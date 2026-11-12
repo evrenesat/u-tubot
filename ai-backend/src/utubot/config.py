@@ -218,6 +218,15 @@ class AppConfig(BaseModel):
     """Public download page and update channel."""
 
     downloader_codes: dict[str, str] = Field(default_factory=dict)
+    github_repo: str = ""
+    github_token_env: str = "UTUBOT_GITHUB_TOKEN"
+    signing_cert_sha256: str = ""
+    apksigner_path: str = ""
+    apksigner_timeout_s: float = 120.0
+    sync_timeout_s: float = 60.0
+    sync_releases_per_page: int = 20
+    sync_max_apk_bytes: int = 200 * 1024 * 1024
+    keep_versions: int = 0
 
 
 class Config(BaseModel):

@@ -33,6 +33,20 @@
 - Tests: `tests/test_glance.py` (panel alias, `{question}` from triage, condense focus, `[llm.glance]` and its fallback,
   auto_long off/on/policy override/background priority/failure isolation/interactive takeover/concurrency cap, panel-default PUT and fallbacks, old prompt files and hashes).
 
+## 2026-11-12 (sync-github)
+
+- `utubot app sync-github --repo OWNER/NAME [--prerelease] [--dry-run]` (`appsync.py`): newest `utubot-vX.Y.Z` release from the
+  GitHub API, `release.json` (version, versionCode, per-ABI SHA-256), download with a size cap, SHA-256 check, signature and
+  signing-certificate check against `[app] signing_cert_sha256`, then `appchannel.publish`. Newer means higher versionCode; no-op
+  otherwise. Exit 0 ok, 1 check failed or misconfigured, 75 GitHub unreachable or rate limited. A missing pin, or an
+  `apksigner_path` that does not run, refuses loudly.
+- Signature check: `apksigner_path` set runs `apksigner verify --print-certs`; unset uses `apksig.py`, a pure-Python reader of the
+  APK Signing Block (v2, v3, v3.1) that verifies the RSA signatures (PKCS#1 v1.5, PSS), recomputes the chunked content digest and
+  returns the signer certificates. ECDSA/DSA keys and v1-only APKs are refused with a pointer to apksigner. Tests use APKs signed by
+  apksigner with a throwaway key (`tests/fixtures/*.apk.bin`) and OpenSSL signature vectors.
+- Releases without `release.json`: ABIs from file names, hashes from `SHA256SUMS`, versionCode derived from the version.
+- `[app]` gains `github_repo`, `github_token_env`, `signing_cert_sha256`, `apksigner_path`, `keep_versions` and sync limits.
+
 ## 2026-11-12 (review fixes, backpressure PR)
 
 - summary/ask jobs now return their result (text, source) so deduped joiners read it; truncated

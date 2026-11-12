@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import appchannel
+from . import appchannel, appsync
 from .auth import Auth, PairError, append_user, hash_token, new_token
 from .config import load_config
 from .db import Database
@@ -84,6 +84,28 @@ def cmd_app_publish(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_app_sync_github(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    repo = args.repo or cfg.app.github_repo
+    if not repo:
+        print("error: give --repo OWNER/NAME or set [app] github_repo", file=sys.stderr)
+        return 1
+    try:
+        result = appsync.sync_github(
+            cfg, repo, include_prerelease=args.prerelease, dry_run=args.dry_run
+        )
+    except appsync.TransientError as exc:
+        print(f"warning: {exc}; will retry on the next run", file=sys.stderr)
+        return appsync.EXIT_TEMPFAIL
+    except appsync.SyncError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    prefix = "dry run: " if args.dry_run else ""
+    for line in result.lines:
+        print(f"{prefix}{line}")
+    return 0
+
+
 def cmd_prompts_validate(args: argparse.Namespace) -> int:
     try:
         with open(args.file, encoding="utf-8") as fh:
@@ -130,6 +152,20 @@ def main(argv: list[str] | None = None) -> int:
     publish.add_argument("--version-code", type=int, required=True)
     publish.add_argument("--changelog", default="")
     publish.set_defaults(func=cmd_app_publish)
+    sync = app.add_parser(
+        "sync-github",
+        help="publish the newest GitHub Release of the app into the update channel",
+    )
+    sync.add_argument("--repo", help="OWNER/NAME (default: [app] github_repo)")
+    sync.add_argument(
+        "--prerelease", action="store_true", help="consider releases marked as prereleases"
+    )
+    sync.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="say what would happen; download no APK, write nothing",
+    )
+    sync.set_defaults(func=cmd_app_sync_github)
     prompts = sub.add_parser("prompts", help="prompt set tools").add_subparsers(
         dest="sub", required=True
     )

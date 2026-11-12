@@ -36,7 +36,8 @@ option. Highlights:
 - `[security]` rate limits, pairing limits, request size cap, `trusted_proxies` for
   `X-Forwarded-For` (loopback only by default).
 - `[assess]` batch size, wait cap, tier-2 daily cap per user.
-- `[setup]`, `[app]` the public `/setup.json` (TVs import it by address) and the landing page download codes.
+- `[setup]`, `[app]` the public `/setup.json` (TVs import it by address), the landing page download codes and the GitHub
+  update channel (`github_repo`, `signing_cert_sha256`, `apksigner_path`; `utubot app sync-github`, see `../docs/server.md`, Updates).
 - `[captions]` ASR backend (`openai` or `faster_whisper`), diarization (`none` or `pyannote`).
 - Environment: `UTUBOT_CONFIG`, `UTUBOT_LLM_API_KEY`, `UTUBOT_ASR_API_KEY`, `UTUBOT_HF_TOKEN`.
 
@@ -51,6 +52,7 @@ needs `Authorization: Bearer <token>` (caption `.vtt` accepts the same header, a
 
 ```
 utubot serve | user add|pair|devices|revoke | app publish APK... --version-name X --version-code N
+utubot app sync-github [--repo OWNER/NAME] [--prerelease] [--dry-run]
 utubot prompts validate FILE
 ```
 

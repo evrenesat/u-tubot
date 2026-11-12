@@ -189,6 +189,18 @@ auto_captions = true
 # Downloader (AFTVnews) short codes, shown when non-empty; keys are ABIs.
 [app]
 downloader_codes = { arm64-v8a = "", armeabi-v7a = "" }
+# `utubot app sync-github` copies new GitHub Releases of the app into the update channel (APKs, update.json).
+# github_repo = "owner/repo"                # example; the repository whose utubot-v* releases are published
+# signing_cert_sha256 = "<64 hex digits>"   # required to sync: SHA-256 of the release signing certificate
+#                                           # (`apksigner verify --print-certs APK`); every APK must match it
+# apksigner_path = "/path/to/android-sdk/build-tools/<version>/apksigner"
+#                                           # optional: verify with apksigner; unset uses the built-in v2/v3 verifier (RSA keys)
+# github_token_env = "UTUBOT_GITHUB_TOKEN"  # optional env var with a GitHub token (only raises the API rate limit)
+# keep_versions = 0                         # versions of APK files kept in app_dir after a sync; 0 keeps all
+# apksigner_timeout_s = 120.0
+# sync_timeout_s = 60.0                     # per HTTP request
+# sync_releases_per_page = 20
+# sync_max_apk_bytes = 209715200            # download cap per APK
 
 # ---- Users --------------------------------------------------------------------------------
 # Tokens are not stored here. `utubot user add NAME [--admin]` writes a sha256 hash to
