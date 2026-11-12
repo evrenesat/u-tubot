@@ -47,6 +47,27 @@ Debug APKs: `smarttubetv/build/outputs/apk/stutubot/debug/u-tubot_<version>_<abi
 
 An end-to-end test (`UtubotBackendE2eTest`) runs against a real backend when `UTUBOT_E2E_URL` and `UTUBOT_E2E_CODE` are set.
 
+### Checking the TV app on an emulator
+
+The panel, the Summary view and the updates are checked on an Android TV emulator (`-no-window -no-audio -memory 2048 -cores 2`) with
+`scripts/emulator_mock_backend.py`, which stands in for the backend (summaries in every state, transcripts, `/app/update.json`).
+Unit tests cover the logic (`UtubotPanelModelTest`, `PanelCoordinatorTest`, `UtubotPanelControllerTest`, ...); the emulator shows what
+they can't: the real skins, focus and the framework's own refocusing.
+
+```sh
+python3 scripts/emulator_mock_backend.py --port 18790 --static temp/update &    # temp/ is ignored by git
+adb -s emulator-5554 install -r smarttubetv/build/outputs/apk/stutubot/debug/u-tubot_<ver>_x86.apk
+adb -s emulator-5554 shell run-as dev.utubot.tv sh -c 'cat > shared_prefs/utubot_settings.xml' < prefs.xml   # url, token, summary_panel
+adb -s emulator-5554 shell input keyevent KEYCODE_INFO                                                      # D-pad and Info
+adb -s emulator-5554 exec-out screencap -p > shot.png ; adb -s emulator-5554 shell uiautomator dump
+```
+
+`prefs.xml` is the `utubot_settings` preference file: `url` (`http://10.0.2.2:18790`), `token`, `summary_panel` true. Use `-s emulator-5554`
+on every `adb` call. Skins: *Settings, User interface, Skins*; check Classic and Modern. `uiautomator dump` leaves out views that are
+not visible to the user, which is how an invisible grid shows: `modern_browse_content` without children.
+For an update, serve an `update.json` with a higher version (`downloadUrlList_x86` next to `downloadUrlList`) and an APK built with
+`-PutubotVersionName=0.9.0`.
+
 ### Private builds with a baked backend
 
 A build for your own devices may carry defaults: `-PutubotUrl=https://utubot.example.com -PutubotToken=...` or a gitignored

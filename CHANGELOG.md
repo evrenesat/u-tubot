@@ -7,7 +7,32 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 ## Unreleased
 
-- App releases are numbered and published automatically (0.3.x onwards); the app itself is unchanged from 0.2.2.
+- App releases are numbered and published automatically (0.3.x onwards).
+- Fixed: the Modern skin could show an empty screen (no grid, the sidebar and the top bar only) after the app started or a section
+  loaded. The checks of the rows ran on a background thread, so the rows were put on the screen from there, which collided with the
+  layout of the grid and left it empty or invisible. The rows now come out on the main thread, as the other checks do.
+- Summary panel, rebuilt as a preview. It no longer takes the focus, dims anything or covers the top bar: it is a small card in the
+  right strip below the top bar, and it hides when the focus leaves the cards (sidebar, another section, an empty or loading
+  list), a card goes away or the player opens. Its header names the prompt and says "Long-press OK or press Info for summary
+  options".
+- The panel waits for the card to keep the focus (Settings, u·tubot, Summary delay: 1, 1.8, 3 or 5 seconds, 1.8 by default) and starts
+  again whenever the focus moves or a key is pressed, so nothing is asked for while you scroll. It shows the title and "Waiting…",
+  then a small working indicator; a result for a card you already left is dropped. The first Back hides the panel and keeps the
+  focus on the card; the next Back is the app's (the sidebar). The panel mode stays on.
+- The panel asks for the short glance summary (`prompt=panel`; a server that doesn't know it gets the first prompt of its list) and shows
+  about three lines; a first line that starts with "→ " is the answer to the title's question and is shown in bold.
+- Summary view: Info on a card (or "u·tubot summary" in the video menu) opens a focused view with the prompts on the left and the
+  summary on the right. Up and Down move through the prompts (the summary follows after a short rest), OK keeps a prompt for the
+  session, Right enters the text, Up and Down scroll it by pages, Left goes back, Back closes the view and the focus returns to
+  the same card. The title, the source, the indicator and Retry are on top. The AI answer dialog scrolls and has the indicator and Retry too.
+- A small animated indicator and a badge at the top right of every screen but the player show while u·tubot is working.
+- Videos without captions: the panel says "No captions — press Info to transcribe"; the Summary view offers "Transcribe in
+  background (~N min)", which starts the job on the server and shows "Transcribing… N%" until the summary is ready. When YouTube slows
+  the server down the message is shown and the request is repeated after the time the server gives, while the card or view is still
+  shown. These states are never kept in the app.
+- Automatic updates: the app checks for a new version shortly after it starts and then at most every 6 hours, with Electric Eel's
+  update dialog and installer (Settings, Updates, Notify about updates turns it off). A backend typed in Advanced on 0.2.0, which
+  never stored an update address, now uses `<backend>/app/update.json` for both the automatic and the manual "Check for updates".
 - Backend: `utubot app sync-github` publishes the newest GitHub Release into the update channel after checking each APK's SHA-256
   and signing certificate, so a server follows new app releases on its own.
 
@@ -26,7 +51,7 @@ Backend (`ai-backend/`) changes in this release:
   `transcript_status: "failed"` with a `reason` and never trip the circuit breaker.
 - New `POST /v1/videos/{id}/transcribe` queues a background transcription of the audio (stored as the transcript with source
   `asr`; idempotent), `GET /v1/videos/{id}/transcript` shows its progress, and `GET /v1/jobs` lists your caption and transcript
-  jobs (`waiting|processing|ready|failed`; jobs retry at most 3 times). The TV app will offer "Transcribe in background?" for
+  jobs (`waiting|processing|ready|failed`; jobs retry at most 3 times). The TV app offers "Transcribe in background?" for
   `needs_transcript`. Audio downloads hold the YouTube gate only until they start; ASR never replaces YouTube captions.
 - Fewer YouTube fetches: tier-2 analysis defaults to 30 per user per day (was 40, example config 100), runs only for videos with a
   title question or a clickbait score above the threshold, and only while YouTube is healthy; `[transcripts] max_concurrency` is
@@ -37,7 +62,7 @@ Backend (`ai-backend/`) changes in this release:
   `[llm.summary]`).
 - `GET /v1/prompts` returns `panel_default` (default `builtin/glance`, config `[summary] panel_prompt`) next to `default`
   (still `builtin/tldr`). Change it with `PUT /v1/prompts/panel-default` or in the web UI. `GET /v1/videos/{id}/summary?prompt=panel`
-  uses it. The app keeps showing `default` in the panel until it adopts `panel_default`.
+  uses it. The app's panel asks for it (`prompt=panel`); the Summary view uses `default`.
 - `[summary] auto_long = false`: when true (or the policy field `auto_long`), a panel summary also queues the user's default
   long summary in the background (at most `auto_long_max_concurrent = 2` at a time). Opening the long summary yourself takes over
   from the background job, and a background failure never fails your request.

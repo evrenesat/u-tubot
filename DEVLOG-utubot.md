@@ -1,5 +1,43 @@
 # u·tubot devlog
 
+## 2026-11-12 (app round 1: passive panel, Summary view, transcripts, auto-update)
+
+- Real-TV report (0.2.0, Modern skin): the screen dimmed, no grid, the panel over the top bar. Reproduced on an Android TV 14 emulator
+  with the 0.2.2 release and then with this branch; evidence in `docs/screenshots/r1/` (`before-*`).
+  - Dim: Electric Eel's own screensaver (`ScreensaverManager`: 60 s without a key press dims to 80%). The old panel consumed keys
+    before `MotherActivity` could end the dimming (a Back that went back to the grid left the screen dark), and the focus inside its
+    Spinner's popup window never reached the activity at all. Used keys now end the dimming (`UtubotPanelController.dispatchKeyEvent`).
+  - Panel: a full-height strip over the top bar with a focusable Spinner and ScrollView, never hidden when the focus left the cards, so
+    it stayed up over other sections and empty pages. Replaced by a passive corner card below the top bar that follows the focus.
+  - Empty grid (the dump with `modern_browse_content` without children): not the panel. `UtubotManager.resolve`, zipped into
+    `HiddenVideoResolver`, finished on the io thread of its last assess call, and `BrowsePresenter` showed the rows from there: the
+    adapters of the grids were changed off the UI thread. With the main thread inside a layout this throws ("Cannot call this
+    method while RecyclerView is computing a layout or scrolling", logged as `updateRowsHeader error`, with the stack of the io thread
+    captured on the emulator) and cancels the load. The grid then has no visible rows: `ModernBrowseFragment` fades the first rows in
+    (`setAlpha(0f)` and an animation) from that same thread, and `uiautomator` leaves out what isn't visible, which is how the dump
+    showed `modern_browse_content` without children (the alpha itself was not measured). 3 of 12 cold starts of the Modern skin showed an
+    empty screen and logged the error without the fix, 0 of 12 with it. The resolver now emits on the main thread
+    (`UtubotAssessFlowTest` fails on the io thread).
+- Panel timing: `FocusDebouncer` (every focus change or D-pad key starts the pause again, default 1.8 s, Settings 1/1.8/3/5 s),
+  `PanelCoordinator` (when it is up: only for a card of the list, hidden for anything else, a card that goes away, pause, the view),
+  `RequestGeneration` (answers for a card or prompt that was left are dropped). First Back hides the panel and keeps the focus.
+- A bug found on the emulator: after Back closed the Summary view the focus went back to the card but the panel never returned:
+  the framework refocused the card while the view closed, and the later `requestFocus` of the same card gave no focus event. The
+  controller looks at the focus once the view is gone.
+- Summary view (Info, or "u·tubot summary" in the menu; Menu stays the video menu): prompts left (400 ms rest, OK keeps the prompt),
+  text right (page scrolling), title, source, indicator and Retry on top; the AI answer uses it too.
+- Transcript states, coded against the backend branch `fix/youtube-pacing` and tolerant of its absence: `needs_transcript`,
+  `delayed` (retry after `retry_after_s`, bounded 1 s to 10 min, only while the card or view is shown), `transcribing` (progress polls
+  every 4 s). The manager caches only `ready` summaries (a test fails if a transient state is kept).
+- Auto-update: `UtubotUpdateSchedule` (20 s after the start, then 6 h, 5 min retry when a check can't happen), the stored `update_url`
+  or `<backend>/app/update.json` derived at read time for installs that typed their backend on 0.2.0. `UtubotUpdateManifestTest`
+  parses the real manifest shape (`downloadUrlList_<abi>` wins over `downloadUrlList`). On the emulator the automatic check
+  (30 s after the start) and "Check for updates" both opened the update dialog from the mock's `/app/update.json`; Install update
+  reached the system installer.
+- Verified on the emulator in the Classic and Modern skins: cold start, panel waiting/loading/ready, no panel on the sidebar,
+  after a section switch and during the player, Back, Info view, transcript and delayed states, Settings. The mock backend is
+  `scripts/emulator_mock_backend.py` (`docs/development.md`).
+
 ## 2026-11-12 (continuous delivery)
 
 - CI: `utubot-ci.yml` (named apart from the inherited `CI.yml`, which differs only by case) tests the backend (ruff, pytest) and the

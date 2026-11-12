@@ -15,12 +15,14 @@ so the other flavors behave as before.
 | `leanbackassistant/build.gradle` | `stutubot` flavor with `matchingFallbacks` | module variant matching |
 | `smarttubetv/build.gradle` | `stutubot` flavor, applicationId, version, release signing from `UTUBOT_KEYSTORE*` or `keystore.properties`, APK name `u-tubot_<ver>_<abi>.apk` | side-by-side install, signed releases |
 | `common/src/stutubot/res/values/update_urls.xml` | empty `update_urls` array | no built-in update source: the stored `update_url` of the imported setup is used |
-| `app/presenters/dialogs/AppUpdatePresenter.java` | `getUpdateUrls()`: stored setup URL for the built-in flavor, none means no check | self-update from the user's own backend |
+| `app/presenters/dialogs/AppUpdatePresenter.java` | `getUpdateUrls()`: stored setup URL (or the one derived from the backend) for the built-in flavor, none means no check; the update dialog always opens for the built-in flavor | self-update from the user's own backend |
+| `app/presenters/dialogs/BootDialogPresenter.java` | `UtubotUpdates.start` instead of the one check at boot | check shortly after the start, then every 6 hours |
+| `tv/ui/main/MainApplication.java` | `UtubotAppHooks.install` | busy badge on every screen but the player, which screen is up (video menu) |
 | `smarttubetv/src/stutubot/res/` | app label and icons | branding |
 | `.gitignore` | `utubot.properties`, `temp/` | local secrets and scratch |
 | `app/models/data/Video.java` | `utubotMark` field (copied in `copy`) | label of the card mark |
 | `app/models/data/VideoGroup.java` | `isHiddenByUtubot` in the add-filter chain | hides or marks a card from the cached verdict |
-| `misc/HiddenVideoResolver.java` | `UtubotManager.resolve(...)` zipped into the existing resolve | one assess call per row emission, bounded by wait_ms and a hard timeout; failures show the videos unfiltered |
+| `misc/HiddenVideoResolver.java` | `UtubotManager.resolve(...)` zipped into the existing resolve | one assess call per row emission, bounded by wait_ms and a hard timeout; failures show the videos unfiltered. It emits on the main thread: the rows are shown from what the resolver emits, so a background thread here changed the grids' adapters off the UI thread (empty Modern screen) |
 | `app/presenters/SplashPresenter.java` | `UtubotPairing.promptIfNeeded` | first-launch pairing dialog when no token |
 | `app/presenters/dialogs/menu/VideoMenuPresenter.java` | `UtubotMenu.append` (two places) | AI answer, Summary panel toggle, Prepare HQ captions |
 | `misc/AppDataSourceManager.java` | Settings entry "u·tubot" | settings screen |
@@ -29,12 +31,12 @@ so the other flavors behave as before.
 | `exoplayer/selector/TrackSelectorUtil.java` | track name lookup | "u·tubot: label" in the subtitle picker |
 | `tv/presenter/VideoCardPresenter.java` | mark with own colour, `addMark` overload, card tag | mark rendering, panel reads the focused card |
 | `tv/ui/modern/widgets/ModernVideoCard.java` | card tag | panel reads the focused card |
-| `tv/ui/common/LeanbackActivity.java` | `UtubotPanelController` (key dispatch, resume) | Summary side panel (not in the player activity) |
+| `tv/ui/common/LeanbackActivity.java` | `UtubotPanelController` (key dispatch, resume, pause) | passive Summary panel and the Summary view (not in the player activity) |
 
 ## Behaviour
 
 - Settings, always in this order: Import setup, Pair with code (6 digits, `POST /v1/pair`, token stored, connection tested,
-  then "Paired as <user>"), assess switch, mark only, answer in menu, Summary panel, auto-select HQ captions, Prompts (list,
+  then "Paired as <user>"), assess switch, mark only, answer in menu, Summary panel, Summary delay, auto-select HQ captions, Prompts (list,
   choose default, Import from URL, Refresh all), Test connection, Advanced (backend URL and token by hand; a typed backend
   also sets `<backend>/app/update.json` when no update URL is stored). `UtubotSettingsPresenter.buildCategories` is the list.
 - Import setup (`UtubotSetup`, `UtubotSetupFlow`): the user types a bare host or a URL, the app fetches `/setup.json`
@@ -44,8 +46,40 @@ so the other flavors behave as before.
   every step is logged with tag `Utubot`. `SimpleEditDialog` submits on OK and on the keyboard's Go/Done/Next/Send/Search
   action; Back with the keyboard up only hides it.
 - Assess failures, timeouts and pending verdicts leave cards unfiltered. Marks use their own colour (`UtubotPolicy.MARK_COLOR`).
-- Summary panel: right side, 35% width, 700 ms focus debounce, prompt selector, status line, polling while pending.
-  RIGHT from the grid edge enters the panel, BACK or LEFT returns. It is hidden while the player is open.
+- Summary panel (`UtubotPanelController`, `UtubotPanelView`, `PanelCoordinator`): a passive preview. One view added to the activity's
+  content (no dialog, no window, no dimming); it never takes the focus and never handles a D-pad key. It is the bottom of the right
+  strip (35% of the width), below the screen's top bar (`modern_browse_top_bar`, the classic title group), and nothing of the
+  screen is detached, hidden or moved. A global focus listener finds the card (`R.id.utubot_card_video` tag set by
+  `VideoCardPresenter` and `ModernVideoCard`); `PanelCoordinator` decides: focus on a card shows the title and "Waiting…" at once, the
+  request starts after the card kept the focus for the delay of the settings (1, 1.8, 3 or 5 s) and any focus change or D-pad key
+  starts the pause again (`FocusDebouncer`); focus on anything else, a card that is detached, the activity pausing (the player
+  opens), the mode turned off or the Summary view opening hides the panel and drops its request (`RequestGeneration` ignores the
+  late answers). The first Back with the panel up hides it and leaves the focus on the card (`UtubotKeys`); the next one is the app's.
+  Header: the label of the panel prompt, the hint "Long-press OK or press Info for summary options" and the working indicator.
+- The panel requests `prompt=panel`; on 400 or 404 (an older backend) it uses the first prompt of `GET /v1/prompts` and remembers it.
+  The header label is the label of `panel_default`. The text is about three lines; a first line that starts with "→ " is bold.
+- Summary view (`UtubotSummaryOverlay`): opened with the Info key on a card while the panel mode is on, or "u·tubot summary" in the
+  video menu (`UtubotUiHost`: the menu closes its dialog, the screen underneath takes the request). A focused card over the
+  screen, in the same window: prompts on the left (Up and Down reload after 400 ms, OK keeps the prompt for the session), the text
+  on the right (Right enters, Up and Down page, Left goes back), the title, the source line, the indicator and Retry (or
+  "Transcribe in background") on top. It uses the `default` prompt (or the kept one). Back closes it; the focus returns to the card.
+  Menu keeps the video menu (Electric Eel's `KeyHelpers.isMenuKey`), so Info is the key.
+- Transcript states (`UtubotPanelModel`, "Transcript status" of `ai/CONTRACT.md`): a summary can answer `needs_transcript` (message,
+  `can_transcribe`, `estimate_s`: the view offers `POST /v1/videos/{id}/transcribe`, then follows `GET /v1/videos/{id}/transcript`),
+  `pending` with `transcript_status` `delayed` (message in `error`, asked again after `retry_after_s`, 1 s to 10 min, while the card or
+  view is shown), `transcribing` (progress, followed every 4 s in the view and every 20 s in the panel, which must not poll faster
+  than a pending summary) or `failed` (`error`, `reason`: the transcribe action returns with `can_transcribe`, Retry goes with a
+  `reason`). The manager keeps ready summaries only; these states are never cached. An insight (the AI answer) can say the same
+  (`UtubotAnswerModel`): it shows the state, and its transcribe button opens the Summary view of the video and starts there.
+  Older backends simply never send them.
+- Working indicator: `UtubotWorkingIndicator` (three pulsing dots, redrawn about 12 times a second, only while active, attached and shown), in the panel, the
+  view and the answer, and `UtubotBadgeController` (badge at the top right of every screen but the player, shown after 300 ms of work,
+  kept for 700 ms) fed by `UtubotBusyTracker`, which counts every `UtubotClient` call in flight.
+- Auto-update (`UtubotUpdates`, `UtubotUpdateSchedule`): 20 s after the app starts, then every 6 hours (a check that can't happen now, e.g.
+  the player is open, is tried again after 5 minutes), through `AppUpdatePresenter` (the checker of `SharedModules`, `appupdatechecker2`: version
+  check, APK of the device's ABI, update dialog, installer). On by default; Settings, Updates, "Notify about updates" is its switch.
+  `UtubotSettings.getUpdateUrl()` returns the stored `update_url`, or `<backend>/app/update.json` when none was ever stored (a
+  backend typed on 0.2.0); a setup that stored an empty address keeps none.
 - HQ captions: fetched with the `Authorization` header (never `?token=`); the header is only sent to the backend host.
 
 ## update.json (self-update)
