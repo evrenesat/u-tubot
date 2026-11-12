@@ -1,5 +1,44 @@
 # u·tubot devlog
 
+## 2026-11-12 (app review follow-ups)
+
+Findings of the review of PR 20 (app round 1), each with a unit test.
+
+- Caches: `UtubotManager` kept the prompt list for the session (`mPrompts`) and the summaries, verdicts and captions of the backend it
+  was loaded from. `UtubotSettings` now notifies a connection listener when `setUrl` or `setToken` really changes a value, which
+  covers `applySetup`, `setUrlManually` and the pairing at one place; the manager drops everything, the session prompt included
+  (a key of another backend's list). Choose default, Import and Refresh drop the prompt list themselves (also when they fail: the
+  backend may have changed before the error), which covers the pending prompt sets of `UtubotSetupFlow.importPendingPromptSets` too.
+  A summary, verdict, prompt list or caption list that arrives after a switch is not stored (`isCurrent` compares the client's
+  backend and token with the settings'): `UtubotConnectionCacheTest` holds a request open across a token change.
+- Security: `authorizationFor` compared `startsWith(baseUrl)`; `https://u.example.com.evil.net/x` got the token. It parses both with
+  OkHttp `HttpUrl` and compares scheme, host and port, and requires the path to be under the backend's path by whole segments (a dot
+  segment can't climb out).
+- Updates: an update found while the player was open was dropped by `showUpdateDialog` and the schedule had counted the check as
+  done (6 hours). `AppUpdatePresenter` now reports it (`UtubotUpdates.onUpdateDeferred`), the schedule retries in 5 minutes and
+  `UtubotAppHooks` brings the retry forward to 5 seconds after a non-player screen resumes. `check()` still refuses to start
+  during playback or over a dialog, so nothing is prompted while playing and a long film causes no repeated downloads.
+- `SharedModules` `appupdatechecker2` (read at the pinned checkout): `AppVersionChecker` reads `downloadUrl*` as plain `Uri`s,
+  `AppDownloader` only tests `URLUtil.isValidUrl` (accepts http, file, content, ...) and fetches with OkHttp; neither looks at the
+  scheme or host. `UtubotUpdateChecker` overrides `onChangelogReceived` and passes on only https or private-host http addresses
+  (judged by OkHttp's own parse of the string, so a parser difference can't let a different host through).
+- Settings: `setUrlManually("")` removed the token but left `update_url`, so the old server kept being checked.
+- Panel: with the Summary view open, `UtubotPanelController.handleKey` restored the view's focus only for the D-pad; OK/Enter went
+  to the card under the view whenever the grid had the focus (the restore is posted, so a key can land first). Select keys
+  (`UtubotKeys.isSelectKey`) are used there as well, and the rest of that press is swallowed.
+- Installer label (owner's TV: "App installed" showed `com.liskovsoft.smartyoutubetv2.tv.ui.main.MainAp…` and the generic icon during a
+  self-update). The manifest was not missing anything: `<application>` has `label`, `icon`, `banner` and `logo` in main and `aapt2 dump
+  badging` of every published APK (0.2.0 to 0.3.0) and of this branch's debug APK shows `application-label:'u·tubot'` and
+  `application-icon-*`. That class name is `ApplicationInfo.loadLabel`'s last fallback, taken when the label resource can't be resolved,
+  i.e. an installer reading the package file without its resources. The label is now a literal in `src/stutubot/AndroidManifest.xml`
+  (the first thing `loadLabel` returns, no resources needed). The icon is always a resource, so the generic icon in such an
+  installer is not something the app can change. Not verified on the TV (no device here); to check it: update from a build
+  without the literal and look at `adb shell dumpsys package dev.utubot.tv | grep -iE "labelRes|nonLocalizedLabel|icon="` and the
+  installer's log for "Failure retrieving text".
+- `UtubotBadgeController` (the value of a `WeakHashMap<Activity, ...>` in `UtubotAppHooks`) held its activity and its badge view
+  (which holds the activity as its context) strongly; both are weak references now. `mReturnFocus` was already a weak reference and
+  is cleared in `closeOverlay`.
+
 ## 2026-11-12 (fast transcripts)
 
 - Backend only (no app change): videos without captions are transcribed automatically under the per-user policy (`auto_transcribe`),
