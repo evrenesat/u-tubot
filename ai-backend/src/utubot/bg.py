@@ -41,6 +41,13 @@ class TaskRegistry:
         task = self._tasks.get(key)
         return task is not None and not task.done()
 
+    def cancel(self, key: Any) -> bool:
+        task = self._tasks.get(key)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
     async def drain(self) -> None:
         pending = [t for t in self._tasks.values() if not t.done()]
         if pending:

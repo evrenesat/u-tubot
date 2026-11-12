@@ -41,7 +41,7 @@ from .models import (
     QueryMeta,
     SummaryAdhoc,
 )
-from .prompts import Prompt, PromptError, PromptStore, validate_prompt_set
+from .prompts import PANEL_ALIAS, Prompt, PromptError, PromptStore, validate_prompt_set
 from .security import BodyLimitMiddleware, RateLimited, RateLimiter, client_ip
 from .transcripts import Fetcher, TranscriptService
 
@@ -393,6 +393,14 @@ def create_app(
             raise HTTPException(404, str(exc)) from exc
         return {"default": body.key}
 
+    @app.put("/v1/prompts/panel-default")
+    async def prompts_panel_default(body: DefaultRequest, user: UserConfig = Depends(current_user)):
+        try:
+            svc.prompts.set_panel_default(user.name, body.key)
+        except PromptError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {"panel_default": body.key}
+
     @app.get("/v1/videos/{video_id}/summary")
     async def summary(
         video_id: str,
@@ -402,13 +410,20 @@ def create_app(
         user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
-        key = prompt or svc.prompts.default_key(user.name)
+        panel = prompt == PANEL_ALIAS
+        if panel:
+            key = svc.prompts.panel_key(user.name)
+        else:
+            key = prompt or svc.prompts.default_key(user.name)
         resolved = svc.prompts.resolve(user.name, key)
         if resolved is None:
             raise HTTPException(404, f"unknown prompt {key}")
-        return await svc.content.summary(
+        result = await svc.content.summary(
             user.policy, video_id, resolved, key, meta.as_dict(), wait_ms
         )
+        if panel and result["status"] == "ready":
+            svc.content.schedule_long(user.name, user.policy, video_id, meta.as_dict(), key)
+        return result
 
     @app.post("/v1/videos/{video_id}/summary")
     async def summary_adhoc(

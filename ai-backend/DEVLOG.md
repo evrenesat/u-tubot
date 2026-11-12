@@ -1,5 +1,38 @@
 # DEVLOG
 
+## 2026-11-12 (glance summaries, panel default, background long summaries)
+
+- Owner request: the side-panel summary was too long for the screen and slow; titles that pose a question or tease a reveal
+  should be answered first.
+- New built-in prompt `builtin/glance` (<= ~280 chars, <= 3 short lines, plain text, `→ answer` line first when the title poses
+  a question or is a curiosity gap, "Not answered in the video" otherwise, then 1-2 lines of gist; `max_tokens` 160). The
+  triage `title_question` fills `{question}` (it already did; the glance and `answer-title` templates now use it, and both work
+  when it is empty). `answer-title` rewritten with the same curiosity-first logic. Builtin set version 2.
+- `Prompt.task` (`summary` default, `glance`): picks the `[llm.*]` table. `[llm.glance]` (optional; `reasoning_effort` "none"
+  and `max_tokens` 160 by default) falls back to `[llm.summary]` with reasoning off. `content_hash` only includes `task` when
+  it is not `summary`, so existing prompts keep their cached summaries; old prompt-set files validate unchanged.
+- Defaults split: `GET /v1/prompts` returns `panel_default` next to `default` (and `panel_default` per prompt);
+  `PUT /v1/prompts/panel-default {"key"}` (separate route chosen over a `panel_key` field on `/default`); stored in the new
+  `user_panel_default` table (created by `CREATE TABLE IF NOT EXISTS`, no migration); resolution order user choice, then
+  `[summary] panel_prompt`, then `builtin/glance`. `GET /v1/videos/{id}/summary?prompt=panel` resolves to it and returns the
+  resolved key in `prompt`. Web UI got a "Use for the side panel" selector.
+- `[summary] auto_long` (default false) and policy field `auto_long` (null = follow config): after a `prompt=panel` request ends
+  ready, `ContentService.schedule_long` queues the user's `default` prompt at `BACKGROUND` priority through the existing
+  per-provider limiter; skipped when cached, running, recently failed, or the same prompt as the panel one. Summary job
+  creation was factored into `_start_summary` (shared by the interactive and background paths, same registry key, so joiners dedupe).
+- Condense (map) step: system prompt asks for the passage that answers the title's question or reveals its tease first, on
+  an `ANSWER:` line; the map user message now carries the video title and the triage question. Caveat: `condensed` rows made
+  before this change are reused as they are (key is video + budget); `DELETE FROM condensed` rebuilds them.
+- Review fix: background and interactive runs of one summary are separate registry tasks (`summary_task_key`: `summary` vs
+  `summary-bg`), so a background failure never makes an interactive request `failed`, and an interactive request never
+  joins a background task (it starts its own and cancels the background one; same result row, last write wins).
+  `[summary] auto_long_max_concurrent` (2) caps background long jobs from task start (transcript fetch included); over the
+  cap `schedule_long` skips and a later panel request retries.
+- Known follow-ups: the Android panel still preselects `default` from `GET /v1/prompts` (needs `panel_default` or
+  `prompt=panel`); no thumbnail text exists in the metadata the app sends, so only the title is used today.
+- Tests: `tests/test_glance.py` (panel alias, `{question}` from triage, condense focus, `[llm.glance]` and its fallback,
+  auto_long off/on/policy override/background priority/failure isolation/interactive takeover/concurrency cap, panel-default PUT and fallbacks, old prompt files and hashes).
+
 ## 2026-11-12 (review fixes, backpressure PR)
 
 - summary/ask jobs now return their result (text, source) so deduped joiners read it; truncated

@@ -3,6 +3,23 @@
 Versions follow `versionName` in `smarttubetv/build.gradle` (flavor `stutubot`). Release APKs are signed with the u·tubot
 release key; the certificate SHA-256 is in each release's notes on GitHub.
 
+## Unreleased
+
+Backend (`ai-backend/`) only; no app build changes yet.
+
+- New built-in prompt `builtin/glance` for the side panel: at most about 280 characters in 3 short lines. When the title poses
+  a question or teases a reveal ("you won't believe", "the truth about", "why ...") the first line is `→ ` plus the answer from
+  the transcript. It uses a 160 token budget with reasoning off, on the optional `[llm.glance]` model (falls back to
+  `[llm.summary]`).
+- `GET /v1/prompts` returns `panel_default` (default `builtin/glance`, config `[summary] panel_prompt`) next to `default`
+  (still `builtin/tldr`). Change it with `PUT /v1/prompts/panel-default` or in the web UI. `GET /v1/videos/{id}/summary?prompt=panel`
+  uses it. The app keeps showing `default` in the panel until it adopts `panel_default`.
+- `[summary] auto_long = false`: when true (or the policy field `auto_long`), a panel summary also queues the user's default
+  long summary in the background (at most `auto_long_max_concurrent = 2` at a time). Opening the long summary yourself takes over
+  from the background job, and a background failure never fails your request.
+- `builtin/answer-title` answers the title's question or curiosity gap first; the transcript condense step keeps the passage that
+  answers it. Prompts accept an optional `task` (`summary` or `glance`); existing prompt-set files are unchanged.
+
 ## 0.2.2 (2026-11-12)
 
 Security fixes for backend addresses and tokens. Updates 0.2.1 in place.

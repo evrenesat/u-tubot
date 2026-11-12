@@ -59,8 +59,10 @@ published in `/setup.json` and in APK download links), `users_file` (default `da
 
 **`[llm]`**: `default_provider`, `timeout_s`, `retries_on_bad_json`, `json_retry_max_tokens`, `reasoning_headroom_tokens`, `retry_max_attempts`, `retry_base_s`, `retry_max_s`,
 `deadline_interactive_s`, `deadline_background_s`; `[llm.providers.NAME]` with `base_url`, `api_key_env`, `max_concurrent`,
-`reserved_interactive`, `json_mode`; per-task tables `[llm.triage]`, `[llm.summary]`, `[llm.answer]`, `[llm.analysis]`, `[llm.captions]`, each with
-`model`, optional `provider`, `fallback`, `reasoning_effort`, `max_tokens`, `temperature`. See [llm-providers.md](llm-providers.md).
+`reserved_interactive`, `json_mode`; per-task tables `[llm.triage]`, `[llm.summary]`, `[llm.glance]` (optional), `[llm.answer]`, `[llm.analysis]`, `[llm.captions]`, each with
+`model`, optional `provider`, `fallback`, `reasoning_effort`, `max_tokens`, `temperature`. `[llm.glance]` runs the short side-panel
+summary; when absent the glance uses `[llm.summary]` with `reasoning_effort = "none"`, and when present `reasoning_effort` defaults
+to `"none"` and `max_tokens` to 160. See [llm-providers.md](llm-providers.md).
 
 **`[assess]`**: `batch_size` (titles per triage call), `coalesce_ms`, `max_videos_per_request`, `wait_ms_cap`, `default_wait_ms`,
 `background_concurrency`, `tier2_daily_cap_per_user` (transcript-based deep analyses per user per UTC day),
@@ -71,7 +73,10 @@ blocks the host), `skip_if_longer_than_s`.
 
 **`[summary]`**: `token_budget`, `chunk_tokens`, `chars_per_token`, `strategy` (`map_reduce` or `truncate`),
 `default_wait_ms`, `wait_ms_cap`, `adhoc_ttl_s`, `max_summary_chars`, `max_import_bytes`, `import_timeout_s`,
-`import_allow_hosts`, `import_max_redirects`.
+`import_allow_hosts`, `import_max_redirects`, `panel_prompt` (prompt for the side panel's automatic summaries, default
+`"builtin/glance"`; each user can choose their own), `auto_long` (default `false`: also generate the user's default long summary in
+the background after a panel summary; a user's `auto_long` policy field overrides it), `auto_long_max_concurrent` (default `2`,
+background long summaries in flight including the transcript fetch; further ones are skipped until one ends, `0` disables them). See [prompt-sets.md](prompt-sets.md).
 
 **`[captions]`**: ASR and diarization, see [captions.md](captions.md).
 

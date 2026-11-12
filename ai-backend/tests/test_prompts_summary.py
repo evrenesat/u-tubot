@@ -50,7 +50,7 @@ async def test_builtin_listed_and_default(env):
     body = r.json()
     assert body["default"] == "builtin/tldr"
     builtin = next(s for s in body["sets"] if s["id"] == "builtin")
-    assert len(builtin["prompts"]) == 5
+    assert len(builtin["prompts"]) == 6
     assert (await env.client.delete("/v1/prompts/sets/builtin")).status_code == 400
     assert (
         await env.client.put("/v1/prompts/sets/builtin", json=pset("builtin"))

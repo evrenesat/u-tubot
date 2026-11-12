@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from .config import Config
+from .config import GLANCE_MAX_TOKENS, Config
 from .db import Database
 from .urlguard import Resolver, UrlRejected, guarded_get, system_resolver
 
@@ -18,6 +18,11 @@ log = logging.getLogger("utubot.prompts")
 
 BUILTIN_SET_ID = "builtin"
 DEFAULT_BUILTIN_KEY = "builtin/tldr"
+DEFAULT_PANEL_KEY = "builtin/glance"
+PANEL_ALIAS = "panel"
+TASK_SUMMARY = "summary"
+TASK_GLANCE = "glance"
+TASKS = (TASK_SUMMARY, TASK_GLANCE)
 SET_FORMAT_VERSION = 1
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 TEMPLATE_VARS = (
@@ -40,6 +45,42 @@ DEFAULT_SYSTEM = (
 )
 
 
+GLANCE_SYSTEM = (
+    "You write the glance card a TV viewer sees beside a video while browsing. It must fit a "
+    "small panel and be read in two seconds. Plain text only: no markdown, no preamble, never "
+    "start with 'This video'. Be concrete and faithful to the transcript, never invent details. "
+    "Reply in {language}."
+)
+GLANCE_TEMPLATE = (
+    "Title: {title}\nChannel: {channel}\nDuration: {duration}\n"
+    "Question the title poses (detected earlier, may be empty): {question}\n\n"
+    "Transcript:\n{transcript}\n\n"
+    "Write the glance card: at most 3 short lines and at most 280 characters in total.\n"
+    "First decide whether the title (or thumbnail text, if the metadata gives any) poses or "
+    'implies a question, or is a curiosity gap or clickbait: "you won\'t believe", "this '
+    'changes everything", "the truth about", "why ...", "what happened", a number tease, '
+    'a cliffhanger. If it is, line 1 is "→ " followed by the direct, specific answer from the '
+    "transcript: the actual names, numbers or reveal, not a description of it. If the "
+    'transcript does not answer it, line 1 is "→ " followed by a few words saying so, such as '
+    '"Not answered in the video" (in {language}).\n'
+    "Then 1 or 2 short lines with the gist.\n"
+    "If the title asks nothing and teases nothing, skip the arrow line and give the gist in 2 "
+    "or 3 short lines."
+)
+ANSWER_TITLE_TEMPLATE = (
+    "Title: {title}\nChannel: {channel}\nDuration: {duration}\n"
+    "Question the title poses (detected earlier, may be empty): {question}\n\n"
+    "Transcript:\n{transcript}\n\n"
+    "The title (or thumbnail text, if the metadata gives any) may pose or imply a question, or "
+    'create curiosity or wonder: "you won\'t believe", "the truth about", "why ...", "what '
+    'happened", a number tease, a cliffhanger. Find that first. Line 1: the question or '
+    "curiosity gap, phrased as a short question. Then answer it directly in 2-3 sentences with "
+    "the actual names, numbers or reveal, using only what the video says. If the video never "
+    "answers it, say so. If the title asks nothing and teases nothing, give a 2 sentence summary "
+    "instead."
+)
+
+
 class PromptError(ValueError):
     pass
 
@@ -52,6 +93,7 @@ class Prompt(BaseModel):
     template: str
     max_tokens: int = 700
     model: str | None = None
+    task: str = TASK_SUMMARY
 
     @field_validator("id")
     @classmethod
@@ -81,10 +123,18 @@ class Prompt(BaseModel):
             raise ValueError(f"max_tokens must be 16..{MAX_TOKENS_LIMIT}")
         return v
 
+    @field_validator("task")
+    @classmethod
+    def _task(cls, v: str) -> str:
+        if v not in TASKS:
+            raise ValueError(f"task must be one of {', '.join(TASKS)}")
+        return v
+
     def content_hash(self) -> str:
-        blob = json.dumps(
-            [self.system, self.template, self.max_tokens, self.model], ensure_ascii=False
-        )
+        parts: list[Any] = [self.system, self.template, self.max_tokens, self.model]
+        if self.task != TASK_SUMMARY:
+            parts.append(self.task)
+        blob = json.dumps(parts, ensure_ascii=False)
         return hashlib.sha256(blob.encode()).hexdigest()
 
 
@@ -140,8 +190,16 @@ BUILTIN_SET = PromptSet(
     tubeai_prompt_set=SET_FORMAT_VERSION,
     id=BUILTIN_SET_ID,
     name="Built-in",
-    version="1",
+    version="2",
     prompts=[
+        Prompt(
+            id="glance",
+            label="Glance",
+            system=GLANCE_SYSTEM,
+            template=GLANCE_TEMPLATE,
+            max_tokens=GLANCE_MAX_TOKENS,
+            task=TASK_GLANCE,
+        ),
         Prompt(
             id="tldr",
             label="TL;DR",
@@ -159,14 +217,7 @@ BUILTIN_SET = PromptSet(
             id="answer-title",
             label="Answer the title",
             system=DEFAULT_SYSTEM,
-            template=(
-                "Title: {title}\nChannel: {channel}\nDuration: {duration}\n\n"
-                "Transcript:\n{transcript}\n\n"
-                "The title may pose or imply a question. State that question, then answer it "
-                "directly in 2-3 sentences using only what the video says. If the video never "
-                "actually answers it, say so. If the title asks nothing, give a 2 sentence "
-                "summary instead."
-            ),
+            template=ANSWER_TITLE_TEMPLATE,
             max_tokens=400,
         ),
         Prompt(
@@ -248,6 +299,13 @@ class PromptStore:
             return row["prompt_key"]
         return DEFAULT_BUILTIN_KEY
 
+    def panel_key(self, user: str) -> str:
+        row = self.db.one("SELECT prompt_key FROM user_panel_default WHERE user=?", [user])
+        for key in (row["prompt_key"] if row else None, self.cfg.summary.panel_prompt):
+            if key and self.resolve(user, key):
+                return key
+        return DEFAULT_PANEL_KEY
+
     def resolve(self, user: str, key: str) -> Prompt | None:
         set_id, _, prompt_id = key.partition("/")
         found = self.get_set(user, set_id)
@@ -271,9 +329,10 @@ class PromptStore:
         if not found:
             return False
         self.db.execute("DELETE FROM prompt_sets WHERE user=? AND set_id=?", [user, set_id])
-        row = self.db.one("SELECT prompt_key FROM user_default WHERE user=?", [user])
-        if row and row["prompt_key"].startswith(f"{set_id}/"):
-            self.db.execute("DELETE FROM user_default WHERE user=?", [user])
+        for table in ("user_default", "user_panel_default"):
+            row = self.db.one(f"SELECT prompt_key FROM {table} WHERE user=?", [user])
+            if row and row["prompt_key"].startswith(f"{set_id}/"):
+                self.db.execute(f"DELETE FROM {table} WHERE user=?", [user])
         return True
 
     def set_default(self, user: str, key: str) -> None:
@@ -281,6 +340,13 @@ class PromptStore:
             raise PromptError(f"unknown prompt {key}")
         self.db.execute(
             "INSERT OR REPLACE INTO user_default(user,prompt_key) VALUES(?,?)", [user, key]
+        )
+
+    def set_panel_default(self, user: str, key: str) -> None:
+        if not self.resolve(user, key):
+            raise PromptError(f"unknown prompt {key}")
+        self.db.execute(
+            "INSERT OR REPLACE INTO user_panel_default(user,prompt_key) VALUES(?,?)", [user, key]
         )
 
     async def fetch(self, url: str) -> PromptSet:
@@ -338,6 +404,7 @@ class PromptStore:
 
     def describe(self, user: str) -> dict[str, Any]:
         default = self.default_key(user)
+        panel = self.panel_key(user)
         sets = []
         for pset, source_url in self.list_sets(user):
             sets.append(
@@ -352,9 +419,10 @@ class PromptStore:
                             "key": f"{pset.id}/{p.id}",
                             "label": p.label,
                             "default": f"{pset.id}/{p.id}" == default,
+                            "panel_default": f"{pset.id}/{p.id}" == panel,
                         }
                         for p in pset.prompts
                     ],
                 }
             )
-        return {"default": default, "sets": sets}
+        return {"default": default, "panel_default": panel, "sets": sets}

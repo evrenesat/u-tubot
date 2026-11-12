@@ -10,6 +10,8 @@ CONFIG_ENV = "UTUBOT_CONFIG"
 DEFAULT_CONFIG_PATH = "./config.toml"
 DEFAULT_PROVIDER = "default"
 DEFAULT_LLM_BASE_URL = "http://127.0.0.1:8000/v1"
+GLANCE_MAX_TOKENS = 160
+GLANCE_REASONING_EFFORT = "none"
 
 
 class LLMTask(BaseModel):
@@ -20,6 +22,13 @@ class LLMTask(BaseModel):
     reasoning_headroom_tokens: int | None = None
     temperature: float = 0.2
     fallback: list[str] = Field(default_factory=list)
+
+
+class GlanceTask(LLMTask):
+    """`[llm.glance]`: the fast task behind the short panel summary."""
+
+    reasoning_effort: str | None = GLANCE_REASONING_EFFORT
+    max_tokens: int = GLANCE_MAX_TOKENS
 
 
 class ProviderConfig(BaseModel):
@@ -46,10 +55,19 @@ class LLMConfig(BaseModel):
     deadline_background_s: float = 120.0
     triage: LLMTask = LLMTask(model="fast", reasoning_effort="none", max_tokens=2500)
     summary: LLMTask = LLMTask(model="worker", max_tokens=900)
+    glance: GlanceTask | None = None
     answer: LLMTask = LLMTask(model="worker", max_tokens=600)
     analysis: LLMTask = LLMTask(model="worker", max_tokens=900)
     captions: LLMTask = LLMTask(model="worker", max_tokens=2000)
     smart: LLMTask = LLMTask(model="smart", max_tokens=1500)
+
+    def glance_task(self) -> LLMTask:
+        """`[llm.glance]` when configured, else `[llm.summary]` with reasoning off."""
+        if self.glance is not None:
+            return self.glance
+        return self.summary.model_copy(
+            update={"reasoning_effort": GLANCE_REASONING_EFFORT, "max_tokens": GLANCE_MAX_TOKENS}
+        )
 
 
 class AssessConfig(BaseModel):
@@ -91,6 +109,9 @@ class SummaryConfig(BaseModel):
     import_timeout_s: float = 15.0
     import_allow_hosts: list[str] = Field(default_factory=list)
     import_max_redirects: int = 5
+    panel_prompt: str = "builtin/glance"
+    auto_long: bool = False
+    auto_long_max_concurrent: int = 2
 
 
 class CaptionsConfig(BaseModel):
@@ -131,6 +152,7 @@ class UserPolicy(BaseModel):
     mark_inflated_ratio_below: float = 0.35
     inflated_min_duration_s: int = 300
     answer_in_label: bool = False
+    auto_long: bool | None = None
 
 
 class UserConfig(BaseModel):

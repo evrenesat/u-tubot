@@ -28,8 +28,11 @@ pairing codes, devices and policy edits.
 One TOML file, `UTUBOT_CONFIG` (default `./config.toml`). `config.example.toml` lists every
 option. Highlights:
 
-- `[llm.providers.NAME]` any number of OpenAI-compatible providers; `[llm.triage|summary|answer|analysis|captions]`
-  pick provider and model per task. A prompt's `model` may be `alias` or `provider:model`.
+- `[llm.providers.NAME]` any number of OpenAI-compatible providers; `[llm.triage|summary|glance|answer|analysis|captions]`
+  pick provider and model per task (`glance` is the optional fast model for the side-panel summary). A prompt's `model` may be
+  `alias` or `provider:model`.
+- `[summary]` token budget and strategy, `panel_prompt` (side-panel prompt, `builtin/glance`), `auto_long` (also build the long
+  summary in the background, off by default).
 - `[security]` rate limits, pairing limits, request size cap, `trusted_proxies` for
   `X-Forwarded-For` (loopback only by default).
 - `[assess]` batch size, wait cap, tier-2 daily cap per user.
@@ -53,7 +56,8 @@ utubot prompts validate FILE
 
 ## Prompt sets
 
-`prompts/example-set.json` is a starting point. Variables: `{title} {channel} {duration}
+`prompts/example-set.json` is a starting point. Each user has a `default` prompt (Summary view, `builtin/tldr`) and a
+`panel_default` (side panel, `builtin/glance`); `GET /v1/videos/ID/summary?prompt=panel` uses the latter. Variables: `{title} {channel} {duration}
 {description} {transcript} {language} {question}`. Validate with `utubot prompts validate FILE`,
 host anywhere, import by URL (short links followed, 256 KiB cap).
 

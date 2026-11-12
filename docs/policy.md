@@ -31,6 +31,7 @@ Set them in `[default_policy]` (everyone), per user in `[users.policy]`, or at r
 | `mark_inflated_ratio_below` | `0.35` | essential/total ratio at or below this marks "Inflated" |
 | `inflated_min_duration_s` | `300` | videos shorter than this are never marked inflated |
 | `answer_in_label` | `false` | append the short answer to the mark text |
+| `auto_long` | unset | `true`/`false` overrides `[summary] auto_long` (generate the long summary in the background after a side-panel summary); unset follows the config |
 
 Hiding wins over marking. Raise a threshold to see fewer marks; set a hide threshold to `1.01` to never hide on that score.
 Topics work best as short, concrete phrases (`"reaction videos"`, `"celebrity gossip"`), because the model must pick them from your
