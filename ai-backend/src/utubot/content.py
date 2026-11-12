@@ -82,7 +82,7 @@ class ContentService:
         self.cfg, self.db, self.llm = cfg, db, llm
         self.transcripts, self.prompts = transcripts, prompts
         self.registry = TaskRegistry(cfg.summary.failure_cooldown_s)
-        self._ask_results: dict[Any, str] = {}
+        self._ask_results: dict[Any, tuple[str, float | None]] = {}
 
     def wait_cap(self, wait_ms: int | None) -> int:
         s = self.cfg.summary
@@ -116,7 +116,7 @@ class ContentService:
         chunks = split_chunks(text, s.chunk_tokens * s.chars_per_token)
         notes = await asyncio.gather(
             *(
-                self.llm.chat(
+                self.llm.chat_result(
                     self.cfg.llm.analysis,
                     [
                         {"role": "system", "content": MAP_SYSTEM},
@@ -128,11 +128,14 @@ class ContentService:
                 for i, chunk in enumerate(chunks)
             )
         )
-        merged = truncate_smart("\n\n".join(notes), budget_chars)
-        self.db.execute(
-            "INSERT OR REPLACE INTO condensed(video_id,budget,text,created_at) VALUES(?,?,?,?)",
-            [transcript.video_id, s.token_budget, merged, time.time()],
+        merged = truncate_smart(
+            "\n\n".join(n.text + CUT_MARK if n.truncated else n.text for n in notes), budget_chars
         )
+        if not any(n.truncated for n in notes):
+            self.db.execute(
+                "INSERT OR REPLACE INTO condensed(video_id,budget,text,created_at) VALUES(?,?,?,?)",
+                [transcript.video_id, s.token_budget, merged, time.time()],
+            )
         return merged
 
     def _values(
@@ -199,6 +202,10 @@ class ContentService:
         ttl = self.cfg.summary.adhoc_ttl_s if adhoc else None
         base = {"video_id": video_id, "prompt": key, "text": None, "source": None, "error": None}
         hit = self._cached_summary(video_id, store_key, chash, policy.language, ttl)
+        if hit is None and not adhoc:
+            hit = self._cached_summary(
+                video_id, ADHOC_KEY, chash, policy.language, self.cfg.summary.adhoc_ttl_s
+            )
         if hit:
             return {**base, "status": "ready", "text": hit["text"], "source": hit["source"]}
         task_key = ("summary", video_id, store_key, chash, policy.language)
@@ -206,19 +213,17 @@ class ContentService:
         if failure:
             return {**base, "status": "failed", "error": failure}
 
-        used_key_box: list[str] = []
-
-        async def job() -> None:
+        async def job() -> tuple[str, str]:
             transcript = await self.source(video_id, qmeta)
             generated = await self._generate(prompt, transcript, policy)
             text = generated.text + CUT_MARK if generated.truncated else generated.text
             used_key = ADHOC_KEY if generated.truncated else store_key
-            used_key_box.append(used_key)
             self.db.execute(
                 "INSERT OR REPLACE INTO summaries(video_id,prompt_key,content_hash,language,text,"
                 "source,created_at) VALUES(?,?,?,?,?,?,?)",
                 [video_id, used_key, chash, policy.language, text, transcript.source, time.time()],
             )
+            return text, transcript.source
 
         task = self.registry.start(task_key, job)
         if not await wait_task(task, self.wait_cap(wait_ms)):
@@ -229,11 +234,8 @@ class ContentService:
                 "status": "failed",
                 "error": public_error(task.exception(), "content task"),
             }
-        used = used_key_box[-1] if used_key_box else store_key
-        hit = self._cached_summary(
-            video_id, used, chash, policy.language, self.cfg.summary.adhoc_ttl_s
-        ) or self._cached_summary(video_id, used, chash, policy.language)
-        return {**base, "status": "ready", "text": hit["text"], "source": hit["source"]}
+        text, source = task.result()
+        return {**base, "status": "ready", "text": text, "source": source}
 
     async def insight(
         self, policy: UserPolicy, video_id: str, qmeta: dict[str, Any], wait_ms: int | None
@@ -331,9 +333,8 @@ class ContentService:
         qhash = hashlib.sha256(question.encode()).hexdigest()[:16]
         task_key = ("ask", video_id, qhash, policy.language)
         results = self._ask_results
-        truncated_answers: dict[tuple, str] = {}
 
-        async def job() -> None:
+        async def job() -> str:
             transcript = await self.source(video_id, qmeta)
             body = await self.condensed(transcript) if transcript.text else ""
             values = self._values(transcript, body, policy, question)
@@ -352,12 +353,15 @@ class ContentService:
                 priority=INTERACTIVE,
             )
             if answer.truncated:
-                truncated_answers[task_key] = answer.text + CUT_MARK
+                expires = time.time() + self.cfg.summary.adhoc_ttl_s
+                results[task_key] = (answer.text + CUT_MARK, expires)
             else:
-                results[task_key] = answer.text
+                results[task_key] = (answer.text, None)
+            return results[task_key][0]
 
-        if task_key in results:
-            return {"answer": results[task_key], "status": "ready"}
+        cached = results.get(task_key)
+        if cached and (cached[1] is None or cached[1] > time.time()):
+            return {"answer": cached[0], "status": "ready"}
         task = self.registry.start(task_key, job)
         if not await wait_task(task, self.wait_cap(wait_ms)):
             return {"answer": None, "status": "pending"}
@@ -367,7 +371,4 @@ class ContentService:
                 "status": "failed",
                 "error": public_error(task.exception(), "content task"),
             }
-        return {
-            "answer": results.get(task_key) or truncated_answers.get(task_key),
-            "status": "ready",
-        }
+        return {"answer": task.result(), "status": "ready"}

@@ -31,6 +31,7 @@ HTTP_SERVER_ERROR_FLOOR = 500
 JITTER_LOW = 0.5
 TRUNCATION_RETRY_FACTOR = 2
 CUT_MARK = " …"
+MIN_HTTP_TIMEOUT_S = 0.001
 JSON_NUDGE = "Reply with JSON only, no prose, no reasoning."
 RETRYABLE_TRANSPORT = (httpx.NetworkError, httpx.ConnectTimeout, httpx.RemoteProtocolError)
 
@@ -105,6 +106,15 @@ def parse_retry_after(value: str | None) -> float | None:
     if when.tzinfo is None:
         when = when.replace(tzinfo=UTC)
     return max(0.0, (when - datetime.now(UTC)).total_seconds())
+
+
+def error_code_suffix(resp: httpx.Response) -> str:
+    try:
+        err = resp.json()["error"]
+        code = err.get("code") if isinstance(err, dict) else None
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return ""
+    return f" (code={str(code)[:60]})" if code else ""
 
 
 @dataclass
@@ -188,6 +198,12 @@ class LLMClient:
         override = task.reasoning_headroom_tokens
         return self.cfg.llm.reasoning_headroom_tokens if override is None else override
 
+    def deadline_for(self, priority: int, deadline_s: float | None) -> float:
+        if deadline_s is not None:
+            return deadline_s
+        llm = self.cfg.llm
+        return llm.deadline_interactive_s if priority == INTERACTIVE else llm.deadline_background_s
+
     def _headers(self, provider: str) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         key = self.cfg.api_key(provider)
@@ -218,7 +234,12 @@ class LLMClient:
                 raise LLMBusyError("llm slot wait exceeded deadline") from exc
             retry_after: float | None = None
             try:
-                resp = await self._http.post(url, json=body, headers=self._headers(provider))
+                resp = await self._http.post(
+                    url,
+                    json=body,
+                    headers=self._headers(provider),
+                    timeout=max(MIN_HTTP_TIMEOUT_S, min(llm.timeout_s, deadline_at - loop.time())),
+                )
             except RETRYABLE_TRANSPORT as exc:
                 reason = f"connection error {type(exc).__name__}"
             except httpx.HTTPError as exc:
@@ -229,7 +250,7 @@ class LLMClient:
                     retry_after = parse_retry_after(resp.headers.get("retry-after"))
                 elif resp.status_code >= HTTP_ERROR_FLOOR:
                     raise LLMError(
-                        f"llm http {resp.status_code}: {resp.text[:200]}",
+                        f"llm http {resp.status_code}{error_code_suffix(resp)}",
                         failover=resp.status_code >= HTTP_SERVER_ERROR_FLOOR,
                     )
                 else:
@@ -253,14 +274,12 @@ class LLMClient:
         priority: int = BACKGROUND,
         json_mode: bool = False,
         deadline_s: float | None = None,
+        deadline_at: float | None = None,
     ) -> Completion:
         llm = self.cfg.llm
-        if deadline_s is None:
-            deadline_s = (
-                llm.deadline_interactive_s if priority == INTERACTIVE else llm.deadline_background_s
-            )
         loop = asyncio.get_running_loop()
-        deadline_at = loop.time() + deadline_s
+        if deadline_at is None:
+            deadline_at = loop.time() + self.deadline_for(priority, deadline_s)
         chain = self.chain(task, model)
         last: LLMError | None = None
         for idx, (provider, name) in enumerate(chain):
@@ -309,24 +328,30 @@ class LLMClient:
         deadline_s: float | None = None,
     ) -> ChatResult:
         answer_budget = max_tokens or task.max_tokens
+        deadline_at = asyncio.get_running_loop().time() + self.deadline_for(priority, deadline_s)
         done = await self.complete(
             task,
             messages,
             model=model,
             max_tokens=answer_budget,
             priority=priority,
-            deadline_s=deadline_s,
+            deadline_at=deadline_at,
         )
         if done.finish_reason == "length":
             log.warning("llm output kind=truncated retry=1 reasoning=%s", done.reasoning)
-            done = await self.complete(
-                task,
-                messages,
-                model=model,
-                max_tokens=answer_budget * TRUNCATION_RETRY_FACTOR,
-                priority=priority,
-                deadline_s=deadline_s,
-            )
+            try:
+                done = await self.complete(
+                    task,
+                    messages,
+                    model=model,
+                    max_tokens=answer_budget * TRUNCATION_RETRY_FACTOR,
+                    priority=priority,
+                    deadline_at=deadline_at,
+                )
+            except LLMError as exc:
+                if not done.text:
+                    raise
+                log.warning("llm truncation retry failed (%s), keeping first answer", exc)
         truncated = done.finish_reason == "length"
         if not done.text:
             kind = "truncated" if truncated else "empty"
@@ -370,6 +395,7 @@ class LLMClient:
         convo = list(messages)
         max_tokens: int | None = None
         last = "unknown"
+        deadline_at = asyncio.get_running_loop().time() + self.deadline_for(priority, deadline_s)
         for _ in range(attempts):
             done = await self.complete(
                 task,
@@ -378,7 +404,7 @@ class LLMClient:
                 max_tokens=max_tokens,
                 priority=priority,
                 json_mode=True,
-                deadline_s=deadline_s,
+                deadline_at=deadline_at,
             )
             try:
                 return extract_json(done.text)

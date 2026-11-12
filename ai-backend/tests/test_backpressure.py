@@ -282,15 +282,110 @@ async def test_truncated_twice_is_marked(client, mock_llm):
     assert (await client.chat(TASK, MSGS)).endswith(" …")
 
 
-async def test_truncated_summary_not_cached_long_term(env):
+async def test_truncated_summary_cached_short_term_only(env):
     env.llm.length_first = 2
     p = {"wait_ms": 5000}
     r = await env.client.get(f"/v1/videos/{VID}/summary", params=p)
     assert r.json()["status"] == "ready" and r.json()["text"].endswith(" …")
     n = len(env.llm.calls)
     again = await env.client.get(f"/v1/videos/{VID}/summary", params=p)
-    assert again.json()["text"] and not again.json()["text"].endswith(" …")
+    assert again.json()["text"] == r.json()["text"] and len(env.llm.calls) == n
+    env.cfg.summary.adhoc_ttl_s = -1
+    fresh = await env.client.get(f"/v1/videos/{VID}/summary", params=p)
+    assert fresh.json()["text"] and not fresh.json()["text"].endswith(" …")
     assert len(env.llm.calls) > n
+
+
+async def test_truncated_summary_joiner_gets_text(env):
+    env.llm.length_first = 2
+    env.llm.delay_s = 0.1
+    p = {"wait_ms": 5000}
+    a, b = await asyncio.gather(
+        env.client.get(f"/v1/videos/{VID}/summary", params=p),
+        env.client.get(f"/v1/videos/{VID}/summary", params=p),
+    )
+    for r in (a, b):
+        assert r.status_code == 200 and r.json()["status"] == "ready"
+        assert r.json()["text"].endswith(" …") and r.json()["source"]
+    n = len(env.llm.calls)
+    later = await env.client.get(f"/v1/videos/{VID}/summary", params=p)
+    assert later.json()["text"] == a.json()["text"] and len(env.llm.calls) == n
+
+
+async def test_truncated_ask_joiner_gets_answer_and_is_cached(env):
+    env.llm.length_first = 2
+    env.llm.delay_s = 0.1
+    body = {"question": "Why?", "wait_ms": 5000}
+    a, b = await asyncio.gather(
+        env.client.post(f"/v1/videos/{VID}/ask", json=body),
+        env.client.post(f"/v1/videos/{VID}/ask", json=body),
+    )
+    for r in (a, b):
+        assert r.json()["status"] == "ready" and r.json()["answer"].endswith(" …")
+    n = len(env.llm.calls)
+    again = await env.client.post(f"/v1/videos/{VID}/ask", json=body)
+    assert again.json()["answer"] == a.json()["answer"] and len(env.llm.calls) == n
+
+
+async def test_truncated_condensed_notes_not_persisted(env):
+    env.cfg.summary.token_budget = 200
+    env.cfg.summary.chunk_tokens = 100
+    env.fetcher.text = "\n".join(f"[00:{i:02d}] line {i} " + "word " * 20 for i in range(40))
+    env.llm.length_first = 2
+    r = await env.client.get(f"/v1/videos/{VID}/summary", params={"wait_ms": 10000})
+    assert r.json()["status"] == "ready"
+    assert env.svc.content.db.one("SELECT 1 AS x FROM condensed") is None
+
+
+async def test_truncation_retry_failure_keeps_first_answer(client, monkeypatch):
+    from utubot.llm import Completion
+
+    calls = []
+
+    async def fake(*args, **kw):
+        calls.append(kw["deadline_at"])
+        if len(calls) == 1:
+            return Completion("partial", False, "length")
+        raise LLMError("busy", failover=True)
+
+    monkeypatch.setattr(client, "complete", fake)
+    result = await client.chat_result(TASK, MSGS)
+    assert result.text == "partial" and result.truncated
+    assert len(calls) == 2 and calls[0] == calls[1]
+
+
+async def test_json_retries_share_one_deadline(client, monkeypatch):
+    seen = []
+    real = client.complete
+
+    async def spy(*args, **kw):
+        seen.append(kw["deadline_at"])
+        return await real(*args, **kw)
+
+    monkeypatch.setattr(client, "complete", spy)
+    with pytest.raises(LLMError):
+        await client.chat_json(TASK, MSGS)
+    assert len(seen) == 2 and seen[0] == seen[1]
+
+
+async def test_http_timeout_clamped_to_deadline(client, monkeypatch):
+    seen = []
+    real = client._http.post
+
+    async def spy(*args, **kw):
+        seen.append(kw["timeout"])
+        return await real(*args, **kw)
+
+    monkeypatch.setattr(client._http, "post", spy)
+    await client.complete(TASK, MSGS, deadline_s=0.5)
+    assert seen and seen[0] <= 0.5
+
+
+async def test_http_error_does_not_echo_body_or_log_it(client, mock_llm):
+    mock_llm.fail_status = 400
+    with pytest.raises(LLMError) as exc:
+        await client.chat(TASK, MSGS)
+    assert "boom" not in str(exc.value) and "400" in str(exc.value)
 
 
 async def test_prompt_max_tokens_is_answer_budget(env):

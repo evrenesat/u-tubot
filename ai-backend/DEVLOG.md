@@ -1,5 +1,14 @@
 # DEVLOG
 
+## 2026-11-12 (review fixes, backpressure PR)
+
+- summary/ask jobs now return their result (text, source) so deduped joiners read it; truncated
+  summaries/answers sit in a short-TTL cache (`adhoc_ttl_s`) readable by all callers and the summary lookup also
+  checks the ad-hoc row. Truncated map-step notes are never persisted in `condensed`.
+- `llm.py`: one absolute deadline per logical call shared by truncation/bad-JSON retries; HTTP timeout clamped to the
+  remaining deadline; a failed truncation retry returns the first (truncated) answer; HTTP error messages carry status
+  and `error.code` only, never the response body.
+
 ## 2026-11-12 (truncated summaries)
 
 - Bug: summaries cut mid-sentence were cached as ready. Per-prompt `max_tokens` overrode the task budget and reasoning
