@@ -1,11 +1,17 @@
 # Changelog
 
-Versions follow `versionName` in `smarttubetv/build.gradle` (flavor `stutubot`). Release APKs are signed with the u·tubot
-release key; the certificate SHA-256 is in each release's notes on GitHub.
+Versions are `<major>.<minor>.<patch>`: `major.minor` is `utubot.version`, the patch counts the releases of that series
+(`docs/development.md`). Every app change merged to `main` is released automatically. Release APKs are signed with the u·tubot
+release key; the certificate SHA-256 is in each release's notes on GitHub. User-facing notes of the next release go under
+`## Unreleased`; a release publishes the lines its predecessor did not carry.
 
 ## Unreleased
 
-Backend (`ai-backend/`) only; no app build changes yet.
+- App releases are numbered and published automatically (0.3.x onwards); the app itself is unchanged from 0.2.2.
+- Backend: `utubot app sync-github` publishes the newest GitHub Release into the update channel after checking each APK's SHA-256
+  and signing certificate, so a server follows new app releases on its own.
+
+Backend (`ai-backend/`) changes in this release:
 
 - New built-in prompt `builtin/glance` for the side panel: at most about 280 characters in 3 short lines. When the title poses
   a question or teases a reveal ("you won't believe", "the truth about", "why ...") the first line is `→ ` plus the answer from
