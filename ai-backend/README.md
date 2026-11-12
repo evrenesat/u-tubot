@@ -35,7 +35,9 @@ option. Highlights:
   summary in the background, off by default).
 - `[security]` rate limits, pairing limits, request size cap, `trusted_proxies` for
   `X-Forwarded-For` (loopback only by default).
-- `[assess]` batch size, wait cap, tier-2 daily cap per user.
+- `[assess]` batch size, wait cap, tier-2 daily cap per user (30).
+- `[youtube]` pacing and circuit breaker for every request to YouTube (`max_concurrent`, `min_interval_s`, `jitter_s`,
+  `cooldown_base_s`, `cooldown_max_s`); `[transcripts] no_captions_ttl_s`.
 - `[setup]`, `[app]` the public `/setup.json` (TVs import it by address), the landing page download codes and the GitHub
   update channel (`github_repo`, `signing_cert_sha256`, `apksigner_path`; `utubot app sync-github`, see `../docs/server.md`, Updates).
 - `[captions]` ASR backend (`openai` or `faster_whisper`), diarization (`none` or `pyannote`).
@@ -68,6 +70,14 @@ host anywhere, import by URL (short links followed, 256 KiB cap).
 `POST /v1/videos/ID/captions` queues a persisted job: yt-dlp audio, ffmpeg 16 kHz mono, ASR,
 optional diarization, segmentation (42 chars x 2 lines, 1-7 s), WebVTT with `[S1]` prefixes.
 Jobs survive restarts. Needs `ffmpeg` on PATH.
+
+## No transcript, no summary
+
+Everything that reaches YouTube goes through `youtube.py` (`YoutubeGate`: pacing plus a 429/403/bot-check circuit breaker).
+Summaries, insights and answers are never made from the title alone: a transient YouTube problem answers `pending` with
+`transcript_status: "delayed"` and `retry_after_s`, a video without captions answers `needs_transcript` and the user can start
+`POST /v1/videos/ID/transcribe` (audio, ASR, stored with source `asr`). `GET /v1/videos/ID/transcript` and `GET /v1/jobs` show
+progress. See `../docs/server.md` and `../ai/CONTRACT.md`.
 
 ## Tests
 

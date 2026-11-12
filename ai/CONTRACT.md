@@ -47,6 +47,29 @@ optional):
  "insight_ready":true, "captions_ready":false}
 ```
 
+## Transcript status
+
+Summaries, insights and answers are made from a real transcript only: YouTube captions (`source`
+`youtube_captions`) or one the backend built from the audio (`asr`). They are **never** made from the
+title, channel and description alone, so there is no `metadata_only` source any more. The responses of
+`insight`, `summary` and `ask` all carry `transcript_status`, and when the transcript is the reason there
+is no text they say why:
+
+| `transcript_status` | `status` | extra fields | what the app does |
+|---|---|---|---|
+| `ok` | `ready` | `source` | shows the text |
+| `delayed` | `pending` | `error` (user-facing, "YouTube is limiting transcript downloads; retrying in ~N min"), `retry_after_s` | shows `error`, asks again after `retry_after_s` (not before) |
+| `none` | `needs_transcript` | `can_transcribe`, `message` ("No captions. Transcribe the audio in the background?"), `estimate_s` (rough seconds, may be null) | shows `message`; when `can_transcribe` offers a "Transcribe in background?" action that calls `POST /v1/videos/{id}/transcribe` |
+| `transcribing` | `pending` | `progress` 0.0-1.0, `estimate_s` | shows progress, asks again later |
+| `failed` | `failed` | `error`, `reason`, `can_transcribe` | shows `error`; `reason` is `private`, `members_only`, `age_restricted`, `unavailable`, `forbidden`, `too_long`, `live` (video problems) or absent (a transcription job failed); offers the transcribe action again only when `can_transcribe` |
+| `null` | any | none | the problem is not the transcript (model busy, generic failure) |
+
+`delayed` means YouTube slowed the server down (HTTP 429, bot check, 403 on the watch request, network error, an incomplete answer or an open cooldown); it is never
+cached, so the same request works once `retry_after_s` has passed. `none` is remembered by the backend for 3 days
+(`[transcripts] no_captions_ttl_s`) and then checked again; `can_transcribe` is false for live streams and videos
+longer than `[captions] max_duration_s`. The summary of a video whose transcription is queued or running answers `pending` with
+`transcript_status: "transcribing"` until the transcript exists, then works normally with `source: "asr"`.
+
 ## Endpoints
 
 ### `GET /v1/health` (no auth)
@@ -76,13 +99,15 @@ Optional query fields: `title`, `channel`, `duration_s` (used if the backend has
 no metadata yet). Starts a job if none exists.
 
 ```json
-{"video_id":"...","status":"ready|pending|failed","error":null,
+{"video_id":"...","status":"ready|pending|failed|needs_transcript","error":null,
  "title_question":"...","answer":"2–3 sentences","answer_confidence":0.0-1.0,
  "summary":"markdown-ish plain text, ≤ 1200 chars",
  "key_points":["...","..."],
  "inflation":{"duration_s":754,"essential_s":120,"ratio":0.16},
- "source":"youtube_captions|asr|metadata_only"}
+ "source":"youtube_captions|asr",
+ "transcript_status":"ok|delayed|none|transcribing|failed|null"}
 ```
+Plus the extra fields of [Transcript status](#transcript-status) when `transcript_status` is not `ok`.
 
 ### Prompt sets (custom summary prompts)
 
@@ -143,15 +168,57 @@ usually already cached. Off by default; explicit `prompt=<key>` requests never
 queue anything.
 
 ```json
-{"video_id":"...","prompt":"my-prompts/tldr","status":"ready|pending|failed",
- "text":"...","source":"youtube_captions|asr|metadata_only","error":null}
+{"video_id":"...","prompt":"my-prompts/tldr","status":"ready|pending|failed|needs_transcript",
+ "text":"...","source":"youtube_captions|asr","error":null,
+ "transcript_status":"ok|delayed|none|transcribing|failed|null"}
 ```
+Plus the extra fields of [Transcript status](#transcript-status) when `transcript_status` is not `ok`.
 
 `POST /v1/videos/{id}/summary` with `{"prompt_text":"...", "system":"..."}`
 runs an ad-hoc prompt (not cached long-term) — for quick iteration.
 
 ### `POST /v1/videos/{id}/ask`
-`{"question":"..."}` → `{"answer":"...","status":"ready|pending"}`
+`{"question":"..."}` → `{"answer":"...","status":"ready|pending|failed|needs_transcript","transcript_status":"ok|delayed|none|transcribing|failed|null"}`,
+plus the extra fields of [Transcript status](#transcript-status) when it is not `ok`.
+
+### `POST /v1/videos/{id}/transcribe`
+Queue a background transcription of the audio for a video without captions (the answer to "Transcribe in
+background?"). Optional query fields `title`, `channel`, `duration_s` as for `insight`. The backend downloads the
+audio (paced with every other YouTube request), runs its speech recognition and stores the text as the video's
+transcript with source `asr`. Idempotent: asking again while the user's job is queued or running returns that job.
+Nothing is queued when a transcript already exists.
+
+```json
+{"video_id":"...","job_id":"a1b2c3d4e5f6","status":"queued|running|ready",
+ "transcript_status":"transcribing|ok","progress":0.0,"estimate_s":630}
+```
+`400` when the video cannot be transcribed (live, or longer than the configured maximum), `429` when the user
+already has the maximum number of active transcriptions (`[captions] transcribe_max_active_per_user`, 5).
+
+### `GET /v1/videos/{id}/transcript`
+Where the transcript stands. Cheap: never contacts YouTube.
+
+```json
+{"video_id":"...","transcript_status":"ok|delayed|none|transcribing|failed|unknown",
+ "source":"youtube_captions|asr","lang":"en",
+ "progress":0.4,"estimate_s":630,"job_id":"...",
+ "can_transcribe":true,"message":"...","error":null}
+```
+Only the fields that apply are present (`source`/`lang` with `ok`, `progress`/`estimate_s`/`job_id` with `transcribing`,
+`can_transcribe`/`message`/`estimate_s` with `none`, `error`/`reason`/`can_transcribe` with `failed`,
+`error`/`retry_after_s` with `delayed`). `job_id` appears only for the caller's own job, never another user's.
+`unknown` (only here) means the backend has not looked yet.
+
+### `GET /v1/jobs?limit=50`
+The caller's background jobs of every kind, newest first (groundwork for a "check later" shelf). `limit` 1-200.
+
+```json
+{"jobs":[{"id":"a1b2c3d4e5f6","kind":"transcript|captions","video_id":"...","title":"...or null",
+          "state":"waiting|processing|ready|failed","progress":0.0-1.0,"error":null,
+          "created_at":1700000000.0,"finished_at":null,"retry_after_s":null}]}
+```
+`waiting` = queued (including while YouTube has the server in a cooldown; then `retry_after_s` says roughly how long),
+`processing` = running. `error` is a short generic message for `failed`.
 
 ### `POST /v1/videos/{id}/captions`
 Queue high-quality captions. Body: `{"lang":"auto","translate_to":null}`.
@@ -187,6 +254,10 @@ Stored for later threshold tuning.
   focus, toggle turns the mode off.
 - Context menu: "AI answer" (shows `answer_short` in the item label when
   known), "Summary panel on/off", "Prepare HQ captions".
+- Summary panel and Summary view: handle `transcript_status`. `delayed`: show the `error` text and retry after
+  `retry_after_s`. `none` (`status: "needs_transcript"`): show `message` and, when `can_transcribe`, a
+  "Transcribe in background?" action that calls `POST /v1/videos/{id}/transcribe`; afterwards the same request
+  answers `transcribing` with `progress` until the summary is ready. The panel must not poll faster than it did for `pending`.
 - Settings → u·tubot → Prompts: list sets, "Import from URL", "Refresh all",
   choose default.
 - Player: when `captions_ready`, offer the u·tubot track(s) in the subtitle
@@ -204,6 +275,7 @@ Stored for later threshold tuning.
 - `POST /v1/pair` `{"code":"123456","device":"Living room TV"}` -> `{"token":"utb_...","user":"owner"}`.
   Codes are single use, valid 15 minutes, created by `utubot user pair NAME` or the admin UI.
   Wrong codes: `403`; lockout after repeated failures: `429`. Each device gets its own token.
+- `GET /v1/me` `features` also lists `"transcribe": true` (the endpoints above exist).
 - `GET /v1/me` also returns `"admin": bool`. `PUT /v1/me/policy` patches the caller's policy.
 - Admin only (user with `admin = true`, else `403 {"error":"forbidden"}`):
   `POST /v1/admin/pair {"user"}` -> `{"code","expires_in_s"}`, `GET /v1/admin/users`,

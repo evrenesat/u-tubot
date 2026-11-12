@@ -11,7 +11,7 @@ on the card) or **hide** (the card is removed). The verdict is computed from sha
 - **topics**: which of your listed topics the video clearly belongs to (matched case-insensitively against your exact entries).
 - **inflation**: for videos worth a second look (those with a question title or a clickbait score above
   `assess.tier2_clickbait_threshold`), the transcript is analysed for how much of the video carries unique information. A 12
-  minute video with 2 useful minutes is labelled `Inflated · 12m≈2m`. Limited per user per day by `assess.tier2_daily_cap_per_user`.
+  minute video with 2 useful minutes is labelled `Inflated · 12m≈2m`. Limited per user per day by `assess.tier2_daily_cap_per_user` (30), and only while YouTube is not limiting the server.
 - **title question**: the question the title asks, answered from the transcript when known; shown as "AI answer" in the video menu.
 
 ## Policy fields

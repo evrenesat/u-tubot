@@ -1,5 +1,74 @@
 # DEVLOG
 
+## 2026-11-12 (review fixes for the YouTube gate)
+
+- Breaker scope: only a 429, the bot check or a 403 on the watch/player/metadata request open it. A 403/410 on a caption or media
+  URL and private, members-only, age-gated or unavailable videos raise `YoutubeVideoError` (`transcript_status: "failed"` + `reason`),
+  recorded in `video_holds` (`[transcripts] video_failure_ttl_s`, 1 h) so they are not re-fetched; any such answer closes a half-open
+  breaker and resets the escalation. `RATE_LIMIT_RE` no longer matches a bare "try again later".
+- Jobs: `YoutubeDelayed` (including blocked) re-queues with `attempts` and `not_before` (gate clock), capped by
+  `[captions] job_max_attempts` (3), then fails; a per-video error fails the job at once. Orphan `media/<id>` directories older
+  than `media_orphan_age_s` are removed at start.
+- Media lane: `YoutubeGate.run_started` holds the paced slot only until the download signals its first bytes (yt-dlp progress
+  hook), then releases it; a 429 after the start still opens the breaker. yt-dlp gets a `match_filter` (live, duration) and
+  `max_filesize`; the converted WAV is re-checked against `max_duration_s` before ASR.
+- Soft-degraded answers: "no captions" is cached only from a complete yt-dlp answer (formats present, no caption language listed
+  without formats); otherwise `delayed`. A caption file that parses to nothing is `delayed` with a `video_holds` entry
+  (`empty_track_retry_s`, 1 h), never "no captions".
+- ASR vs captions: a transcript job first re-checks YouTube (`get(recheck=True)`, ignores the no-captions memory) and uses captions
+  if they exist; `store_asr` never replaces a `youtube_captions` row (a fresh complete "no captions" answer deletes a stale one).
+- Tier-2 refunds the daily slot when the fetch ends delayed. `GET .../transcript` shows `job_id` only for the caller's own job;
+  `state()` and the summary/insight/ask responses never carry one. `delayed` can appear on that endpoint (empty-track hold).
+- Tests: scoped classification, per-video failures end to end, retry cap (network and blocked), media start gating, filters,
+  sweep, soft-degraded answers, recheck, refunds, job-id scoping (`test_youtube_gate.py`, `test_youtube_fetch.py`, `test_media.py`,
+  `test_transcript_flow.py`).
+
+## 2026-11-12 (YouTube pacing, circuit breaker, no title-only summaries, ask-to-transcribe)
+
+- Incident: one home IP, one user browsing the TV home screen: about 70 transcript fetches in 3 hours (26 interactive summaries, 41
+  tier-2 analyses, insights, caption jobs) in bursts; YouTube answered `/api/timedtext` with 429. Every later fetch failed, the
+  fetcher stored a `metadata_only` transcript (empty text, cached 30 days) and summaries were generated from the title (5 vague
+  bullets, cached as ready).
+- `youtube.py`: `YoutubeGate`, a process-wide pacer plus breaker for yt-dlp metadata, timedtext and audio download. At most
+  `[youtube] max_concurrent` (1) in flight, `min_interval_s` (3 s) + random `jitter_s` between requests (measured from the end of the
+  previous request), interactive before background, `promote(key)` lifts a queued background fetch when a user starts waiting on
+  it. Breaker: 429, 403 or "Sign in to confirm you're not a bot" (also yt-dlp "rate-limited by YouTube") open it for `Retry-After`
+  or `cooldown_base_s` * 2^(consecutive blocks - 1) up to `cooldown_max_s`; interactive callers get `YoutubeCooldown` immediately,
+  background callers wait (paused, they hold no slot and no tier-2 semaphore) and the first request afterwards is the probe.
+  State (`youtube_gate` row) survives restarts so a crash loop cannot hammer YouTube. Injectable `Clock` for tests.
+- Failures are classified (`classify_failure`, `classify_status`) into `YoutubeBlocked` (opens the breaker), `YoutubeDelayed`
+  (network, 5xx, empty caption body: transient, breaker untouched) or a sanitised `YoutubeError`; messages never carry URLs
+  (`from None`, query strings stripped) and the `httpx`/`httpcore` loggers get a URL-redacting filter because httpx logs every
+  request URL, signed caption tokens included, at INFO.
+- `TranscriptService.get(video_id, priority)` is the only way to a transcript: cache, then "no captions" marker, then one shared
+  in-flight fetch through the gate. `no_captions` table (3 day TTL, `[transcripts] no_captions_ttl_s`) replaces the empty
+  `metadata_only` row. `Database` start-up deletes legacy `metadata_only` transcripts, summaries and insights.
+- Metadata-only generation removed: `ContentService.source` no longer falls back to the title; `NO_TRANSCRIPT` prompt text gone.
+  Summary/insight/ask answer `transcript_status` (`ok|delayed|none|transcribing|failed|null`): transient problem is
+  `pending`+`delayed`+`error`+`retry_after_s` (not cached, not recorded as a task failure via the `expected` exception flag);
+  no captions is `needs_transcript`+`none`+`can_transcribe`+`message`+`estimate_s` and makes no LLM call.
+- `transcribe.py` (`Transcription`): state from the DB only (`ok`, active job -> `transcribing` with progress, recent failed job ->
+  `failed`, marker -> `none`), `request()` for `POST /v1/videos/{id}/transcribe`, `status()` for `GET .../transcript` (adds
+  `unknown`, not in the five values, for videos never looked at). Estimate = `asr_overhead_s` + duration / `asr_speed_factor`.
+- Jobs: `jobs` table gained `kind` (`captions|transcript`), `title`, `finished_at` (ALTER on start). Transcript jobs reuse
+  `CaptionPipeline._recognise` (gated download, ffmpeg, ASR), build cues, store the text as source `asr`. One active job per user
+  and video; the same video never runs twice at once; `_claim` skips queued work while the breaker is open (state `waiting`); a
+  job whose download is refused goes back to the queue. `GET /v1/jobs` (mine, any kind, `waiting|processing|ready|failed`) is the
+  groundwork for the "check later" shelf (issue #16). `[captions] transcribe_max_active_per_user` caps queued jobs.
+- Volume: tier-2 default cap 30/day; scheduled only for a title question or clickbait score >= threshold (unchanged rule) and now
+  also only when the breaker is not open, the video is not known to lack captions and fewer than `[youtube] max_background_queue`
+  background fetches wait. The fetch happens outside the assess `_bg` semaphore (a paused fetch no longer blocks triage).
+  Audit: the only path to YouTube text is `TranscriptService.get`; summary prompts, insight, ask and tier-2 share one fetch per TTL.
+  `[transcripts] max_concurrency` removed (superseded).
+- Web UI: shows `needs_transcript` with a "Transcribe in background" button, stops polling on `delayed`, lists all jobs.
+- Tests: `test_youtube_gate.py` (pacing, jitter, concurrency, priority, promotion, breaker open/close/exponential/Retry-After cap,
+  paused-not-failed, persistence, log hygiene, classifiers), `test_youtube_fetch.py` (real `YoutubeFetcher` with a mock
+  timedtext transport and injected extractor: 429+Retry-After, bot check, no captions + expiry, empty body, 5xx, once-per-TTL),
+  `test_transcript_flow.py` (HTTP flow, ASR job end to end, `/v1/jobs`, tier-2 gating, legacy purge, column migration),
+  `tests/fakes.py` (`FakeClock`).
+- Known follow-ups: the TV app does not know `needs_transcript`/`delayed` yet (issue #16 shelf, "Transcribe in background?"
+  action); diarization is not applied to transcript jobs; a job paused inside the gate while running shows as `processing`.
+
 ## 2026-11-12 (glance summaries, panel default, background long summaries)
 
 - Owner request: the side-panel summary was too long for the screen and slow; titles that pose a question or tease a reveal

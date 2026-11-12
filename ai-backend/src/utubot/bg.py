@@ -8,6 +8,11 @@ from typing import Any
 from .errors import public_error
 
 
+def is_failure(exc: BaseException | None) -> bool:
+    """Exceptions flagged `expected` (delayed, no captions) are outcomes, not failures."""
+    return exc is not None and not getattr(exc, "expected", False)
+
+
 class TaskRegistry:
     def __init__(self, failure_cooldown_s: float = 30.0):
         self._tasks: dict[Any, asyncio.Task] = {}
@@ -24,7 +29,7 @@ class TaskRegistry:
         def _done(t: asyncio.Task, key: Any = key) -> None:
             if self._tasks.get(key) is t:
                 del self._tasks[key]
-            if not t.cancelled() and t.exception() is not None:
+            if not t.cancelled() and is_failure(t.exception()):
                 self._failures[key] = (time.time(), public_error(t.exception(), "background task"))
 
         task.add_done_callback(_done)

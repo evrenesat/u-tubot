@@ -75,12 +75,13 @@ table { width:100%; border-collapse:collapse; } td, th { text-align:left; paddin
     </div>
     <textarea id="adhoc" style="min-height:90px" placeholder="optional ad-hoc prompt text (overrides the selected prompt; uses {title} {transcript} ...)"></textarea>
     <div class="row"><button id="runSummary">Summarize</button><button class="sec" id="runInsight">Insight</button>
+      <button class="sec" id="runTranscribe" hidden>Transcribe in background</button>
       <span id="sumMsg" class="mut"></span></div>
     <pre id="sumOut" hidden></pre>
   </section>
 
   <section>
-    <h2>HQ captions</h2>
+    <h2>HQ captions and background jobs</h2>
     <div class="row">
       <input id="capVid" type="text" placeholder="video id">
       <button id="capQueue">Queue</button><button class="sec" id="capStatus">Status</button>
@@ -198,12 +199,26 @@ $("saveSet").onclick = async () => {
 async function poll(fn, el) {
   for (let i = 0; i < 40; i++) {
     const r = await fn();
-    if (r.status !== "pending") return r;
-    msg(el, "pending... " + (i + 1)); await new Promise(r => setTimeout(r, 1500));
+    if (r.status !== "pending" || r.transcript_status === "delayed") return r;
+    msg(el, r.transcript_status === "transcribing" ? "transcribing " + Math.round((r.progress || 0) * 100) + "%" : "pending... " + (i + 1)); await new Promise(r => setTimeout(r, 1500));
   }
   throw new Error("still pending");
 }
 function show(r) { $("sumOut").hidden = false; $("sumOut").textContent = r.text ?? JSON.stringify(r, null, 2); }
+function offerTranscribe(r) {
+  $("runTranscribe").hidden = !(r.status === "needs_transcript" && r.can_transcribe);
+  if (r.status === "needs_transcript") msg("sumMsg", r.message + (r.estimate_s ? " (about " + Math.ceil(r.estimate_s / 60) + " min)" : ""), !r.can_transcribe);
+  else if (r.transcript_status === "delayed") msg("sumMsg", r.error, true);
+}
+$("runTranscribe").onclick = async () => {
+  const id = $("vid").value.trim(); if (!id) return;
+  try {
+    const r = await api("/v1/videos/" + id + "/transcribe", { method: "POST" });
+    $("runTranscribe").hidden = true;
+    msg("sumMsg", "transcription " + r.status + ", try again when it is done");
+    await loadJobs();
+  } catch (e) { msg("sumMsg", e.message, true); }
+};
 $("runSummary").onclick = async () => {
   const id = $("vid").value.trim(); if (!id) return;
   msg("sumMsg", "working...");
@@ -214,7 +229,8 @@ $("runSummary").onclick = async () => {
       : api("/v1/videos/" + id + "/summary?" + q({ prompt: $("promptPick").value, wait_ms: 20000 }));
     const r = await poll(call, "sumMsg");
     msg("sumMsg", r.status + (r.source ? " (" + r.source + ")" : ""), r.status === "failed");
-    if (r.error) $("sumOut").textContent = r.error; else show(r);
+    offerTranscribe(r);
+    if (r.error) $("sumOut").textContent = r.error; else if (r.status === "needs_transcript") $("sumOut").textContent = r.message; else show(r);
     $("sumOut").hidden = false;
   } catch (e) { msg("sumMsg", e.message, true); }
 };
@@ -223,15 +239,15 @@ $("runInsight").onclick = async () => {
   msg("sumMsg", "working...");
   try {
     const r = await poll(() => api("/v1/videos/" + id + "/insight?wait_ms=20000"), "sumMsg");
-    msg("sumMsg", r.status, r.status === "failed"); $("sumOut").hidden = false; $("sumOut").textContent = JSON.stringify(r, null, 2);
+    msg("sumMsg", r.status, r.status === "failed"); offerTranscribe(r); $("sumOut").hidden = false; $("sumOut").textContent = JSON.stringify(r, null, 2);
   } catch (e) { msg("sumMsg", e.message, true); }
 };
 
 async function loadJobs() {
   try {
-    const { jobs } = await api("/v1/captions/jobs");
-    $("jobs").innerHTML = "<tr><th>video</th><th>lang</th><th>status</th><th>progress</th><th>error</th></tr>" + jobs.map(j =>
-      "<tr><td>" + esc(j.video_id) + "</td><td>" + esc(j.lang) + (j.translate_to ? "&rarr;" + esc(j.translate_to) : "") + "</td><td>" + esc(j.status) +
+    const { jobs } = await api("/v1/jobs");
+    $("jobs").innerHTML = "<tr><th>video</th><th>kind</th><th>state</th><th>progress</th><th>error</th></tr>" + jobs.map(j =>
+      "<tr><td>" + esc(j.title || j.video_id) + "</td><td>" + esc(j.kind) + "</td><td>" + esc(j.state) +
       "</td><td>" + Math.round(j.progress * 100) + "%</td><td class='bad'>" + esc(j.error || "") + "</td></tr>").join("");
   } catch {}
 }

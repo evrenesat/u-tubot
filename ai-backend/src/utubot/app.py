@@ -43,7 +43,9 @@ from .models import (
 )
 from .prompts import PANEL_ALIAS, Prompt, PromptError, PromptStore, validate_prompt_set
 from .security import BodyLimitMiddleware, RateLimited, RateLimiter, client_ip
+from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
+from .youtube import Clock, YoutubeGate
 
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 APK_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\.apk$")
@@ -51,6 +53,8 @@ APK_MIME = "application/vnd.android.package-archive"
 LANG_RE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
 WEB_DIR = Path(__file__).parent / "web"
 RECENT_JOBS_LIMIT = 20
+JOBS_LIMIT_DEFAULT = 50
+JOBS_LIMIT_MAX = 200
 
 
 @dataclass
@@ -64,6 +68,8 @@ class Services:
     prompts: PromptStore
     content: ContentService
     jobs: JobQueue
+    gate: YoutubeGate
+    transcription: Transcription
     limiter: RateLimiter
 
 
@@ -75,12 +81,18 @@ def build_services(
     asr: ASRBackend | None = None,
     downloader: Downloader | None = None,
     prompt_transport: httpx.AsyncBaseTransport | None = None,
+    clock: Clock | None = None,
 ) -> Services:
     db = Database(cfg.db_path)
     llm = LLMClient(cfg, transport=llm_transport)
-    transcripts = TranscriptService(cfg, db, fetcher)
+    gate = YoutubeGate(cfg.youtube, db, clock)
+    transcripts = TranscriptService(cfg, db, fetcher, gate)
     prompts = PromptStore(cfg, db, prompt_transport)
-    pipeline = CaptionPipeline(cfg, db, asr or make_asr(cfg.captions), llm, downloader=downloader)
+    pipeline = CaptionPipeline(
+        cfg, db, asr or make_asr(cfg.captions), llm, downloader=downloader, gate=gate
+    )
+    jobs = JobQueue(cfg, db, pipeline, transcripts)
+    transcription = Transcription(cfg, transcripts, jobs)
     return Services(
         cfg=cfg,
         db=db,
@@ -89,8 +101,10 @@ def build_services(
         transcripts=transcripts,
         assessor=Assessor(cfg, db, llm, transcripts),
         prompts=prompts,
-        content=ContentService(cfg, db, llm, transcripts, prompts),
-        jobs=JobQueue(cfg, db, pipeline),
+        content=ContentService(cfg, db, llm, transcripts, prompts, transcription),
+        jobs=jobs,
+        gate=gate,
+        transcription=transcription,
         limiter=RateLimiter(cfg.security.rate_window_s),
     )
 
@@ -235,7 +249,12 @@ def create_app(
             "user": user.name,
             "policy": user.policy.model_dump(),
             "admin": user.admin,
-            "features": {"assess": True, "insight": True, "captions": True},
+            "features": {
+                "assess": True,
+                "insight": True,
+                "captions": True,
+                "transcribe": True,
+            },
         }
 
     @app.put("/v1/me/policy")
@@ -475,6 +494,34 @@ def create_app(
     async def captions_status(video_id: str, user: UserConfig = Depends(current_user)):
         check_video_id(video_id)
         return svc.jobs.status(video_id)
+
+    @app.post("/v1/videos/{video_id}/transcribe")
+    async def transcribe(
+        video_id: str,
+        meta: QueryMeta = Depends(qmeta),
+        user: UserConfig = Depends(current_user),
+    ):
+        check_video_id(video_id)
+        try:
+            return svc.transcription.request(user.name, video_id, meta.as_dict())
+        except TranscribeRefused as exc:
+            raise HTTPException(exc.status, exc.message) from exc
+
+    @app.get("/v1/videos/{video_id}/transcript")
+    async def transcript_status(
+        video_id: str,
+        meta: QueryMeta = Depends(qmeta),
+        user: UserConfig = Depends(current_user),
+    ):
+        check_video_id(video_id)
+        return svc.transcription.status(video_id, user.name, meta.as_dict())
+
+    @app.get("/v1/jobs")
+    async def jobs_list(
+        limit: int = Query(JOBS_LIMIT_DEFAULT, ge=1, le=JOBS_LIMIT_MAX),
+        user: UserConfig = Depends(current_user),
+    ):
+        return {"jobs": svc.jobs.listing(user.name, limit)}
 
     @app.get("/v1/captions/jobs")
     async def captions_jobs(user: UserConfig = Depends(current_user)):

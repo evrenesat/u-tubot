@@ -52,9 +52,26 @@ Off by default (`diarization = "none"`). It uses pyannote.audio and the gated Hu
 If the token or the package is missing, diarization is skipped with a log warning and captions are produced without speakers. It runs on
 CPU and adds substantial time on top of ASR (often similar to the audio length); it is most useful for interviews and podcasts.
 
+## Transcripts for videos without captions
+
+The same pieces build a plain-text transcript for videos YouTube has no captions for. The backend never summarises such a video from
+its title; it answers `needs_transcript` and the TV asks "Transcribe in background?". `POST /v1/videos/ID/transcribe` queues a job
+(one per user and video; asking again returns the same job) that downloads the audio through the YouTube gate
+([server.md](server.md#youtube-limits-and-the-transcription-fallback)), runs the ffmpeg and ASR steps above (language auto-detected,
+no diarization, no VTT) and stores the text as the video's transcript with source `asr`. Summaries, insights and answers then work as
+usual and say `source: "asr"`. Progress is in `GET /v1/videos/ID/transcript` and in `GET /v1/jobs`; the estimate shown beforehand is
+`asr_overhead_s` plus the video length divided by `asr_speed_factor` (set it to what your ASR backend really does). `transcribe_max_active_per_user`
+(5) limits queued jobs per user. Queued jobs wait while YouTube has the server in a cooldown. A job whose download is refused (429, network) goes back to the queue,
+at most `job_max_attempts` (3) times, then fails; a problem of the one video (private, members-only, 403/410 on its media, live, longer than
+`max_duration_s`) fails it at once without touching the YouTube breaker. Before downloading, the job asks YouTube once more for
+captions: if they exist they are used and the audio is skipped, and a transcript from the audio never replaces YouTube captions.
+Live streams and videos over `max_duration_s` are refused from yt-dlp's real info before any download, and audio over `max_download_bytes` is skipped.
+Audio downloads hold the YouTube gate only until they start, so they do not delay interactive fetches. Scratch directories a crash left under `data_dir/media` are swept at start.
+
 ## Checking on jobs
 
-The web UI has a *HQ captions* section (queue a video, status). `GET /v1/captions/jobs` lists your recent jobs;
+The web UI has a *HQ captions and background jobs* section (queue a video, status; all your jobs, including transcriptions). `GET /v1/jobs`
+lists your jobs of every kind (`kind` `captions` or `transcript`, `state` `waiting|processing|ready|failed`); `GET /v1/captions/jobs` lists your recent caption jobs;
 `GET /v1/videos/ID/captions` gives the status and tracks. Failures are logged by the service (`journalctl -u utubot`); the API only
 returns generic messages.
 

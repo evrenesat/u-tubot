@@ -12,10 +12,29 @@ import httpx
 import yt_dlp
 
 from .config import Config
-from .db import Database
+from .db import METADATA_ONLY, Database
+from .llm import INTERACTIVE, parse_retry_after
+from .youtube import (
+    REASON_EMPTY,
+    REASON_EMPTY_TRACK,
+    REASON_INCOMPLETE,
+    REASON_NETWORK,
+    YoutubeCooldown,
+    YoutubeDelayed,
+    YoutubeError,
+    YoutubeGate,
+    YoutubeVideoError,
+    classify_failure,
+    classify_status,
+)
 
 TIMESTAMP_BLOCK_S = 20
+SOURCE_CAPTIONS = "youtube_captions"
+SOURCE_ASR = "asr"
 VIDEO_URL = "https://www.youtube.com/watch?v={}"
+HTTP_ERROR_FLOOR = 400
+HOLD_FAILED = "failed"
+HOLD_DELAYED = "delayed"
 TAG_RE = re.compile(r"<[^>]+>")
 VTT_TIME_RE = re.compile(
     r"(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})\s+-->\s+(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})"
@@ -39,6 +58,17 @@ class FetchResult:
 
 
 Fetcher = Callable[[str], Awaitable[FetchResult]]
+Extractor = Callable[[str], dict[str, Any]]
+
+
+class NoCaptions(RuntimeError):
+    """YouTube lists no usable captions for this video. An expected outcome, not a failure."""
+
+    expected = True
+
+    def __init__(self, video_id: str):
+        super().__init__("no captions")
+        self.video_id = video_id
 
 
 def fmt_ts(seconds: float) -> str:
@@ -135,6 +165,20 @@ def pick_format(formats: list[dict]) -> dict | None:
     return None
 
 
+def info_complete(info: dict[str, Any]) -> bool:
+    """A full yt-dlp answer: a throttled or partial one lacks the formats list."""
+    return bool(info.get("id")) and bool(info.get("title")) and bool(info.get("formats"))
+
+
+def degraded_tracks(info: dict[str, Any]) -> bool:
+    """Caption languages listed without any format: YouTube answered, but only in part."""
+    for table in (info.get("subtitles") or {}, info.get("automatic_captions") or {}):
+        for name, formats in table.items():
+            if name != "live_chat" and not formats:
+                return True
+    return False
+
+
 def extract_meta(info: dict[str, Any]) -> dict[str, Any]:
     return {
         "video_id": info.get("id"),
@@ -149,8 +193,21 @@ def extract_meta(info: dict[str, Any]) -> dict[str, Any]:
 
 
 class YoutubeFetcher:
-    def __init__(self, cfg: Config):
+    """Metadata and caption text through yt-dlp and httpx. Failures are classified, never raw.
+
+    Pacing and the circuit breaker live in `YoutubeGate`, which `TranscriptService` wraps around
+    every call.
+    """
+
+    def __init__(
+        self,
+        cfg: Config,
+        extract: Extractor | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
         self.cfg = cfg
+        self._extract_fn: Extractor = extract or self._extract
+        self._transport = transport
 
     def _extract(self, video_id: str) -> dict[str, Any]:
         opts: dict[str, Any] = {
@@ -165,29 +222,72 @@ class YoutubeFetcher:
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(VIDEO_URL.format(video_id), download=False)
 
+    def _extract_classified(self, video_id: str) -> dict[str, Any]:
+        try:
+            return self._extract_fn(video_id)
+        except yt_dlp.utils.YoutubeDLError as exc:
+            raise classify_failure(exc, self.cfg.youtube.network_retry_s) from None
+
+    async def _download_track(self, url: str) -> str:
+        retry_s = self.cfg.youtube.network_retry_s
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.cfg.transcripts.fetch_timeout_s, transport=self._transport
+            ) as http:
+                resp = await http.get(url, follow_redirects=True)
+        except httpx.HTTPError:
+            raise YoutubeDelayed(REASON_NETWORK, retry_s) from None
+        problem = classify_status(
+            resp.status_code,
+            retry_s,
+            parse_retry_after(resp.headers.get("retry-after")),
+            media=True,
+        )
+        if problem is not None:
+            raise problem
+        if resp.status_code >= HTTP_ERROR_FLOOR:
+            raise YoutubeError(f"caption download http {resp.status_code}")
+        if not resp.text.strip():
+            raise YoutubeDelayed(REASON_EMPTY, retry_s)
+        return resp.text
+
     async def __call__(self, video_id: str) -> FetchResult:
-        info = await asyncio.to_thread(self._extract, video_id)
+        retry_s = self.cfg.youtube.network_retry_s
+        info = await asyncio.to_thread(self._extract_classified, video_id)
+        if not info_complete(info):
+            raise YoutubeDelayed(REASON_INCOMPLETE, retry_s)
         meta = extract_meta(info)
         track = pick_track(info, self.cfg.transcripts.default_language)
         if not track:
+            if degraded_tracks(info):
+                raise YoutubeDelayed(REASON_INCOMPLETE, retry_s)
             return FetchResult(meta, None, None)
         formats, lang = track
         fmt = pick_format(formats)
         if not fmt:
             return FetchResult(meta, None, lang)
-        async with httpx.AsyncClient(timeout=self.cfg.transcripts.fetch_timeout_s) as http:
-            resp = await http.get(fmt["url"], follow_redirects=True)
-            resp.raise_for_status()
-        segments = parse_json3(resp.text) if fmt["ext"] == "json3" else parse_vtt(resp.text)
-        return FetchResult(meta, segments_to_text(segments) or None, lang)
+        raw = await self._download_track(fmt["url"])
+        segments = parse_json3(raw) if fmt["ext"] == "json3" else parse_vtt(raw)
+        text = segments_to_text(segments)
+        if not text:
+            raise YoutubeDelayed(REASON_EMPTY_TRACK, self.cfg.transcripts.empty_track_retry_s)
+        return FetchResult(meta, text, lang)
 
 
 class TranscriptService:
-    def __init__(self, cfg: Config, db: Database, fetcher: Fetcher | None = None):
+    """Transcript cache in front of YouTube: one fetch per video per TTL, always through the gate."""
+
+    def __init__(
+        self,
+        cfg: Config,
+        db: Database,
+        fetcher: Fetcher | None = None,
+        gate: YoutubeGate | None = None,
+    ):
         self.cfg = cfg
         self.db = db
+        self.gate = gate or YoutubeGate(cfg.youtube, db)
         self.fetcher: Fetcher = fetcher or YoutubeFetcher(cfg)
-        self._sem = asyncio.Semaphore(cfg.transcripts.max_concurrency)
         self._inflight: dict[str, asyncio.Task[Transcript]] = {}
 
     def cached_meta(self, video_id: str) -> dict[str, Any] | None:
@@ -203,33 +303,121 @@ class TranscriptService:
 
     def cached(self, video_id: str) -> Transcript | None:
         row = self.db.one("SELECT * FROM transcripts WHERE video_id=?", [video_id])
-        if not row or time.time() - row["fetched_at"] > self.cfg.transcripts.cache_ttl_s:
+        if not row or not row["text"] or row["source"] == METADATA_ONLY:
+            return None
+        expired = time.time() - row["fetched_at"] > self.cfg.transcripts.cache_ttl_s
+        if expired and row["source"] != SOURCE_ASR:
             return None
         return Transcript(
             video_id, row["text"], row["lang"], row["source"], self.cached_meta(video_id) or {}
         )
 
-    async def get(self, video_id: str) -> Transcript:
+    def no_captions(self, video_id: str) -> bool:
+        """True while a recent check found no captions. Expires; never permanent."""
+        row = self.db.one("SELECT checked_at FROM no_captions WHERE video_id=?", [video_id])
+        return (
+            bool(row) and time.time() - row["checked_at"] <= self.cfg.transcripts.no_captions_ttl_s
+        )
+
+    def hold(self, video_id: str) -> dict[str, Any] | None:
+        """A remembered per-video outcome that must not be re-fetched yet, else None."""
+        row = self.db.one(
+            "SELECT kind, reason, until FROM video_holds WHERE video_id=?", [video_id]
+        )
+        if row is None or row["until"] <= time.time():
+            return None
+        return dict(row)
+
+    def _record_hold(self, video_id: str, kind: str, reason: str, seconds: float) -> None:
+        self.db.execute(
+            "INSERT OR REPLACE INTO video_holds(video_id,kind,reason,until) VALUES(?,?,?,?)",
+            [video_id, kind, reason, time.time() + seconds],
+        )
+
+    def record_failure(self, video_id: str, reason: str) -> None:
+        """Remember that this video cannot be read (private, members-only, too long, ...)."""
+        self._record_hold(video_id, HOLD_FAILED, reason, self.cfg.transcripts.video_failure_ttl_s)
+
+    @staticmethod
+    def _audio_can_help(held: dict[str, Any]) -> bool:
+        return held["kind"] == HOLD_FAILED and YoutubeVideoError(held["reason"]).can_transcribe
+
+    @staticmethod
+    def _hold_error(held: dict[str, Any]) -> YoutubeError:
+        if held["kind"] == HOLD_FAILED:
+            return YoutubeVideoError(held["reason"])
+        return YoutubeDelayed(held["reason"], max(0.0, held["until"] - time.time()))
+
+    def store_asr(self, video_id: str, text: str, lang: str | None) -> bool:
+        """Keep an ASR transcript unless the video has YouTube captions; they always win."""
+        stored = self.db.execute_rc(
+            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at) VALUES(?,?,?,?,?)"
+            " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
+            " text=excluded.text, fetched_at=excluded.fetched_at"
+            " WHERE transcripts.source != ?",
+            [video_id, lang, SOURCE_ASR, text, time.time(), SOURCE_CAPTIONS],
+        )
+        if stored:
+            self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])
+            self.db.execute("DELETE FROM video_holds WHERE video_id=?", [video_id])
+        return bool(stored)
+
+    async def get(
+        self, video_id: str, priority: int = INTERACTIVE, recheck: bool = False
+    ) -> Transcript:
+        """The transcript, fetched at most once per TTL.
+
+        Raises `NoCaptions` (cached for `no_captions_ttl_s`), `YoutubeVideoError` (this video cannot
+        be read) or `YoutubeDelayed` (transient). Background callers wait while the breaker is open;
+        interactive ones get `YoutubeCooldown`. `recheck` ignores the "no captions" memory, for a
+        caller about to spend real effort on a video it believes has none.
+        """
         hit = self.cached(video_id)
         if hit:
             return hit
+        held = self.hold(video_id)
+        if held and not (recheck and self._audio_can_help(held)):
+            raise self._hold_error(held)
+        if not recheck and self.no_captions(video_id):
+            raise NoCaptions(video_id)
         task = self._inflight.get(video_id)
         if task is None:
-            task = asyncio.create_task(self._fetch(video_id))
+            task = asyncio.create_task(self._fetch(video_id, priority))
             self._inflight[video_id] = task
             task.add_done_callback(lambda _t: self._inflight.pop(video_id, None))
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        elif priority == INTERACTIVE:
+            if not self.gate.healthy():
+                raise YoutubeCooldown(self.gate.cooldown_remaining())
+            self.gate.promote(video_id)
         return await asyncio.shield(task)
 
-    async def _fetch(self, video_id: str) -> Transcript:
-        async with self._sem:
-            result = await self.fetcher(video_id)
+    async def _fetch(self, video_id: str, priority: int) -> Transcript:
+        try:
+            result = await self.gate.run(lambda: self.fetcher(video_id), priority, key=video_id)
+        except YoutubeVideoError as exc:
+            self.record_failure(video_id, exc.reason)
+            raise
+        except YoutubeDelayed as exc:
+            if exc.reason == REASON_EMPTY_TRACK:
+                self._record_hold(video_id, HOLD_DELAYED, exc.reason, exc.retry_after_s)
+            raise
         self.store_meta(video_id, result.meta)
-        meta = self.cached_meta(video_id) or {}
-        source = "youtube_captions" if result.text else "metadata_only"
-        text = result.text or ""
+        if not result.text:
+            self.db.execute(
+                "INSERT OR REPLACE INTO no_captions(video_id,checked_at) VALUES(?,?)",
+                [video_id, time.time()],
+            )
+            self.db.execute(
+                "DELETE FROM transcripts WHERE video_id=? AND source=?", [video_id, SOURCE_CAPTIONS]
+            )
+            raise NoCaptions(video_id)
         self.db.execute(
             "INSERT OR REPLACE INTO transcripts(video_id,lang,source,text,fetched_at)"
             " VALUES(?,?,?,?,?)",
-            [video_id, result.lang, source, text, time.time()],
+            [video_id, result.lang, SOURCE_CAPTIONS, result.text, time.time()],
         )
-        return Transcript(video_id, text, result.lang, source, meta)
+        self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])
+        return Transcript(
+            video_id, result.text, result.lang, SOURCE_CAPTIONS, self.cached_meta(video_id) or {}
+        )

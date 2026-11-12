@@ -13,13 +13,23 @@ import yt_dlp
 
 from ..config import Config
 from ..db import Database
-from ..llm import LLMClient
+from ..llm import BACKGROUND, LLMClient
+from ..transcripts import segments_to_text
+from ..youtube import (
+    REASON_LIVE,
+    REASON_TOO_LONG,
+    YoutubeGate,
+    YoutubeVideoError,
+    classify_failure,
+)
 from .asr import (
     LANGUAGE_NAMES,
     ASRBackend,
     ASRError,
+    ASRResult,
     normalize_language,
     run_ffmpeg,
+    wav_duration,
 )
 from .diarize import Diarizer, assign_speakers, make_diarizer
 from .segment import build_cues, count_speakers, to_vtt, wrap_lines
@@ -33,7 +43,8 @@ TRANSLATE_SYSTEM = (
     "same length and order as the input. Keep it short enough for subtitles."
 )
 
-Downloader = Callable[[str, Path], Awaitable[Path]]
+Started = Callable[[], None]
+Downloader = Callable[[str, Path, Started], Awaitable[Path]]
 Progress = Callable[[float], None]
 
 
@@ -41,8 +52,42 @@ class PipelineError(RuntimeError):
     pass
 
 
-async def download_audio(video_id: str, out_dir: Path, fmt: str) -> Path:
+def audio_filter(max_duration_s: int, verdict: dict[str, str]) -> Callable[..., str | None]:
+    """yt-dlp `match_filter`: judge the real info before any audio is downloaded.
+
+    A rejected video is skipped by yt-dlp; the reason lands in `verdict` for the caller.
+    """
+
+    def check(info: dict[str, Any], *, incomplete: bool = False) -> str | None:
+        if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
+            verdict["reason"] = REASON_LIVE
+            return "live streams cannot be transcribed"
+        duration = info.get("duration")
+        if duration and duration > max_duration_s:
+            verdict["reason"] = REASON_TOO_LONG
+            return "video is longer than the transcription limit"
+        return None
+
+    return check
+
+
+async def download_audio(
+    video_id: str,
+    out_dir: Path,
+    started: Started,
+    *,
+    fmt: str,
+    max_duration_s: int,
+    max_bytes: int,
+    network_retry_s: float = 60.0,
+) -> Path:
+    """Best audio through yt-dlp. `started` is called when the first bytes arrive."""
+
+    def _hook(_status: dict[str, Any]) -> None:
+        started()
+
     def _run() -> Path:
+        verdict: dict[str, str] = {}
         opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
@@ -50,12 +95,36 @@ async def download_audio(video_id: str, out_dir: Path, fmt: str) -> Path:
             "noplaylist": True,
             "format": fmt,
             "outtmpl": str(out_dir / "audio.%(ext)s"),
+            "match_filter": audio_filter(max_duration_s, verdict),
+            "max_filesize": max_bytes,
+            "progress_hooks": [_hook],
         }
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(VIDEO_URL.format(video_id), download=True)
-            return Path(ydl.prepare_filename(info))
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(VIDEO_URL.format(video_id), download=True)
+                if info is None:
+                    raise YoutubeVideoError(verdict.get("reason", REASON_TOO_LONG))
+                path = Path(ydl.prepare_filename(info))
+                if not path.exists():
+                    raise YoutubeVideoError(REASON_TOO_LONG)
+                return path
+        except yt_dlp.utils.YoutubeDLError as exc:
+            raise classify_failure(exc, network_retry_s, media=True) from None
 
     return await asyncio.to_thread(_run)
+
+
+def sweep_media(media_dir: Path, max_age_s: float) -> int:
+    """Remove scratch directories left by a crash (older than `max_age_s`); returns the count."""
+    if not media_dir.is_dir():
+        return 0
+    cutoff = time.time() - max_age_s
+    removed = 0
+    for child in media_dir.iterdir():
+        if child.is_dir() and child.stat().st_mtime < cutoff:
+            shutil.rmtree(child, ignore_errors=True)
+            removed += 1
+    return removed
 
 
 def track_label(lang: str, speakers: int) -> str:
@@ -73,12 +142,71 @@ class CaptionPipeline:
         llm: LLMClient | None = None,
         diarizer: Diarizer | None = None,
         downloader: Downloader | None = None,
+        gate: YoutubeGate | None = None,
     ):
         self.cfg, self.db, self.asr, self.llm = cfg, db, asr, llm
+        self.gate = gate or YoutubeGate(cfg.youtube, db)
         self.diarizer = diarizer or make_diarizer(cfg.captions)
         self.downloader = downloader or (
-            lambda vid, out: download_audio(vid, out, cfg.captions.audio_format)
+            lambda vid, out, started: download_audio(
+                vid,
+                out,
+                started,
+                fmt=cfg.captions.audio_format,
+                max_duration_s=cfg.captions.max_duration_s,
+                max_bytes=cfg.captions.max_download_bytes,
+                network_retry_s=cfg.youtube.network_retry_s,
+            )
         )
+
+    async def _recognise(
+        self, video_id: str, requested: str | None, work: Path, progress: Progress
+    ) -> tuple[ASRResult, Path]:
+        """Audio download (through the YouTube gate), 16 kHz mono WAV, ASR. Shared by both jobs."""
+        c = self.cfg.captions
+        progress(0.02)
+        src = await self.gate.run_started(
+            lambda started: self.downloader(video_id, work, started),
+            BACKGROUND,
+            key=f"audio:{video_id}",
+        )
+        progress(0.2)
+        wav = work / "audio16k.wav"
+        await run_ffmpeg(
+            "-i",
+            str(src),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            str(c.sample_rate),
+            "-c:a",
+            "pcm_s16le",
+            str(wav),
+        )
+        progress(0.25)
+        if wav_duration(wav, c.sample_rate) > c.max_duration_s:
+            raise YoutubeVideoError(REASON_TOO_LONG)
+        result = await self.asr.transcribe(wav, requested, lambda f: progress(0.25 + 0.6 * f))
+        if not result.words:
+            raise PipelineError("ASR returned no words")
+        return result, wav
+
+    async def transcribe(self, video_id: str, progress: Progress) -> tuple[str, str | None]:
+        """Plain-text transcript from the audio (language auto-detected): `(text, language)`."""
+        work = self.cfg.media_dir / video_id
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            result, _wav = await self._recognise(video_id, None, work, progress)
+            cues = build_cues(result.words, self.cfg.captions)
+            text = segments_to_text([(cue.start, " ".join(cue.lines)) for cue in cues])
+            if not text:
+                raise PipelineError("ASR returned no text")
+            progress(1.0)
+            return text, result.language
+        finally:
+            if not self.cfg.captions.keep_media:
+                shutil.rmtree(work, ignore_errors=True)
 
     async def run(
         self, video_id: str, lang: str, translate_to: str | None, progress: Progress
@@ -87,27 +215,8 @@ class CaptionPipeline:
         work = self.cfg.media_dir / video_id
         work.mkdir(parents=True, exist_ok=True)
         try:
-            progress(0.02)
-            src = await self.downloader(video_id, work)
-            progress(0.2)
-            wav = work / "audio16k.wav"
-            await run_ffmpeg(
-                "-i",
-                str(src),
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                str(c.sample_rate),
-                "-c:a",
-                "pcm_s16le",
-                str(wav),
-            )
-            progress(0.25)
             requested = None if lang == "auto" else lang
-            result = await self.asr.transcribe(wav, requested, lambda f: progress(0.25 + 0.6 * f))
-            if not result.words:
-                raise PipelineError("ASR returned no words")
+            result, wav = await self._recognise(video_id, requested, work, progress)
             turns = await self.diarizer.diarize(wav)
             progress(0.9)
             assign_speakers(result.words, turns)
