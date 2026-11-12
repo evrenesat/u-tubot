@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-36 -112 704 232" role="img" aria-label="u·tubot">
+  <title>u·tubot</title>
+  <path d="M12 0V58A26 26 0 0 0 64 58V0M64 0V84" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="108" cy="42" r="16" fill="#C8F23A"/>
+  <path d="M170 -26V62A22 22 0 0 0 192 84H200M154 0H200" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M244 0V58A26 26 0 0 0 296 58V0M296 0V84" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M340 -76V84" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/><circle cx="382" cy="42" r="42" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="504" cy="42" r="42" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M602 -26V62A22 22 0 0 0 624 84H632M586 0H632" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
