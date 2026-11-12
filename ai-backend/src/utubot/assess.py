@@ -13,6 +13,7 @@ from .db import Database
 from .llm import BACKGROUND, LLMClient, LLMError
 from .models import Flag, Verdict, VideoMeta
 from .transcripts import NoCaptions, TranscriptService
+from .youtube import YoutubeDelayed
 
 TRIAGE_SYSTEM = (
     "You triage YouTube videos for a TV viewer using only the title, channel and metadata. "
@@ -383,10 +384,11 @@ class Assessor:
             or (duration and duration > self.cfg.transcripts.skip_if_longer_than_s)
         ):
             return
-        if not self._take_tier2_slot(user):
+        day = self._take_tier2_slot(user)
+        if day is None:
             return
         task = self.tier2.start(
-            video.video_id, lambda: self._deep_analysis(video.video_id, triage, duration)
+            video.video_id, lambda: self._tier2_job(user, day, video.video_id, triage, duration)
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -398,21 +400,37 @@ class Assessor:
             return False
         if self.transcripts.cached(video_id) is not None:
             return True
-        if self.transcripts.no_captions(video_id):
+        if self.transcripts.no_captions(video_id) or self.transcripts.hold(video_id):
             return False
         return gate.background_waiting() < self.cfg.youtube.max_background_queue
 
-    def _take_tier2_slot(self, user: str) -> bool:
+    def _take_tier2_slot(self, user: str) -> str | None:
+        """Count one analysis for today; returns the day taken, None when the cap is reached."""
         day = datetime.now(UTC).strftime("%Y-%m-%d")
         row = self.db.one("SELECT count FROM tier2_usage WHERE user=? AND day=?", [user, day])
         used = row["count"] if row else 0
         if used >= self.cfg.assess.tier2_daily_cap_per_user:
-            return False
+            return None
         self.db.execute(
             "INSERT OR REPLACE INTO tier2_usage(user,day,count) VALUES(?,?,?)",
             [user, day, used + 1],
         )
-        return True
+        return day
+
+    def _refund_tier2_slot(self, user: str, day: str) -> None:
+        self.db.execute(
+            "UPDATE tier2_usage SET count=MAX(count-1, 0) WHERE user=? AND day=?", [user, day]
+        )
+
+    async def _tier2_job(
+        self, user: str, day: str, video_id: str, triage: dict[str, Any], duration: int | None
+    ) -> None:
+        """A delayed fetch (429, cooldown, network) never reached YouTube's data: give the slot back."""
+        try:
+            await self._deep_analysis(video_id, triage, duration)
+        except YoutubeDelayed:
+            self._refund_tier2_slot(user, day)
+            raise
 
     async def _deep_analysis(
         self, video_id: str, triage: dict[str, Any], duration: int | None

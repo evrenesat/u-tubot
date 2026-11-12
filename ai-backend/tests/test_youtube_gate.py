@@ -10,10 +10,15 @@ from utubot.config import YoutubeConfig
 from utubot.db import Database
 from utubot.llm import BACKGROUND, INTERACTIVE
 from utubot.youtube import (
+    REASON_AGE_RESTRICTED,
     REASON_BOT_CHECK,
     REASON_FORBIDDEN,
+    REASON_FORBIDDEN_MEDIA,
+    REASON_MEMBERS_ONLY,
     REASON_NETWORK,
+    REASON_PRIVATE,
     REASON_RATE_LIMITED,
+    REASON_UNAVAILABLE,
     STATE_CLOSED,
     STATE_HALF_OPEN,
     STATE_OPEN,
@@ -22,6 +27,7 @@ from utubot.youtube import (
     YoutubeDelayed,
     YoutubeError,
     YoutubeGate,
+    YoutubeVideoError,
     classify_failure,
     classify_status,
     redact_urls,
@@ -344,7 +350,7 @@ def test_classify_bot_check_rate_limit_forbidden_and_network():
 
 def test_classify_other_failures_are_sanitised():
     url = "https://www.youtube.com/api/timedtext?v=abcdefghijk&sig=SECRET&expire=1"
-    exc = classify_failure(RuntimeError(f"Video unavailable: {url}"), NETWORK_RETRY_S)
+    exc = classify_failure(RuntimeError(f"Something odd happened: {url}"), NETWORK_RETRY_S)
     assert type(exc) is YoutubeError
     assert "SECRET" not in str(exc) and "sig=" not in str(exc)
     assert redact_urls(f"see {url} now") == "see https://www.youtube.com/api/timedtext now"
@@ -356,3 +362,202 @@ def test_classify_status():
     assert isinstance(classify_status(403, NETWORK_RETRY_S, None), YoutubeBlocked)
     assert type(classify_status(503, NETWORK_RETRY_S, None)) is YoutubeDelayed
     assert classify_status(200, NETWORK_RETRY_S, None) is None
+
+
+# ---- review fixes: scoped breaker, media start gating -------------------------------------------
+
+
+def test_only_gate_level_signals_open_the_breaker():
+    bot = classify_failure(RuntimeError("Sign in to confirm you're not a bot"), NETWORK_RETRY_S)
+    assert isinstance(bot, YoutubeBlocked)
+    for media in (False, True):
+        assert isinstance(
+            classify_failure(RuntimeError("HTTP Error 429: Too Many Requests"), 60, media=media),
+            YoutubeBlocked,
+        )
+    watch = "ERROR: [youtube] abc: Unable to download webpage: HTTP Error 403: Forbidden"
+    assert isinstance(classify_failure(RuntimeError(watch), 60), YoutubeBlocked)
+    assert isinstance(classify_failure(RuntimeError(watch), 60, media=True), YoutubeBlocked)
+    api = "ERROR: [youtube] abc: Unable to download API page: HTTP Error 403: Forbidden"
+    assert isinstance(classify_failure(RuntimeError(api), 60, media=True), YoutubeBlocked)
+
+
+def test_403_and_410_on_media_or_caption_urls_belong_to_the_video():
+    media = "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+    err = classify_failure(RuntimeError(media), 60, media=True)
+    assert isinstance(err, YoutubeVideoError) and err.reason == REASON_FORBIDDEN_MEDIA
+    assert err.can_transcribe is True
+    gone = classify_failure(RuntimeError("HTTP Error 410: Gone"), 60)
+    assert isinstance(gone, YoutubeVideoError) and gone.reason == REASON_UNAVAILABLE
+    forbidden = classify_status(403, 60, None, media=True)
+    assert isinstance(forbidden, YoutubeVideoError) and forbidden.reason == REASON_FORBIDDEN_MEDIA
+    assert isinstance(classify_status(403, 60, None), YoutubeBlocked)
+    assert isinstance(classify_status(410, 60, None, media=True), YoutubeVideoError)
+    assert isinstance(classify_status(429, 60, 5, media=True), YoutubeBlocked)
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ("Join this channel to get access to members-only content", REASON_MEMBERS_ONLY),
+        ("Sign in to confirm your age. This video may be inappropriate", REASON_AGE_RESTRICTED),
+        (
+            "ERROR: [youtube] abc: Private video. Sign in if you've been granted access",
+            REASON_PRIVATE,
+        ),
+        ("ERROR: [youtube] abc: Video unavailable", REASON_UNAVAILABLE),
+        ("This video has been removed by the uploader", REASON_UNAVAILABLE),
+    ],
+)
+def test_private_members_only_age_gated_and_unavailable_are_per_video(text, reason):
+    err = classify_failure(RuntimeError(text), NETWORK_RETRY_S)
+    assert isinstance(err, YoutubeVideoError) and err.reason == reason
+    assert err.can_transcribe is False and err.message
+
+
+def test_a_bare_try_again_later_is_not_a_rate_limit():
+    err = classify_failure(RuntimeError("Something failed, please try again later"), 60)
+    assert type(err) is YoutubeError
+    limited = classify_failure(
+        RuntimeError(
+            "This content isn't available, try again later. The current session has been "
+            "rate-limited by YouTube for up to an hour"
+        ),
+        60,
+    )
+    assert isinstance(limited, YoutubeBlocked)
+
+
+async def test_a_per_video_error_never_opens_the_breaker_and_counts_as_a_live_answer():
+    clock = FakeClock()
+    gate = make_gate(clock, min_interval_s=0.0)
+
+    async def private():
+        raise YoutubeVideoError(REASON_PRIVATE)
+
+    for _ in range(5):
+        with pytest.raises(YoutubeVideoError):
+            await gate.run(private)
+    assert gate.state() == STATE_CLOSED and gate.healthy()
+    with pytest.raises(YoutubeBlocked):
+        await gate.run(blocked())
+    await clock.advance(301)
+    with pytest.raises(YoutubeVideoError):
+        await gate.run(private)
+    assert gate.state() == STATE_CLOSED
+    with pytest.raises(YoutubeBlocked) as again:
+        await gate.run(blocked())
+    assert again.value.retry_after_s == pytest.approx(300)
+
+
+async def test_media_download_holds_the_slot_only_until_it_starts():
+    clock = FakeClock()
+    gate = make_gate(clock)
+    release = asyncio.Event()
+    events: list[str] = []
+
+    async def download(started):
+        events.append("start")
+        started()
+        await release.wait()
+        events.append("done")
+        return "audio"
+
+    media = asyncio.create_task(gate.run_started(download, BACKGROUND))
+    await settle()
+    assert events == ["start"] and not media.done()
+    ui = asyncio.create_task(gate.run(ok, INTERACTIVE))
+    await settle()
+    assert not ui.done()
+    await clock.advance(2.9)
+    assert not ui.done()
+    await clock.advance(0.2)
+    assert await ui == "ok"
+    assert not media.done()
+    release.set()
+    assert await media == "audio" and events == ["start", "done"]
+
+
+async def test_media_start_is_still_paced_and_prioritised():
+    clock = FakeClock()
+    gate = make_gate(clock)
+    order: list[str] = []
+
+    async def meta():
+        order.append("meta")
+
+    async def download(started):
+        order.append("media")
+        started()
+        return "audio"
+
+    await gate.run(meta)
+    bg = asyncio.create_task(gate.run_started(download, BACKGROUND))
+    await settle()
+    assert order == ["meta"]
+    await clock.advance(3.1)
+    await bg
+    assert order == ["meta", "media"]
+
+
+async def test_media_download_without_a_start_signal_releases_when_it_finishes():
+    gate = make_gate(FakeClock(), min_interval_s=0.0)
+
+    async def download(started):
+        return "audio"
+
+    assert await gate.run_started(download) == "audio"
+    assert await gate.run(ok) == "ok"
+
+
+async def test_media_download_blocked_before_or_after_start_opens_the_breaker():
+    for after_start in (False, True):
+        gate = make_gate(FakeClock(), min_interval_s=0.0)
+
+        async def download(started, after_start=after_start):
+            if after_start:
+                started()
+                await asyncio.sleep(0)
+            raise YoutubeBlocked(REASON_RATE_LIMITED, 120)
+
+        with pytest.raises(YoutubeBlocked) as info:
+            await gate.run_started(download)
+        assert info.value.retry_after_s == pytest.approx(120)
+        assert gate.state() == STATE_OPEN
+
+
+async def test_media_download_is_refused_by_an_open_breaker_before_it_starts():
+    clock = FakeClock()
+    gate = make_gate(clock)
+    with pytest.raises(YoutubeBlocked):
+        await gate.run(blocked(300))
+    ran: list[int] = []
+
+    async def download(started):
+        ran.append(1)
+        return "audio"
+
+    with pytest.raises(YoutubeCooldown):
+        await gate.run_started(download, INTERACTIVE)
+    assert ran == []
+
+
+async def test_cancelling_a_media_download_cancels_the_transfer():
+    gate = make_gate(FakeClock(), min_interval_s=0.0)
+    cancelled = asyncio.Event()
+
+    async def download(started):
+        started()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    task = asyncio.create_task(gate.run_started(download))
+    await settle()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await settle()
+    assert cancelled.is_set()

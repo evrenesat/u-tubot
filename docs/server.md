@@ -74,7 +74,7 @@ to `"none"` and `max_tokens` to 160. See [llm-providers.md](llm-providers.md).
 `max_concurrent` (default `1`), `min_interval_s` (`3.0`), `jitter_s` (`1.5`), `cooldown_base_s` (`300`), `cooldown_max_s` (`3600`),
 `network_retry_s` (`60`), `max_background_queue` (`5`).
 
-**`[transcripts]`**: `cache_ttl_s`, `no_captions_ttl_s` (default 3 days), `fetch_timeout_s`, `default_language`, `cookies_file`
+**`[transcripts]`**: `cache_ttl_s`, `no_captions_ttl_s` (default 3 days), `video_failure_ttl_s` (1 h), `empty_track_retry_s` (1 h), `fetch_timeout_s`, `default_language`, `cookies_file`
 (only if YouTube blocks the host), `skip_if_longer_than_s`. (`max_concurrency` is gone: `[youtube] max_concurrent` replaces it;
 an old entry is ignored.)
 
@@ -86,7 +86,7 @@ the background after a panel summary; a user's `auto_long` policy field override
 background long summaries in flight including the transcript fetch; further ones are skipped until one ends, `0` disables them). See [prompt-sets.md](prompt-sets.md).
 
 **`[captions]`**: ASR and diarization, see [captions.md](captions.md). Also `asr_speed_factor` and `asr_overhead_s` (the estimate shown
-before a background transcription), `transcribe_max_active_per_user` (default `5`).
+before a background transcription), `transcribe_max_active_per_user` (default `5`), `job_max_attempts` (`3`), `media_orphan_age_s` (`3600`), `max_download_bytes` (400 MiB).
 
 **`[setup]`, `[setup.defaults]`**: the public `/setup.json`: `name`, `pairing`, optional `prompt_set_urls`, and the switch values
 the app applies on import (`assess`, `mark_only`, `answer_in_menu`, `summary_panel`, `auto_captions`).
@@ -109,12 +109,21 @@ through one process-wide gate:
 - **Pacing.** At most `[youtube] max_concurrent` requests (default 1) are in flight, and they start at least `min_interval_s`
   (3 s) plus a random `0..jitter_s` (1.5 s) apart. Interactive work (a summary someone is waiting for) goes before background work
   (tier-2 analysis, caption and transcript jobs); a user who starts waiting on a queued background fetch promotes it.
-- **Circuit breaker.** A 429 or 403, or yt-dlp's "Sign in to confirm you're not a bot", opens the breaker. The cooldown is the
-  `Retry-After` header when YouTube sends one, else `cooldown_base_s` (5 min) doubled for each consecutive block up to
-  `cooldown_max_s` (60 min); no cooldown is longer than that. While it is open interactive requests are answered at once without
-  touching YouTube, and background work **waits** (it is neither failed nor dropped) and resumes when the cooldown ends. The first
-  request afterwards is a probe: success closes the breaker, another block doubles the cooldown. The state survives restarts. The log
-  records each transition (`youtube gate open: reason=... cooldown_s=...`, `half-open`, `closed`); URLs never appear in it.
+- **Circuit breaker.** Only signals about the server as a whole open it: a 429, the "Sign in to confirm you're not a bot" check, or a 403
+  on the watch, player or metadata request. The cooldown is the `Retry-After` header when YouTube sends one, else `cooldown_base_s`
+  (5 min) doubled for each consecutive block up to `cooldown_max_s` (60 min); no cooldown is longer than that. While it is open
+  interactive requests are answered at once without touching YouTube, and background work (caption and transcript jobs, tier-2)
+  **waits** (it is neither failed nor dropped) and resumes when the cooldown ends. The first request afterwards is a probe: any
+  answer from YouTube (a transcript, "no captions", even "this video is private") closes the breaker and resets the escalation,
+  another block doubles the cooldown. The state survives restarts. The log records each transition (`youtube gate open:
+  reason=... cooldown_s=...`, `half-open`, `closed`); URLs never appear in it.
+- **Problems of one video stay with that video.** A 403 or 410 on a caption or media URL and members-only, age-gated, private or
+  unavailable videos are failures of that video (`transcript_status: "failed"` with a `reason`), remembered for
+  `transcripts.video_failure_ttl_s` (1 h) so they are not re-fetched; they never touch the breaker.
+- **Long downloads do not hold the gate.** Audio downloads take the gate only to start (a paced slot, released when the first bytes
+  arrive), so a 20 minute download never stalls an interactive metadata or caption fetch. A video that yt-dlp reports as live or
+  longer than `captions.max_duration_s` (3 h) is refused from the real info before anything is downloaded, and audio larger than
+  `captions.max_download_bytes` is skipped.
 - **Fewer fetches.** A transcript is fetched at most once per `transcripts.cache_ttl_s` (30 days), concurrent requests share one fetch,
   and "this video has no captions" is remembered for `transcripts.no_captions_ttl_s` (3 days, then checked again). The second tier
   (inflation and answer analysis) runs only for videos with a title question or a clickbait score above
@@ -127,16 +136,20 @@ through one process-wide gate:
 
 | Situation | Response |
 |---|---|
-| 429, cooldown, bot check, network error, empty caption file | `status: "pending"`, `transcript_status: "delayed"`, a user-facing `error` ("YouTube is limiting transcript downloads; retrying in ~N min") and `retry_after_s`. Never cached; ask again after `retry_after_s`. |
-| YouTube lists no captions | `status: "needs_transcript"`, `transcript_status: "none"`, `can_transcribe`, `message` and `estimate_s`. The TV offers "Transcribe in background?". |
+| 429, cooldown, bot check, network error, empty or incomplete YouTube answer, a caption file that parses to nothing | `status: "pending"`, `transcript_status: "delayed"`, a user-facing `error` ("YouTube is limiting transcript downloads; retrying in ~N min") and `retry_after_s`. Never cached as "no captions"; ask again after `retry_after_s` (a caption file that parses to nothing is held for `transcripts.empty_track_retry_s`, 1 h). |
+| Private, members-only, age-gated or unavailable video, 403/410 on its caption or media URL, too long or live | `status: "failed"`, `transcript_status: "failed"`, `error`, `reason`, `can_transcribe`. |
+| YouTube lists no captions (from a complete yt-dlp answer) | `status: "needs_transcript"`, `transcript_status: "none"`, `can_transcribe`, `message` and `estimate_s`. The TV offers "Transcribe in background?". |
 | The user said yes | `POST /v1/videos/ID/transcribe` queues a job: audio through the gate, ffmpeg, your ASR backend ([captions.md](captions.md)), stored as the transcript with source `asr`. Meanwhile summaries answer `pending` with `transcript_status: "transcribing"` and `progress`; afterwards everything works as with YouTube captions. |
 
-`GET /v1/videos/ID/transcript` shows the state and `GET /v1/jobs` lists your caption and transcript jobs (`waiting`, `processing`,
-`ready`, `failed`). Jobs wait while the breaker is open and run when it closes. Videos that are live or longer than
+`GET /v1/videos/ID/transcript` shows the state (with `job_id` only for your own job) and `GET /v1/jobs` lists your caption and transcript
+jobs (`waiting`, `processing`, `ready`, `failed`). Jobs wait while the breaker is open and run when it closes; a job that YouTube
+keeps refusing is retried `captions.job_max_attempts` (3) times and then fails. Before spending effort on the audio a transcript job
+asks YouTube once more for captions and uses them if they exist (ASR never replaces real captions). Videos that are live or longer than
 `captions.max_duration_s` (3 h) cannot be transcribed (`can_transcribe: false`).
 
 If YouTube keeps blocking the host even at the default pace, raise `min_interval_s`, lower `tier2_daily_cap_per_user`, or set
-`transcripts.cookies_file` (a credential: keep it private). Summaries created from the title alone by earlier versions are deleted
+`transcripts.cookies_file` (a credential: keep it private). Scratch directories under `data_dir/media` that a crash left behind are
+removed at start when older than `captions.media_orphan_age_s` (1 h). Summaries created from the title alone by earlier versions are deleted
 when the new version first starts.
 
 Suggested production values for a home connection that was rate limited:

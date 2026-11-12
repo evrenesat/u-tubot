@@ -61,8 +61,12 @@ its title; it answers `needs_transcript` and the TV asks "Transcribe in backgrou
 no diarization, no VTT) and stores the text as the video's transcript with source `asr`. Summaries, insights and answers then work as
 usual and say `source: "asr"`. Progress is in `GET /v1/videos/ID/transcript` and in `GET /v1/jobs`; the estimate shown beforehand is
 `asr_overhead_s` plus the video length divided by `asr_speed_factor` (set it to what your ASR backend really does). `transcribe_max_active_per_user`
-(5) limits queued jobs per user. Queued jobs wait while YouTube has the server in a cooldown and a job whose download is refused goes
-back to the queue instead of failing.
+(5) limits queued jobs per user. Queued jobs wait while YouTube has the server in a cooldown. A job whose download is refused (429, network) goes back to the queue,
+at most `job_max_attempts` (3) times, then fails; a problem of the one video (private, members-only, 403/410 on its media, live, longer than
+`max_duration_s`) fails it at once without touching the YouTube breaker. Before downloading, the job asks YouTube once more for
+captions: if they exist they are used and the audio is skipped, and a transcript from the audio never replaces YouTube captions.
+Live streams and videos over `max_duration_s` are refused from yt-dlp's real info before any download, and audio over `max_download_bytes` is skipped.
+Audio downloads hold the YouTube gate only until they start, so they do not delay interactive fetches. Scratch directories a crash left under `data_dir/media` are swept at start.
 
 ## Checking on jobs
 

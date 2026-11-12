@@ -84,7 +84,7 @@ def cfg(tmp_path) -> Config:
 async def env(cfg, mock_llm, fetcher, clock, tmp_path):
     asr = OpenAIASR(cfg.captions, transport=httpx.ASGITransport(app=mock_llm.app))
 
-    async def fake_download(video_id, out_dir):
+    async def fake_download(video_id, out_dir, started=None):
         import subprocess
 
         path = out_dir / "audio.wav"

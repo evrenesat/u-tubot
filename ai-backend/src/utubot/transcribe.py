@@ -15,8 +15,8 @@ from typing import Any
 from .captions.jobs import ACTIVE, KIND_TRANSCRIPT, JobQueue
 from .config import Config
 from .errors import MSG_NO_CAPTIONS, MSG_NO_CAPTIONS_UNAVAILABLE, MSG_TRANSCRIBE, delayed_message
-from .transcripts import NoCaptions, TranscriptService
-from .youtube import YoutubeDelayed
+from .transcripts import HOLD_DELAYED, NoCaptions, TranscriptService
+from .youtube import YoutubeDelayed, YoutubeVideoError
 
 OK = "ok"
 DELAYED = "delayed"
@@ -72,8 +72,30 @@ class Transcription:
             "estimate_s": self.estimate_s(meta.get("duration_s")) if can else None,
         }
 
+    def _held(self, video_id: str, meta: dict[str, Any]) -> dict[str, Any] | None:
+        held = self.transcripts.hold(video_id)
+        if held is None:
+            return None
+        if held["kind"] == HOLD_DELAYED:
+            wait = YoutubeDelayed(held["reason"], max(0.0, held["until"] - time.time()))
+            return {
+                "transcript_status": DELAYED,
+                "error": delayed_message(wait),
+                "retry_after_s": max(1, math.ceil(wait.retry_after_s)),
+            }
+        failure = YoutubeVideoError(held["reason"])
+        return {
+            "transcript_status": FAILED,
+            "error": failure.message,
+            "reason": failure.reason,
+            "can_transcribe": failure.can_transcribe and self.can_transcribe(meta),
+        }
+
     def state(self, video_id: str, hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
-        """Transcript state known without touching YouTube; None when it is not known yet."""
+        """Transcript state known without touching YouTube; None when it is not known yet.
+
+        Never carries a job id: jobs belong to the user who queued them (see `status`).
+        """
         cached = self.transcripts.cached(video_id)
         if cached:
             return {"transcript_status": OK, "source": cached.source, "lang": cached.lang}
@@ -84,8 +106,10 @@ class Transcription:
                 "transcript_status": TRANSCRIBING,
                 "progress": round(job["progress"], PROGRESS_DIGITS),
                 "estimate_s": self.estimate_s(meta.get("duration_s")),
-                "job_id": job["id"],
             }
+        held = self._held(video_id, meta)
+        if held:
+            return held
         recent = (
             job
             and job["status"] == "failed"
@@ -94,9 +118,8 @@ class Transcription:
         if recent:
             return {
                 "transcript_status": FAILED,
-                "error": MSG_TRANSCRIBE,
+                "error": job["error"] or MSG_TRANSCRIBE,
                 "can_transcribe": self.can_transcribe(meta),
-                "job_id": job["id"],
             }
         if self.transcripts.no_captions(video_id):
             return self.none_fields(video_id, hint)
@@ -120,6 +143,15 @@ class Transcription:
                 "error": delayed_message(exc),
                 "retry_after_s": max(1, math.ceil(exc.retry_after_s)),
             }
+        if isinstance(exc, YoutubeVideoError):
+            return {
+                "status": STATUS_FOR[FAILED],
+                "transcript_status": FAILED,
+                "error": exc.message,
+                "reason": exc.reason,
+                "can_transcribe": exc.can_transcribe
+                and self.can_transcribe(self._meta(video_id, hint)),
+            }
         if isinstance(exc, NoCaptions):
             return {"status": STATUS_FOR[NONE], **self.none_fields(video_id, hint)}
         return None
@@ -135,6 +167,8 @@ class Transcription:
         meta = self._meta(video_id, hint)
         if not self.can_transcribe(meta):
             raise TranscribeRefused(400, MSG_NO_CAPTIONS_UNAVAILABLE)
+        if state and state["transcript_status"] == FAILED and not state.get("can_transcribe", True):
+            raise TranscribeRefused(400, state["error"])
         job = self.jobs.find_active_transcript(user, video_id)
         if job is None:
             limit = self.cfg.captions.transcribe_max_active_per_user
@@ -152,10 +186,16 @@ class Transcription:
             "estimate_s": self.estimate_s(meta.get("duration_s")),
         }
 
-    def status(self, video_id: str, hint: dict[str, Any] | None = None) -> dict[str, Any]:
-        """`GET /v1/videos/{id}/transcript`: cheap, never touches YouTube."""
-        state = self.state(video_id, hint) or {
-            "transcript_status": UNKNOWN,
-            "source": None,
-        }
-        return {"video_id": video_id, **state}
+    def status(
+        self, video_id: str, user: str, hint: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """`GET /v1/videos/{id}/transcript`: cheap, never touches YouTube.
+
+        Progress and outcome are about the video and shared; `job_id` is only the caller's own job.
+        """
+        state = self.state(video_id, hint) or {"transcript_status": UNKNOWN, "source": None}
+        out = {"video_id": video_id, **state}
+        job = self.jobs.own_transcript_job(user, video_id)
+        if job and state["transcript_status"] in (TRANSCRIBING, FAILED):
+            out["job_id"] = job["id"]
+        return out

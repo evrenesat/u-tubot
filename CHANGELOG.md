@@ -21,10 +21,13 @@ Backend (`ai-backend/`) changes in this release:
   that way are deleted on first start). A transient YouTube problem answers `status: "pending"`, `transcript_status: "delayed"`,
   an `error` such as "YouTube is limiting transcript downloads; retrying in ~5 min" and `retry_after_s`, and is never cached.
   A video without captions answers `status: "needs_transcript"` (`transcript_status: "none"`, `can_transcribe`, `message`,
-  `estimate_s`), remembered for 3 days (`[transcripts] no_captions_ttl_s`).
+  `estimate_s`), remembered for 3 days (`[transcripts] no_captions_ttl_s`) but only from a complete YouTube answer. Problems of one
+  video (private, members-only, age-gated, unavailable, a 403/410 on its caption or media URL, too long, live) answer
+  `transcript_status: "failed"` with a `reason` and never trip the circuit breaker.
 - New `POST /v1/videos/{id}/transcribe` queues a background transcription of the audio (stored as the transcript with source
   `asr`; idempotent), `GET /v1/videos/{id}/transcript` shows its progress, and `GET /v1/jobs` lists your caption and transcript
-  jobs (`waiting|processing|ready|failed`). The TV app will offer "Transcribe in background?" for `needs_transcript`.
+  jobs (`waiting|processing|ready|failed`; jobs retry at most 3 times). The TV app will offer "Transcribe in background?" for
+  `needs_transcript`. Audio downloads hold the YouTube gate only until they start; ASR never replaces YouTube captions.
 - Fewer YouTube fetches: tier-2 analysis defaults to 30 per user per day (was 40, example config 100), runs only for videos with a
   title question or a clickbait score above the threshold, and only while YouTube is healthy; `[transcripts] max_concurrency` is
   replaced by `[youtube] max_concurrent`.

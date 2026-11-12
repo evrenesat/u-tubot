@@ -142,7 +142,9 @@ max_background_queue = 5           # tier-2 is not scheduled while this many bac
 
 [transcripts]
 cache_ttl_s = 2592000
-no_captions_ttl_s = 259200         # a "no captions" answer is remembered this long (3 days), then checked again
+no_captions_ttl_s = 259200         # a "no captions" answer (from a complete yt-dlp answer) is remembered this long (3 days), then checked again
+video_failure_ttl_s = 3600         # a per-video failure (private, members-only, 403/410 on a caption or media URL) is remembered this long
+empty_track_retry_s = 3600         # a caption file that parses to nothing is "delayed" (not "no captions") and not re-fetched for this long
 fetch_timeout_s = 60.0
 default_language = "en"
 # cookies_file = "/var/lib/utubot/cookies.txt"   # only if YouTube starts blocking this host
@@ -186,6 +188,9 @@ job_concurrency = 1
 asr_speed_factor = 1.5             # audio seconds transcribed per second; only used for the "estimate_s" shown to the user
 asr_overhead_s = 30                # download + model load, added to the estimate
 transcribe_max_active_per_user = 5 # queued or running "transcribe in background" jobs per user
+job_max_attempts = 3               # a job that YouTube keeps refusing (429, network) is retried this many times, then fails
+media_orphan_age_s = 3600          # on start, scratch directories under data_dir/media older than this are removed (unless keep_media)
+max_download_bytes = 419430400     # yt-dlp skips audio larger than this (400 MiB); the duration limit is max_duration_s
 
 # ---- Setup import and public download page ------------------------------------------------
 # GET /setup.json (no auth) lets the TV app configure itself from a short address.

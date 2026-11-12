@@ -8,10 +8,11 @@ from typing import Any
 
 from ..config import Config
 from ..db import Database
-from ..errors import MSG_JOB, MSG_TRANSCRIBE
-from ..transcripts import TranscriptService
-from ..youtube import YoutubeBlocked
-from .pipeline import CaptionPipeline
+from ..errors import MSG_JOB, MSG_JOB_RETRIES, MSG_TRANSCRIBE
+from ..llm import BACKGROUND
+from ..transcripts import NoCaptions, TranscriptService
+from ..youtube import YoutubeDelayed, YoutubeVideoError
+from .pipeline import CaptionPipeline, sweep_media
 
 log = logging.getLogger("utubot.jobs")
 ACTIVE = ("queued", "running")
@@ -35,6 +36,10 @@ class JobQueue:
         self._stopping = False
 
     def start(self) -> None:
+        if not self.cfg.captions.keep_media:
+            removed = sweep_media(self.cfg.media_dir, self.cfg.captions.media_orphan_age_s)
+            if removed:
+                log.info("removed %d orphaned media directories", removed)
         self.db.execute(
             "UPDATE jobs SET status='queued', progress=0, updated_at=? WHERE status='running'",
             [time.time()],
@@ -67,6 +72,15 @@ class JobQueue:
         row = self.db.one(
             "SELECT * FROM jobs WHERE kind=? AND user=? AND video_id=?"
             " AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1",
+            [KIND_TRANSCRIPT, user, video_id],
+        )
+        return dict(row) if row else None
+
+    def own_transcript_job(self, user: str, video_id: str) -> dict[str, Any] | None:
+        """The caller's active transcript job for a video, else their newest one."""
+        row = self.db.one(
+            "SELECT * FROM jobs WHERE kind=? AND user=? AND video_id=?"
+            " ORDER BY (status IN ('queued','running')) DESC, created_at DESC LIMIT 1",
             [KIND_TRANSCRIPT, user, video_id],
         )
         return dict(row) if row else None
@@ -158,13 +172,14 @@ class JobQueue:
     def listing(self, user: str, limit: int) -> list[dict[str, Any]]:
         """The user's jobs of every kind, newest first, in the shape of `GET /v1/jobs`."""
         rows = self.db.all(
-            "SELECT id,kind,video_id,title,status,progress,error,created_at,finished_at FROM jobs"
-            " WHERE user=? ORDER BY created_at DESC LIMIT ?",
+            "SELECT id,kind,video_id,title,status,progress,error,created_at,finished_at,not_before"
+            " FROM jobs WHERE user=? ORDER BY created_at DESC LIMIT ?",
             [user, limit],
         )
-        retry = self.pipeline.gate.cooldown_remaining()
+        now = self.pipeline.gate.now()
         out = []
         for r in rows:
+            retry = max(self.pipeline.gate.cooldown_remaining(), (r["not_before"] or 0) - now)
             title = r["title"] or (self.transcripts.cached_meta(r["video_id"]) or {}).get("title")
             state = JOB_STATES.get(r["status"], r["status"])
             out.append(
@@ -188,9 +203,11 @@ class JobQueue:
         if not self.pipeline.gate.healthy():
             return None
         row = self.db.one(
-            "SELECT * FROM jobs WHERE status='queued' AND NOT EXISTS"
+            "SELECT * FROM jobs WHERE status='queued' AND (not_before IS NULL OR not_before<=?)"
+            " AND NOT EXISTS"
             " (SELECT 1 FROM jobs r WHERE r.video_id=jobs.video_id AND r.status='running')"
-            " ORDER BY created_at LIMIT 1"
+            " ORDER BY created_at LIMIT 1",
+            [self.pipeline.gate.now()],
         )
         if not row:
             return None
@@ -205,13 +222,47 @@ class JobQueue:
         )
 
     async def _run_transcript(self, job: dict[str, Any]) -> None:
+        """ASR, unless YouTube has captions after all: those are used and the audio is skipped."""
         video_id = job["video_id"]
-        if self.transcripts.cached(video_id):
+        try:
+            await self.transcripts.get(video_id, BACKGROUND, recheck=True)
             return
+        except NoCaptions:
+            pass
+        except YoutubeVideoError as exc:
+            if not exc.can_transcribe:
+                raise
         text, lang = await self.pipeline.transcribe(
             video_id, lambda f: self._set_progress(job["id"], f)
         )
         self.transcripts.store_asr(video_id, text, lang)
+
+    def _fail(self, job: dict[str, Any], message: str) -> None:
+        now = time.time()
+        self.db.execute(
+            "UPDATE jobs SET status='failed', error=?, updated_at=?, finished_at=? WHERE id=?",
+            [message, now, now, job["id"]],
+        )
+
+    def _retry(self, job: dict[str, Any], exc: YoutubeDelayed) -> None:
+        """Back into the queue after a transient YouTube problem, at most `job_max_attempts` times."""
+        attempts = (job.get("attempts") or 0) + 1
+        if attempts >= self.cfg.captions.job_max_attempts:
+            log.warning("%s job %s gave up after %d attempts", job["kind"], job["id"], attempts)
+            self._fail(job, MSG_JOB_RETRIES)
+            return
+        log.warning(
+            "%s job %s back in the queue (attempt %d, %s)",
+            job["kind"],
+            job["id"],
+            attempts,
+            exc.reason,
+        )
+        self.db.execute(
+            "UPDATE jobs SET status='queued', progress=0, attempts=?, not_before=?, updated_at=?"
+            " WHERE id=?",
+            [attempts, self.pipeline.gate.now() + exc.retry_after_s, time.time(), job["id"]],
+        )
 
     async def run_one(self) -> bool:
         job = self._claim()
@@ -235,20 +286,15 @@ class JobQueue:
             )
         except asyncio.CancelledError:
             raise
-        except YoutubeBlocked:
-            log.warning("job %s back in the queue: youtube asked us to slow down", job["id"])
-            self.db.execute(
-                "UPDATE jobs SET status='queued', progress=0, updated_at=? WHERE id=?",
-                [time.time(), job["id"]],
-            )
+        except YoutubeVideoError as exc:
+            self.transcripts.record_failure(job["video_id"], exc.reason)
+            log.warning("%s job %s failed: %s", job["kind"], job["id"], exc.reason)
+            self._fail(job, exc.message)
+        except YoutubeDelayed as exc:
+            self._retry(job, exc)
         except Exception as exc:
             log.warning("%s job %s failed: %s", job["kind"], job["id"], exc, exc_info=True)
-            now = time.time()
-            message = MSG_TRANSCRIBE if job["kind"] == KIND_TRANSCRIPT else MSG_JOB
-            self.db.execute(
-                "UPDATE jobs SET status='failed', error=?, updated_at=?, finished_at=? WHERE id=?",
-                [message, now, now, job["id"]],
-            )
+            self._fail(job, MSG_TRANSCRIBE if job["kind"] == KIND_TRANSCRIPT else MSG_JOB)
         return True
 
     async def _worker(self) -> None:

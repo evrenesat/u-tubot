@@ -13,6 +13,7 @@ MSG_BUSY = "the language model is busy, try again in a moment"
 MSG_GENERIC = "could not process this video, try again later"
 MSG_JOB = "caption generation failed"
 MSG_TRANSCRIBE = "transcription failed"
+MSG_JOB_RETRIES = "YouTube kept refusing the download, try again later"
 MSG_NO_CAPTIONS = "No captions. Transcribe the audio in the background?"
 MSG_NO_CAPTIONS_UNAVAILABLE = "No captions are available for this video."
 SECONDS_PER_MINUTE = 60

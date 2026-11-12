@@ -1,5 +1,28 @@
 # DEVLOG
 
+## 2026-11-12 (review fixes for the YouTube gate)
+
+- Breaker scope: only a 429, the bot check or a 403 on the watch/player/metadata request open it. A 403/410 on a caption or media
+  URL and private, members-only, age-gated or unavailable videos raise `YoutubeVideoError` (`transcript_status: "failed"` + `reason`),
+  recorded in `video_holds` (`[transcripts] video_failure_ttl_s`, 1 h) so they are not re-fetched; any such answer closes a half-open
+  breaker and resets the escalation. `RATE_LIMIT_RE` no longer matches a bare "try again later".
+- Jobs: `YoutubeDelayed` (including blocked) re-queues with `attempts` and `not_before` (gate clock), capped by
+  `[captions] job_max_attempts` (3), then fails; a per-video error fails the job at once. Orphan `media/<id>` directories older
+  than `media_orphan_age_s` are removed at start.
+- Media lane: `YoutubeGate.run_started` holds the paced slot only until the download signals its first bytes (yt-dlp progress
+  hook), then releases it; a 429 after the start still opens the breaker. yt-dlp gets a `match_filter` (live, duration) and
+  `max_filesize`; the converted WAV is re-checked against `max_duration_s` before ASR.
+- Soft-degraded answers: "no captions" is cached only from a complete yt-dlp answer (formats present, no caption language listed
+  without formats); otherwise `delayed`. A caption file that parses to nothing is `delayed` with a `video_holds` entry
+  (`empty_track_retry_s`, 1 h), never "no captions".
+- ASR vs captions: a transcript job first re-checks YouTube (`get(recheck=True)`, ignores the no-captions memory) and uses captions
+  if they exist; `store_asr` never replaces a `youtube_captions` row (a fresh complete "no captions" answer deletes a stale one).
+- Tier-2 refunds the daily slot when the fetch ends delayed. `GET .../transcript` shows `job_id` only for the caller's own job;
+  `state()` and the summary/insight/ask responses never carry one. `delayed` can appear on that endpoint (empty-track hold).
+- Tests: scoped classification, per-video failures end to end, retry cap (network and blocked), media start gating, filters,
+  sweep, soft-degraded answers, recheck, refunds, job-id scoping (`test_youtube_gate.py`, `test_youtube_fetch.py`, `test_media.py`,
+  `test_transcript_flow.py`).
+
 ## 2026-11-12 (YouTube pacing, circuit breaker, no title-only summaries, ask-to-transcribe)
 
 - Incident: one home IP, one user browsing the TV home screen: about 70 transcript fetches in 3 hours (26 interactive summaries, 41

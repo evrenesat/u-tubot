@@ -17,12 +17,20 @@ from utubot.transcripts import NoCaptions, TranscriptService, YoutubeFetcher
 from utubot.youtube import (
     REASON_BOT_CHECK,
     REASON_EMPTY,
+    REASON_EMPTY_TRACK,
+    REASON_FORBIDDEN_MEDIA,
+    REASON_INCOMPLETE,
+    REASON_MEMBERS_ONLY,
     REASON_NETWORK,
+    REASON_PRIVATE,
     REASON_RATE_LIMITED,
+    REASON_UNAVAILABLE,
+    STATE_CLOSED,
     YoutubeBlocked,
     YoutubeCooldown,
     YoutubeDelayed,
     YoutubeGate,
+    YoutubeVideoError,
 )
 
 VID = "abcdefghijk"
@@ -40,7 +48,13 @@ BOT_CHECK = "ERROR: [youtube] abcdefghijk: Sign in to confirm you’re not a bot
 
 
 def info(captions: bool = True) -> dict:
-    out = {"id": VID, "title": "A title", "duration": 600, "language": "en"}
+    out = {
+        "id": VID,
+        "title": "A title",
+        "duration": 600,
+        "language": "en",
+        "formats": [{"format_id": "251", "ext": "webm"}],
+    }
     if captions:
         out["automatic_captions"] = {"en": [{"ext": "json3", "url": TRACK_URL}]}
     return out
@@ -255,3 +269,128 @@ async def test_ttl_expires_youtube_captions_but_not_an_asr_transcript(tmp_path):
     assert rig.svc.cached(OTHER).source == "asr"
     await rig.svc.get(VID)
     assert rig.extracts == 2
+
+
+# ---- review fixes: per-video failures, soft-degraded answers, holds ----------------------------
+
+
+async def test_403_on_the_caption_url_is_a_per_video_failure_not_a_breaker_trip(tmp_path):
+    rig = Rig(tmp_path, lambda req: httpx.Response(403))
+    with pytest.raises(YoutubeVideoError) as first:
+        await rig.svc.get(VID)
+    assert first.value.reason == REASON_FORBIDDEN_MEDIA
+    assert rig.gate.healthy() and rig.gate.state() == STATE_CLOSED
+    assert rig.svc.hold(VID)["kind"] == "failed"
+    with pytest.raises(YoutubeVideoError):
+        await rig.svc.get(VID)
+    assert rig.extracts == 1 and len(rig.http) == 1
+    rig.handler = lambda req: httpx.Response(200, text=CAPTIONS)
+    assert (await rig.svc.get("zzzzzzzzzzz")).source == "youtube_captions"
+
+
+async def test_410_and_members_only_are_per_video_failures(tmp_path):
+    rig = Rig(tmp_path, lambda req: httpx.Response(410))
+    with pytest.raises(YoutubeVideoError) as gone:
+        await rig.svc.get(VID)
+    assert gone.value.reason == REASON_UNAVAILABLE and rig.gate.healthy()
+    members = Rig(
+        tmp_path / "m",
+        extract=lambda: yt_dlp.utils.DownloadError(
+            "ERROR: [youtube] abc: Join this channel to get access to members-only content"
+        ),
+    )
+    with pytest.raises(YoutubeVideoError) as info_:
+        await members.svc.get(VID)
+    assert info_.value.reason == REASON_MEMBERS_ONLY and members.gate.healthy()
+
+
+async def test_403_on_the_watch_request_still_opens_the_breaker(tmp_path):
+    rig = Rig(
+        tmp_path,
+        extract=lambda: yt_dlp.utils.DownloadError(
+            "ERROR: [youtube] abc: Unable to download webpage: HTTP Error 403: Forbidden"
+        ),
+    )
+    with pytest.raises(YoutubeBlocked):
+        await rig.svc.get(VID)
+    assert not rig.gate.healthy()
+
+
+async def test_a_video_failure_expires_and_is_fetched_again(tmp_path):
+    rig = Rig(tmp_path, lambda req: httpx.Response(403))
+    with pytest.raises(YoutubeVideoError):
+        await rig.svc.get(VID)
+    rig.db.execute("UPDATE video_holds SET until=?", [time.time() - 1])
+    rig.handler = lambda req: httpx.Response(200, text=CAPTIONS)
+    assert (await rig.svc.get(VID)).source == "youtube_captions"
+    assert rig.extracts == 2
+
+
+async def test_an_incomplete_ytdlp_answer_is_delayed_and_never_cached_as_no_captions(tmp_path):
+    partial = {"id": VID, "title": "A title", "duration": 600}
+    rig = Rig(tmp_path, extract=lambda: partial)
+    with pytest.raises(YoutubeDelayed) as info_:
+        await rig.svc.get(VID)
+    assert info_.value.reason == REASON_INCOMPLETE and not isinstance(info_.value, YoutubeBlocked)
+    assert not rig.svc.no_captions(VID) and rig.db.one("SELECT 1 FROM no_captions") is None
+    assert rig.gate.healthy()
+    rig.extract_result = lambda: info(captions=False)
+    with pytest.raises(NoCaptions):
+        await rig.svc.get(VID)
+    assert rig.svc.no_captions(VID)
+
+
+async def test_caption_languages_listed_without_formats_are_a_degraded_answer(tmp_path):
+    degraded = {**info(captions=False), "automatic_captions": {"en": []}}
+    rig = Rig(tmp_path, extract=lambda: degraded)
+    with pytest.raises(YoutubeDelayed) as info_:
+        await rig.svc.get(VID)
+    assert info_.value.reason == REASON_INCOMPLETE
+    assert not rig.svc.no_captions(VID)
+
+
+async def test_an_empty_parsed_track_is_delayed_with_a_short_hold_not_no_captions(tmp_path):
+    rig = Rig(tmp_path, lambda req: httpx.Response(200, text='{"events": []}'))
+    with pytest.raises(YoutubeDelayed) as info_:
+        await rig.svc.get(VID)
+    assert info_.value.reason == REASON_EMPTY_TRACK
+    assert info_.value.retry_after_s == rig.cfg.transcripts.empty_track_retry_s == 3600
+    assert not rig.svc.no_captions(VID) and rig.db.one("SELECT 1 FROM no_captions") is None
+    assert rig.db.one("SELECT 1 FROM transcripts") is None
+    assert rig.gate.healthy()
+    with pytest.raises(YoutubeDelayed) as held:
+        await rig.svc.get(VID)
+    assert held.value.reason == REASON_EMPTY_TRACK and 3500 < held.value.retry_after_s <= 3600
+    assert rig.extracts == 1
+    rig.db.execute("UPDATE video_holds SET until=?", [time.time() - 1])
+    rig.handler = lambda req: httpx.Response(200, text=CAPTIONS)
+    assert (await rig.svc.get(VID)).source == "youtube_captions"
+    assert rig.svc.hold(VID) is None
+
+
+async def test_asr_never_replaces_youtube_captions(tmp_path):
+    rig = Rig(tmp_path)
+    await rig.svc.get(VID)
+    assert rig.svc.store_asr(VID, "[00:00] spoken words", "en") is False
+    assert rig.svc.cached(VID).source == "youtube_captions"
+    assert "Hello world." in rig.svc.cached(VID).text
+    assert rig.svc.store_asr(OTHER, "[00:00] spoken words", "en") is True
+    assert rig.svc.store_asr(OTHER, "[00:00] newer words", "en") is True
+    assert rig.svc.cached(OTHER).text == "[00:00] newer words"
+
+
+async def test_recheck_ignores_the_no_captions_memory_but_not_other_holds(tmp_path):
+    rig = Rig(tmp_path, extract=lambda: info(captions=False))
+    with pytest.raises(NoCaptions):
+        await rig.svc.get(VID)
+    rig.extract_result = lambda: info()
+    with pytest.raises(NoCaptions):
+        await rig.svc.get(VID)
+    assert rig.extracts == 1
+    assert (await rig.svc.get(VID, recheck=True)).source == "youtube_captions"
+    assert rig.extracts == 2
+    rig.svc.record_failure(OTHER, REASON_PRIVATE)
+    with pytest.raises(YoutubeVideoError):
+        await rig.svc.get(OTHER, recheck=True)
+    rig.svc.record_failure(OTHER, REASON_FORBIDDEN_MEDIA)
+    assert (await rig.svc.get(OTHER, recheck=True)).source == "youtube_captions"

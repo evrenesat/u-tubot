@@ -15,7 +15,13 @@ from ..config import Config
 from ..db import Database
 from ..llm import BACKGROUND, LLMClient
 from ..transcripts import segments_to_text
-from ..youtube import YoutubeGate, classify_failure
+from ..youtube import (
+    REASON_LIVE,
+    REASON_TOO_LONG,
+    YoutubeGate,
+    YoutubeVideoError,
+    classify_failure,
+)
 from .asr import (
     LANGUAGE_NAMES,
     ASRBackend,
@@ -23,6 +29,7 @@ from .asr import (
     ASRResult,
     normalize_language,
     run_ffmpeg,
+    wav_duration,
 )
 from .diarize import Diarizer, assign_speakers, make_diarizer
 from .segment import build_cues, count_speakers, to_vtt, wrap_lines
@@ -36,7 +43,8 @@ TRANSLATE_SYSTEM = (
     "same length and order as the input. Keep it short enough for subtitles."
 )
 
-Downloader = Callable[[str, Path], Awaitable[Path]]
+Started = Callable[[], None]
+Downloader = Callable[[str, Path, Started], Awaitable[Path]]
 Progress = Callable[[float], None]
 
 
@@ -44,10 +52,42 @@ class PipelineError(RuntimeError):
     pass
 
 
+def audio_filter(max_duration_s: int, verdict: dict[str, str]) -> Callable[..., str | None]:
+    """yt-dlp `match_filter`: judge the real info before any audio is downloaded.
+
+    A rejected video is skipped by yt-dlp; the reason lands in `verdict` for the caller.
+    """
+
+    def check(info: dict[str, Any], *, incomplete: bool = False) -> str | None:
+        if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
+            verdict["reason"] = REASON_LIVE
+            return "live streams cannot be transcribed"
+        duration = info.get("duration")
+        if duration and duration > max_duration_s:
+            verdict["reason"] = REASON_TOO_LONG
+            return "video is longer than the transcription limit"
+        return None
+
+    return check
+
+
 async def download_audio(
-    video_id: str, out_dir: Path, fmt: str, network_retry_s: float = 60.0
+    video_id: str,
+    out_dir: Path,
+    started: Started,
+    *,
+    fmt: str,
+    max_duration_s: int,
+    max_bytes: int,
+    network_retry_s: float = 60.0,
 ) -> Path:
+    """Best audio through yt-dlp. `started` is called when the first bytes arrive."""
+
+    def _hook(_status: dict[str, Any]) -> None:
+        started()
+
     def _run() -> Path:
+        verdict: dict[str, str] = {}
         opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
@@ -55,15 +95,36 @@ async def download_audio(
             "noplaylist": True,
             "format": fmt,
             "outtmpl": str(out_dir / "audio.%(ext)s"),
+            "match_filter": audio_filter(max_duration_s, verdict),
+            "max_filesize": max_bytes,
+            "progress_hooks": [_hook],
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(VIDEO_URL.format(video_id), download=True)
-                return Path(ydl.prepare_filename(info))
+                if info is None:
+                    raise YoutubeVideoError(verdict.get("reason", REASON_TOO_LONG))
+                path = Path(ydl.prepare_filename(info))
+                if not path.exists():
+                    raise YoutubeVideoError(REASON_TOO_LONG)
+                return path
         except yt_dlp.utils.YoutubeDLError as exc:
-            raise classify_failure(exc, network_retry_s) from None
+            raise classify_failure(exc, network_retry_s, media=True) from None
 
     return await asyncio.to_thread(_run)
+
+
+def sweep_media(media_dir: Path, max_age_s: float) -> int:
+    """Remove scratch directories left by a crash (older than `max_age_s`); returns the count."""
+    if not media_dir.is_dir():
+        return 0
+    cutoff = time.time() - max_age_s
+    removed = 0
+    for child in media_dir.iterdir():
+        if child.is_dir() and child.stat().st_mtime < cutoff:
+            shutil.rmtree(child, ignore_errors=True)
+            removed += 1
+    return removed
 
 
 def track_label(lang: str, speakers: int) -> str:
@@ -87,8 +148,14 @@ class CaptionPipeline:
         self.gate = gate or YoutubeGate(cfg.youtube, db)
         self.diarizer = diarizer or make_diarizer(cfg.captions)
         self.downloader = downloader or (
-            lambda vid, out: download_audio(
-                vid, out, cfg.captions.audio_format, cfg.youtube.network_retry_s
+            lambda vid, out, started: download_audio(
+                vid,
+                out,
+                started,
+                fmt=cfg.captions.audio_format,
+                max_duration_s=cfg.captions.max_duration_s,
+                max_bytes=cfg.captions.max_download_bytes,
+                network_retry_s=cfg.youtube.network_retry_s,
             )
         )
 
@@ -98,8 +165,10 @@ class CaptionPipeline:
         """Audio download (through the YouTube gate), 16 kHz mono WAV, ASR. Shared by both jobs."""
         c = self.cfg.captions
         progress(0.02)
-        src = await self.gate.run(
-            lambda: self.downloader(video_id, work), BACKGROUND, key=f"audio:{video_id}"
+        src = await self.gate.run_started(
+            lambda started: self.downloader(video_id, work, started),
+            BACKGROUND,
+            key=f"audio:{video_id}",
         )
         progress(0.2)
         wav = work / "audio16k.wav"
@@ -116,6 +185,8 @@ class CaptionPipeline:
             str(wav),
         )
         progress(0.25)
+        if wav_duration(wav, c.sample_rate) > c.max_duration_s:
+            raise YoutubeVideoError(REASON_TOO_LONG)
         result = await self.asr.transcribe(wav, requested, lambda f: progress(0.25 + 0.6 * f))
         if not result.words:
             raise PipelineError("ASR returned no words")

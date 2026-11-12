@@ -12,10 +12,14 @@ from utubot.config import AssessConfig, Config
 from utubot.db import Database
 from utubot.llm import BACKGROUND
 from utubot.youtube import (
+    REASON_FORBIDDEN_MEDIA,
     REASON_NETWORK,
+    REASON_PRIVATE,
     REASON_RATE_LIMITED,
+    REASON_TOO_LONG,
     YoutubeBlocked,
     YoutubeDelayed,
+    YoutubeVideoError,
 )
 
 VID = "abcdefghijk"
@@ -34,7 +38,7 @@ async def wait_transcript(env, want: str, vid: str = VID, timeout: float = 15.0)
     body: dict = {}
     while time.time() < deadline:
         body = (await env.client.get(f"/v1/videos/{vid}/transcript")).json()
-        if body["transcript_status"] == want:
+        if body.get("transcript_status") == want:
             return body
         await asyncio.sleep(0.05)
     pytest.fail(f"timeout waiting for {want}, last {body}")
@@ -184,7 +188,7 @@ async def test_transcribe_job_is_idempotent_and_summary_uses_the_asr_transcript(
     assert body["transcript_status"] == "ok"
     sent = " ".join(m["content"] for m in env.llm.calls[-1]["messages"])
     assert "Hello there." in sent
-    assert env.fetcher.calls == [VID]
+    assert env.fetcher.calls == [VID, VID]
     assert not (env.cfg.media_dir / VID).exists()
     assert rows(env, "jobs") == 1
 
@@ -229,11 +233,11 @@ async def test_job_whose_download_is_blocked_goes_back_to_the_queue(env):
     real = pipeline.downloader
     attempts = []
 
-    async def flaky(video_id, out_dir):
+    async def flaky(video_id, out_dir, started):
         attempts.append(video_id)
         if len(attempts) == 1:
             raise YoutubeBlocked(REASON_RATE_LIMITED, 300)
-        return await real(video_id, out_dir)
+        return await real(video_id, out_dir, started)
 
     pipeline.downloader = flaky
     await env.client.post(f"/v1/videos/{VID}/transcribe")
@@ -256,7 +260,7 @@ async def test_a_failed_transcription_is_reported_and_can_be_retried(env):
     env.fetcher.text = None
     await summary(env)
 
-    async def broken(video_id, out_dir):
+    async def broken(video_id, out_dir, started):
         raise RuntimeError("yt-dlp exploded with https://x.example/a?token=SECRET")
 
     env.svc.jobs.pipeline.downloader = broken
@@ -455,3 +459,230 @@ def test_config_defaults_match_the_incident_fix():
     assert cfg.youtube.min_interval_s == 3.0
     assert (cfg.youtube.cooldown_base_s, cfg.youtube.cooldown_max_s) == (300.0, 3600.0)
     assert cfg.transcripts.no_captions_ttl_s == 3 * 86400
+
+
+# ---- review fixes ------------------------------------------------------------------------------
+
+
+def job_row(env, vid: str = VID) -> dict:
+    return dict(
+        env.svc.db.one("SELECT * FROM jobs WHERE video_id=? ORDER BY created_at DESC", [vid])
+    )
+
+
+async def run_until(env, done, step: float = 400.0, rounds: int = 60) -> None:
+    """Let the job worker run, moving the fake clock past each retry delay, until `done()`."""
+    for _ in range(rounds):
+        await asyncio.sleep(0.05)
+        if done():
+            return
+        await env.clock.advance(step)
+    pytest.fail("condition not reached")
+
+
+def job_finished(env, vid: str = VID):
+    return lambda: job_row(env, vid)["status"] in ("ready", "failed")
+
+
+async def test_a_403_on_the_media_url_fails_the_one_video_and_leaves_the_breaker_alone(env):
+    env.fetcher.text = None
+    await summary(env)
+    calls = []
+
+    async def forbidden(video_id, out_dir, started):
+        calls.append(video_id)
+        raise YoutubeVideoError(REASON_FORBIDDEN_MEDIA)
+
+    env.svc.jobs.pipeline.downloader = forbidden
+    await env.client.post(f"/v1/videos/{VID}/transcribe")
+    await run_until(env, job_finished(env))
+    job = job_row(env)
+    assert job["status"] == "failed" and job["attempts"] == 0 and len(calls) == 1
+    assert job["error"] == "YouTube refused the download for this video."
+    assert env.svc.gate.healthy() and env.svc.gate.state() == "closed"
+    env.fetcher.text = "[00:00] Plenty of captions here. " * 5
+    other = (await summary(env, OTHER)).json()
+    assert other["status"] == "ready"
+    failed = (await summary(env)).json()
+    assert failed["status"] == "failed" and failed["transcript_status"] == "failed"
+    assert failed["reason"] == "forbidden" and failed["can_transcribe"] is True
+    status = (await env.client.get(f"/v1/videos/{VID}/transcript")).json()
+    assert status["transcript_status"] == "failed" and status["reason"] == "forbidden"
+
+
+async def test_a_private_video_is_reported_as_failed_with_a_reason_and_cannot_be_transcribed(env):
+    env.fetcher.error = YoutubeVideoError(REASON_PRIVATE)
+    body = (await summary(env)).json()
+    assert body["status"] == "failed" and body["transcript_status"] == "failed"
+    assert body["reason"] == "private" and body["error"] == "This video is private."
+    assert body["can_transcribe"] is False and body["text"] is None
+    assert env.svc.gate.healthy() and env.llm.calls == []
+    again = (await summary(env)).json()
+    assert again["reason"] == "private" and env.fetcher.calls == [VID]
+    insight = (await env.client.get(f"/v1/videos/{VID}/insight", params={"wait_ms": 5000})).json()
+    assert insight["status"] == "failed" and insight["reason"] == "private"
+    refused = await env.client.post(f"/v1/videos/{VID}/transcribe")
+    assert refused.status_code == 400 and "private" in refused.json()["error"]
+    status = (await env.client.get(f"/v1/videos/{VID}/transcript")).json()
+    assert status["transcript_status"] == "failed" and status["can_transcribe"] is False
+
+
+async def test_a_job_hitting_a_transient_error_is_requeued_up_to_the_attempt_cap(env):
+    env.fetcher.text = None
+    await summary(env)
+    calls = []
+
+    async def flaky(video_id, out_dir, started):
+        calls.append(video_id)
+        raise YoutubeDelayed(REASON_NETWORK, 30)
+
+    env.svc.jobs.pipeline.downloader = flaky
+    await env.client.post(f"/v1/videos/{VID}/transcribe")
+    await asyncio.sleep(0.3)
+    job = job_row(env)
+    assert job["status"] == "queued" and job["attempts"] == 1 and len(calls) == 1
+    listed = (await env.client.get("/v1/jobs")).json()["jobs"][0]
+    assert listed["state"] == "waiting" and 0 < listed["retry_after_s"] <= 30
+    await run_until(env, job_finished(env), step=31.0)
+    job = job_row(env)
+    assert job["status"] == "failed" and job["attempts"] == 2 and len(calls) == 3
+    assert job["error"] == "YouTube kept refusing the download, try again later"
+    assert env.cfg.captions.job_max_attempts == 3
+    assert env.svc.gate.healthy()
+
+
+async def test_a_job_that_keeps_being_blocked_gives_up_instead_of_looping_forever(env):
+    env.fetcher.text = None
+    await summary(env)
+    calls = []
+
+    async def blocked(video_id, out_dir, started):
+        calls.append(video_id)
+        raise YoutubeBlocked(REASON_RATE_LIMITED, 300)
+
+    env.svc.jobs.pipeline.downloader = blocked
+    await env.client.post(f"/v1/videos/{VID}/transcribe")
+    await run_until(env, job_finished(env), step=400.0)
+    job = job_row(env)
+    assert job["status"] == "failed" and len(calls) == 3
+    assert job["error"] == "YouTube kept refusing the download, try again later"
+
+
+async def test_a_job_over_the_duration_limit_fails_that_video_only(env):
+    env.fetcher.text = None
+    await summary(env)
+
+    async def too_long(video_id, out_dir, started):
+        raise YoutubeVideoError(REASON_TOO_LONG)
+
+    env.svc.jobs.pipeline.downloader = too_long
+    await env.client.post(f"/v1/videos/{VID}/transcribe")
+    await run_until(env, job_finished(env))
+    assert job_row(env)["error"] == "This video is too long to transcribe."
+    refused = await env.client.post(f"/v1/videos/{VID}/transcribe")
+    assert refused.status_code == 400
+    body = (await summary(env)).json()
+    assert body["status"] == "failed" and body["reason"] == "too_long"
+    assert env.svc.gate.healthy()
+
+
+# ---- ASR must not replace or ignore real captions ----------------------------------------------
+
+
+async def test_a_transcribe_job_uses_captions_that_appeared_and_skips_the_asr(env):
+    env.fetcher.text = None
+    assert (await summary(env)).json()["status"] == "needs_transcript"
+    env.fetcher.text = "[00:00] Real captions arrived. " * 5
+    await env.client.post(f"/v1/videos/{VID}/transcribe")
+    await run_until(env, job_finished(env), step=1.0)
+    assert job_row(env)["status"] == "ready"
+    assert env.llm.audio_calls == []
+    status = (await env.client.get(f"/v1/videos/{VID}/transcript")).json()
+    assert status["transcript_status"] == "ok" and status["source"] == "youtube_captions"
+    assert (await summary(env)).json()["source"] == "youtube_captions"
+
+
+@NEEDS_FFMPEG
+async def test_a_transcribe_job_never_overwrites_captions_stored_meanwhile(env):
+    env.fetcher.text = None
+    await summary(env)
+    real = env.svc.jobs.pipeline.downloader
+
+    async def downloader(video_id, out_dir, started):
+        env.svc.db.execute(
+            "INSERT OR REPLACE INTO transcripts(video_id,lang,source,text,fetched_at)"
+            " VALUES(?,?,?,?,?)",
+            [video_id, "en", "youtube_captions", "[00:00] real captions", time.time()],
+        )
+        return await real(video_id, out_dir, started)
+
+    env.svc.jobs.pipeline.downloader = downloader
+    await env.client.post(f"/v1/videos/{VID}/transcribe")
+    await run_until(env, job_finished(env), step=1.0)
+    row = env.svc.db.one("SELECT source, text FROM transcripts WHERE video_id=?", [VID])
+    assert row["source"] == "youtube_captions" and row["text"] == "[00:00] real captions"
+
+
+# ---- tier-2 slot refunds -------------------------------------------------------------------------
+
+
+def tier2_count(env) -> int:
+    row = env.svc.db.one("SELECT SUM(count) AS n FROM tier2_usage")
+    return row["n"] or 0
+
+
+async def test_tier2_gives_the_daily_slot_back_when_the_fetch_is_delayed(env):
+    env.fetcher.error = YoutubeDelayed(REASON_NETWORK, 60)
+    await env.client.post("/v1/assess", json={"videos": [question()], "wait_ms": 2000})
+    await env.svc.assessor.drain()
+    assert env.fetcher.calls == [VID] and tier2_count(env) == 0
+    env.fetcher.error = None
+    await env.client.post("/v1/assess", json={"videos": [question()], "wait_ms": 2000})
+    await env.svc.assessor.drain()
+    assert tier2_count(env) == 1
+
+
+async def test_tier2_refunds_when_the_fetch_hits_a_cooldown_and_keeps_the_slot_otherwise(env):
+    assessor = env.svc.assessor
+    day = assessor._take_tier2_slot("owner")
+    assert day and tier2_count(env) == 1
+    env.fetcher.error = YoutubeBlocked(REASON_RATE_LIMITED, 300)
+    with pytest.raises(YoutubeBlocked):
+        await assessor._tier2_job("owner", day, VID, {"title_question": "Why?"}, 900)
+    assert tier2_count(env) == 0
+    assessor._refund_tier2_slot("owner", day)
+    assert tier2_count(env) == 0
+    env.fetcher.error = None
+    env.fetcher.text = None
+    await env.clock.advance(301)
+    day = assessor._take_tier2_slot("owner")
+    await assessor._tier2_job("owner", day, OTHER, {"title_question": "Why?"}, 900)
+    assert tier2_count(env) == 1
+
+
+# ---- privacy of job ids --------------------------------------------------------------------------
+
+
+async def test_the_transcript_endpoint_only_exposes_the_callers_own_job_id(env):
+    env.svc.gate.report_block(REASON_RATE_LIMITED, 600)
+    partner = {"Authorization": "Bearer utb_othertoken"}
+    queued = (await env.client.post(f"/v1/videos/{VID}/transcribe")).json()
+    mine = (await env.client.get(f"/v1/videos/{VID}/transcript")).json()
+    assert mine["transcript_status"] == "transcribing" and mine["job_id"] == queued["job_id"]
+    theirs = (await env.client.get(f"/v1/videos/{VID}/transcript", headers=partner)).json()
+    assert theirs["transcript_status"] == "transcribing" and "job_id" not in theirs
+    assert queued["job_id"] not in str(theirs)
+    body = (await env.client.get(f"/v1/videos/{VID}/summary", headers=partner)).json()
+    assert body["transcript_status"] == "transcribing" and queued["job_id"] not in str(body)
+    other = (await env.client.post(f"/v1/videos/{VID}/transcribe", headers=partner)).json()
+    assert other["job_id"] != queued["job_id"]
+
+
+async def test_an_empty_caption_track_hold_answers_delayed_everywhere(env):
+    env.svc.transcripts._record_hold(VID, "delayed", "empty_track", 3600)
+    body = (await summary(env)).json()
+    assert body["status"] == "pending" and body["transcript_status"] == "delayed"
+    assert body["retry_after_s"] == 3600 and "retrying in ~60 min" in body["error"]
+    status = (await env.client.get(f"/v1/videos/{VID}/transcript")).json()
+    assert status["transcript_status"] == "delayed" and status["retry_after_s"] == 3600
+    assert env.fetcher.calls == [] and env.llm.calls == []

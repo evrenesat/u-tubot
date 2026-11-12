@@ -37,6 +37,29 @@ REASON_BOT_CHECK = "bot_check"
 REASON_COOLDOWN = "cooldown"
 REASON_NETWORK = "network"
 REASON_EMPTY = "empty_response"
+REASON_EMPTY_TRACK = "empty_track"
+REASON_INCOMPLETE = "incomplete_response"
+
+REASON_PRIVATE = "private"
+REASON_MEMBERS_ONLY = "members_only"
+REASON_AGE_RESTRICTED = "age_restricted"
+REASON_UNAVAILABLE = "unavailable"
+REASON_FORBIDDEN_MEDIA = "forbidden"
+REASON_TOO_LONG = "too_long"
+REASON_LIVE = "live"
+
+VIDEO_FAILURE_MESSAGES = {
+    REASON_PRIVATE: "This video is private.",
+    REASON_MEMBERS_ONLY: "This video is for channel members only.",
+    REASON_AGE_RESTRICTED: "This video is age-restricted and cannot be read without signing in.",
+    REASON_UNAVAILABLE: "This video is unavailable.",
+    REASON_FORBIDDEN_MEDIA: "YouTube refused the download for this video.",
+    REASON_TOO_LONG: "This video is too long to transcribe.",
+    REASON_LIVE: "Live streams cannot be transcribed.",
+}
+# After these the audio is still reachable, so transcribing may work; after the others it is not.
+TRANSCRIBABLE_AFTER = frozenset({REASON_FORBIDDEN_MEDIA})
+STATUS_GONE = 410
 
 STATUS_TOO_MANY_REQUESTS = 429
 STATUS_FORBIDDEN = 403
@@ -45,9 +68,29 @@ ERROR_TEXT_MAX_CHARS = 200
 
 BOT_CHECK_RE = re.compile(r"confirm you.{0,8}re not a bot", re.IGNORECASE)
 RATE_LIMIT_RE = re.compile(
-    r"HTTP Error 429|Too Many Requests|rate-limited by YouTube|try again later", re.IGNORECASE
+    r"HTTP Error 429|Too Many Requests|rate-limited by YouTube", re.IGNORECASE
 )
 FORBIDDEN_RE = re.compile(r"HTTP Error 403", re.IGNORECASE)
+GONE_RE = re.compile(r"HTTP Error 410", re.IGNORECASE)
+METADATA_REQUEST_RE = re.compile(
+    r"unable to download (?:webpage|api page|json|player)|player response|watch page", re.IGNORECASE
+)
+VIDEO_FAILURE_PATTERNS = (
+    (REASON_MEMBERS_ONLY, re.compile(r"members-only|members only|join this channel", re.I)),
+    (
+        REASON_AGE_RESTRICTED,
+        re.compile(r"confirm your age|age-restricted|inappropriate for some", re.I),
+    ),
+    (REASON_PRIVATE, re.compile(r"private video|this video is private", re.I)),
+    (
+        REASON_UNAVAILABLE,
+        re.compile(
+            r"video unavailable|not available|has been removed|no longer available"
+            r"|been terminated|who has blocked it|not made this video available",
+            re.I,
+        ),
+    ),
+)
 NETWORK_RE = re.compile(
     r"timed out|timeout|connection (?:reset|refused|aborted|error)|name resolution"
     r"|network is unreachable|unable to download|remote end closed|\bSSL\b|HTTP Error 5\d\d",
@@ -79,6 +122,27 @@ class YoutubeBlocked(YoutubeDelayed):
         self.hint_s = hint_s
 
 
+class YoutubeVideoError(YoutubeError):
+    """This one video cannot be read (private, members-only, age-gated, gone, refused).
+
+    YouTube answered, so it says nothing about the gate: it never opens the breaker.
+    """
+
+    expected = True
+
+    def __init__(self, reason: str):
+        super().__init__(f"youtube video error: {reason}")
+        self.reason = reason
+
+    @property
+    def message(self) -> str:
+        return VIDEO_FAILURE_MESSAGES.get(self.reason, VIDEO_FAILURE_MESSAGES[REASON_UNAVAILABLE])
+
+    @property
+    def can_transcribe(self) -> bool:
+        return self.reason in TRANSCRIBABLE_AFTER
+
+
 class YoutubeCooldown(YoutubeDelayed):
     """The breaker is open; nothing was sent to YouTube."""
 
@@ -92,15 +156,32 @@ def redact_urls(text: str) -> str:
 
 
 def classify_failure(
-    exc: BaseException, network_retry_s: float, retry_after_s: float | None = None
+    exc: BaseException,
+    network_retry_s: float,
+    retry_after_s: float | None = None,
+    *,
+    media: bool = False,
 ) -> YoutubeError:
-    """Map a yt-dlp or transport failure to a sanitised YouTube error."""
+    """Map a yt-dlp or transport failure to a sanitised YouTube error.
+
+    Only gate-level signals open the breaker: a 429, the bot check, or a 403 on the watch, player
+    or metadata request. With `media=True` (an audio or caption download) a 403 that does not come
+    from such a request, like a 410 or a members-only, age-gated, private or unavailable video, is a
+    problem of this one video.
+    """
     text = str(exc)
     if BOT_CHECK_RE.search(text):
         return YoutubeBlocked(REASON_BOT_CHECK, retry_after_s)
     if RATE_LIMIT_RE.search(text):
         return YoutubeBlocked(REASON_RATE_LIMITED, retry_after_s)
+    for reason, pattern in VIDEO_FAILURE_PATTERNS:
+        if pattern.search(text):
+            return YoutubeVideoError(reason)
+    if GONE_RE.search(text):
+        return YoutubeVideoError(REASON_UNAVAILABLE)
     if FORBIDDEN_RE.search(text):
+        if media and not METADATA_REQUEST_RE.search(text):
+            return YoutubeVideoError(REASON_FORBIDDEN_MEDIA)
         return YoutubeBlocked(REASON_FORBIDDEN, retry_after_s)
     if isinstance(exc, OSError | TimeoutError) or NETWORK_RE.search(text):
         return YoutubeDelayed(REASON_NETWORK, network_retry_s)
@@ -108,12 +189,19 @@ def classify_failure(
 
 
 def classify_status(
-    status: int, network_retry_s: float, retry_after_s: float | None
+    status: int, network_retry_s: float, retry_after_s: float | None, *, media: bool = False
 ) -> YoutubeError | None:
-    """Map an HTTP status from a direct YouTube request; None when it is not a problem."""
+    """Map an HTTP status from a direct YouTube request; None when it is not a problem.
+
+    `media=True` is a caption or media URL: its 403 and 410 belong to the video, not to the gate.
+    """
     if status == STATUS_TOO_MANY_REQUESTS:
         return YoutubeBlocked(REASON_RATE_LIMITED, retry_after_s)
+    if status == STATUS_GONE:
+        return YoutubeVideoError(REASON_UNAVAILABLE)
     if status == STATUS_FORBIDDEN:
+        if media:
+            return YoutubeVideoError(REASON_FORBIDDEN_MEDIA)
         return YoutubeBlocked(REASON_FORBIDDEN, retry_after_s)
     if status >= STATUS_SERVER_ERROR_FLOOR:
         return YoutubeDelayed(REASON_NETWORK, network_retry_s)
@@ -199,6 +287,9 @@ class YoutubeGate:
                 "INSERT OR REPLACE INTO youtube_gate(id,cooldown_until,strikes) VALUES(1,?,?)",
                 [self._until, self._strikes],
             )
+
+    def now(self) -> float:
+        return self._clock.now()
 
     def cooldown_remaining(self) -> float:
         return max(0.0, self._until - self._clock.now())
@@ -339,5 +430,50 @@ class YoutubeGate:
             except YoutubeBlocked as exc:
                 exc.retry_after_s = self.report_block(exc.reason, exc.hint_s)
                 raise
+            except YoutubeVideoError:
+                self.report_ok()
+                raise
             self.report_ok()
             return result
+
+    async def run_started(
+        self,
+        fn: Callable[[Callable[[], None]], Awaitable[T]],
+        priority: int = BACKGROUND,
+        key: str | None = None,
+    ) -> T:
+        """Gate only the start of a long transfer.
+
+        `fn(started)` runs in a paced slot; the slot is released as soon as `fn` calls `started()`
+        (thread-safe) or finishes, and the transfer then runs on without holding it, so metadata and
+        caption fetches never wait behind a whole download. A 429 after the start still opens the
+        breaker.
+        """
+        loop = asyncio.get_running_loop()
+        started: asyncio.Future[None] = loop.create_future()
+        tasks: list[asyncio.Task[T]] = []
+
+        def signal() -> None:
+            loop.call_soon_threadsafe(lambda: started.done() or started.set_result(None))
+
+        async def start_phase() -> None:
+            task = loop.create_task(fn(signal))
+            tasks.append(task)
+            try:
+                await asyncio.wait({task, started}, return_when=asyncio.FIRST_COMPLETED)
+            except asyncio.CancelledError:
+                task.cancel()
+                raise
+            if task.done():
+                task.result()
+
+        await self.run(start_phase, priority, key)
+        task = tasks[0]
+        try:
+            return await task
+        except YoutubeBlocked as exc:
+            exc.retry_after_s = self.report_block(exc.reason, exc.hint_s)
+            raise
+        except asyncio.CancelledError:
+            task.cancel()
+            raise

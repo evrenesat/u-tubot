@@ -99,6 +99,8 @@ class YoutubeConfig(BaseModel):
 class TranscriptConfig(BaseModel):
     cache_ttl_s: int = 30 * 86400
     no_captions_ttl_s: int = 3 * 86400
+    video_failure_ttl_s: int = 3600
+    empty_track_retry_s: int = 3600
     fetch_timeout_s: float = 60.0
     prefer_manual: bool = True
     default_language: str = "en"
@@ -151,6 +153,9 @@ class CaptionsConfig(BaseModel):
     asr_speed_factor: float = 1.5
     asr_overhead_s: int = 30
     transcribe_max_active_per_user: int = 5
+    job_max_attempts: int = 3
+    media_orphan_age_s: int = 3600
+    max_download_bytes: int = 400 * 1024 * 1024
     audio_format: str = "bestaudio/best"
     asr_chunk_s: int = 600
     translate_batch: int = 40

@@ -61,10 +61,10 @@ is no text they say why:
 | `delayed` | `pending` | `error` (user-facing, "YouTube is limiting transcript downloads; retrying in ~N min"), `retry_after_s` | shows `error`, asks again after `retry_after_s` (not before) |
 | `none` | `needs_transcript` | `can_transcribe`, `message` ("No captions. Transcribe the audio in the background?"), `estimate_s` (rough seconds, may be null) | shows `message`; when `can_transcribe` offers a "Transcribe in background?" action that calls `POST /v1/videos/{id}/transcribe` |
 | `transcribing` | `pending` | `progress` 0.0-1.0, `estimate_s` | shows progress, asks again later |
-| `failed` | `failed` | `error`, `can_transcribe` | shows `error`, may offer the transcribe action again |
+| `failed` | `failed` | `error`, `reason`, `can_transcribe` | shows `error`; `reason` is `private`, `members_only`, `age_restricted`, `unavailable`, `forbidden`, `too_long`, `live` (video problems) or absent (a transcription job failed); offers the transcribe action again only when `can_transcribe` |
 | `null` | any | none | the problem is not the transcript (model busy, generic failure) |
 
-`delayed` means YouTube slowed the server down (HTTP 429/403, bot check, network error or an open cooldown); it is never
+`delayed` means YouTube slowed the server down (HTTP 429, bot check, 403 on the watch request, network error, an incomplete answer or an open cooldown); it is never
 cached, so the same request works once `retry_after_s` has passed. `none` is remembered by the backend for 3 days
 (`[transcripts] no_captions_ttl_s`) and then checked again; `can_transcribe` is false for live streams and videos
 longer than `[captions] max_duration_s`. The summary of a video whose transcription is queued or running answers `pending` with
@@ -199,13 +199,14 @@ already has the maximum number of active transcriptions (`[captions] transcribe_
 Where the transcript stands. Cheap: never contacts YouTube.
 
 ```json
-{"video_id":"...","transcript_status":"ok|none|transcribing|failed|unknown",
+{"video_id":"...","transcript_status":"ok|delayed|none|transcribing|failed|unknown",
  "source":"youtube_captions|asr","lang":"en",
  "progress":0.4,"estimate_s":630,"job_id":"...",
  "can_transcribe":true,"message":"...","error":null}
 ```
 Only the fields that apply are present (`source`/`lang` with `ok`, `progress`/`estimate_s`/`job_id` with `transcribing`,
-`can_transcribe`/`message`/`estimate_s` with `none`, `error`/`can_transcribe`/`job_id` with `failed`).
+`can_transcribe`/`message`/`estimate_s` with `none`, `error`/`reason`/`can_transcribe` with `failed`,
+`error`/`retry_after_s` with `delayed`). `job_id` appears only for the caller's own job, never another user's.
 `unknown` (only here) means the backend has not looked yet.
 
 ### `GET /v1/jobs?limit=50`

@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS transcripts(
   fetched_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS no_captions(
   video_id TEXT PRIMARY KEY, checked_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS video_holds(
+  video_id TEXT PRIMARY KEY, kind TEXT NOT NULL, reason TEXT NOT NULL, until REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS youtube_gate(
   id INTEGER PRIMARY KEY CHECK(id=1), cooldown_until REAL NOT NULL, strikes INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS triage(
@@ -47,7 +49,7 @@ CREATE TABLE IF NOT EXISTS jobs(
   id TEXT PRIMARY KEY, user TEXT NOT NULL, video_id TEXT NOT NULL, lang TEXT NOT NULL,
   translate_to TEXT, status TEXT NOT NULL, progress REAL NOT NULL DEFAULT 0, error TEXT,
   created_at REAL NOT NULL, updated_at REAL NOT NULL, kind TEXT NOT NULL DEFAULT 'captions',
-  title TEXT, finished_at REAL);
+  title TEXT, finished_at REAL, attempts INTEGER NOT NULL DEFAULT 0, not_before REAL);
 CREATE TABLE IF NOT EXISTS captions(
   video_id TEXT NOT NULL, lang TEXT NOT NULL, label TEXT NOT NULL, speakers INTEGER NOT NULL,
   vtt TEXT NOT NULL, created_at REAL NOT NULL, PRIMARY KEY(video_id, lang));
@@ -69,6 +71,8 @@ JOB_COLUMNS = {
     "kind": "TEXT NOT NULL DEFAULT 'captions'",
     "title": "TEXT",
     "finished_at": "REAL",
+    "attempts": "INTEGER NOT NULL DEFAULT 0",
+    "not_before": "REAL",
 }
 METADATA_ONLY = "metadata_only"
 

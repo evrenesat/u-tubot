@@ -514,7 +514,7 @@ def create_app(
         user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
-        return svc.transcription.status(video_id, meta.as_dict())
+        return svc.transcription.status(video_id, user.name, meta.as_dict())
 
     @app.get("/v1/jobs")
     async def jobs_list(
