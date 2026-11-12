@@ -30,6 +30,12 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
   background (~N min)", which starts the job on the server and shows "Transcribing… N%" until the summary is ready. When YouTube slows
   the server down the message is shown and the request is repeated after the time the server gives, while the card or view is still
   shown. These states are never kept in the app.
+- The panel, the Summary view and the AI answer show the server's own message for a video without usable captions, for example "Captions
+  are temporarily unavailable from YouTube; transcribe the audio instead (~90 s)?" when YouTube limits the caption API; the app's own
+  wording is only used when the server says nothing. A transcription the server starts by itself shows "Transcribing… N% (~M min)"
+  without asking and the summary appears when it is done (the AI answer follows it too). A delay shows the server's explanation and a
+  "Retrying in N s" countdown.
+- The Settings tile of u·tubot has its own icon (the symbol) instead of the crossed-out "AI" of Content filtering.
 - Automatic updates: the app checks for a new version shortly after it starts and then at most every 6 hours, with Electric Eel's
   update dialog and installer (Settings, Updates, Notify about updates turns it off). A backend typed in Advanced on 0.2.0, which
   never stored an update address, now uses `<backend>/app/update.json` for both the automatic and the manual "Check for updates".

@@ -1,5 +1,32 @@
 # u·tubot devlog
 
+## 2026-11-12 (server messages in the app, issue 25)
+
+- The server's words win: `UtubotStateText.noCaptionsShort` (the passive panel) used the local "press Info to transcribe" whenever
+  `can_transcribe` was true and ignored `message`, so the "Captions are temporarily unavailable..." text of the caption-limited
+  answer never showed. Panel, Summary view and AI answer now show `message` and use the local strings only without one.
+- Transcribing shows the estimate next to the percentage ("Transcribing… 40% (~4 min)"); a delayed answer shows the server's `error`
+  and a one-second countdown to the next request (`UtubotCountdown` on the existing `UtubotScheduler`, `State.retryInSec`; the old
+  single timer is the countdown's last tick). The Summary view's focus is not pulled to Retry on every tick (it moves only when the
+  phase changes).
+- `UtubotAnswerModel` (the AI answer) now waits like the Summary view: retries a delayed request after its time and follows a running
+  transcription with `GET /transcript` (4 s) until the answer can be asked for. Before, an auto-started job left it on a stale
+  "Transcribing…" until Retry.
+- `duration_s`, `title` and `channel`: `insight`, `summary` and `transcribe` all send them (`UtubotClient.addMeta`, tested for each).
+  The gap found: `Video.from(Video)` copies the media item and the badge but not the duration field, so a copied card could send no
+  length; `UtubotMeta.durationSec` now falls back to the media item. `GET /transcript` takes the same optional fields only as a hint
+  for its estimate and the app re-asks the summary (with metadata) after it, so it sends none. The app has no `ask` call.
+- Settings tile icon: `settings_utubot.png` (302x302 RGBA, white on transparent) replaces `settings_aislist` for the u·tubot entry
+  (Content filtering keeps the crossed-out "AI"). `assets/brand/render.py` renders it from `utubot-symbol-mono.svg`: the tile is
+  dropped, white and the light dot stay, the grey u and ring become holes (read from the render's luminance, so antialiased edges are
+  exact), then it is fitted into the canvas and padding measured from `settings_about.png`. `UtubotBrandingTest` checks the tile, the
+  canvas, the padding and that every visible pixel is white.
+- Checked on the emulator (Modern skin, mock backend, real cards): the panel with the server's caption-limited message, with an auto-started
+  "Transcribing… 40% (~4 min)", with the server's delayed error and a live "Retrying in 39 s"; the u·tubot tile in Settings; the panel
+  requests carry `title`, `channel` and `duration_s` (`/summary?wait_ms=20000&prompt=panel&title=Gabriela&channel=KATSEYE&duration_s=198`).
+  `scripts/emulator_mock_backend.py` got `message`, `estimate`, `retry_after`, `progress` and the mode `auto_transcribe` for this.
+  Screenshots: `docs/screenshots/r2/`.
+
 ## 2026-11-12 (own identity)
 
 - New symbol: a play triangle holding a lowercase u, the interpunct a lime ball on its tip (an indigo ring cuts it off the white tip), on an
