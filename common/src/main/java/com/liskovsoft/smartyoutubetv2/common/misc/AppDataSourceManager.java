@@ -16,6 +16,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.settings.PlayerSecti
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.settings.SearchSectionSettingsPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.settings.SystemSectionSettingsPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.settings.UpdatesSettingsPresenter;
+import com.liskovsoft.smartyoutubetv2.common.diagnostics.DataSubmitter;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.ExoFormatItem;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem.VideoPreset;
@@ -62,8 +63,11 @@ public class AppDataSourceManager {
 
         settingItems.add(new SettingsItem(
                 context.getString(R.string.settings_updates), () -> UpdatesSettingsPresenter.instance(context).show(), R.drawable.settings_updates));
-        settingItems.add(new SettingsItem(
-                context.getString(R.string.settings_debugging), () -> DebuggingSettingsPresenter.instance(context).show(), R.drawable.settings_debugging));
+        // The section is about submitting the diagnostics: without a server (the flavor has none) it is left out
+        if (DataSubmitter.isConfigured(context)) {
+            settingItems.add(new SettingsItem(
+                    context.getString(R.string.settings_debugging), () -> DebuggingSettingsPresenter.instance(context).show(), R.drawable.settings_debugging));
+        }
 
         if (Helpers.equalsAny(context.getPackageName(), Utils.KNOWN_PACKAGES)) {
             settingItems.add(new SettingsItem(

@@ -15,24 +15,24 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * A minimal HTTP/1.1 server for the client tests: one answer per path prefix, one request per connection
  */
-final class TinyHttpServer {
-    interface Handler {
+public final class TinyHttpServer {
+    public interface Handler {
         Response handle(Request request) throws InterruptedException;
     }
 
-    static final class Request {
-        String method;
-        String path;
-        String query;
-        final Map<String, String> headers = new HashMap<>();
-        String body = "";
+    public static final class Request {
+        public String method;
+        public String path;
+        public String query;
+        public final Map<String, String> headers = new HashMap<>();
+        public String body = "";
     }
 
-    static final class Response {
-        final int code;
-        final String body;
+    public static final class Response {
+        public final int code;
+        public final String body;
 
-        Response(int code, String body) {
+        public Response(int code, String body) {
             this.code = code;
             this.body = body;
         }
@@ -42,22 +42,22 @@ final class TinyHttpServer {
     private final Map<String, Handler> mHandlers = new ConcurrentHashMap<>();
     private volatile boolean mStopped;
 
-    TinyHttpServer() throws IOException {
+    public TinyHttpServer() throws IOException {
         mSocket = new ServerSocket(0, 0, InetAddress.getByName("127.0.0.1"));
         Thread thread = new Thread(this::acceptLoop, "tiny-http");
         thread.setDaemon(true);
         thread.start();
     }
 
-    int getPort() {
+    public int getPort() {
         return mSocket.getLocalPort();
     }
 
-    void on(String pathPrefix, Handler handler) {
+    public void on(String pathPrefix, Handler handler) {
         mHandlers.put(pathPrefix, handler);
     }
 
-    void stop() {
+    public void stop() {
         mStopped = true;
 
         try {

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Every address u·tubot shows: its own repository, never Electric Eel's or SmartTube's (they are credited, not asked for support) -->
+    <string name="about_donation_url" translatable="false"></string>
+    <string name="about_feedback_url" translatable="false">https://github.com/evrenesat/u-tubot/issues</string>
+    <string name="about_releases_url" translatable="false">https://github.com/evrenesat/u-tubot/releases</string>
+    <string name="about_git_repository_url" translatable="false">https://github.com/evrenesat/u-tubot</string>
+    <string name="about_credit" translatable="false">Based on Electric Eel and SmartTube</string>
+    <string-array name="about_credits">
+        <item>Electric Eel|https://github.com/cygnusx-1-org/electriceel</item>
+        <item>SmartTube|https://github.com/yuliskov/SmartTube</item>
+    </string-array>
+
+    <!-- The full About (not shown to this package) -->
+    <string name="releases_url" translatable="false">https://github.com/evrenesat/u-tubot/releases</string>
+    <string name="sources_url" translatable="false">https://github.com/evrenesat/u-tubot</string>
+    <string name="web_site_url" translatable="false">https://github.com/evrenesat/u-tubot</string>
+    <string-array name="donations" />
+    <string-array name="feedback">
+        <item>GitHub issues|https://github.com/evrenesat/u-tubot/issues</item>
+    </string-array>
+
+    <!-- Settings → Debugging → Submit data would send the diagnostics to Electric Eel's server: no address, no section (DataSubmitter.isConfigured) -->
+    <string name="submit_data_url" translatable="false"></string>
+</resources>

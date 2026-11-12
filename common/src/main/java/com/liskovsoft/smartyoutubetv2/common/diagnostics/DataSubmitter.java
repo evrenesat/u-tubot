@@ -1,6 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.diagnostics;
 
 import android.content.Context;
+import android.text.TextUtils;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
@@ -139,10 +140,21 @@ public final class DataSubmitter {
     }
 
     /**
+     * A flavor without the address of a server (submit_data_url) has no submitting: Settings → Debugging doesn't offer it
+     */
+    public static boolean isConfigured(Context context) {
+        return !TextUtils.isEmpty(context.getString(R.string.submit_data_url));
+    }
+
+    /**
      * When the app starts, with Settings → Debugging → Submit data on startup on (see AutoSubmitWorker). Turned off: nothing's
      * scheduled anymore.
      */
     public static void autoSubmit(Context context) {
+        if (!isConfigured(context)) {
+            return;
+        }
+
         try {
             AutoSubmitWorker.schedule(context.getApplicationContext());
         } catch (RuntimeException e) {

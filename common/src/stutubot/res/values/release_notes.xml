@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings → Updates → Release notes: the releases of u·tubot, not of Electric Eel (see GitHubReleases) -->
+    <string name="release_notes_url" translatable="false">https://api.github.com/repos/evrenesat/u-tubot/releases?per_page=10</string>
+    <string name="release_notes_tag_prefix" translatable="false">utubot-v</string>
+</resources>
