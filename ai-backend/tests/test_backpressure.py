@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from tests.mock_openai import MockOpenAI
+from tests.test_prompts_summary import VID
 from utubot.config import Config, LLMTask, ProviderConfig
 from utubot.errors import MSG_BUSY
 from utubot.llm import BACKGROUND, INTERACTIVE, LLMBusyError, LLMClient, LLMError, PriorityLimiter
@@ -198,7 +199,10 @@ async def test_json_empty_content_retries_with_more_tokens(client, mock_llm, cfg
     )
     assert data["answer_short"]
     first, second = mock_llm.calls
-    assert second["max_tokens"] == 4321 and second["max_tokens"] > first["max_tokens"]
+    assert (
+        second["max_tokens"] == 4321 + cfg.llm.reasoning_headroom_tokens
+        and second["max_tokens"] > first["max_tokens"]
+    )
     assert "JSON only" in second["messages"][-1]["content"]
 
 
@@ -247,3 +251,49 @@ async def test_assess_coalesce_flushes_full_batch_immediately(env):
     videos = [vid(i, f"Title {i}") for i in range(25)]
     r = await env.client.post("/v1/assess", json={"videos": videos, "wait_ms": 1000})
     assert all(v["status"] == "ready" for v in r.json()["results"])
+
+
+async def test_headroom_added_to_max_tokens(client, mock_llm, cfg):
+    await client.chat(LLMTask(model="worker", max_tokens=500), MSGS)
+    assert mock_llm.calls[0]["max_tokens"] == 500 + cfg.llm.reasoning_headroom_tokens
+    await client.chat(LLMTask(model="worker", max_tokens=500), MSGS, max_tokens=700)
+    assert mock_llm.calls[1]["max_tokens"] == 700 + cfg.llm.reasoning_headroom_tokens
+
+
+async def test_task_headroom_override_zero(client, mock_llm):
+    task = LLMTask(model="worker", max_tokens=500, reasoning_headroom_tokens=0)
+    await client.chat(task, MSGS)
+    assert mock_llm.calls[0]["max_tokens"] == 500
+
+
+async def test_truncated_then_ok_retries_with_doubled_budget(client, mock_llm, cfg):
+    mock_llm.length_first = 1
+    result = await client.chat_result(LLMTask(model="worker", max_tokens=500), MSGS)
+    assert not result.truncated
+    first, second = mock_llm.calls
+    head = cfg.llm.reasoning_headroom_tokens
+    assert first["max_tokens"] == 500 + head and second["max_tokens"] == 1000 + head
+
+
+async def test_truncated_twice_is_marked(client, mock_llm):
+    mock_llm.length_first = 5
+    result = await client.chat_result(TASK, MSGS)
+    assert result.truncated and len(mock_llm.calls) == 2
+    assert (await client.chat(TASK, MSGS)).endswith(" …")
+
+
+async def test_truncated_summary_not_cached_long_term(env):
+    env.llm.length_first = 2
+    p = {"wait_ms": 5000}
+    r = await env.client.get(f"/v1/videos/{VID}/summary", params=p)
+    assert r.json()["status"] == "ready" and r.json()["text"].endswith(" …")
+    n = len(env.llm.calls)
+    again = await env.client.get(f"/v1/videos/{VID}/summary", params=p)
+    assert again.json()["text"] and not again.json()["text"].endswith(" …")
+    assert len(env.llm.calls) > n
+
+
+async def test_prompt_max_tokens_is_answer_budget(env):
+    await env.client.get(f"/v1/videos/{VID}/summary", params={"wait_ms": 5000})
+    head = env.cfg.llm.reasoning_headroom_tokens
+    assert env.llm.calls[-1]["max_tokens"] == 700 + head

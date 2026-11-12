@@ -29,6 +29,8 @@ RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
 HTTP_ERROR_FLOOR = 400
 HTTP_SERVER_ERROR_FLOOR = 500
 JITTER_LOW = 0.5
+TRUNCATION_RETRY_FACTOR = 2
+CUT_MARK = " …"
 JSON_NUDGE = "Reply with JSON only, no prose, no reasoning."
 RETRYABLE_TRANSPORT = (httpx.NetworkError, httpx.ConnectTimeout, httpx.RemoteProtocolError)
 
@@ -106,6 +108,12 @@ def parse_retry_after(value: str | None) -> float | None:
 
 
 @dataclass
+class ChatResult:
+    text: str
+    truncated: bool
+
+
+@dataclass
 class Completion:
     text: str
     reasoning: bool
@@ -175,6 +183,10 @@ class LLMClient:
             if target not in out:
                 out.append(target)
         return out
+
+    def headroom(self, task: LLMTask) -> int:
+        override = task.reasoning_headroom_tokens
+        return self.cfg.llm.reasoning_headroom_tokens if override is None else override
 
     def _headers(self, provider: str) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -255,7 +267,7 @@ class LLMClient:
             body: dict[str, Any] = {
                 "model": name,
                 "messages": messages,
-                "max_tokens": max_tokens or task.max_tokens,
+                "max_tokens": (max_tokens or task.max_tokens) + self.headroom(task),
                 "temperature": task.temperature,
             }
             if task.reasoning_effort:
@@ -286,6 +298,44 @@ class LLMClient:
         finish = choice.get("finish_reason")
         return Completion(strip_thinking(content), reasoning, finish)
 
+    async def chat_result(
+        self,
+        task: LLMTask,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        priority: int = BACKGROUND,
+        deadline_s: float | None = None,
+    ) -> ChatResult:
+        answer_budget = max_tokens or task.max_tokens
+        done = await self.complete(
+            task,
+            messages,
+            model=model,
+            max_tokens=answer_budget,
+            priority=priority,
+            deadline_s=deadline_s,
+        )
+        if done.finish_reason == "length":
+            log.warning("llm output kind=truncated retry=1 reasoning=%s", done.reasoning)
+            done = await self.complete(
+                task,
+                messages,
+                model=model,
+                max_tokens=answer_budget * TRUNCATION_RETRY_FACTOR,
+                priority=priority,
+                deadline_s=deadline_s,
+            )
+        truncated = done.finish_reason == "length"
+        if not done.text:
+            kind = "truncated" if truncated else "empty"
+            log.warning("llm output unusable kind=%s reasoning_only=%s", kind, done.reasoning)
+            raise LLMError(f"model returned no answer ({kind})")
+        if truncated:
+            log.warning("llm output kind=truncated retry=exhausted")
+        return ChatResult(done.text, truncated)
+
     async def chat(
         self,
         task: LLMTask,
@@ -296,7 +346,7 @@ class LLMClient:
         priority: int = BACKGROUND,
         deadline_s: float | None = None,
     ) -> str:
-        done = await self.complete(
+        result = await self.chat_result(
             task,
             messages,
             model=model,
@@ -304,11 +354,7 @@ class LLMClient:
             priority=priority,
             deadline_s=deadline_s,
         )
-        if not done.text:
-            kind = "truncated" if done.finish_reason == "length" else "empty"
-            log.warning("llm output unusable kind=%s reasoning_only=%s", kind, done.reasoning)
-            raise LLMError(f"model returned no answer ({kind})")
-        return done.text
+        return result.text + CUT_MARK if result.truncated else result.text
 
     async def chat_json(
         self,

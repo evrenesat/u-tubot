@@ -60,8 +60,12 @@ so give the summary task a model with that much context and decent instruction f
   JSON once, the backend asks again (`retries_on_bad_json`).
 - `reasoning_effort` is sent to the endpoint only when you set it. For triage use `"none"` (or the lowest your provider
   accepts) so a reasoning model does not spend seconds per card. Endpoints that reject the field: leave it unset.
-- `max_tokens` usually includes reasoning tokens. For a reasoning model raise it (triage 2500 is the default; give summaries
-  2000 or more), otherwise the answer is cut off.
+- `max_tokens` is the budget for the visible answer. The backend adds `[llm] reasoning_headroom_tokens` (default 2048) to
+  every request so reasoning models can think without cutting the answer; a task may override it with its own
+  `reasoning_headroom_tokens` (`0` for endpoints without reasoning). A prompt's `max_tokens` is an answer budget too.
+- When the endpoint reports `finish_reason: length` the call is retried once with the answer budget doubled. If the text is
+  still cut, it is returned with a trailing " …", logged as `kind=truncated`, and not cached long-term (summaries use the ad-hoc
+  TTL), so a later request tries again.
 - Prefer a non-reasoning or low-effort model for triage and the app's interactive summary panel; the TV waits for results.
 
 ## Cost and speed notes

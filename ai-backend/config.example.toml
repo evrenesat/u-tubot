@@ -34,6 +34,9 @@ default_provider = "local"
 timeout_s = 120.0
 retries_on_bad_json = 1           # one retry when the model returns unparsable JSON
 json_retry_max_tokens = 6000      # max_tokens for the one JSON retry (reasoning models)
+# max_tokens (here and per task/prompt) is the ANSWER budget; this headroom is added on top for reasoning tokens.
+# Each [llm.<task>] may override it; use 0 for endpoints that do not reason.
+reasoning_headroom_tokens = 2048
 # Fail-fast endpoints answer 503/429 when busy. Retries use exponential backoff with jitter and
 # honour Retry-After, until the per-task deadline; then the task's `fallback` models are tried.
 retry_max_attempts = 4            # per model

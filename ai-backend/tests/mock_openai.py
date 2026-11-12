@@ -22,6 +22,7 @@ class MockOpenAI:
         self.busy_models: set[str] = set()
         self.empty_first = 0
         self.finish_reason = "stop"
+        self.length_first = 0
         self.active = 0
         self.max_active = 0
         self.app = self._build()
@@ -60,9 +61,11 @@ class MockOpenAI:
             if self.empty_first > 0:
                 self.empty_first -= 1
                 message = {"role": "assistant", "content": "", "reasoning_content": "thinking..."}
-            return {
-                "choices": [{"index": 0, "message": message, "finish_reason": self.finish_reason}]
-            }
+            finish = self.finish_reason
+            if self.length_first > 0:
+                self.length_first -= 1
+                finish = "length"
+            return {"choices": [{"index": 0, "message": message, "finish_reason": finish}]}
 
         @app.post("/v1/audio/transcriptions")
         async def transcriptions(request: Request):

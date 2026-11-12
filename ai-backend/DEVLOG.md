@@ -1,5 +1,13 @@
 # DEVLOG
 
+## 2026-11-12 (truncated summaries)
+
+- Bug: summaries cut mid-sentence were cached as ready. Per-prompt `max_tokens` overrode the task budget and reasoning
+  models spent it on thinking (finish_reason=length). `max_tokens` is now the answer budget; `[llm] reasoning_headroom_tokens`
+  (2048, per-task override, 0 allowed) is added to each request. `chat_result` retries once with double budget on length; if
+  still cut the text gets " …", is logged kind=truncated and summaries are stored under the ad-hoc key (ad-hoc TTL).
+- Built-in prompt budgets raised: tldr 700, answer-title 400, takeaways 900, worth-it 600, eli-new 700.
+
 ## 2026-11-12 (LLM backpressure)
 
 - Production: the TV triggers /v1/assess per row, background triage saturated a fail-fast

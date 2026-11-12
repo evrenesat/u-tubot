@@ -10,7 +10,7 @@ from .bg import TaskRegistry, wait_task
 from .config import Config, UserPolicy
 from .db import Database
 from .errors import public_error
-from .llm import INTERACTIVE, LLMClient
+from .llm import CUT_MARK, INTERACTIVE, ChatResult, LLMClient
 from .prompts import DEFAULT_SYSTEM, Prompt, PromptStore, render
 from .transcripts import Transcript, TranscriptService, fmt_ts
 
@@ -156,21 +156,21 @@ class ContentService:
 
     async def _generate(
         self, prompt: Prompt, transcript: Transcript, policy: UserPolicy, question: str = ""
-    ) -> str:
+    ) -> ChatResult:
         body = await self.condensed(transcript) if transcript.text else ""
         values = self._values(
             transcript, body, policy, question or self._title_question(transcript.video_id)
         )
         system = render(prompt.system or DEFAULT_SYSTEM, values)
         user = render(prompt.template, values)
-        text = await self.llm.chat(
+        result = await self.llm.chat_result(
             self.cfg.llm.summary,
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             model=prompt.model,
             max_tokens=prompt.max_tokens,
             priority=INTERACTIVE,
         )
-        return clean_text(text)
+        return ChatResult(clean_text(result.text), result.truncated)
 
     def _cached_summary(
         self, video_id: str, key: str, chash: str, language: str, ttl_s: float | None = None
@@ -206,13 +206,18 @@ class ContentService:
         if failure:
             return {**base, "status": "failed", "error": failure}
 
+        used_key_box: list[str] = []
+
         async def job() -> None:
             transcript = await self.source(video_id, qmeta)
-            text = await self._generate(prompt, transcript, policy)
+            generated = await self._generate(prompt, transcript, policy)
+            text = generated.text + CUT_MARK if generated.truncated else generated.text
+            used_key = ADHOC_KEY if generated.truncated else store_key
+            used_key_box.append(used_key)
             self.db.execute(
                 "INSERT OR REPLACE INTO summaries(video_id,prompt_key,content_hash,language,text,"
                 "source,created_at) VALUES(?,?,?,?,?,?,?)",
-                [video_id, store_key, chash, policy.language, text, transcript.source, time.time()],
+                [video_id, used_key, chash, policy.language, text, transcript.source, time.time()],
             )
 
         task = self.registry.start(task_key, job)
@@ -224,7 +229,10 @@ class ContentService:
                 "status": "failed",
                 "error": public_error(task.exception(), "content task"),
             }
-        hit = self._cached_summary(video_id, store_key, chash, policy.language)
+        used = used_key_box[-1] if used_key_box else store_key
+        hit = self._cached_summary(
+            video_id, used, chash, policy.language, self.cfg.summary.adhoc_ttl_s
+        ) or self._cached_summary(video_id, used, chash, policy.language)
         return {**base, "status": "ready", "text": hit["text"], "source": hit["source"]}
 
     async def insight(
@@ -323,6 +331,7 @@ class ContentService:
         qhash = hashlib.sha256(question.encode()).hexdigest()[:16]
         task_key = ("ask", video_id, qhash, policy.language)
         results = self._ask_results
+        truncated_answers: dict[tuple, str] = {}
 
         async def job() -> None:
             transcript = await self.source(video_id, qmeta)
@@ -334,7 +343,7 @@ class ContentService:
             )
             if len(results) >= ASK_CACHE_MAX:
                 results.clear()
-            results[task_key] = await self.llm.chat(
+            answer = await self.llm.chat_result(
                 self.cfg.llm.answer,
                 [
                     {"role": "system", "content": render(ASK_SYSTEM, values)},
@@ -342,6 +351,10 @@ class ContentService:
                 ],
                 priority=INTERACTIVE,
             )
+            if answer.truncated:
+                truncated_answers[task_key] = answer.text + CUT_MARK
+            else:
+                results[task_key] = answer.text
 
         if task_key in results:
             return {"answer": results[task_key], "status": "ready"}
@@ -354,4 +367,7 @@ class ContentService:
                 "status": "failed",
                 "error": public_error(task.exception(), "content task"),
             }
-        return {"answer": results.get(task_key), "status": "ready"}
+        return {
+            "answer": results.get(task_key) or truncated_answers.get(task_key),
+            "status": "ready",
+        }

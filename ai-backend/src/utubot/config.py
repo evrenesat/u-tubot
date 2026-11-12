@@ -17,6 +17,7 @@ class LLMTask(BaseModel):
     provider: str | None = None
     reasoning_effort: str | None = None
     max_tokens: int = 1024
+    reasoning_headroom_tokens: int | None = None
     temperature: float = 0.2
     fallback: list[str] = Field(default_factory=list)
 
@@ -37,6 +38,7 @@ class LLMConfig(BaseModel):
     timeout_s: float = 120.0
     retries_on_bad_json: int = 1
     json_retry_max_tokens: int = 6000
+    reasoning_headroom_tokens: int = 2048
     retry_max_attempts: int = 4
     retry_base_s: float = 1.0
     retry_max_s: float = 15.0
