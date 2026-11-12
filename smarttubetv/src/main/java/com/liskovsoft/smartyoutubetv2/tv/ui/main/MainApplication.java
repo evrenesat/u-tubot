@@ -46,6 +46,7 @@ import com.liskovsoft.smartyoutubetv2.tv.ui.skin.SkinRegistry;
 import com.liskovsoft.smartyoutubetv2.tv.ui.settingscards.SettingsCardsActivity;
 import com.liskovsoft.smartyoutubetv2.tv.ui.signin.SignInActivity;
 import com.liskovsoft.smartyoutubetv2.tv.ui.webbrowser.WebBrowserActivity;
+import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotAppHooks;
 import com.liskovsoft.youtubeapi.service.YouTubeServiceManager;
 
 import org.conscrypt.Conscrypt;
@@ -98,6 +99,7 @@ public class MainApplication extends MultiDexApplication implements Configuratio
 
         setupGlobalExceptionHandler();
         setupViewManager();
+        UtubotAppHooks.install(this);
 
         // The channels can be updated with nothing else of the app running
         HomeScreenPlaylistsData.registerChannelsSource(this);

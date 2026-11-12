@@ -42,6 +42,11 @@ public final class UtubotMenu {
             appendAnswer(context, dialog, video);
         }
 
+        if (UtubotUiHost.canOpen()) {
+            dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_summary_item),
+                    option -> openInView(context, UtubotOpenRequests.Kind.SUMMARY, video)));
+        }
+
         boolean isPanelOn = settings.isSummaryPanelEnabled();
         dialog.appendSingleButton(UiOptionItem.from(context.getString(isPanelOn ? R.string.utubot_panel_on : R.string.utubot_panel_off),
                 option -> settings.setSummaryPanelEnabled(!isPanelOn)));
@@ -55,7 +60,20 @@ public final class UtubotMenu {
         dialog.appendSingleButton(UiOptionItem.from(title, option -> showAnswer(context, video)));
     }
 
+    /**
+     * Closes the menu: the screen under it opens the Summary view or the answer when it resumes
+     */
+    private static void openInView(Context context, UtubotOpenRequests.Kind kind, Video video) {
+        AppDialogPresenter.instance(context).closeDialog();
+        UtubotUiHost.request(kind, video);
+    }
+
     private static void showAnswer(Context context, Video video) {
+        if (UtubotUiHost.canOpen()) {
+            openInView(context, UtubotOpenRequests.Kind.ANSWER, video);
+            return;
+        }
+
         MessageHelpers.showMessage(context, context.getString(R.string.utubot_answer_loading));
         RxHelper.disposeActions(sAction);
         sAction = UtubotManager.instance(context).insightObserve(video)
@@ -79,7 +97,7 @@ public final class UtubotMenu {
     /**
      * The answer first, then the summary, the key points, the share of the video that matters and the source
      */
-    static String formatInsight(Context context, Insight insight) {
+    public static String formatInsight(Context context, Insight insight) {
         StringBuilder text = new StringBuilder();
 
         if (insight.titleQuestion != null) {

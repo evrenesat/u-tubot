@@ -26,6 +26,7 @@ import io.reactivex.schedulers.Schedulers;
  * Settings → u-tubot: the backend, the switches, the connection test and the prompt sets
  */
 public class UtubotSettingsPresenter extends BasePresenter<Void> {
+    private static final int MS_PER_SECOND = 1000;
     private final UtubotSettings mSettings;
     private final UtubotManager mManager;
     private Disposable mAction;
@@ -52,7 +53,7 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
     }
 
     /**
-     * The main page, always in this order: Import setup, Pair with code, the switches, Prompts, Test connection, Advanced
+     * The main page, always in this order: Import setup, Pair with code, the switches (Summary panel and its delay), Prompts, Test connection, Advanced
      */
     List<OptionCategory> buildCategories() {
         Context context = getContext();
@@ -76,6 +77,8 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
                 option -> mSettings.setAnswerInMenuEnabled(option.isSelected()), mSettings.isAnswerInMenuEnabled())));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_summary_panel), context.getString(R.string.utubot_summary_panel_desc),
                 option -> mSettings.setSummaryPanelEnabled(option.isSelected()), mSettings.isSummaryPanelEnabled())));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_panel_delay),
+                formatDelay(context, mSettings.getPanelDelayMs()), option -> showPanelDelays())));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_captions), context.getString(R.string.utubot_auto_captions_desc),
                 option -> mSettings.setAutoCaptionsEnabled(option.isSelected()), mSettings.isAutoCaptionsEnabled())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_prompts), option -> showPrompts())));
@@ -84,6 +87,30 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
                 option -> showAdvanced())));
 
         return categories;
+    }
+
+    private void showPanelDelays() {
+        Context context = getContext();
+        AppDialogPresenter dialog = AppDialogPresenter.instance(context);
+        List<OptionItem> options = new ArrayList<>();
+
+        for (int delayMs : UtubotSettings.PANEL_DELAY_CHOICES_MS) {
+            options.add(UiOptionItem.from(formatDelay(context, delayMs), option -> mSettings.setPanelDelayMs(delayMs),
+                    delayMs == mSettings.getPanelDelayMs()));
+        }
+
+        dialog.appendRadioCategory(context.getString(R.string.utubot_panel_delay), options);
+        dialog.showDialog(context.getString(R.string.utubot_panel_delay));
+    }
+
+    /**
+     * "1 s", "1.8 s"
+     */
+    static String formatDelay(Context context, int delayMs) {
+        float seconds = delayMs / (float) MS_PER_SECOND;
+        String text = seconds == Math.floor(seconds) ? String.valueOf((int) seconds) : String.valueOf(seconds);
+
+        return context.getString(R.string.utubot_panel_delay_value, text);
     }
 
     private void showAdvanced() {

@@ -1,18 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="utubot_card_video" type="id" />
+    <item name="utubot_overlay_list" type="id" />
+    <item name="utubot_overlay_text" type="id" />
+    <item name="utubot_overlay_retry" type="id" />
+
     <integer name="utubot_panel_width_percent">35</integer>
-    <integer name="utubot_panel_focus_debounce_ms">700</integer>
-    <integer name="utubot_panel_edge_check_ms">150</integer>
     <integer name="utubot_panel_title_lines">2</integer>
+    <integer name="utubot_panel_text_lines">3</integer>
+    <integer name="utubot_overlay_list_weight">28</integer>
+    <integer name="utubot_overlay_text_weight">72</integer>
+    <integer name="utubot_overlay_scroll_page_percent">85</integer>
+    <integer name="utubot_indicator_dots">3</integer>
+    <integer name="utubot_indicator_cycle_ms">1200</integer>
+    <integer name="utubot_indicator_steps">12</integer>
+    <integer name="utubot_busy_show_delay_ms">300</integer>
+    <integer name="utubot_busy_min_visible_ms">700</integer>
+
     <color name="utubot_panel_background">#E6101418</color>
     <color name="utubot_panel_title">#FFFFFFFF</color>
+    <color name="utubot_panel_label">#FF7CC4FF</color>
     <color name="utubot_panel_status">#FFB0BEC5</color>
     <color name="utubot_panel_text">#FFECEFF1</color>
-    <dimen name="utubot_panel_padding">20dp</dimen>
-    <dimen name="utubot_panel_gap">10dp</dimen>
-    <dimen name="utubot_panel_title_size">20sp</dimen>
+    <color name="utubot_panel_lead">#FFFFFFFF</color>
+    <color name="utubot_panel_hint">#FF78909C</color>
+    <color name="utubot_overlay_scrim">#B3000000</color>
+    <color name="utubot_overlay_background">#FF161B20</color>
+    <color name="utubot_overlay_focus">#FF2F6FB0</color>
+    <color name="utubot_overlay_focus_soft">#552F6FB0</color>
+    <color name="utubot_overlay_current">#FF7CC4FF</color>
+    <color name="utubot_badge_background">#CC101418</color>
+    <color name="utubot_indicator_dot">#FF7CC4FF</color>
+
+    <dimen name="utubot_panel_padding">16dp</dimen>
+    <dimen name="utubot_panel_margin">24dp</dimen>
+    <dimen name="utubot_panel_gap">6dp</dimen>
+    <dimen name="utubot_panel_label_size">13sp</dimen>
+    <dimen name="utubot_panel_title_size">17sp</dimen>
     <dimen name="utubot_panel_status_size">14sp</dimen>
-    <dimen name="utubot_panel_text_size">17sp</dimen>
-    <dimen name="utubot_panel_spinner_min_height">48dp</dimen>
+    <dimen name="utubot_panel_text_size">15sp</dimen>
+    <dimen name="utubot_panel_hint_size">12sp</dimen>
+
+    <dimen name="utubot_overlay_margin_horizontal">56dp</dimen>
+    <dimen name="utubot_overlay_margin_vertical">32dp</dimen>
+    <dimen name="utubot_overlay_padding">24dp</dimen>
+    <dimen name="utubot_overlay_gap">12dp</dimen>
+    <dimen name="utubot_overlay_title_size">24sp</dimen>
+    <dimen name="utubot_overlay_status_size">15sp</dimen>
+    <dimen name="utubot_overlay_text_size">22sp</dimen>
+    <dimen name="utubot_overlay_item_size">18sp</dimen>
+    <dimen name="utubot_overlay_item_padding">12dp</dimen>
+    <dimen name="utubot_overlay_hint_size">13sp</dimen>
+    <dimen name="utubot_overlay_corner">8dp</dimen>
+    <dimen name="utubot_overlay_focus_stroke">3dp</dimen>
+
+    <dimen name="utubot_indicator_dot_size">7dp</dimen>
+    <dimen name="utubot_indicator_dot_gap">4dp</dimen>
+    <dimen name="utubot_badge_margin">20dp</dimen>
+    <dimen name="utubot_badge_padding">8dp</dimen>
+    <dimen name="utubot_badge_count_size">12sp</dimen>
 </resources>

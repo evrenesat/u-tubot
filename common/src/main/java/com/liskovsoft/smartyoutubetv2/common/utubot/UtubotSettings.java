@@ -18,6 +18,11 @@ public class UtubotSettings {
     public static final int DEFAULT_WAIT_MS = 1200;
     public static final int MAX_WAIT_MS = 3000;
     public static final int NETWORK_SLACK_MS = 500;
+    /** How long a card keeps the focus before the passive panel asks for its summary (Settings choices) */
+    public static final int DEFAULT_PANEL_DELAY_MS = 1800;
+    public static final int[] PANEL_DELAY_CHOICES_MS = {1000, DEFAULT_PANEL_DELAY_MS, 3000, 5000};
+    /** How long the prompt highlight rests in the Summary view before its summary loads */
+    public static final int VIEW_PROMPT_DELAY_MS = 400;
     private static final String PREFS_NAME = "utubot_settings";
     private static final String KEY_URL = "url";
     private static final String KEY_TOKEN = "token";
@@ -27,6 +32,7 @@ public class UtubotSettings {
     private static final String KEY_PANEL = "summary_panel";
     private static final String KEY_AUTO_CAPTIONS = "auto_captions";
     private static final String KEY_WAIT_MS = "wait_ms";
+    private static final String KEY_PANEL_DELAY_MS = "panel_delay_ms";
     private static final String KEY_PAIR_PROMPT_DONE = "pair_prompt_done";
     private static final String KEY_SETUP_PROMPT_DONE = "setup_prompt_done";
     private static final String KEY_UPDATE_URL = "update_url";
@@ -286,5 +292,30 @@ public class UtubotSettings {
 
     public void setWaitMs(int waitMs) {
         mPrefs.edit().putInt(KEY_WAIT_MS, Math.max(0, Math.min(waitMs, MAX_WAIT_MS))).apply();
+    }
+
+    /**
+     * The pause before the passive panel summarizes the focused card: one of {@link #PANEL_DELAY_CHOICES_MS}
+     */
+    public int getPanelDelayMs() {
+        int stored = mPrefs.getInt(KEY_PANEL_DELAY_MS, DEFAULT_PANEL_DELAY_MS);
+
+        return isPanelDelayChoice(stored) ? stored : DEFAULT_PANEL_DELAY_MS;
+    }
+
+    public void setPanelDelayMs(int delayMs) {
+        if (isPanelDelayChoice(delayMs)) {
+            mPrefs.edit().putInt(KEY_PANEL_DELAY_MS, delayMs).apply();
+        }
+    }
+
+    private static boolean isPanelDelayChoice(int delayMs) {
+        for (int choice : PANEL_DELAY_CHOICES_MS) {
+            if (choice == delayMs) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
