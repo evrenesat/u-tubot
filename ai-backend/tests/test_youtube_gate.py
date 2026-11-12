@@ -10,6 +10,7 @@ from utubot.config import YoutubeConfig
 from utubot.db import Database
 from utubot.llm import BACKGROUND, INTERACTIVE
 from utubot.youtube import (
+    CLASS_MEDIA,
     REASON_AGE_RESTRICTED,
     REASON_BOT_CHECK,
     REASON_FORBIDDEN,
@@ -526,20 +527,24 @@ async def test_media_download_blocked_before_or_after_start_opens_the_breaker():
         assert gate.state() == STATE_OPEN
 
 
-async def test_media_download_is_refused_by_an_open_breaker_before_it_starts():
+async def test_media_download_is_refused_by_an_open_media_breaker_before_it_starts():
     clock = FakeClock()
-    gate = make_gate(clock)
+    gate = make_gate(clock, min_interval_s=0.0)
+
+    async def blocked_download(started):
+        raise YoutubeBlocked(REASON_RATE_LIMITED, 300, CLASS_MEDIA)
+
     with pytest.raises(YoutubeBlocked):
-        await gate.run(blocked(300))
+        await gate.run_started(blocked_download)
     ran: list[int] = []
 
     async def download(started):
         ran.append(1)
         return "audio"
 
-    with pytest.raises(YoutubeCooldown):
+    with pytest.raises(YoutubeCooldown) as info:
         await gate.run_started(download, INTERACTIVE)
-    assert ran == []
+    assert ran == [] and info.value.klass == CLASS_MEDIA
 
 
 async def test_cancelling_a_media_download_cancels_the_transfer():

@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 CONFIG_ENV = "UTUBOT_CONFIG"
 DEFAULT_CONFIG_PATH = "./config.toml"
@@ -95,6 +95,9 @@ class YoutubeConfig(BaseModel):
     cooldown_max_s: float = 3600.0
     network_retry_s: float = 60.0
     max_background_queue: int = 5
+    js_runtime: Literal["deno", "node", "bun", "quickjs"] = "deno"
+    js_runtime_path: str = ""
+    remote_components: list[str] = Field(default_factory=list)
 
 
 class TranscriptConfig(BaseModel):
@@ -129,8 +132,52 @@ class SummaryConfig(BaseModel):
     auto_long_max_concurrent: int = 2
 
 
+ASR_KIND_OPENAI = "openai"
+ASR_KIND_FASTER_WHISPER = "faster_whisper"
+LEGACY_ENGINE_NAME = "default"
+DEFAULT_OPENAI_ASR_MODEL = "whisper-1"
+DEFAULT_FASTER_WHISPER_MODEL = "small"
+
+
+class AsrEngineConfig(BaseModel):
+    """One speech-to-text engine of the chain (`[[captions.asr_engines]]`)."""
+
+    name: str
+    kind: Literal["openai", "faster_whisper"] = ASR_KIND_OPENAI
+    url: str = ""
+    model: str = ""
+    api_key_env: str | None = None
+    key_optional: bool = False
+    languages: list[str] = Field(default_factory=list)
+    max_chunk_s: int = Field(default=600, ge=0)
+    max_parallel: int = Field(default=1, ge=1)
+    timeout_s: float = 900.0
+    priority: int = 100
+    background_only: bool = False
+    speed_factor: float = 1.5
+    overhead_s: float = 2.0
+    compute_type: str | None = None
+    threads: int | None = None
+
+    @model_validator(mode="after")
+    def _defaults(self) -> AsrEngineConfig:
+        if not self.model:
+            self.model = (
+                DEFAULT_FASTER_WHISPER_MODEL
+                if self.kind == ASR_KIND_FASTER_WHISPER
+                else DEFAULT_OPENAI_ASR_MODEL
+            )
+        if self.kind == ASR_KIND_OPENAI and not self.url:
+            raise ValueError(f"asr engine {self.name}: kind openai needs a url")
+        self.languages = [lang.strip().lower() for lang in self.languages if lang.strip()]
+        return self
+
+
 class CaptionsConfig(BaseModel):
-    asr_backend: str = "openai"
+    asr_engines: list[AsrEngineConfig] = Field(default_factory=list)
+    asr_unhealthy_s: float = 300.0
+    asr_chunk_overlap_s: float = 2.0
+    asr_backend: Literal["openai", "faster_whisper"] = ASR_KIND_OPENAI
     asr_url: str = "http://127.0.0.1:8000/v1/audio/transcriptions"
     asr_api_key_env: str = "UTUBOT_ASR_API_KEY"
     asr_model: str = "whisper-1"
@@ -153,6 +200,8 @@ class CaptionsConfig(BaseModel):
     job_poll_s: float = 2.0
     asr_speed_factor: float = 1.5
     asr_overhead_s: int = 30
+    download_overhead_s: float = 5.0
+    download_speed_factor: float = 300.0
     transcribe_max_active_per_user: int = 5
     job_max_attempts: int = 3
     media_orphan_age_s: int = 3600
@@ -160,6 +209,28 @@ class CaptionsConfig(BaseModel):
     audio_format: str = "bestaudio/best"
     asr_chunk_s: int = 600
     translate_batch: int = 40
+
+    def engines(self) -> list[AsrEngineConfig]:
+        """The engine chain: `asr_engines`, or the legacy `asr_backend`/`asr_*` keys as one engine."""
+        if self.asr_engines:
+            return list(self.asr_engines)
+        faster = self.asr_backend == ASR_KIND_FASTER_WHISPER
+        return [
+            AsrEngineConfig(
+                name=LEGACY_ENGINE_NAME,
+                kind=ASR_KIND_FASTER_WHISPER if faster else ASR_KIND_OPENAI,
+                url=self.asr_url,
+                model=self.whisper_model if faster else self.asr_model,
+                api_key_env=self.asr_api_key_env,
+                key_optional=True,
+                max_chunk_s=self.asr_chunk_s,
+                timeout_s=self.asr_timeout_s,
+                speed_factor=self.asr_speed_factor,
+                overhead_s=float(self.asr_overhead_s),
+                compute_type=self.whisper_compute_type,
+                threads=self.whisper_threads,
+            )
+        ]
 
 
 TASK_ANSWER = "answer"

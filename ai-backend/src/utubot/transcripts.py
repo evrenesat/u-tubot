@@ -15,6 +15,9 @@ from .config import Config
 from .db import METADATA_ONLY, Database
 from .llm import INTERACTIVE, parse_retry_after
 from .youtube import (
+    CLASS_CAPTIONS,
+    CLASS_METADATA,
+    FETCH_CLASSES,
     REASON_EMPTY,
     REASON_EMPTY_TRACK,
     REASON_INCOMPLETE,
@@ -26,6 +29,7 @@ from .youtube import (
     YoutubeVideoError,
     classify_failure,
     classify_status,
+    ytdlp_runtime_options,
 )
 
 TIMESTAMP_BLOCK_S = 20
@@ -48,6 +52,8 @@ class Transcript:
     lang: str | None
     source: str
     meta: dict[str, Any] = field(default_factory=dict)
+    engine: str | None = None
+    model: str | None = None
 
 
 @dataclass
@@ -55,6 +61,7 @@ class FetchResult:
     meta: dict[str, Any]
     text: str | None
     lang: str | None
+    answered: tuple[str, ...] | None = None
 
 
 Fetcher = Callable[[str], Awaitable[FetchResult]]
@@ -216,6 +223,7 @@ class YoutubeFetcher:
             "skip_download": True,
             "noplaylist": True,
             "socket_timeout": self.cfg.transcripts.fetch_timeout_s,
+            **ytdlp_runtime_options(self.cfg.youtube),
         }
         if self.cfg.transcripts.cookies_file:
             opts["cookiefile"] = self.cfg.transcripts.cookies_file
@@ -226,7 +234,9 @@ class YoutubeFetcher:
         try:
             return self._extract_fn(video_id)
         except yt_dlp.utils.YoutubeDLError as exc:
-            raise classify_failure(exc, self.cfg.youtube.network_retry_s) from None
+            raise classify_failure(
+                exc, self.cfg.youtube.network_retry_s, klass=CLASS_METADATA
+            ) from None
 
     async def _download_track(self, url: str) -> str:
         retry_s = self.cfg.youtube.network_retry_s
@@ -242,6 +252,7 @@ class YoutubeFetcher:
             retry_s,
             parse_retry_after(resp.headers.get("retry-after")),
             media=True,
+            klass=CLASS_CAPTIONS,
         )
         if problem is not None:
             raise problem
@@ -261,11 +272,11 @@ class YoutubeFetcher:
         if not track:
             if degraded_tracks(info):
                 raise YoutubeDelayed(REASON_INCOMPLETE, retry_s)
-            return FetchResult(meta, None, None)
+            return FetchResult(meta, None, None, answered=(CLASS_METADATA,))
         formats, lang = track
         fmt = pick_format(formats)
         if not fmt:
-            return FetchResult(meta, None, lang)
+            return FetchResult(meta, None, lang, answered=(CLASS_METADATA,))
         raw = await self._download_track(fmt["url"])
         segments = parse_json3(raw) if fmt["ext"] == "json3" else parse_vtt(raw)
         text = segments_to_text(segments)
@@ -309,7 +320,13 @@ class TranscriptService:
         if expired and row["source"] != SOURCE_ASR:
             return None
         return Transcript(
-            video_id, row["text"], row["lang"], row["source"], self.cached_meta(video_id) or {}
+            video_id,
+            row["text"],
+            row["lang"],
+            row["source"],
+            self.cached_meta(video_id) or {},
+            row["engine"],
+            row["model"],
         )
 
     def no_captions(self, video_id: str) -> bool:
@@ -348,14 +365,39 @@ class TranscriptService:
             return YoutubeVideoError(held["reason"])
         return YoutubeDelayed(held["reason"], max(0.0, held["until"] - time.time()))
 
-    def store_asr(self, video_id: str, text: str, lang: str | None) -> bool:
-        """Keep an ASR transcript unless the video has YouTube captions; they always win."""
+    def store_asr(
+        self,
+        video_id: str,
+        text: str,
+        lang: str | None,
+        *,
+        engine: str | None = None,
+        model: str | None = None,
+        segments: list[tuple[float, float, str]] | None = None,
+    ) -> bool:
+        """Keep an ASR transcript unless the video has YouTube captions; they always win.
+
+        `segments` are `(start_s, end_s, text)` rows kept next to the text with the engine and model
+        that produced them.
+        """
         stored = self.db.execute_rc(
-            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at) VALUES(?,?,?,?,?)"
+            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,engine,model,segments)"
+            " VALUES(?,?,?,?,?,?,?,?)"
             " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
-            " text=excluded.text, fetched_at=excluded.fetched_at"
+            " text=excluded.text, fetched_at=excluded.fetched_at, engine=excluded.engine,"
+            " model=excluded.model, segments=excluded.segments"
             " WHERE transcripts.source != ?",
-            [video_id, lang, SOURCE_ASR, text, time.time(), SOURCE_CAPTIONS],
+            [
+                video_id,
+                lang,
+                SOURCE_ASR,
+                text,
+                time.time(),
+                engine,
+                model,
+                json.dumps(segments) if segments else None,
+                SOURCE_CAPTIONS,
+            ],
         )
         if stored:
             self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])
@@ -387,14 +429,16 @@ class TranscriptService:
             task.add_done_callback(lambda _t: self._inflight.pop(video_id, None))
             task.add_done_callback(lambda t: t.cancelled() or t.exception())
         elif priority == INTERACTIVE:
-            if not self.gate.healthy():
-                raise YoutubeCooldown(self.gate.cooldown_remaining())
+            if not self.gate.healthy(*FETCH_CLASSES):
+                raise YoutubeCooldown(self.gate.cooldown_remaining(*FETCH_CLASSES))
             self.gate.promote(video_id)
         return await asyncio.shield(task)
 
     async def _fetch(self, video_id: str, priority: int) -> Transcript:
         try:
-            result = await self.gate.run(lambda: self.fetcher(video_id), priority, key=video_id)
+            result = await self.gate.run(
+                lambda: self.fetcher(video_id), priority, key=video_id, classes=FETCH_CLASSES
+            )
         except YoutubeVideoError as exc:
             self.record_failure(video_id, exc.reason)
             raise

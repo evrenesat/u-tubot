@@ -153,7 +153,7 @@ def build_services(
         webauth=WebAuth(cfg, db, auth),
         catalog=catalog,
         settings=SettingsService(cfg, auth, prompts, catalog),
-        status=StatusService(cfg, db, gate, llm.usage),
+        status=StatusService(cfg, db, gate, llm.usage, transcription.engines),
         updates=UpdatesStatus(cfg, github_transport),
     )
 
@@ -445,6 +445,13 @@ def create_app(
             )
         return {"users": out}
 
+    @app.get("/v1/admin/status")
+    async def admin_status(admin: UserConfig = Depends(admin_user)):
+        return {
+            "youtube": svc.gate.snapshot(),
+            "asr": {"engines": svc.transcription.engines.status()},
+        }
+
     @app.delete("/v1/admin/devices/{device_id}")
     async def admin_revoke(device_id: str, admin: UserConfig = Depends(admin_user)):
         if not svc.auth.revoke(device_id):
@@ -505,7 +512,9 @@ def create_app(
         user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
-        return await svc.content.insight(user.policy, video_id, meta.as_dict(), wait_ms)
+        return await svc.content.insight(
+            user.policy, video_id, meta.as_dict(), wait_ms, user=user.name
+        )
 
     @app.get("/v1/prompts")
     async def prompts_list(user: UserConfig = Depends(current_user)):
@@ -597,7 +606,14 @@ def create_app(
             raise HTTPException(404, f"unknown prompt {key}")
         resolved = svc.content.with_user_model(resolved, user.policy)
         result = await svc.content.summary(
-            user.policy, video_id, resolved, key, meta.as_dict(), wait_ms
+            user.policy,
+            video_id,
+            resolved,
+            key,
+            meta.as_dict(),
+            wait_ms,
+            user=user.name,
+            passive=panel,
         )
         if panel and result["status"] == "ready":
             svc.content.schedule_long(user.name, user.policy, video_id, meta.as_dict(), key)
@@ -623,7 +639,14 @@ def create_app(
             raise HTTPException(400, str(exc)) from exc
         adhoc = svc.content.with_user_model(adhoc, user.policy)
         return await svc.content.summary(
-            user.policy, video_id, adhoc, "adhoc", meta.as_dict(), body.wait_ms, adhoc=True
+            user.policy,
+            video_id,
+            adhoc,
+            "adhoc",
+            meta.as_dict(),
+            body.wait_ms,
+            adhoc=True,
+            user=user.name,
         )
 
     @app.post("/v1/videos/{video_id}/ask")
@@ -635,7 +658,7 @@ def create_app(
     ):
         check_video_id(video_id)
         return await svc.content.ask(
-            user.policy, video_id, body.question, meta.as_dict(), body.wait_ms
+            user.policy, video_id, body.question, meta.as_dict(), body.wait_ms, user=user.name
         )
 
     @app.post("/v1/videos/{video_id}/captions")

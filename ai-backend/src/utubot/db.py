@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS video_meta(
   video_id TEXT PRIMARY KEY, json TEXT NOT NULL, fetched_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS transcripts(
   video_id TEXT PRIMARY KEY, lang TEXT, source TEXT NOT NULL, text TEXT NOT NULL,
-  fetched_at REAL NOT NULL);
+  fetched_at REAL NOT NULL, engine TEXT, model TEXT, segments TEXT);
 CREATE INDEX IF NOT EXISTS transcripts_fetched ON transcripts(fetched_at);
 CREATE TABLE IF NOT EXISTS no_captions(
   video_id TEXT PRIMARY KEY, checked_at REAL NOT NULL);
@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS video_holds(
   video_id TEXT PRIMARY KEY, kind TEXT NOT NULL, reason TEXT NOT NULL, until REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS youtube_gate(
   id INTEGER PRIMARY KEY CHECK(id=1), cooldown_until REAL NOT NULL, strikes INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS youtube_gate_class(
+  klass TEXT PRIMARY KEY, cooldown_until REAL NOT NULL, strikes INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS triage(
   video_id TEXT NOT NULL, topics_hash TEXT NOT NULL, json TEXT NOT NULL, created_at REAL NOT NULL,
   PRIMARY KEY(video_id, topics_hash));
@@ -50,7 +52,8 @@ CREATE TABLE IF NOT EXISTS jobs(
   id TEXT PRIMARY KEY, user TEXT NOT NULL, video_id TEXT NOT NULL, lang TEXT NOT NULL,
   translate_to TEXT, status TEXT NOT NULL, progress REAL NOT NULL DEFAULT 0, error TEXT,
   created_at REAL NOT NULL, updated_at REAL NOT NULL, kind TEXT NOT NULL DEFAULT 'captions',
-  title TEXT, finished_at REAL, attempts INTEGER NOT NULL DEFAULT 0, not_before REAL);
+  title TEXT, finished_at REAL, attempts INTEGER NOT NULL DEFAULT 0, not_before REAL,
+  priority INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS captions(
   video_id TEXT NOT NULL, lang TEXT NOT NULL, label TEXT NOT NULL, speakers INTEGER NOT NULL,
   vtt TEXT NOT NULL, created_at REAL NOT NULL, PRIMARY KEY(video_id, lang));
@@ -89,8 +92,10 @@ JOB_COLUMNS = {
     "finished_at": "REAL",
     "attempts": "INTEGER NOT NULL DEFAULT 0",
     "not_before": "REAL",
+    "priority": "INTEGER NOT NULL DEFAULT 1",
 }
 POLICY_COLUMNS = {"version": "INTEGER NOT NULL DEFAULT 0", "updated_at": "REAL NOT NULL DEFAULT 0"}
+TRANSCRIPT_COLUMNS = {"engine": "TEXT", "model": "TEXT", "segments": "TEXT"}
 METADATA_ONLY = "metadata_only"
 
 
@@ -107,15 +112,16 @@ class Database:
             self._migrate()
             self._conn.commit()
 
+    def _add_missing_columns(self, table: str, columns: dict[str, str]) -> None:
+        have = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+        for column, ddl in columns.items():
+            if column not in have:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
     def _migrate(self) -> None:
-        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(jobs)")}
-        for column, ddl in JOB_COLUMNS.items():
-            if column not in have:
-                self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {ddl}")
-        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(policy_overrides)")}
-        for column, ddl in POLICY_COLUMNS.items():
-            if column not in have:
-                self._conn.execute(f"ALTER TABLE policy_overrides ADD COLUMN {column} {ddl}")
+        self._add_missing_columns("jobs", JOB_COLUMNS)
+        self._add_missing_columns("policy_overrides", POLICY_COLUMNS)
+        self._add_missing_columns("transcripts", TRANSCRIPT_COLUMNS)
         # Rows written when a transcript could not be fetched: nothing may be built on a title alone.
         self._conn.execute("DELETE FROM transcripts WHERE source=?", [METADATA_ONLY])
         self._conn.execute("DELETE FROM summaries WHERE source=?", [METADATA_ONLY])

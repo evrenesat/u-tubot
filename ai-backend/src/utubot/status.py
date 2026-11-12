@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from . import __version__, appchannel, appsync
+from .captions.engines import AsrRouter
 from .config import Config
 from .db import Database
 from .usage import (
@@ -30,8 +31,15 @@ def day_start(now: float | None = None) -> float:
 
 
 class StatusService:
-    def __init__(self, cfg: Config, db: Database, gate: YoutubeGate, usage: Usage):
-        self.cfg, self.db, self.gate, self.usage = cfg, db, gate, usage
+    def __init__(
+        self,
+        cfg: Config,
+        db: Database,
+        gate: YoutubeGate,
+        usage: Usage,
+        engines: AsrRouter | None = None,
+    ):
+        self.cfg, self.db, self.gate, self.usage, self.engines = cfg, db, gate, usage, engines
 
     def home(self, user: str) -> dict[str, Any]:
         counters = self.usage.today()
@@ -62,7 +70,9 @@ class StatusService:
                 "healthy": gate.healthy(),
                 "cooldown_remaining_s": int(gate.cooldown_remaining()),
                 "background_waiting": gate.background_waiting(),
+                "classes": gate.snapshot(),
             },
+            "asr": {"engines": self.engines.status() if self.engines else []},
             "usage": {
                 "day": datetime.now(UTC).strftime("%Y-%m-%d"),
                 "llm": {

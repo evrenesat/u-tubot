@@ -17,3 +17,10 @@ class Cue:
     end: float
     lines: list[str]
     speaker: str | None = None
+
+
+@dataclass
+class Segment:
+    start: float
+    end: float
+    text: str

@@ -1,9 +1,12 @@
-"""Everything that talks to YouTube goes through one gate: a pacer plus a circuit breaker.
+"""Everything that talks to YouTube goes through one gate: a shared pacer plus per-class breakers.
 
 The pacer keeps at most `max_concurrent` requests in flight with a minimum (jittered) gap between
-them, interactive work before background work. The breaker opens when YouTube answers 429/403 or
-asks for a bot check: interactive callers get `YoutubeCooldown` at once, background callers wait
-(paused, not failed) until the cooldown ends. Nothing here logs a URL.
+them, interactive work before background work; it is shared by every class so the overall request
+rate stays what the owner configured. The breakers are one per endpoint class (`captions`: the
+timedtext API, `metadata`: watch/player/yt-dlp extraction, `media`: audio downloads): a 429 on one
+class must not stop the others. A breaker opens when YouTube answers 429/403 or asks for a bot check:
+interactive callers get `YoutubeCooldown` at once, background callers wait (paused, not failed)
+until the cooldown ends. Nothing here logs a URL.
 """
 
 from __future__ import annotations
@@ -14,10 +17,10 @@ import logging
 import random
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from .config import YoutubeConfig
 from .db import Database
@@ -26,6 +29,14 @@ from .llm import BACKGROUND, INTERACTIVE
 log = logging.getLogger("utubot.youtube")
 
 T = TypeVar("T")
+
+CLASS_CAPTIONS = "captions"
+CLASS_METADATA = "metadata"
+CLASS_MEDIA = "media"
+CLASSES = (CLASS_METADATA, CLASS_CAPTIONS, CLASS_MEDIA)
+FETCH_CLASSES = (CLASS_METADATA, CLASS_CAPTIONS)
+MEDIA_CLASSES = (CLASS_MEDIA,)
+YTDLP_CLASSES = (CLASS_METADATA, CLASS_MEDIA)
 
 STATE_CLOSED = "closed"
 STATE_OPEN = "open"
@@ -100,7 +111,13 @@ URL_RE = re.compile(r"(https?://[^\s?#'\"<>]+)[^\s'\"<>]*")
 
 
 class YoutubeError(RuntimeError):
-    """A YouTube request failed. The message is safe to log: URLs are stripped of queries."""
+    """A YouTube request failed. The message is safe to log: URLs are stripped of queries.
+
+    `klass` names the endpoint class that answered (None: not known, the gate assumes the class(es)
+    of the operation it ran).
+    """
+
+    klass: str | None = None
 
 
 class YoutubeDelayed(YoutubeError):
@@ -117,9 +134,10 @@ class YoutubeDelayed(YoutubeError):
 class YoutubeBlocked(YoutubeDelayed):
     """YouTube told us to back off (429/403/bot check). The gate sets the cooldown."""
 
-    def __init__(self, reason: str, hint_s: float | None = None):
+    def __init__(self, reason: str, hint_s: float | None = None, klass: str | None = None):
         super().__init__(reason, hint_s or 0.0)
         self.hint_s = hint_s
+        self.klass = klass
 
 
 class YoutubeVideoError(YoutubeError):
@@ -130,9 +148,10 @@ class YoutubeVideoError(YoutubeError):
 
     expected = True
 
-    def __init__(self, reason: str):
+    def __init__(self, reason: str, klass: str | None = None):
         super().__init__(f"youtube video error: {reason}")
         self.reason = reason
+        self.klass = klass
 
     @property
     def message(self) -> str:
@@ -144,10 +163,25 @@ class YoutubeVideoError(YoutubeError):
 
 
 class YoutubeCooldown(YoutubeDelayed):
-    """The breaker is open; nothing was sent to YouTube."""
+    """A breaker is open; nothing was sent to YouTube."""
 
-    def __init__(self, retry_after_s: float):
+    def __init__(self, retry_after_s: float, klass: str | None = None):
         super().__init__(REASON_COOLDOWN, retry_after_s)
+        self.klass = klass
+
+
+def ytdlp_runtime_options(cfg: YoutubeConfig) -> dict[str, Any]:
+    """yt-dlp options for the JavaScript runtime that solves YouTube's "n challenge".
+
+    Without one yt-dlp cannot unscramble some stream URLs and warns about it. A service started by
+    systemd often has no `deno` on its PATH, so `[youtube] js_runtime_path` names the executable.
+    """
+    opts: dict[str, Any] = {}
+    if cfg.js_runtime_path:
+        opts["js_runtimes"] = {cfg.js_runtime: {"path": cfg.js_runtime_path}}
+    if cfg.remote_components:
+        opts["remote_components"] = list(cfg.remote_components)
+    return opts
 
 
 def redact_urls(text: str) -> str:
@@ -161,8 +195,9 @@ def classify_failure(
     retry_after_s: float | None = None,
     *,
     media: bool = False,
+    klass: str = CLASS_METADATA,
 ) -> YoutubeError:
-    """Map a yt-dlp or transport failure to a sanitised YouTube error.
+    """Map a yt-dlp or transport failure to a sanitised YouTube error of endpoint class `klass`.
 
     Only gate-level signals open the breaker: a 429, the bot check, or a 403 on the watch, player
     or metadata request. With `media=True` (an audio or caption download) a 403 that does not come
@@ -171,38 +206,43 @@ def classify_failure(
     """
     text = str(exc)
     if BOT_CHECK_RE.search(text):
-        return YoutubeBlocked(REASON_BOT_CHECK, retry_after_s)
+        return YoutubeBlocked(REASON_BOT_CHECK, retry_after_s, klass)
     if RATE_LIMIT_RE.search(text):
-        return YoutubeBlocked(REASON_RATE_LIMITED, retry_after_s)
+        return YoutubeBlocked(REASON_RATE_LIMITED, retry_after_s, klass)
     for reason, pattern in VIDEO_FAILURE_PATTERNS:
         if pattern.search(text):
-            return YoutubeVideoError(reason)
+            return YoutubeVideoError(reason, klass)
     if GONE_RE.search(text):
-        return YoutubeVideoError(REASON_UNAVAILABLE)
+        return YoutubeVideoError(REASON_UNAVAILABLE, klass)
     if FORBIDDEN_RE.search(text):
         if media and not METADATA_REQUEST_RE.search(text):
-            return YoutubeVideoError(REASON_FORBIDDEN_MEDIA)
-        return YoutubeBlocked(REASON_FORBIDDEN, retry_after_s)
+            return YoutubeVideoError(REASON_FORBIDDEN_MEDIA, klass)
+        return YoutubeBlocked(REASON_FORBIDDEN, retry_after_s, klass)
     if isinstance(exc, OSError | TimeoutError) or NETWORK_RE.search(text):
         return YoutubeDelayed(REASON_NETWORK, network_retry_s)
     return YoutubeError(redact_urls(text).strip()[:ERROR_TEXT_MAX_CHARS] or "youtube error")
 
 
 def classify_status(
-    status: int, network_retry_s: float, retry_after_s: float | None, *, media: bool = False
+    status: int,
+    network_retry_s: float,
+    retry_after_s: float | None,
+    *,
+    media: bool = False,
+    klass: str = CLASS_CAPTIONS,
 ) -> YoutubeError | None:
-    """Map an HTTP status from a direct YouTube request; None when it is not a problem.
+    """Map an HTTP status from a direct YouTube request of class `klass`; None when it is no problem.
 
     `media=True` is a caption or media URL: its 403 and 410 belong to the video, not to the gate.
     """
     if status == STATUS_TOO_MANY_REQUESTS:
-        return YoutubeBlocked(REASON_RATE_LIMITED, retry_after_s)
+        return YoutubeBlocked(REASON_RATE_LIMITED, retry_after_s, klass)
     if status == STATUS_GONE:
-        return YoutubeVideoError(REASON_UNAVAILABLE)
+        return YoutubeVideoError(REASON_UNAVAILABLE, klass)
     if status == STATUS_FORBIDDEN:
         if media:
-            return YoutubeVideoError(REASON_FORBIDDEN_MEDIA)
-        return YoutubeBlocked(REASON_FORBIDDEN, retry_after_s)
+            return YoutubeVideoError(REASON_FORBIDDEN_MEDIA, klass)
+        return YoutubeBlocked(REASON_FORBIDDEN, retry_after_s, klass)
     if status >= STATUS_SERVER_ERROR_FLOOR:
         return YoutubeDelayed(REASON_NETWORK, network_retry_s)
     return None
@@ -240,10 +280,24 @@ class _Waiter:
     priority: int
     seq: int
     key: str | None
+    classes: tuple[str, ...]
+
+
+@dataclass
+class _Breaker:
+    until: float = 0.0
+    strikes: int = 0
+    probe_logged: bool = False
+
+
+def _as_classes(klass: str | Iterable[str] | None, default: Iterable[str]) -> tuple[str, ...]:
+    if klass is None:
+        return tuple(default)
+    return (klass,) if isinstance(klass, str) else tuple(klass)
 
 
 class YoutubeGate:
-    """Process-wide YouTube pacer and circuit breaker."""
+    """Process-wide YouTube pacer (shared) with one circuit breaker per endpoint class."""
 
     def __init__(
         self,
@@ -262,46 +316,85 @@ class YoutubeGate:
         self._waiters: list[_Waiter] = []
         self._seq = itertools.count()
         self._changed: asyncio.Future | None = None
-        self._until = 0.0
-        self._strikes = 0
-        self._probe_logged = False
+        self._breakers = {name: _Breaker() for name in CLASSES}
         self._load()
 
     def _load(self) -> None:
         if self._db is None:
             return
+        rows = self._db.all("SELECT klass, cooldown_until, strikes FROM youtube_gate_class")
+        for row in rows:
+            if row["klass"] in self._breakers:
+                self._breakers[row["klass"]] = _Breaker(
+                    float(row["cooldown_until"]), row["strikes"]
+                )
+        if not rows:
+            self._adopt_legacy_row()
+        for name, breaker in self._breakers.items():
+            if self._remaining(name) > 0:
+                log.warning(
+                    "youtube gate restored open: class=%s cooldown_s=%d strikes=%d",
+                    name,
+                    self._remaining(name),
+                    breaker.strikes,
+                )
+
+    def _adopt_legacy_row(self) -> None:
+        """State saved by the single-breaker version: it applies to every class once."""
         row = self._db.one("SELECT cooldown_until, strikes FROM youtube_gate WHERE id=1")
         if row is None:
             return
-        self._until, self._strikes = float(row["cooldown_until"]), int(row["strikes"])
-        if self.cooldown_remaining() > 0:
-            log.warning(
-                "youtube gate restored open: cooldown_s=%d strikes=%d",
-                self.cooldown_remaining(),
-                self._strikes,
-            )
+        for name in CLASSES:
+            self._breakers[name] = _Breaker(float(row["cooldown_until"]), int(row["strikes"]))
+            self._save(name)
+        self._db.execute("DELETE FROM youtube_gate WHERE id=1")
 
-    def _save(self) -> None:
+    def _save(self, klass: str) -> None:
         if self._db is not None:
+            breaker = self._breakers[klass]
             self._db.execute(
-                "INSERT OR REPLACE INTO youtube_gate(id,cooldown_until,strikes) VALUES(1,?,?)",
-                [self._until, self._strikes],
+                "INSERT OR REPLACE INTO youtube_gate_class(klass,cooldown_until,strikes)"
+                " VALUES(?,?,?)",
+                [klass, breaker.until, breaker.strikes],
             )
 
     def now(self) -> float:
         return self._clock.now()
 
-    def cooldown_remaining(self) -> float:
-        return max(0.0, self._until - self._clock.now())
+    def _remaining(self, klass: str) -> float:
+        return max(0.0, self._breakers[klass].until - self._clock.now())
 
-    def state(self) -> str:
-        if self.cooldown_remaining() > 0:
+    def cooldown_remaining(self, *classes: str) -> float:
+        """Seconds until every given class (default: all) may be asked again; the longest wins."""
+        return max((self._remaining(name) for name in classes or CLASSES), default=0.0)
+
+    def _class_state(self, klass: str) -> str:
+        if self._remaining(klass) > 0:
             return STATE_OPEN
-        return STATE_HALF_OPEN if self._strikes else STATE_CLOSED
+        return STATE_HALF_OPEN if self._breakers[klass].strikes else STATE_CLOSED
 
-    def healthy(self) -> bool:
-        """False while the breaker is open; a half-open gate lets requests through as probes."""
-        return self.cooldown_remaining() <= 0
+    def state(self, *classes: str) -> str:
+        """`open` if any given class (default: all) is open, else `half_open` if any is, else closed."""
+        states = {self._class_state(name) for name in classes or CLASSES}
+        for state in (STATE_OPEN, STATE_HALF_OPEN):
+            if state in states:
+                return state
+        return STATE_CLOSED
+
+    def healthy(self, *classes: str) -> bool:
+        """False while any given class (default: all) is open; a half-open one lets probes through."""
+        return self.cooldown_remaining(*classes) <= 0
+
+    def snapshot(self) -> dict[str, dict[str, Any]]:
+        """Per-class breaker state for the status endpoint."""
+        return {
+            name: {
+                "state": self._class_state(name),
+                "cooldown_remaining_s": round(self._remaining(name)),
+                "strikes": self._breakers[name].strikes,
+            }
+            for name in CLASSES
+        }
 
     def background_waiting(self) -> int:
         return sum(1 for w in self._waiters if w.priority == BACKGROUND)
@@ -316,43 +409,70 @@ class YoutubeGate:
         if changed:
             self._poke()
 
-    def report_block(self, reason: str, hint_s: float | None = None) -> float:
-        """Open (or extend) the breaker; returns the cooldown applied in seconds."""
-        cfg = self.cfg
-        if self.cooldown_remaining() <= 0:
-            self._strikes += 1
-        if hint_s and hint_s > 0:
-            cooldown = hint_s
-        else:
-            cooldown = cfg.cooldown_base_s * 2 ** (self._strikes - 1)
-        cooldown = min(max(cooldown, cfg.min_interval_s), cfg.cooldown_max_s)
-        self._until = max(self._until, self._clock.now() + cooldown)
-        self._probe_logged = False
-        self._save()
-        log.warning(
-            "youtube gate open: reason=%s cooldown_s=%d strikes=%d retry_after_hint=%s",
-            reason,
-            cooldown,
-            self._strikes,
-            "yes" if hint_s else "no",
-        )
-        self._poke()
-        return self.cooldown_remaining()
+    def report_block(
+        self,
+        reason: str,
+        hint_s: float | None = None,
+        klass: str | Iterable[str] | None = None,
+    ) -> float:
+        """Open (or extend) the breaker of `klass` (default: every class); returns its cooldown in s.
 
-    def report_ok(self) -> None:
-        if not self._strikes or self.cooldown_remaining() > 0:
-            return
-        self._strikes = 0
-        self._until = 0.0
-        self._save()
-        log.info("youtube gate closed: request succeeded")
+        A bot check comes from yt-dlp's player request, which metadata and media share, so it opens
+        both. A 429 or 403 only opens the class that received it.
+        """
+        targets = _as_classes(klass, CLASSES)
+        if reason == REASON_BOT_CHECK and any(name in YTDLP_CLASSES for name in targets):
+            targets = tuple(dict.fromkeys((*targets, *YTDLP_CLASSES)))
+        cfg = self.cfg
+        for name in targets:
+            breaker = self._breakers[name]
+            if self._remaining(name) <= 0:
+                breaker.strikes += 1
+            if hint_s and hint_s > 0:
+                cooldown = hint_s
+            else:
+                cooldown = cfg.cooldown_base_s * 2 ** (breaker.strikes - 1)
+            cooldown = min(max(cooldown, cfg.min_interval_s), cfg.cooldown_max_s)
+            breaker.until = max(breaker.until, self._clock.now() + cooldown)
+            breaker.probe_logged = False
+            self._save(name)
+            log.warning(
+                "youtube gate open: class=%s reason=%s cooldown_s=%d strikes=%d retry_after_hint=%s",
+                name,
+                reason,
+                cooldown,
+                breaker.strikes,
+                "yes" if hint_s else "no",
+            )
         self._poke()
+        return self.cooldown_remaining(*targets[:1])
+
+    def report_ok(self, klass: str | Iterable[str] | None = None) -> None:
+        for name in _as_classes(klass, CLASSES):
+            breaker = self._breakers[name]
+            if not breaker.strikes or self._remaining(name) > 0:
+                continue
+            breaker.strikes, breaker.until = 0, 0.0
+            self._save(name)
+            log.info("youtube gate closed: class=%s request succeeded", name)
+            self._poke()
 
     def _gap(self) -> float:
         return self.cfg.min_interval_s + self._rand() * self.cfg.jitter_s
 
+    def _cooling(self, waiter: _Waiter) -> tuple[float, str | None]:
+        """The longest cooldown among the waiter's classes and the class that has it."""
+        worst, which = 0.0, None
+        for name in waiter.classes:
+            left = self._remaining(name)
+            if left > worst:
+                worst, which = left, name
+        return worst, which
+
     def _best(self) -> _Waiter | None:
-        return min(self._waiters, key=lambda w: (w.priority, w.seq), default=None)
+        """The next waiter to run: classes that are cooling never hold up the ones that are not."""
+        runnable = [w for w in self._waiters if self._cooling(w)[0] <= 0]
+        return min(runnable, key=lambda w: (w.priority, w.seq), default=None)
 
     def _poke(self) -> None:
         fut, self._changed = self._changed, None
@@ -377,15 +497,15 @@ class YoutubeGate:
             if sleeper is not None:
                 sleeper.cancel()
 
-    async def _acquire(self, priority: int, key: str | None) -> None:
-        waiter = _Waiter(priority, next(self._seq), key)
+    async def _acquire(self, priority: int, key: str | None, classes: tuple[str, ...]) -> None:
+        waiter = _Waiter(priority, next(self._seq), key, classes)
         self._waiters.append(waiter)
         try:
             while True:
-                cooling = self.cooldown_remaining()
+                cooling, which = self._cooling(waiter)
                 if cooling > 0:
                     if waiter.priority == INTERACTIVE:
-                        raise YoutubeCooldown(cooling)
+                        raise YoutubeCooldown(cooling, which)
                     await self._wait_change(cooling)
                     continue
                 if self._in_use < self._limit and self._best() is waiter:
@@ -400,9 +520,11 @@ class YoutubeGate:
             self._poke()
         self._in_use += 1
         self._ready_at = self._clock.now() + self._gap()
-        if self._strikes and not self._probe_logged:
-            self._probe_logged = True
-            log.info("youtube gate half-open: probing")
+        for name in classes:
+            breaker = self._breakers[name]
+            if breaker.strikes and not breaker.probe_logged:
+                breaker.probe_logged = True
+                log.info("youtube gate half-open: class=%s probing", name)
 
     def _release(self) -> None:
         self._in_use -= 1
@@ -410,8 +532,13 @@ class YoutubeGate:
         self._poke()
 
     @asynccontextmanager
-    async def slot(self, priority: int = INTERACTIVE, key: str | None = None):
-        await self._acquire(priority, key)
+    async def slot(
+        self,
+        priority: int = INTERACTIVE,
+        key: str | None = None,
+        classes: Sequence[str] = FETCH_CLASSES,
+    ):
+        await self._acquire(priority, key, tuple(classes))
         try:
             yield
         finally:
@@ -422,18 +549,25 @@ class YoutubeGate:
         fn: Callable[[], Awaitable[T]],
         priority: int = INTERACTIVE,
         key: str | None = None,
+        classes: Sequence[str] = FETCH_CLASSES,
     ) -> T:
-        """Run one YouTube operation in a paced slot and feed its outcome to the breaker."""
-        async with self.slot(priority, key):
+        """Run one YouTube operation in a paced slot and feed its outcome to the breakers.
+
+        `classes` are the endpoint classes the operation needs: it starts only when none of them is
+        cooling. A block opens the class named by the error (`exc.klass`, else all of `classes`);
+        success closes every class the result says it `answered` (else all of `classes`).
+        """
+        classes = tuple(classes)
+        async with self.slot(priority, key, classes):
             try:
                 result = await fn()
             except YoutubeBlocked as exc:
-                exc.retry_after_s = self.report_block(exc.reason, exc.hint_s)
+                exc.retry_after_s = self.report_block(exc.reason, exc.hint_s, exc.klass or classes)
                 raise
-            except YoutubeVideoError:
-                self.report_ok()
+            except YoutubeVideoError as exc:
+                self.report_ok(exc.klass or classes)
                 raise
-            self.report_ok()
+            self.report_ok(getattr(result, "answered", None) or classes)
             return result
 
     async def run_started(
@@ -441,6 +575,7 @@ class YoutubeGate:
         fn: Callable[[Callable[[], None]], Awaitable[T]],
         priority: int = BACKGROUND,
         key: str | None = None,
+        classes: Sequence[str] = MEDIA_CLASSES,
     ) -> T:
         """Gate only the start of a long transfer.
 
@@ -449,6 +584,7 @@ class YoutubeGate:
         caption fetches never wait behind a whole download. A 429 after the start still opens the
         breaker.
         """
+        classes = tuple(classes)
         loop = asyncio.get_running_loop()
         started: asyncio.Future[None] = loop.create_future()
         tasks: list[asyncio.Task[T]] = []
@@ -467,12 +603,12 @@ class YoutubeGate:
             if task.done():
                 task.result()
 
-        await self.run(start_phase, priority, key)
+        await self.run(start_phase, priority, key, classes)
         task = tasks[0]
         try:
             return await task
         except YoutubeBlocked as exc:
-            exc.retry_after_s = self.report_block(exc.reason, exc.hint_s)
+            exc.retry_after_s = self.report_block(exc.reason, exc.hint_s, exc.klass or classes)
             raise
         except asyncio.CancelledError:
             task.cancel()

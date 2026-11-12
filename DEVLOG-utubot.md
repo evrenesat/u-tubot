@@ -1,5 +1,11 @@
 # u·tubot devlog
 
+## 2026-11-12 (fast transcripts)
+
+- Backend only (no app change): videos without captions are transcribed automatically under the per-user policy (`auto_transcribe`),
+  by an engine chain with chunked parallel ASR, the original-language audio track and per-class YouTube breakers (issue #19). Details in
+  `ai-backend/DEVLOG.md`, `docs/captions.md`, `docs/server.md`, `ai/CONTRACT.md`.
+
 ## 2026-11-12 (R4: phone web UI)
 
 - Backend only (no app change, so no automatic release): the web UI at `/` was rebuilt as a phone-first control page with

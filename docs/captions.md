@@ -7,9 +7,9 @@ Whisper, optionally labels speakers, and serves a WebVTT track the TV adds to th
 
 1. **Queue.** *Video menu, Prepare HQ captions* (or `POST /v1/videos/ID/captions`) queues a persisted job. Jobs survive restarts and
    are processed `captions.job_concurrency` at a time (default 1). One job per video and language; repeated requests share it.
-2. **Download.** yt-dlp fetches the best audio (`audio_format`), then `ffmpeg` converts it to 16 kHz mono WAV. Videos longer than
-   `max_duration_s` (3 h) are refused.
-3. **ASR.** Speech recognition with word timestamps (below).
+2. **Download.** yt-dlp fetches the lowest-bitrate audio of the video's original-language track ([below](#which-audio-is-downloaded)),
+   then `ffmpeg` converts it to 16 kHz mono WAV. Videos longer than `max_duration_s` (3 h) are refused.
+3. **ASR.** Speech recognition with word timestamps, chunked and stitched ([below](#asr-engines)).
 4. **Diarization** (optional): speaker turns are matched to words.
 5. **Cues.** Words are grouped into cues of at most `max_lines` (2) lines of `max_chars_per_line` (42) characters, 1 to 7 seconds
    (`min_cue_s`, `max_cue_s`), breaking at sentence and speaker changes.
@@ -20,22 +20,147 @@ Optionally `translate_to` translates the cues with `[llm.captions]`. Captions ar
 job and, when ready, adds the track; with *Select HQ captions automatically* it is turned on for you. The app fetches the VTT with
 its `Authorization` header.
 
-## ASR backends
+## ASR engines
 
-Choose with `captions.asr_backend`. The example config uses `faster_whisper`; the built-in default is `openai`.
+Speech to text goes through a chain of engines. Each engine is one `[[captions.asr_engines]]` entry and is used when it is enabled
+(its `api_key_env` variable is set, or it names none) and healthy. A video is sent to the best engine that serves its language; if that
+engine fails, the work falls through to the next.
 
-| Backend | Where | Setup |
+| Field | Default | Meaning |
 |---|---|---|
-| `faster_whisper` | local, CPU (int8) | `uv sync --extra asr`; `whisper_model` (`tiny`, `base`, `small`, `medium`, `large-v3`), `whisper_compute_type`, `whisper_threads`. Models download from Hugging Face on first use into the cache. |
-| `openai` | any server with `POST /v1/audio/transcriptions` | `asr_url`, `asr_model` (`whisper-1`), key in the variable named by `asr_api_key_env` (default `UTUBOT_ASR_API_KEY`). Long audio is cut into `asr_chunk_s` (600 s) chunks. Works with OpenAI and local servers that offer the endpoint. |
+| `name` | required | label in logs, `GET /v1/status` and the stored transcript (`engine`) |
+| `kind` | `openai` | `openai`: any server with `POST /v1/audio/transcriptions` (OpenAI, mlx-audio/oMLX, whisper.cpp, vLLM, a CPU STT box). `faster_whisper`: local CPU (`uv sync --extra asr`) |
+| `url` | required for `openai` | the full transcription URL |
+| `model` | `whisper-1` / `small` | model name sent to the server; the faster-whisper size (`tiny` ... `large-v3`) for `faster_whisper` |
+| `api_key_env` | none | name of the environment variable holding the key. Set: the engine is enabled only while the variable is non-empty. Omitted: no key is sent |
+| `languages` | all | allow-list of language codes (`["en", "tr"]`). Applied only when the video's language is known from its metadata; an unknown language may reach any engine |
+| `max_chunk_s` | `600` | longest audio piece sent in one request (`0`: never cut). Respect the server's own limit; the last chunk may run up to 3 s over |
+| `max_parallel` | `1` | requests in flight to this engine at once, shared by all jobs (a box that handles one job at a time gets `1`) |
+| `timeout_s` | `900` | per request; connecting gives up after 10 s so a switched-off machine fails fast |
+| `priority` | `100` | lower is tried first; equal numbers keep the order of the file |
+| `background_only` | `false` | never used for jobs somebody is waiting on (summary view, explicit transcribe); only for passive work such as the side panel |
+| `speed_factor`, `overhead_s` | `1.5`, `2.0` | audio seconds one stream transcribes per second, and fixed seconds per request; only used for the estimate shown to the user |
+| `compute_type`, `threads` | `[captions] whisper_*` | `faster_whisper` only |
+
+How an engine is chosen for a file: drop engines that are disabled, background-only (for interactive jobs) or whose `languages` do not
+include the video's known language; put engines that failed in the last `asr_unhealthy_s` (300 s) after the healthy ones; sort by
+`priority`. A failed request (connection error, timeout, 5xx, 429, 401/403/404) marks the engine unhealthy and moves that chunk to the next
+engine, which re-cuts it to its own `max_chunk_s` if that is smaller. A request the engine rejected for its input (400, 413, 415, 422)
+falls through without marking it unhealthy. When every engine is unhealthy they are all tried again, so a single-engine setup recovers
+by itself. The engines used and their models are stored with the transcript (`engine` is `mac+lan-cpu` when two shared the work).
+
+**Example: three engines** (placeholders; use your own hosts and variable names):
+
+```toml
+[[captions.asr_engines]]            # a Mac Studio running oMLX (mlx-audio): everything, three 10 minute chunks at once
+name = "mac"
+kind = "openai"
+url = "http://mac.example:8901/v1/audio/transcriptions"
+model = "whisper-large-v3-turbo-asr-fp16"
+api_key_env = "UTUBOT_ASR_API_KEY"
+max_chunk_s = 600
+max_parallel = 3
+timeout_s = 300
+priority = 10
+speed_factor = 35.0                 # measured: about 37 audio seconds per second per stream
+
+[[captions.asr_engines]]            # a small CPU speech-to-text box: English and Turkish only, one chunk at a time, background work only
+name = "lan-cpu"
+kind = "openai"
+url = "http://stt.example:8788/v1/audio/transcriptions"
+model = "stt"
+api_key_env = "UTUBOT_LAN_STT_KEY"
+languages = ["en", "tr"]
+max_chunk_s = 540
+max_parallel = 1
+timeout_s = 900
+background_only = true
+priority = 20
+speed_factor = 4.0
+
+[[captions.asr_engines]]            # always available: faster-whisper on this machine
+name = "local"
+kind = "faster_whisper"
+model = "small"
+max_chunk_s = 600
+priority = 30
+speed_factor = 1.5
+```
+
+With this chain a summary somebody opens uses the Mac; when the Mac is off (connection refused within 10 s) it falls to the local model
+and the Mac is skipped for five minutes. An English side-panel transcription can go to the CPU box while the Mac is busy elsewhere.
+Japanese audio never reaches the CPU box (`languages`). The Mac and local engines are not restricted, so they take any language.
+
+**Single backend (old keys).** Without any `asr_engines`, `asr_backend`, `asr_url`, `asr_api_key_env`, `asr_model`, `asr_chunk_s`,
+`asr_timeout_s`, `whisper_*`, `asr_speed_factor` and `asr_overhead_s` describe one engine called `default` (one request at a time,
+the key optional). Nothing in an existing config needs to change. Entries in `asr_engines` replace these keys.
+
+### Chunking and stitching
+
+Audio longer than the engine's `max_chunk_s` is cut into chunks that overlap by `asr_chunk_overlap_s` (2 s), so a word on a cut is whole
+in one of the two. Chunks run in parallel up to `max_parallel`. When they are stitched back, each chunk keeps only what lies on its side
+of the middle of every overlap, and text that both sides still said (at least two words repeated at the seam) is dropped once.
+Timestamps are offset to the full audio. A progress report is `finished chunks / total chunks` of the ASR step; the whole job is
+about 2 % download start, 20 % downloaded, 25 % converted, then the ASR step up to 85 %.
+
+A transcript made this way is stored with its segments (start, end, text), the language Whisper detected most (by audio seconds), the
+engine and the model, and shown to clients as `source: "asr"` (`GET /v1/videos/ID/transcript` adds `engine` and `model`).
+
+### Measured speed
+
+One setup (the Mac engine above, three chunks in parallel): a 29.5 minute lecture took 2.5 s to download (10.7 MB of Opus), 3.4 s to
+convert and 16.4 s for ASR (about 108 times real time); the whole job, YouTube pacing included, took about 31 s. A 5.6 minute video took
+4 s to download and 4.7 s for ASR (one chunk, about 72 times real time). Your numbers depend on your engine: put them into
+`speed_factor` and `max_parallel` so the estimates are right.
+
+### Estimates
+
+The `estimate_s` shown with `needs_transcript` and while a job runs is `download_overhead_s + duration / download_speed_factor` (the
+audio download, 5 s plus 300 audio seconds per second by default) plus the chosen engine's `overhead_s + duration /
+(speed_factor x parallel)`, where `parallel` is the engine's `max_parallel` capped at the number of chunks. "The chosen engine" is the
+one the selection above would pick right now for that video's language and priority.
 
 ### CPU performance
 
 Local `small` with `int8` on a modern CPU with 4 threads transcribes a short clip several times faster than real time after the first
 model load (a 19 second clip took about 7 seconds in testing, including load). Expect roughly real time or better for `small` and
 a few times slower than real time for `medium`/`large-v3` on a desktop CPU; a 1 hour video can take from 10 minutes to over an
-hour depending on model and cores. Keep `job_concurrency = 1` and `whisper_threads` at your physical core count. Use a remote
-`openai` backend or a GPU server for long videos.
+hour depending on model and cores. Keep `job_concurrency = 1` and `whisper_threads` at your physical core count, and use a remote
+engine or a GPU server first in the chain for long videos.
+
+## Which audio is downloaded
+
+A video may carry several audio tracks: the original, YouTube's AI-dubbed translations, an audio description. "Worst audio" can land on a
+dub, and the transcript is then in the wrong language. The downloader therefore picks from yt-dlp's format list itself
+(`captions/formats.py`), the lowest bitrate of the **original-language track**:
+
+1. audio-only formats whose track is marked `original` (`format_note`), lowest bitrate;
+2. else audio-only formats that are not dubbed or described and belong to the preferred track (higher `language_preference`, or the one
+   marked `(default)`) when the tracks differ;
+3. else audio-only formats that are not dubbed or described (single-track videos);
+4. else audio-only formats of any track (only when every track is a dub, so no original is offered);
+5. else the same steps over formats that carry video too (the smallest muxed stream; `ffmpeg` drops the video);
+6. else yt-dlp's own selector, `captions.audio_format` (`bestaudio/best`).
+
+Plain HTTPS streams beat manifests, and loudness-compressed (DRC) copies lose ties. Real multi-track videos mark only the original
+(`English (US) original (default)`); the other languages are named by language alone, so the rule is "the marked original, never another
+track".
+
+## YouTube's JavaScript challenge
+
+yt-dlp needs a JavaScript runtime (deno by default) and a solver script to unscramble some stream URLs; without them it warns about the
+"n challenge" and some formats are missing. A service started by systemd often has no `deno` on its `PATH`, so tell the backend:
+
+```toml
+[youtube]
+js_runtime = "deno"                      # deno, node, bun or quickjs
+js_runtime_path = "/usr/local/bin/deno"  # the executable (example path)
+remote_components = ["ejs:github"]       # lets yt-dlp fetch its solver script once; it is cached
+```
+
+On a host with only `js_runtime_path`, yt-dlp still logs `n challenge solving failed`: the solver script (`yt-dlp-ejs`) must come from
+`remote_components` or be installed as the matching package (`yt-dlp[default]`). Both the metadata fetch and the audio download get
+these options.
 
 ## Diarization (speaker labels)
 
@@ -54,19 +179,37 @@ CPU and adds substantial time on top of ASR (often similar to the audio length);
 
 ## Transcripts for videos without captions
 
-The same pieces build a plain-text transcript for videos YouTube has no captions for. The backend never summarises such a video from
-its title; it answers `needs_transcript` and the TV asks "Transcribe in background?". `POST /v1/videos/ID/transcribe` queues a job
-(one per user and video; asking again returns the same job) that downloads the audio through the YouTube gate
-([server.md](server.md#youtube-limits-and-the-transcription-fallback)), runs the ffmpeg and ASR steps above (language auto-detected,
-no diarization, no VTT) and stores the text as the video's transcript with source `asr`. Summaries, insights and answers then work as
-usual and say `source: "asr"`. Progress is in `GET /v1/videos/ID/transcript` and in `GET /v1/jobs`; the estimate shown beforehand is
-`asr_overhead_s` plus the video length divided by `asr_speed_factor` (set it to what your ASR backend really does). `transcribe_max_active_per_user`
-(5) limits queued jobs per user. Queued jobs wait while YouTube has the server in a cooldown. A job whose download is refused (429, network) goes back to the queue,
+The same pieces build a plain-text transcript for videos YouTube has no captions for (the "fast path": no diarization, no VTT, segments
+only). The backend never summarises such a video from its title. What happens instead depends on the user's policy:
+
+- **Automatic** (`auto_transcribe`, [policy.md](policy.md)): the request that found no captions queues the transcription itself and
+  answers `status: "pending"`, `transcript_status: "transcribing"` with `progress` and `estimate_s`; asking again reports the progress
+  until the transcript exists and the summary, insight or answer is made as usual. `on_open` (the default) starts it when the user opens
+  the video (Summary view, insight, answer, an ad-hoc summary); `on_dwell` also starts it from the side panel (`prompt=panel`), which
+  only lingers on a video. Only videos up to `auto_transcribe_max_minutes` (30) qualify, and their length must be known. `off`, longer
+  videos, a full per-user queue (`transcribe_max_active_per_user`) and videos no engine can take still answer `needs_transcript`
+  with `can_transcribe` and the TV asks "Transcribe in background?".
+- **Priority.** A transcription somebody is waiting on (opened video, `POST /v1/videos/ID/transcribe`) is an *interactive* job: it is
+  claimed before background jobs, uses the gate and the engines at interactive priority, and may use any engine. A side-panel job is a
+  background job; when the user then opens the video, it is promoted. Background-only engines never take interactive jobs.
+- **Explicit.** `POST /v1/videos/ID/transcribe` queues a job regardless of the policy (one per user and video; asking again returns
+  the same job).
+
+A job downloads the audio through the YouTube gate ([server.md](server.md#youtube-limits-and-the-transcription-fallback)), runs the ffmpeg
+and chunked ASR steps above (language from the video's metadata when known, else detected) and stores the text, its segments, the
+engine and the model as the video's transcript with source `asr`. Summaries, insights and answers then work as usual and say
+`source: "asr"`. Progress is in `GET /v1/videos/ID/transcript` and in `GET /v1/jobs` (done chunks over all chunks during the ASR step);
+the estimate is described [above](#estimates). `transcribe_max_active_per_user` (5) limits queued jobs per user. Queued jobs are claimed
+interactive first, then oldest first (`job_concurrency` runs that many at a time).
+
+Jobs wait while the **media** endpoint class is cooling; a limit on the caption or metadata endpoints does not hold them back (the check
+for captions that appeared since is then skipped and the audio is transcribed). A job whose download is refused (429, network) goes back to the queue,
 at most `job_max_attempts` (3) times, then fails; a problem of the one video (private, members-only, 403/410 on its media, live, longer than
-`max_duration_s`) fails it at once without touching the YouTube breaker. Before downloading, the job asks YouTube once more for
-captions: if they exist they are used and the audio is skipped, and a transcript from the audio never replaces YouTube captions.
-Live streams and videos over `max_duration_s` are refused from yt-dlp's real info before any download, and audio over `max_download_bytes` is skipped.
-Audio downloads hold the YouTube gate only until they start, so they do not delay interactive fetches. Scratch directories a crash left under `data_dir/media` are swept at start.
+`max_duration_s`) fails it at once without touching the YouTube breakers. Before downloading, the job asks YouTube once more for
+captions when those endpoints are healthy: if they exist they are used and the audio is skipped, and a transcript from the audio never
+replaces YouTube captions. Live streams and videos over `max_duration_s` are refused from yt-dlp's real info before any download, and
+audio over `max_download_bytes` is skipped. Audio downloads hold the YouTube gate only until they start, so they do not delay interactive
+fetches. Scratch directories a crash left under `data_dir/media` are swept at start.
 
 ## Checking on jobs
 

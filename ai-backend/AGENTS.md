@@ -18,9 +18,15 @@
 - Client IP only via `security.client_ip` (trusted proxies; the optional `client_ip_header` counts only with the proxy secret), HTTPS detection only via `security.is_https`. Do not read X-Forwarded-For/-Proto or the client-IP header elsewhere.
 - Prompt cache key = (video, prompt key, sha256 of prompt content, language); keep it that way.
 - Verdicts are derived from shared per-video caches (triage, deep) plus the user's policy.
-- Anything that reaches YouTube (yt-dlp, timedtext, audio) runs through `YoutubeGate.run` (`youtube.py`); never call YouTube
+- Anything that reaches YouTube (yt-dlp, timedtext, audio) runs through `YoutubeGate.run` / `run_started` (`youtube.py`); never call YouTube
   directly. Never put a URL (they carry signed tokens) into a log line or exception message: classify failures with
-  `classify_failure` / `classify_status` and raise `... from None`.
+  `classify_failure` / `classify_status` and raise `... from None`. Name the endpoint class of the request (`captions`, `metadata`,
+  `media`; `klass=` on the classifiers, `classes=` on the gate): breakers are per class, pacing is shared. Never gate audio on caption state.
+- Speech to text goes through the engine chain (`captions/engines.py`, `[[captions.asr_engines]]`); chunking and stitching live in
+  `captions/chunking.py`, the audio format pick in `captions/formats.py`. Never hardcode an engine, URL or key. Transcripts made from
+  audio keep their segments, engine and model (`TranscriptService.store_asr`).
+- The automatic-transcription policy (`auto_transcribe`, `auto_transcribe_max_minutes`) is acted on only in `Transcription.auto`; keep
+  explicit (summary view, insight, ask) and passive (side panel) triggers apart.
 - No summary, insight or answer is ever generated from the title/channel/description alone. Without a transcript return
   `pending` + `transcript_status` (`delayed`) or `needs_transcript`; never cache those.
 - Commit messages: `<type>/<scope>: <summary>` plus bullets; no AI attribution trailers.

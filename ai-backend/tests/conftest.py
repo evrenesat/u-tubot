@@ -8,7 +8,7 @@ from tests.fakes import FakeClock
 from tests.mock_openai import MockOpenAI
 from utubot.app import create_app
 from utubot.auth import hash_token
-from utubot.captions.asr import OpenAIASR
+from utubot.captions.asr import make_asr
 from utubot.config import Config, UserConfig, UserPolicy
 from utubot.transcripts import FetchResult
 
@@ -97,7 +97,7 @@ def anon_client(
 
 @pytest_asyncio.fixture
 async def env(cfg, mock_llm, fetcher, clock, tmp_path):
-    asr = OpenAIASR(cfg.captions, transport=httpx.ASGITransport(app=mock_llm.app))
+    asr = make_asr(cfg.captions, transport=httpx.ASGITransport(app=mock_llm.app))
 
     async def fake_download(video_id, out_dir, started=None):
         import subprocess

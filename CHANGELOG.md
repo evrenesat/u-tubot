@@ -38,6 +38,17 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 Backend (`ai-backend/`) changes in this release:
 
+- Fast transcripts for videos without captions: the request that finds none starts the transcription itself (default policy
+  `auto_transcribe = "on_open"`, videos up to `auto_transcribe_max_minutes` = 30; the side panel only with `on_dwell`) and answers
+  `pending` + `transcribing` with progress; longer videos still ask. Audio is the lowest-bitrate stream of the ORIGINAL-language track
+  (never an AI dub), cut into overlapping chunks and transcribed in parallel (a 29 minute video in about 30 s on a fast engine),
+  stitched with the repeated seams removed, and stored with segments, engine and model.
+- A chain of speech-to-text engines (`[[captions.asr_engines]]`: OpenAI-compatible servers such as oMLX or a CPU STT box, and local
+  faster-whisper) picked by health, language and priority, with fall-through on failure; the old `asr_*` keys still work as one engine.
+- YouTube limits are tracked per endpoint class (caption API, metadata, audio download): a 429 on captions no longer pauses audio
+  downloads. `GET /v1/status` shows each class and the engine chain. `[youtube] js_runtime_path` / `remote_components` let yt-dlp solve
+  YouTube's JavaScript challenge under systemd.
+
 - New phone-first web UI at `/` to steer u·tubot from a phone instead of the TV remote: Home (version, health, the YouTube gate with its
   cooldown, today's model and transcript counters), Models (a model per task from the live provider list, new models marked), Prompts
   (defaults, import, JSON editor with validation messages, try a prompt on a video link), Filters (topic chips, threshold sliders,

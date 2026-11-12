@@ -6,12 +6,14 @@ import time
 
 import httpx
 import pytest
+import pytest_asyncio
 
 from tests.fakes import settle
 from utubot.config import AssessConfig, Config
 from utubot.db import Database
 from utubot.llm import BACKGROUND
 from utubot.youtube import (
+    FETCH_CLASSES,
     REASON_FORBIDDEN_MEDIA,
     REASON_NETWORK,
     REASON_PRIVATE,
@@ -26,7 +28,7 @@ VID = "abcdefghijk"
 OTHER = "bcdefghijkl"
 NEEDS_FFMPEG = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg missing")
 NO_CAPTIONS_MESSAGE = "No captions. Transcribe the audio in the background?"
-ESTIMATE_S = 30 + 900 / 1.5
+ESTIMATE_S = 5 + 900 / 300 + 30 + 900 / 1.5  # download + legacy engine overhead + audio / speed
 
 
 async def summary(env, vid: str = VID, **params):
@@ -42,6 +44,14 @@ async def wait_transcript(env, want: str, vid: str = VID, timeout: float = 15.0)
             return body
         await asyncio.sleep(0.05)
     pytest.fail(f"timeout waiting for {want}, last {body}")
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def ask_first(env):
+    """These tests are about the ask-first flow: the owner opted out of automatic transcription."""
+    assert (
+        await env.client.put("/v1/me/policy", json={"auto_transcribe": "off"})
+    ).status_code == 200
 
 
 def rows(env, table: str) -> int:
@@ -95,7 +105,7 @@ async def test_network_error_is_delayed_without_opening_the_breaker(env):
 
 
 async def test_background_work_is_paused_not_failed_during_cooldown(env):
-    env.svc.gate.report_block(REASON_RATE_LIMITED, 300)
+    env.svc.gate.report_block(REASON_RATE_LIMITED, 300, FETCH_CLASSES)
     task = asyncio.create_task(env.svc.transcripts.get(VID, BACKGROUND))
     await settle()
     assert not task.done() and env.fetcher.calls == []

@@ -94,8 +94,10 @@ an old entry is ignored.)
 the background after a panel summary; a user's `auto_long` policy field overrides it), `auto_long_max_concurrent` (default `2`,
 background long summaries in flight including the transcript fetch; further ones are skipped until one ends, `0` disables them). See [prompt-sets.md](prompt-sets.md).
 
-**`[captions]`**: ASR and diarization, see [captions.md](captions.md). Also `asr_speed_factor` and `asr_overhead_s` (the estimate shown
-before a background transcription), `transcribe_max_active_per_user` (default `5`), `job_max_attempts` (`3`), `media_orphan_age_s` (`3600`), `max_download_bytes` (400 MiB).
+**`[captions]`**: the ASR engine chain (`[[captions.asr_engines]]`, or the single `asr_*` keys), chunking, diarization and the estimate
+inputs, see [captions.md](captions.md). Also `asr_unhealthy_s` (`300`), `asr_chunk_overlap_s` (`2`), `download_overhead_s` and
+`download_speed_factor` (the estimate shown before a transcription), `transcribe_max_active_per_user` (default `5`), `job_max_attempts`
+(`3`), `media_orphan_age_s` (`3600`), `max_download_bytes` (400 MiB), `audio_format` (yt-dlp's fallback selector).
 
 **`[setup]`, `[setup.defaults]`**: the public `/setup.json`: `name`, `pairing`, optional `prompt_set_urls`, and the switch values
 the app applies on import (`assess`, `mark_only`, `answer_in_menu`, `summary_panel`, `auto_captions`).
@@ -109,26 +111,34 @@ page `release_check_ttl_s` (600), `release_check_error_ttl_s` (60), `release_che
 settings](#per-user-settings): `models`, `auto_transcribe`, `auto_transcribe_max_minutes`, `summary_delay_ms`, `update_checks`,
 `mark_only`, `summary_panel`, `auto_captions`, `auto_long`.
 
-Environment: `UTUBOT_CONFIG`, the provider key variables you named, `UTUBOT_ASR_API_KEY`, `UTUBOT_HF_TOKEN`. Keys never go
+Environment: `UTUBOT_CONFIG`, the provider key variables you named, `UTUBOT_ASR_API_KEY` and every other variable named by an
+ASR engine's `api_key_env`, `UTUBOT_HF_TOKEN`. Keys never go
 in the config file.
 
 ## YouTube limits and the transcription fallback
 
 One home address asking YouTube for dozens of caption files in a few minutes gets `HTTP 429 Too Many Requests`. The backend therefore
 sends **every** request that reaches YouTube (yt-dlp metadata and caption lists, the caption text, audio downloads for transcription)
-through one process-wide gate:
+through one process-wide gate. Requests belong to one of three **endpoint classes**, each with its own circuit breaker:
+`captions` (the timedtext caption API), `metadata` (the watch and player pages that yt-dlp reads for the format and caption lists) and
+`media` (audio downloads). YouTube limits them independently: a 429 from the caption API used to pause audio downloads that
+still worked, now it only pauses caption fetches.
 
-- **Pacing.** At most `[youtube] max_concurrent` requests (default 1) are in flight, and they start at least `min_interval_s`
+- **Pacing.** The pacer is shared by all classes, so the overall request rate is what you configured. At most `[youtube] max_concurrent` requests (default 1) are in flight, and they start at least `min_interval_s`
   (3 s) plus a random `0..jitter_s` (1.5 s) apart. Interactive work (a summary someone is waiting for) goes before background work
   (tier-2 analysis, caption and transcript jobs); a user who starts waiting on a queued background fetch promotes it.
-- **Circuit breaker.** Only signals about the server as a whole open it: a 429, the "Sign in to confirm you're not a bot" check, or a 403
-  on the watch, player or metadata request. The cooldown is the `Retry-After` header when YouTube sends one, else `cooldown_base_s`
+- **Circuit breakers (one per class).** Only signals about the server as a whole open one: a 429, the "Sign in to confirm you're not a
+  bot" check, or a 403 on the watch, player or metadata request. It opens the class that received it; the bot check comes from yt-dlp's
+  player request, so it opens both yt-dlp classes (`metadata` and `media`) but not `captions`. A transcript fetch needs `metadata` and
+  `captions`, a transcript job's download needs `media`. The cooldown is the `Retry-After` header when YouTube sends one, else `cooldown_base_s`
   (5 min) doubled for each consecutive block up to `cooldown_max_s` (60 min); no cooldown is longer than that. While it is open
   interactive requests are answered at once without touching YouTube, and background work (caption and transcript jobs, tier-2)
   **waits** (it is neither failed nor dropped) and resumes when the cooldown ends. The first request afterwards is a probe: any
   answer from YouTube (a transcript, "no captions", even "this video is private") closes the breaker and resets the escalation,
-  another block doubles the cooldown. The state survives restarts. The log records each transition (`youtube gate open:
-  reason=... cooldown_s=...`, `half-open`, `closed`); URLs never appear in it.
+  another block doubles that class's cooldown. The state of each class survives restarts (a state saved by the older single breaker is
+  adopted by all three once). The log records each transition (`youtube gate open: class=... reason=... cooldown_s=...`,
+  `half-open`, `closed`); URLs never appear in it. `GET /v1/status` shows each class (`youtube.classes`: `state`,
+  `cooldown_remaining_s`, `strikes`) next to the combined `youtube.state`, and the engine chain (`asr.engines`: health, no URLs).
 - **Problems of one video stay with that video.** A 403 or 410 on a caption or media URL and members-only, age-gated, private or
   unavailable videos are failures of that video (`transcript_status: "failed"` with a `reason`), remembered for
   `transcripts.video_failure_ttl_s` (1 h) so they are not re-fetched; they never touch the breaker.
@@ -151,13 +161,17 @@ through one process-wide gate:
 | 429, cooldown, bot check, network error, empty or incomplete YouTube answer, a caption file that parses to nothing | `status: "pending"`, `transcript_status: "delayed"`, a user-facing `error` ("YouTube is limiting transcript downloads; retrying in ~N min") and `retry_after_s`. Never cached as "no captions"; ask again after `retry_after_s` (a caption file that parses to nothing is held for `transcripts.empty_track_retry_s`, 1 h). |
 | Private, members-only, age-gated or unavailable video, 403/410 on its caption or media URL, too long or live | `status: "failed"`, `transcript_status: "failed"`, `error`, `reason`, `can_transcribe`. |
 | YouTube lists no captions (from a complete yt-dlp answer) | `status: "needs_transcript"`, `transcript_status: "none"`, `can_transcribe`, `message` and `estimate_s`. The TV offers "Transcribe in background?". |
-| The user said yes | `POST /v1/videos/ID/transcribe` queues a job: audio through the gate, ffmpeg, your ASR backend ([captions.md](captions.md)), stored as the transcript with source `asr`. Meanwhile summaries answer `pending` with `transcript_status: "transcribing"` and `progress`; afterwards everything works as with YouTube captions. |
+| No captions and the user's policy allows it (`auto_transcribe` `on_open`/`on_dwell`, video up to `auto_transcribe_max_minutes`, default 30) | the transcription is queued by the request itself and it answers `status: "pending"`, `transcript_status: "transcribing"`, `progress`, `estimate_s`. No question is asked. The side panel (`prompt=panel`) only does this for `on_dwell`. |
+| The user said yes (or the policy did) | `POST /v1/videos/ID/transcribe` queues a job: audio through the gate (the original-language track at the lowest bitrate), ffmpeg, your ASR engines in chunks ([captions.md](captions.md)), stored as the transcript with source `asr`. Meanwhile summaries answer `pending` with `transcript_status: "transcribing"` and `progress`; afterwards everything works as with YouTube captions. |
 
 `GET /v1/videos/ID/transcript` shows the state (with `job_id` only for your own job) and `GET /v1/jobs` lists your caption and transcript
-jobs (`waiting`, `processing`, `ready`, `failed`). Jobs wait while the breaker is open and run when it closes; a job that YouTube
+jobs (`waiting`, `processing`, `ready`, `failed`). Jobs wait while the `media` breaker is open and run when it closes (a caption or metadata limit does not hold them back); a job that YouTube
 keeps refusing is retried `captions.job_max_attempts` (3) times and then fails. Before spending effort on the audio a transcript job
 asks YouTube once more for captions and uses them if they exist (ASR never replaces real captions). Videos that are live or longer than
 `captions.max_duration_s` (3 h) cannot be transcribed (`can_transcribe: false`).
+
+A systemd service often lacks `deno` on its `PATH`: set `[youtube] js_runtime_path` (and `remote_components = ["ejs:github"]`) so yt-dlp
+can solve YouTube's JavaScript challenge, see [captions.md](captions.md#youtubes-javascript-challenge).
 
 If YouTube keeps blocking the host even at the default pace, raise `min_interval_s`, lower `tier2_daily_cap_per_user`, or set
 `transcripts.cookies_file` (a credential: keep it private). Scratch directories under `data_dir/media` that a crash left behind are
@@ -289,8 +303,10 @@ Summaries made with a user's model are cached apart from other models (the model
 triage, insight and analysis caches are keyed without the model, so the first user to compute a video decides which model made it.
 Batches of the title triage are shared only between users with the same topics and the same triage model.
 
-**Transcript policy and TV settings** are stored and served now; the server does not act on `auto_transcribe` itself, and the TV
-reads these settings (and `settings_version` from `GET /v1/me`) in a later app release.
+**Transcript policy and TV settings** are stored and served now. The server acts on `auto_transcribe` and
+`auto_transcribe_max_minutes` itself (a request that finds no captions starts the transcription, see
+[captions.md](captions.md#transcripts-for-videos-without-captions)); the TV reads the other settings (and `settings_version` from
+`GET /v1/me`) in a later app release.
 
 ## Reverse proxy and TLS
 
