@@ -1,11 +1,18 @@
 package com.liskovsoft.smartyoutubetv2.common.app.presenters.settings;
 
 import android.content.Context;
+import android.text.Html;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.TextUtils;
+import android.text.style.StyleSpan;
+import android.graphics.Typeface;
 
 import androidx.annotation.Nullable;
 import androidx.webkit.WebViewCompat;
 
 import com.liskovsoft.appupdatechecker2.AppUpdateChecker;
+import com.liskovsoft.sharedutils.helpers.AppInfoHelpers;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.R;
@@ -18,6 +25,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.base.BasePresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.dialogs.AppUpdatePresenter;
 import com.liskovsoft.smartyoutubetv2.common.misc.GitHubReleases;
 import com.liskovsoft.smartyoutubetv2.common.misc.GitHubReleases.Release;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 
 import java.util.List;
@@ -81,7 +89,7 @@ public class UpdatesSettingsPresenter extends BasePresenter<Void> {
             return;
         }
 
-        sReleasesAction = RxHelper.execute(GitHubReleases.latestObserve(getContext()), releases -> showReleases(releases, null),
+        sReleasesAction = RxHelper.execute(GitHubReleases.latestObserve(getContext(), getChangelogFallbackUrl()), releases -> showReleases(releases, null),
                 error -> {
                     Context context = getContext();
 
@@ -91,6 +99,14 @@ public class UpdatesSettingsPresenter extends BasePresenter<Void> {
                         MessageHelpers.showLongMessage(context, context.getString(R.string.release_notes_failed, reason));
                     }
                 });
+    }
+
+    /**
+     * The update channel of the u·tubot backend: its changelog is the release notes when GitHub can't be reached
+     */
+    @Nullable
+    private String getChangelogFallbackUrl() {
+        return UtubotSettings.isBuiltIn() ? UtubotSettings.instance(getContext()).getUpdateUrl() : null;
     }
 
     /**
@@ -111,8 +127,11 @@ public class UpdatesSettingsPresenter extends BasePresenter<Void> {
             return;
         }
 
+        String versionName = AppInfoHelpers.getAppVersionName(getContext());
+        String tagPrefix = getContext().getString(R.string.release_notes_tag_prefix);
+
         for (Release release : releases) {
-            OptionItem item = UiOptionItem.from(release.version, option -> showNotes(release, releases));
+            OptionItem item = UiOptionItem.from(getTitle(release, versionName, tagPrefix), option -> showNotes(release, releases));
             dialogPresenter.appendSingleButton(item);
 
             if (release == focused) {
@@ -123,11 +142,31 @@ public class UpdatesSettingsPresenter extends BasePresenter<Void> {
         dialogPresenter.showDialog(getContext().getString(R.string.release_notes));
     }
 
+    /**
+     * The installed version is marked and bold
+     */
+    private CharSequence getTitle(Release release, String versionName, String tagPrefix) {
+        if (!GitHubReleases.isInstalled(release, versionName, tagPrefix)) {
+            return release.version;
+        }
+
+        SpannableString title = new SpannableString(getContext().getString(R.string.release_notes_installed, release.version));
+        title.setSpan(new StyleSpan(Typeface.BOLD), 0, title.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        return title;
+    }
+
     private void showNotes(Release release, List<Release> releases) {
         // The notes are a web page: without a WebView, the release's page on a phone
         if (WebViewCompat.getCurrentWebViewPackage(getContext()) == null) {
             AppDialogPresenter.instance(getContext()).closeDialog();
-            QrCodePresenter.instance(getContext()).show(release.pageUrl);
+
+            if (TextUtils.isEmpty(release.pageUrl)) {
+                // The changelog of the update channel has no page: as text
+                MessageHelpers.showLongMessage(getContext(), Html.fromHtml(release.bodyHtml).toString());
+            } else {
+                QrCodePresenter.instance(getContext()).show(release.pageUrl);
+            }
             return;
         }
 

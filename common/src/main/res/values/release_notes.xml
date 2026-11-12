@@ -2,4 +2,8 @@
 <resources>
     <!-- Settings → Updates → Release notes lists these (see GitHubReleases) -->
     <string name="release_notes_url" translatable="false">https://api.github.com/repos/cygnusx-1-org/electriceel/releases?per_page=10</string>
+    <!-- The row of the installed version in the list: its tag -->
+    <string name="release_notes_installed" translatable="false">%s (installed)</string>
+    <!-- Only the releases whose tag starts with this are listed (empty: all of them) -->
+    <string name="release_notes_tag_prefix" translatable="false"></string>
 </resources>
