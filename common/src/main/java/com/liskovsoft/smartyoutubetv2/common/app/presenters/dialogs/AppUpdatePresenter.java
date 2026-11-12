@@ -72,7 +72,7 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
      * The built-in u-tubot flavor has no update source of its own: it follows the update_url of the imported setup, and
      * without one nothing is checked.
      */
-    private String[] getUpdateUrls() {
+    String[] getUpdateUrls() {
         if (UtubotSettings.isBuiltIn()) {
             String url = UtubotSettings.instance(getContext()).getUpdateUrl();
 
@@ -124,7 +124,7 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         if (mIsForceCheck) {
             finishForceCheck();
             showUpdateDialog(versionName, changelog, apkPath);
-        } else if (GeneralData.instance(getContext()).isOldUpdateNotificationsEnabled()) {
+        } else if (UtubotSettings.isBuiltIn() || GeneralData.instance(getContext()).isOldUpdateNotificationsEnabled()) {
             showUpdateDialog(versionName, changelog, apkPath);
         } else {
             pinUpdateSection(versionName, changelog, apkPath);

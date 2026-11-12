@@ -132,6 +132,7 @@ public class UtubotSetupFlowTest {
                 mActivity.getString(R.string.utubot_mark_only),
                 mActivity.getString(R.string.utubot_answer_in_menu),
                 mActivity.getString(R.string.utubot_summary_panel),
+                mActivity.getString(R.string.utubot_panel_delay),
                 mActivity.getString(R.string.utubot_auto_captions),
                 mActivity.getString(R.string.utubot_prompts),
                 mActivity.getString(R.string.utubot_test_connection),
@@ -149,7 +150,7 @@ public class UtubotSetupFlowTest {
 
         List<OptionCategory> categories = UtubotSettingsPresenter.instance(mActivity).buildCategories();
 
-        assertEquals(10, categories.size());
+        assertEquals(11, categories.size());
         assertEquals(mActivity.getString(R.string.utubot_import_setup), categories.get(0).options.get(0).getTitle().toString());
         assertEquals(mActivity.getString(R.string.utubot_pair), categories.get(1).options.get(0).getTitle().toString());
     }
@@ -183,6 +184,53 @@ public class UtubotSetupFlowTest {
         settings.setUrlManually("https://b.example.com");
 
         assertEquals("https://b.example.com/app/update.json", settings.getUpdateUrl());
+    }
+
+    @Test
+    public void upgradedDevice_backendTypedBeforeUpdateUrlsFollowsTheBackend() {
+        UtubotSettings settings = freshSettings(prefs -> prefs.putString("url", "https://utubot.example.com/ai"));
+
+        assertEquals("https://utubot.example.com/ai/app/update.json", settings.getUpdateUrl());
+    }
+
+    @Test
+    public void upgradedDevice_aStoredUpdateUrlWinsOverTheBackend() {
+        UtubotSettings settings = freshSettings(prefs -> prefs.putString("url", "https://utubot.example.com").putString("update_url", "https://cdn.example.com/update.json"));
+
+        assertEquals("https://cdn.example.com/update.json", settings.getUpdateUrl());
+    }
+
+    @Test
+    public void upgradedDevice_anUpdateUrlStoredEmptyByASetupStaysEmpty() {
+        UtubotSettings settings = freshSettings(prefs -> prefs.putString("url", "https://utubot.example.com").putString("update_url", ""));
+
+        assertEquals("", settings.getUpdateUrl());
+    }
+
+    @Test
+    public void upgradedDevice_noBackendOrAnUnsafeOneMeansNoUpdateSource() {
+        assertEquals("", freshSettings(prefs -> prefs.putString("token", "t")).getUpdateUrl());
+        assertEquals("", freshSettings(prefs -> prefs.putString("url", "http://utubot.example.com")).getUpdateUrl());
+        assertEquals("", freshSettings(prefs -> prefs.putString("url", "ftp://utubot.example.com")).getUpdateUrl());
+    }
+
+    @Test
+    public void upgradedDevice_aBackendTypedLaterKeepsTheDerivedAddressInStep() throws Exception {
+        UtubotSettings settings = freshSettings(prefs -> prefs.putString("url", "https://a.example.com"));
+
+        settings.setUrlManually("https://b.example.com");
+
+        assertEquals("https://b.example.com/app/update.json", settings.getUpdateUrl());
+    }
+
+    /**
+     * The settings with only these values stored, as an upgrade leaves them
+     */
+    private UtubotSettings freshSettings(java.util.function.Function<android.content.SharedPreferences.Editor, android.content.SharedPreferences.Editor> store) {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        store.apply(StoredSettings.cleared(settings)).commit();
+
+        return settings;
     }
 
     @Test

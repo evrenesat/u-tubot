@@ -6,12 +6,14 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CaptionTrack;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Captions;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Flag;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Inflation;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Answer;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Me;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Prompt;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptSet;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Summary;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Transcript;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Verdict;
 
 import org.json.JSONArray;
@@ -25,6 +27,8 @@ import java.util.List;
  * JSON of the contract to the model objects. Unknown fields are ignored, missing ones keep their defaults.
  */
 public final class UtubotParser {
+    private static final int PERCENT = 100;
+
     private UtubotParser() {
     }
 
@@ -81,13 +85,11 @@ public final class UtubotParser {
         JSONObject json = new JSONObject(body);
         Insight insight = new Insight();
         insight.videoId = json.optString("video_id", null);
-        insight.status = json.optString("status", insight.status);
-        insight.error = optString(json, "error");
+        readAnswer(json, insight);
         insight.titleQuestion = optString(json, "title_question");
         insight.answer = optString(json, "answer");
         insight.answerConfidence = json.optDouble("answer_confidence", 0);
         insight.summary = optString(json, "summary");
-        insight.source = optString(json, "source");
         insight.keyPoints = optStrings(json.optJSONArray("key_points"));
         JSONObject inflation = json.optJSONObject("inflation");
 
@@ -106,17 +108,45 @@ public final class UtubotParser {
         Summary summary = new Summary();
         summary.videoId = json.optString("video_id", null);
         summary.prompt = optString(json, "prompt");
-        summary.status = json.optString("status", summary.status);
         summary.text = optString(json, "text");
-        summary.source = optString(json, "source");
-        summary.error = optString(json, "error");
+        readAnswer(json, summary);
         return summary;
+    }
+
+    /**
+     * The fields every answer has: the status, the error, the source and what it says about the transcript
+     */
+    private static void readAnswer(JSONObject json, Answer answer) {
+        answer.status = json.optString("status", answer.status);
+        answer.error = optString(json, "error");
+        answer.source = optString(json, "source");
+        answer.transcriptStatus = optString(json, "transcript_status");
+        // The offer comes with a video without captions; a failed answer carries it when a transcription may be tried again
+        answer.canTranscribe = json.optBoolean("can_transcribe", answer.needsTranscript());
+        answer.message = optString(json, "message");
+        answer.reason = optString(json, "reason");
+        answer.estimateSec = optSeconds(json, "estimate_s");
+        answer.retryAfterSec = optSeconds(json, "retry_after_s");
+        answer.progressPercent = optPercent(json, "progress");
+    }
+
+    public static Transcript parseTranscript(String body) throws JSONException {
+        JSONObject json = new JSONObject(body);
+        Transcript transcript = new Transcript();
+        transcript.videoId = json.optString("video_id", null);
+        String status = optString(json, "transcript_status");
+        transcript.status = status != null ? status : json.optString("status", transcript.status);
+        transcript.progressPercent = optPercent(json, "progress");
+        transcript.estimateSec = optSeconds(json, "estimate_s");
+        transcript.error = optString(json, "error");
+        return transcript;
     }
 
     public static PromptList parsePrompts(String body) throws JSONException {
         JSONObject json = new JSONObject(body);
         PromptList list = new PromptList();
         list.defaultKey = optString(json, "default");
+        list.panelDefaultKey = optString(json, "panel_default");
         JSONArray sets = json.optJSONArray("sets");
 
         if (sets == null) {
@@ -214,6 +244,30 @@ public final class UtubotParser {
     @Nullable
     private static String optString(JSONObject json, String key) {
         return json.isNull(key) ? null : json.optString(key, null);
+    }
+
+    /**
+     * @return the whole seconds of a number field, {@link UtubotModels#UNKNOWN} when it is missing, null or not a positive number
+     */
+    private static int optSeconds(JSONObject json, String key) {
+        double value = json.isNull(key) ? Double.NaN : json.optDouble(key, Double.NaN);
+
+        return Double.isNaN(value) || value <= 0 ? UtubotModels.UNKNOWN : (int) Math.ceil(value);
+    }
+
+    /**
+     * @return a progress as 0 to 100: the backend sends a fraction (0.0 to 1.0); a number above 1 is taken as a percentage already
+     */
+    private static int optPercent(JSONObject json, String key) {
+        double value = json.isNull(key) ? Double.NaN : json.optDouble(key, Double.NaN);
+
+        if (Double.isNaN(value) || value < 0) {
+            return UtubotModels.UNKNOWN;
+        }
+
+        double percent = value <= 1.0 ? value * PERCENT : value;
+
+        return (int) Math.min(PERCENT, Math.round(percent));
     }
 
     private static List<String> optStrings(@Nullable JSONArray array) {

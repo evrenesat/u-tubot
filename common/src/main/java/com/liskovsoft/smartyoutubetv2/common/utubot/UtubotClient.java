@@ -8,6 +8,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Me;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptSet;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Summary;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Transcript;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Verdict;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.VideoMeta;
 
@@ -18,11 +19,19 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
+import java.net.ConnectException;
 import java.net.Proxy;
+import java.net.UnknownHostException;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import javax.net.ssl.SSLException;
+
+import okhttp3.Call;
 import okhttp3.Dns;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
@@ -47,6 +56,8 @@ public class UtubotClient {
     private static final long MAX_SETUP_BYTES = 64 * 1024;
     private static final int DEFAULT_READ_TIMEOUT_SEC = 15;
     private static final int HTTP_UNAUTHORIZED = 401;
+    private static final int HTTP_BAD_REQUEST = 400;
+    private static final int HTTP_NOT_FOUND = 404;
     private static final int MAX_ASSESS_VIDEOS = 50;
     private static final OkHttpClient sBase = new OkHttpClient.Builder()
             .proxy(Proxy.NO_PROXY)
@@ -71,6 +82,13 @@ public class UtubotClient {
         public boolean isUnauthorized() {
             return code == HTTP_UNAUTHORIZED;
         }
+
+        /**
+         * The backend doesn't know the prompt asked for (e.g. prompt=panel on a backend without the panel prompt)
+         */
+        public boolean isPromptRejected() {
+            return code == HTTP_BAD_REQUEST || code == HTTP_NOT_FOUND;
+        }
     }
 
     public static final class PairResult {
@@ -85,6 +103,8 @@ public class UtubotClient {
 
     private final String mBaseUrl;
     private final String mToken;
+    private final Set<Call> mCalls = ConcurrentHashMap.newKeySet();
+    private volatile boolean mIsCancelled;
 
     /**
      * @param baseUrl the backend address, with or without a trailing slash
@@ -97,6 +117,21 @@ public class UtubotClient {
 
     public String getBaseUrl() {
         return mBaseUrl;
+    }
+
+    /**
+     * Cancels the calls of this client in flight, and refuses new ones. Safe from any thread.
+     */
+    public void cancel() {
+        mIsCancelled = true;
+
+        for (Call call : mCalls) {
+            call.cancel();
+        }
+    }
+
+    public boolean isCancelled() {
+        return mIsCancelled;
     }
 
     /**
@@ -122,6 +157,7 @@ public class UtubotClient {
      */
     public static UtubotSetup fetchSetup(String url) throws IOException, UtubotSetup.SetupException {
         Request request = new Request.Builder().url(url).build();
+        UtubotBusyTracker.instance().begin();
 
         try (Response response = sBase.newCall(request).execute()) {
             if (!response.isSuccessful()) {
@@ -133,6 +169,8 @@ public class UtubotClient {
             return UtubotSetup.parse(body);
         } catch (IllegalArgumentException e) {
             throw new UtubotSetup.SetupException("Not a valid address: " + url);
+        } finally {
+            UtubotBusyTracker.instance().end();
         }
     }
 
@@ -196,6 +234,23 @@ public class UtubotClient {
 
         addMeta(url, meta);
         return parse(() -> UtubotParser.parseSummary(send(authorized(url), waitMs + LONG_POLL_SLACK_MS)));
+    }
+
+    /**
+     * Asks the backend to make the transcript of a video without captions in the background
+     * (`POST /v1/videos/{id}/transcribe`). The answer says where it stands, like {@link #transcript}.
+     */
+    public Transcript transcribe(String videoId, @Nullable VideoMeta meta) throws IOException {
+        HttpUrl.Builder url = urlBuilder("/videos/" + videoId + "/transcribe");
+        addMeta(url, meta);
+        return parse(() -> UtubotParser.parseTranscript(send(authorized(url).post(json(new JSONObject())), 0)));
+    }
+
+    /**
+     * Where the transcript of a video stands (`GET /v1/videos/{id}/transcript`): cheap, it never starts any work
+     */
+    public Transcript transcript(String videoId) throws IOException {
+        return parse(() -> UtubotParser.parseTranscript(send(builder("/videos/" + videoId + "/transcript", true), 0)));
     }
 
     public PromptList prompts() throws IOException {
@@ -300,15 +355,55 @@ public class UtubotClient {
                 .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
                 .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
                 .build() : sBase;
+        Request request = builder.build();
 
-        try (Response response = client.newCall(builder.build()).execute()) {
-            String body = response.body() != null ? response.body().string() : "";
+        if (mIsCancelled) {
+            throw new IOException("Cancelled");
+        }
 
-            if (!response.isSuccessful()) {
-                throw new HttpException(response.code(), "HTTP " + response.code() + ": " + abbreviate(body));
+        try {
+            return execute(client, request);
+        } catch (IOException e) {
+            if (!isDroppedConnection(request, e)) {
+                throw e;
             }
 
-            return body;
+            // The pool handed out an idle connection that the server had closed: the second try opens a fresh one
+            return execute(client, request);
+        }
+    }
+
+    /**
+     * A GET that failed for a reason a second try can cure: the server closed a kept-alive connection (the client doesn't retry
+     * by itself, so no request is sent twice by accident). Timeouts, refused or unresolvable hosts, TLS and error statuses are not.
+     */
+    private boolean isDroppedConnection(Request request, IOException error) {
+        return "GET".equals(request.method()) && !mIsCancelled && !(error instanceof HttpException) && !(error instanceof InterruptedIOException) &&
+                !(error instanceof UnknownHostException) && !(error instanceof ConnectException) && !(error instanceof SSLException);
+    }
+
+    private String execute(OkHttpClient client, Request request) throws IOException {
+        Call call = client.newCall(request);
+        mCalls.add(call);
+        UtubotBusyTracker.instance().begin();
+
+        try {
+            if (mIsCancelled) {
+                call.cancel();
+            }
+
+            try (Response response = call.execute()) {
+                String body = response.body() != null ? response.body().string() : "";
+
+                if (!response.isSuccessful()) {
+                    throw new HttpException(response.code(), "HTTP " + response.code() + ": " + abbreviate(body));
+                }
+
+                return body;
+            }
+        } finally {
+            mCalls.remove(call);
+            UtubotBusyTracker.instance().end();
         }
     }
 

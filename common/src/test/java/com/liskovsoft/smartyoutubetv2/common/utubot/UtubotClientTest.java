@@ -14,6 +14,7 @@ import org.robolectric.annotation.Config;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
@@ -150,6 +151,216 @@ public class UtubotClientTest {
 
         assertTrue(mQuery.get().contains("prompt=set%2Fprompt") || mQuery.get().contains("prompt=set/prompt"));
         assertTrue(mQuery.get().contains("wait_ms=20000"));
+    }
+
+    @Test
+    public void transcribeStartsTheJobWithAPostAndTheMetadata() throws Exception {
+        mServer.on("/v1/videos/abc/transcribe", request -> {
+            mQuery.set(request.method + " " + request.query);
+            mAuth.set(request.headers.get("authorization"));
+            return new TinyHttpServer.Response(200, "{\"video_id\":\"abc\",\"status\":\"queued\",\"job_id\":\"j1\"," +
+                    "\"transcript_status\":\"transcribing\",\"progress\":0.0,\"estimate_s\":240}");
+        });
+        VideoMeta meta = new VideoMeta();
+        meta.videoId = "abc";
+        meta.title = "A title";
+        meta.durationSec = 600;
+
+        UtubotModels.Transcript transcript = new UtubotClient(base(), TOKEN).transcribe("abc", meta);
+
+        assertTrue(mQuery.get().startsWith("POST "));
+        assertTrue(mQuery.get().contains("duration_s=600"));
+        assertEquals("Bearer " + TOKEN, mAuth.get());
+        assertTrue(transcript.isTranscribing());
+        assertEquals(0, transcript.progressPercent);
+        assertEquals(240, transcript.estimateSec);
+    }
+
+    @Test
+    public void transcribeIsNeverSentTwice() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        mServer.on("/v1/videos/abc/transcribe", request -> {
+            requests.incrementAndGet();
+            return new TinyHttpServer.Response(429, "{\"error\":\"too many transcriptions queued, wait for one to finish\"}");
+        });
+
+        try {
+            new UtubotClient(base(), TOKEN).transcribe("abc", null);
+            fail();
+        } catch (UtubotClient.HttpException e) {
+            assertEquals(429, e.code);
+            assertTrue(e.getMessage().contains("too many transcriptions"));
+        }
+
+        assertEquals(1, requests.get());
+    }
+
+    @Test
+    public void transcriptAsksWhereTheTranscriptStands() throws Exception {
+        mServer.on("/v1/videos/abc/transcript", request -> {
+            mQuery.set(request.method);
+            return new TinyHttpServer.Response(200, "{\"video_id\":\"abc\",\"transcript_status\":\"transcribing\",\"progress\":0.6}");
+        });
+
+        UtubotModels.Transcript transcript = new UtubotClient(base(), TOKEN).transcript("abc");
+
+        assertEquals("GET", mQuery.get());
+        assertTrue(transcript.isTranscribing());
+        assertEquals(60, transcript.progressPercent);
+    }
+
+    @Test
+    public void aBackendThatDoesNotKnowThePanelPromptAnswersWithARejectedPrompt() throws Exception {
+        mServer.on("/v1/videos/old/summary", request -> {
+            mQuery.set(request.query);
+            return new TinyHttpServer.Response(request.query.contains("prompt=panel") ? 404 : 200, "{\"error\":\"unknown prompt\"}");
+        });
+
+        try {
+            new UtubotClient(base(), TOKEN).summary("old", "panel", null, 1000);
+            fail();
+        } catch (UtubotClient.HttpException e) {
+            assertEquals(404, e.code);
+            assertTrue(e.isPromptRejected());
+            assertTrue(mQuery.get().contains("prompt=panel"));
+        }
+    }
+
+    @Test
+    public void onlyBadRequestAndNotFoundAreARejectedPrompt() {
+        assertTrue(new UtubotClient.HttpException(400, "x").isPromptRejected());
+        assertTrue(new UtubotClient.HttpException(404, "x").isPromptRejected());
+        assertFalse(new UtubotClient.HttpException(401, "x").isPromptRejected());
+        assertFalse(new UtubotClient.HttpException(500, "x").isPromptRejected());
+    }
+
+    @Test
+    public void aGetIsTriedAgainWhenTheServerDropsTheConnection() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        mServer.on("/v1/videos/stale/summary", request -> {
+            if (calls.incrementAndGet() == 1) {
+                // No answer at all: what a kept-alive connection that the server closed looks like
+                throw new InterruptedException("dropped");
+            }
+
+            return new TinyHttpServer.Response(200, "{\"video_id\":\"stale\",\"status\":\"ready\",\"text\":\"T\"}");
+        });
+
+        assertEquals("T", new UtubotClient(base(), TOKEN).summary("stale", null, null, 1000).text);
+        assertEquals(2, calls.get());
+    }
+
+    @Test
+    public void aGetIsTriedAgainOnlyOnce() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        mServer.on("/v1/videos/dead/summary", request -> {
+            calls.incrementAndGet();
+            throw new InterruptedException("dropped");
+        });
+
+        try {
+            new UtubotClient(base(), TOKEN).summary("dead", null, null, 1000);
+            fail();
+        } catch (IOException expected) {
+            assertEquals(2, calls.get());
+        }
+    }
+
+    @Test
+    public void aPostIsNeverSentTwice() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        mServer.on("/v1/pair", request -> {
+            calls.incrementAndGet();
+            throw new InterruptedException("dropped");
+        });
+
+        try {
+            new UtubotClient(base(), "").pair("123456", "TV");
+            fail();
+        } catch (IOException expected) {
+            assertEquals(1, calls.get());
+        }
+    }
+
+    @Test
+    public void anErrorStatusIsNotTriedAgain() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        mServer.on("/v1/videos/bad/summary", request -> {
+            calls.incrementAndGet();
+            return new TinyHttpServer.Response(500, "{\"error\":\"boom\"}");
+        });
+
+        try {
+            new UtubotClient(base(), TOKEN).summary("bad", null, null, 1000);
+            fail();
+        } catch (UtubotClient.HttpException e) {
+            assertEquals(1, calls.get());
+        }
+    }
+
+    @Test
+    public void everyCallIsCountedWhileInFlight() throws Exception {
+        UtubotBusyTracker tracker = UtubotBusyTracker.instance();
+        AtomicReference<Integer> during = new AtomicReference<>();
+        mServer.on("/v1/videos/busy/summary", request -> {
+            during.set(tracker.getCount());
+            return new TinyHttpServer.Response(200, "{\"video_id\":\"busy\",\"status\":\"ready\",\"text\":\"T\"}");
+        });
+        int before = tracker.getCount();
+
+        new UtubotClient(base(), TOKEN).summary("busy", null, null, 1000);
+
+        assertEquals(before + 1, (int) during.get());
+        assertEquals(before, tracker.getCount());
+    }
+
+    @Test
+    public void aFailedCallIsNoLongerCounted() {
+        UtubotBusyTracker tracker = UtubotBusyTracker.instance();
+        int before = tracker.getCount();
+
+        try {
+            new UtubotClient("http://127.0.0.1:1", TOKEN).health();
+            fail();
+        } catch (IOException expected) {
+            assertEquals(before, tracker.getCount());
+        }
+    }
+
+    @Test
+    public void cancelStopsACallInFlightAndRefusesNewOnes() throws Exception {
+        mSlowAssess = true;
+        UtubotBusyTracker tracker = UtubotBusyTracker.instance();
+        UtubotClient client = new UtubotClient(base(), TOKEN);
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        Thread caller = new Thread(() -> {
+            try {
+                VideoMeta meta = new VideoMeta();
+                meta.videoId = "a";
+                client.assess(Collections.singletonList(meta), "home", SLOW_MS, SLOW_MS * 2);
+            } catch (Throwable e) {
+                error.set(e);
+            }
+        });
+        long started = System.nanoTime();
+        caller.start();
+        Thread.sleep(300);
+
+        client.cancel();
+        caller.join(2000);
+
+        assertFalse(caller.isAlive());
+        assertTrue(error.get() instanceof IOException);
+        assertTrue((System.nanoTime() - started) / 1_000_000 < SLOW_MS);
+        assertTrue(client.isCancelled());
+        assertEquals(0, tracker.getCount());
+
+        try {
+            client.health();
+            fail();
+        } catch (IOException expected) {
+            assertEquals("Cancelled", expected.getMessage());
+        }
     }
 
     @Test

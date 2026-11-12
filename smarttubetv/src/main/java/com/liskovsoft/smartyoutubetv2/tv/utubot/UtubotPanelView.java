@@ -1,42 +1,39 @@
 package com.liskovsoft.smartyoutubetv2.tv.utubot;
 
 import android.content.Context;
+import android.graphics.Typeface;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.StyleSpan;
+import android.util.TypedValue;
 import android.view.Gravity;
-import android.view.View;
-import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.Spinner;
 import android.widget.TextView;
 
-import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Prompt;
-import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPanelModel.Phase;
+import androidx.annotation.Nullable;
+
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPanelModel.State;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPanelText;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotStateText;
 import com.liskovsoft.smartyoutubetv2.tv.R;
 
-import java.util.ArrayList;
-import java.util.List;
-
 /**
- * The Summary panel: the title, the prompt select box, a status line and the scrollable summary. Drawn over the right side of
- * an activity, the content below stays usable.
+ * The passive Summary panel: a header (the prompt label, the working indicator and the hint to the Summary view), the title and a few
+ * lines of the glance summary. It is a preview: it never takes the focus and never handles a key, so the grid below it keeps working.
+ * The Summary view (UtubotSummaryOverlay) is where the user reads and picks prompts.
  */
 public class UtubotPanelView extends LinearLayout {
-    public interface OnPromptPicked {
-        void onPicked(String key);
-    }
-
+    private final TextView mLabel;
+    private final UtubotWorkingIndicator mIndicator;
     private final TextView mTitle;
-    private final Spinner mSpinner;
-    private final TextView mStatus;
-    private final ScrollView mScroll;
     private final TextView mText;
-    private final List<String> mKeys = new ArrayList<>();
-    private OnPromptPicked mOnPromptPicked;
-    private boolean mIsBinding;
-    private String mCurrentKey;
+    private final int mLeadColor;
+    private final int mStatusColor;
+    private final int mTextColor;
 
     public UtubotPanelView(Context context) {
         super(context);
@@ -46,132 +43,141 @@ public class UtubotPanelView extends LinearLayout {
         int gap = getResources().getDimensionPixelSize(R.dimen.utubot_panel_gap);
         setPadding(padding, padding, padding, padding);
         setVisibility(GONE);
+        setFocusable(false);
+        setFocusableInTouchMode(false);
+        setClickable(false);
+        setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS);
 
-        mTitle = new TextView(context);
-        mTitle.setTextColor(getResources().getColor(R.color.utubot_panel_title));
-        mTitle.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, getResources().getDimension(R.dimen.utubot_panel_title_size));
+        mLeadColor = getResources().getColor(R.color.utubot_panel_lead);
+        mStatusColor = getResources().getColor(R.color.utubot_panel_status);
+        mTextColor = getResources().getColor(R.color.utubot_panel_text);
+
+        LinearLayout header = new LinearLayout(context);
+        header.setOrientation(HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        mLabel = text(context, R.color.utubot_panel_label, R.dimen.utubot_panel_label_size);
+        mLabel.setSingleLine(true);
+        mLabel.setEllipsize(TextUtils.TruncateAt.END);
+        header.addView(mLabel, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
+        mIndicator = new UtubotWorkingIndicator(context);
+        LayoutParams indicatorParams = new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
+        indicatorParams.leftMargin = gap;
+        header.addView(mIndicator, indicatorParams);
+        addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+
+        TextView hint = text(context, R.color.utubot_panel_hint, R.dimen.utubot_panel_hint_size);
+        hint.setText(R.string.utubot_panel_hint);
+        hint.setSingleLine(true);
+        hint.setEllipsize(TextUtils.TruncateAt.END);
+        addView(hint, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+
+        mTitle = text(context, R.color.utubot_panel_title, R.dimen.utubot_panel_title_size);
         mTitle.setMaxLines(getResources().getInteger(R.integer.utubot_panel_title_lines));
-        mTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        addView(mTitle, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        mTitle.setEllipsize(TextUtils.TruncateAt.END);
+        addView(mTitle, below(gap));
 
-        mSpinner = new Spinner(context);
-        mSpinner.setMinimumHeight(getResources().getDimensionPixelSize(R.dimen.utubot_panel_spinner_min_height));
-        mSpinner.setFocusable(true);
-        mSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                if (!mIsBinding && mOnPromptPicked != null && position < mKeys.size() && !mKeys.get(position).equals(mCurrentKey)) {
-                    mCurrentKey = mKeys.get(position);
-                    mOnPromptPicked.onPicked(mCurrentKey);
-                }
-            }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {
-            }
-        });
-        LayoutParams spinnerParams = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
-        spinnerParams.topMargin = gap;
-        addView(mSpinner, spinnerParams);
-
-        mStatus = new TextView(context);
-        mStatus.setTextColor(getResources().getColor(R.color.utubot_panel_status));
-        mStatus.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, getResources().getDimension(R.dimen.utubot_panel_status_size));
-        LayoutParams statusParams = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
-        statusParams.topMargin = gap;
-        addView(mStatus, statusParams);
-
-        mText = new TextView(context);
-        mText.setTextColor(getResources().getColor(R.color.utubot_panel_text));
-        mText.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, getResources().getDimension(R.dimen.utubot_panel_text_size));
-        mScroll = new ScrollView(context);
-        mScroll.setFocusable(true);
-        mScroll.setFocusableInTouchMode(false);
-        mScroll.addView(mText);
-        LayoutParams scrollParams = new LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f);
-        scrollParams.topMargin = gap;
-        addView(mScroll, scrollParams);
+        mText = text(context, R.color.utubot_panel_text, R.dimen.utubot_panel_text_size);
+        mText.setMaxLines(getResources().getInteger(R.integer.utubot_panel_text_lines));
+        mText.setEllipsize(TextUtils.TruncateAt.END);
+        addView(mText, below(gap));
     }
 
     /**
-     * The layout params of the panel inside an activity's content: the right side, the configured share of the width
+     * The layout params of the panel inside an activity's content: a strip of the configured share of the width along the right edge
+     * (the margin included), as high as its lines need, at the bottom and never above {@code topInsetPx} (the top bar of the screen).
+     * It is a sibling of the screen's own views and takes only this corner: it never matches the parent in either direction.
      */
-    public static FrameLayout.LayoutParams layoutParams(Context context, int parentWidthPx) {
+    public static FrameLayout.LayoutParams layoutParams(Context context, int parentWidthPx, int topInsetPx) {
         int percent = context.getResources().getInteger(R.integer.utubot_panel_width_percent);
-        return new FrameLayout.LayoutParams(parentWidthPx * percent / PERCENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.END);
+        int margin = context.getResources().getDimensionPixelSize(R.dimen.utubot_panel_margin);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(Math.max(0, parentWidthPx * percent / PERCENT - margin),
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
+        params.setMargins(margin, Math.max(0, topInsetPx) + margin, margin, margin);
+
+        return params;
     }
 
     private static final int PERCENT = 100;
 
-    public void setOnPromptPicked(OnPromptPicked listener) {
-        mOnPromptPicked = listener;
-    }
-
     public void bind(State state) {
+        mLabel.setText(state.promptLabel != null ? state.promptLabel : getContext().getString(R.string.utubot_title));
         mTitle.setText(state.video != null ? state.video.getTitle() : "");
-        mCurrentKey = state.selectedKey;
-        bindPrompts(state);
-        mScroll.scrollTo(0, 0);
+        mIndicator.setActive(state.isWorking());
 
         switch (state.phase) {
+            case WAITING:
+                showStatus(R.string.utubot_panel_waiting);
+                break;
             case LOADING:
-                mStatus.setText(R.string.utubot_panel_loading);
-                mText.setText("");
+                showStatus(R.string.utubot_panel_loading);
+                break;
+            case PENDING:
+                showStatus(R.string.utubot_panel_pending);
+                break;
+            case NEEDS_TRANSCRIPT:
+                showStatus(UtubotStateText.noCaptionsShort(getContext(), state));
+                break;
+            case DELAYED:
+                showStatus(UtubotStateText.delayed(getContext(), state));
+                break;
+            case TRANSCRIBING:
+                showStatus(UtubotStateText.transcribing(getContext(), state));
                 break;
             case READY:
-                mStatus.setText(getContext().getString(R.string.utubot_panel_ready, state.source != null ? state.source : "-"));
-                mText.setText(state.text != null && !state.text.isEmpty() ? state.text : getContext().getString(R.string.utubot_panel_empty));
+                mText.setText(state.text != null && !state.text.isEmpty() ? styled(state.text) : getContext().getString(R.string.utubot_panel_empty));
+                mText.setTextColor(mTextColor);
                 break;
             case FAILED:
-                mStatus.setText(getContext().getString(R.string.utubot_panel_failed, state.error != null ? state.error : "-"));
-                mText.setText("");
+                mText.setText(getContext().getString(R.string.utubot_panel_failed, state.error != null ? state.error : "-"));
+                mText.setTextColor(mStatusColor);
                 break;
             default:
-                mStatus.setText("");
                 mText.setText("");
-        }
-    }
-
-    private void bindPrompts(State state) {
-        List<String> keys = new ArrayList<>();
-        List<String> labels = new ArrayList<>();
-
-        for (Prompt prompt : state.prompts) {
-            keys.add(prompt.key);
-            labels.add(prompt.label);
-        }
-
-        if (keys.equals(mKeys) && state.phase != Phase.IDLE) {
-            selectKey(state.selectedKey);
-            return;
-        }
-
-        mIsBinding = true;
-        mKeys.clear();
-        mKeys.addAll(keys);
-        mSpinner.setAdapter(new ArrayAdapter<>(getContext(), android.R.layout.simple_spinner_dropdown_item, labels));
-        selectKey(state.selectedKey);
-        mSpinner.post(() -> mIsBinding = false);
-    }
-
-    private void selectKey(String key) {
-        int index = key != null ? mKeys.indexOf(key) : -1;
-
-        if (index >= 0 && mSpinner.getSelectedItemPosition() != index) {
-            mIsBinding = true;
-            mSpinner.setSelection(index);
-            mSpinner.post(() -> mIsBinding = false);
         }
     }
 
     /**
-     * The select box takes the focus
+     * The summary, with the "→ " answer line brighter and bold
      */
-    public boolean focusPrompt() {
-        return getVisibility() == VISIBLE && mSpinner.requestFocus();
+    CharSequence styled(@Nullable String text) {
+        UtubotPanelText.Split split = UtubotPanelText.split(text);
+
+        if (split.lead == null) {
+            return split.rest;
+        }
+
+        SpannableStringBuilder builder = new SpannableStringBuilder(split.lead);
+        builder.setSpan(new StyleSpan(Typeface.BOLD), 0, split.lead.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        builder.setSpan(new ForegroundColorSpan(mLeadColor), 0, split.lead.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        if (!split.rest.isEmpty()) {
+            builder.append("\n").append(split.rest);
+        }
+
+        return builder;
     }
 
-    public boolean hasPanelFocus() {
-        return getVisibility() == VISIBLE && findFocus() != null;
+    private void showStatus(int resId) {
+        showStatus(getContext().getString(resId));
+    }
+
+    private void showStatus(CharSequence text) {
+        mText.setText(text);
+        mText.setTextColor(mStatusColor);
+    }
+
+    private static LayoutParams below(int gap) {
+        LayoutParams params = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+        params.topMargin = gap;
+
+        return params;
+    }
+
+    private TextView text(Context context, int colorRes, int sizeRes) {
+        TextView view = new TextView(context);
+        view.setTextColor(getResources().getColor(colorRes));
+        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, getResources().getDimension(sizeRes));
+
+        return view;
     }
 }

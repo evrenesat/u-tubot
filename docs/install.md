@@ -68,16 +68,22 @@ Importing a setup from a different server replaces the stored address and drops 
 ## 4. Updates
 
 The app checks the update address from the imported setup (`<server>/app/update.json`) with Electric Eel's update checker:
-*Settings, About, Updates* or the normal update prompt. It picks the file for the device's architecture. There is no built-in
-update source: without an imported setup the app never checks for updates. Updates must be signed with the same key as the
-installed app.
+shortly after it starts and then at most every 6 hours (*Settings, Updates, Notify about updates* switches this off), or on demand
+with *Settings, Updates, Check for updates*. It picks the file for the device's architecture and opens the update dialog with the
+changelog. A backend typed by hand in *Advanced* (also on 0.2.0) uses `<server>/app/update.json` too. There is no built-in
+update source: without a server the app never checks for updates. Updates must be signed with the same key as the
+installed app, and the TV asks once to allow installs from the app.
 
 ## 5. Using it
 
 - Cards in rows get marks (clickbait, low quality, inflated length, unwanted topics) or are hidden, following the policy
   your server keeps for you: [policy.md](policy.md). *Mark only, never hide* keeps everything visible.
 - Video menu (long press): **AI answer**, **Summary panel** on/off, **Prepare HQ captions**.
-- Summary panel: with the panel switched on, focusing a card for about 0.7 seconds fills a side panel with that video's
-  summary. Pick the prompt in the panel. See [prompt-sets.md](prompt-sets.md).
+- Summary panel: with the panel switched on, a card that keeps the focus for 1.8 seconds (1, 1.8, 3 or 5 seconds:
+  *Settings, u·tubot, Summary delay*) gets a small preview card at the bottom right with a short summary; it never takes the
+  focus, and the first Back hides it. Press **Info** on a card (or choose **u·tubot summary** in the video menu) for the Summary
+  view: the prompts on the left (Up and Down switch, OK keeps one for the session), the long summary on the right (Right to
+  read, Up and Down scroll, Left to go back), Back to close. For a video without captions the view offers **Transcribe in
+  background**. A small animated indicator shows while the server is working. See [prompt-sets.md](prompt-sets.md).
 - HQ captions: after "Prepare HQ captions" finishes, the track "<language> (u·tubot)" appears in the subtitle picker, and is
   selected automatically unless you turn that off. See [captions.md](captions.md).

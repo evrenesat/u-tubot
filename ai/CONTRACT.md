@@ -245,19 +245,24 @@ Stored for later threshold tuning.
   `action=hide` removes the card (unless the app's "mark only" switch is on),
   `action=mark` adds `mark_label` as a coloured card mark.
 - Summary panel mode: a toggle (quick toggle + settings + context menu
-  item). While on, focusing a card for ~700 ms opens/updates a side overlay
-  panel (right side, ~35% width, browse stays usable) with the summary for
-  that video, a prompt select box (the panel default preselected; D-pad
-  reachable) and a status line. The panel requests `prompt=panel` (or the
-  `panel_default` key from `GET /v1/prompts`), not `default`. Changing the
-  prompt reloads the panel. Back closes the panel
-  focus, toggle turns the mode off.
+  item). While on, a card that keeps the focus for the panel delay (Settings,
+  default 1.8 s) gets a passive preview in the right strip of the screen
+  (~35% width, below the top bar, never focused, browse stays usable) with
+  the card's title and the short summary. The panel requests `prompt=panel`
+  and, if the backend answers 400 or 404, the first prompt of `GET /v1/prompts`; its header label is the label of
+  `panel_default`. The Summary view (Info key or the context menu item "u·tubot summary") is a focused view with the
+  prompt list and the long summary of the user's `default` prompt, which the user changes by moving through
+  the list. The first Back hides the panel and keeps the focus on the card; the toggle turns the mode off.
 - Context menu: "AI answer" (shows `answer_short` in the item label when
   known), "Summary panel on/off", "Prepare HQ captions".
 - Summary panel and Summary view: handle `transcript_status`. `delayed`: show the `error` text and retry after
-  `retry_after_s`. `none` (`status: "needs_transcript"`): show `message` and, when `can_transcribe`, a
-  "Transcribe in background?" action that calls `POST /v1/videos/{id}/transcribe`; afterwards the same request
-  answers `transcribing` with `progress` until the summary is ready. The panel must not poll faster than it did for `pending`.
+  `retry_after_s` (1 s at least, 10 min at most) while the card or view is shown. `none` (`status: "needs_transcript"`): show
+  `message` and, when `can_transcribe`, a "Transcribe in background?" action that calls `POST /v1/videos/{id}/transcribe`;
+  afterwards the view follows `GET /v1/videos/{id}/transcript` (every 4 s; the passive panel every 20 s, no faster than it
+  polled a `pending` summary, one long poll) until the transcript is `ok`, then asks for the summary again.
+  `transcribing`: "Transcribing… N%" and the same follow-up. `failed`: show `error`; offer the action again only with
+  `can_transcribe`, and no Retry when `reason` is present. None of these answers is kept by the app. The AI answer shows
+  the same states for an insight (Retry; the transcription is started from the Summary view of the video).
 - Settings → u·tubot → Prompts: list sets, "Import from URL", "Refresh all",
   choose default.
 - Player: when `captions_ready`, offer the u·tubot track(s) in the subtitle

@@ -25,12 +25,12 @@ build needs one uninstall first.
 
 - **Marks and hiding** on video cards: clickbait, low quality, inflated length (`12m≈2m`) and topics you do not want, with
   per-user thresholds. A mark-only mode never hides anything.
-- **Summary panel**: focus a card and a side panel shows its summary, with a prompt selector.
+- **Summary panel**: focus a card and a small panel previews its summary; Info opens a Summary view with a prompt list and the long summary.
 - **Your own prompts**: prompt sets are JSON files you host anywhere and import by URL; edit and test them in a web UI.
 - **AI answer** to the question a title poses, from the video menu.
 - **HQ captions** prepared in the background (yt-dlp, Whisper on CPU or a remote API, optional speaker labels).
 - **Import setup**: type your server's address and the app configures itself, then pairs with a 6-digit code. No tokens on the TV.
-- **Self-update** from your own server, one APK per CPU architecture.
+- **Self-update** from your own server, checked automatically, one APK per CPU architecture.
 - **Any LLM**: Ollama, llama.cpp, vLLM, LM Studio, OpenAI, OpenRouter or a router, mixed per task.
 
 ## Quick start

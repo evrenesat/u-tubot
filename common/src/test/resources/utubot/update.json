@@ -1,0 +1,41 @@
+{
+  "package": {
+    "downloadUrlList_arm64-v8a": [
+      "https://utubot.example.com/app/u-tubot_0.2.2_arm64-v8a.apk"
+    ],
+    "downloadUrlList_armeabi-v7a": [
+      "https://utubot.example.com/app/u-tubot_0.2.2_armeabi-v7a.apk"
+    ],
+    "downloadUrlList_x86": [
+      "https://utubot.example.com/app/u-tubot_0.2.2_x86.apk"
+    ],
+    "downloadUrlList_universal": [
+      "https://utubot.example.com/app/u-tubot_0.2.2_universal.apk"
+    ],
+    "downloadUrlList": [
+      "https://utubot.example.com/app/u-tubot_0.2.2_universal.apk"
+    ]
+  },
+  "0.2.2": {
+    "versionCode": 4,
+    "changelog": [
+      "Import setup works and Pair with code is in Settings",
+      "Backend address typed by hand is validated; the token is cleared when the host changes",
+      "Re-importing the same setup no longer asks to pair again"
+    ]
+  },
+  "0.2.1": {
+    "versionCode": 3,
+    "changelog": [
+      "Import setup works (it failed silently in 0.2.0)",
+      "Import setup and Pair with code are the first Settings items; readable errors",
+      "Keyboard Go/Done submits; Back keeps the dialog open"
+    ]
+  },
+  "0.2.0": {
+    "versionCode": 2,
+    "changelog": [
+      "First signed release. If you installed 0.1.0, uninstall it once first."
+    ]
+  }
+}

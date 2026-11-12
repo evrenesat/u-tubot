@@ -16,6 +16,16 @@ public final class UtubotModels {
     public static final String STATUS_READY = "ready";
     public static final String STATUS_PENDING = "pending";
     public static final String STATUS_FAILED = "failed";
+    /** The video has no transcript yet; the user may have one made in the background */
+    public static final String STATUS_NEEDS_TRANSCRIPT = "needs_transcript";
+    public static final String TRANSCRIPT_OK = "ok";
+    public static final String TRANSCRIPT_READY = "ready";
+    public static final String TRANSCRIPT_NONE = "none";
+    public static final String TRANSCRIPT_DELAYED = "delayed";
+    public static final String TRANSCRIPT_TRANSCRIBING = "transcribing";
+    public static final String TRANSCRIPT_FAILED = "failed";
+    /** A field the backend did not send */
+    public static final int UNKNOWN = -1;
     public static final String ACTION_NONE = "none";
     public static final String ACTION_MARK = "mark";
     public static final String ACTION_HIDE = "hide";
@@ -91,41 +101,97 @@ public final class UtubotModels {
         public double ratio;
     }
 
-    public static final class Insight {
-        public String videoId;
+    /**
+     * What an answer of the backend (a summary, an insight) says about the transcript it is made from. The text is there only
+     * when it is {@link #STATUS_READY}; otherwise these fields say why (see "Transcript status" of ai/CONTRACT.md). An older backend sends none.
+     */
+    public abstract static class Answer {
         public String status = STATUS_PENDING;
         @Nullable public String error;
+        @Nullable public String source;
+        /** Where the transcript stands: none, delayed, transcribing, ok or failed */
+        @Nullable public String transcriptStatus;
+        /** The user may have the audio transcribed (with a video without captions, or after a failed transcription) */
+        public boolean canTranscribe;
+        /** What the backend tells the user, e.g. why there is no summary */
+        @Nullable public String message;
+        /** Why a video can't be summarized (private, members_only, age_restricted, unavailable, forbidden, too_long, live): asking again changes nothing */
+        @Nullable public String reason;
+        public int estimateSec = UNKNOWN;
+        public int retryAfterSec = UNKNOWN;
+        /** Transcription progress, 0 to 100 */
+        public int progressPercent = UNKNOWN;
+
+        public boolean isReady() {
+            return STATUS_READY.equals(status);
+        }
+
+        public boolean isPending() {
+            return STATUS_PENDING.equals(status);
+        }
+
+        public boolean isFailed() {
+            return STATUS_FAILED.equals(status);
+        }
+
+        /** No captions to summarize: the user decides on a background transcription */
+        public boolean needsTranscript() {
+            return STATUS_NEEDS_TRANSCRIPT.equals(status) || TRANSCRIPT_NONE.equals(transcriptStatus);
+        }
+
+        /** YouTube is slowing the backend down: ask again after {@link #retryAfterSec} */
+        public boolean isDelayed() {
+            return TRANSCRIPT_DELAYED.equals(transcriptStatus);
+        }
+
+        public boolean isTranscribing() {
+            return TRANSCRIPT_TRANSCRIBING.equals(transcriptStatus);
+        }
+
+        /**
+         * An answer of the moment: not a result. It is shown and asked for again; it is never kept (see UtubotManager).
+         */
+        public boolean isTransient() {
+            return needsTranscript() || isDelayed() || isTranscribing();
+        }
+    }
+
+    public static final class Insight extends Answer {
+        public String videoId;
         @Nullable public String titleQuestion;
         @Nullable public String answer;
         public double answerConfidence;
         @Nullable public String summary;
         public List<String> keyPoints = Collections.emptyList();
         @Nullable public Inflation inflation;
-        @Nullable public String source;
-
-        public boolean isPending() {
-            return STATUS_PENDING.equals(status);
-        }
-
-        public boolean isFailed() {
-            return STATUS_FAILED.equals(status);
-        }
     }
 
-    public static final class Summary {
+    public static final class Summary extends Answer {
         public String videoId;
         public String prompt;
-        public String status = STATUS_PENDING;
         @Nullable public String text;
-        @Nullable public String source;
+    }
+
+    /**
+     * The state of a video's transcript (`GET /v1/videos/{id}/transcript`, the answer of `POST .../transcribe`)
+     */
+    public static final class Transcript {
+        public String videoId;
+        public String status = "unknown";
+        public int progressPercent = UNKNOWN;
+        public int estimateSec = UNKNOWN;
         @Nullable public String error;
 
-        public boolean isPending() {
-            return STATUS_PENDING.equals(status);
+        public boolean isDone() {
+            return TRANSCRIPT_OK.equals(status) || TRANSCRIPT_READY.equals(status);
+        }
+
+        public boolean isTranscribing() {
+            return TRANSCRIPT_TRANSCRIBING.equals(status) || "queued".equals(status) || "running".equals(status);
         }
 
         public boolean isFailed() {
-            return STATUS_FAILED.equals(status);
+            return TRANSCRIPT_FAILED.equals(status);
         }
     }
 
@@ -146,6 +212,10 @@ public final class UtubotModels {
 
     public static final class PromptList {
         @Nullable public String defaultKey;
+        /**
+         * The prompt of the passive side panel (the answer to prompt=panel). Null on a backend that has none.
+         */
+        @Nullable public String panelDefaultKey;
         public List<PromptSet> sets = new ArrayList<>();
 
         /**
@@ -159,6 +229,16 @@ public final class UtubotModels {
             }
 
             return result;
+        }
+
+        /**
+         * The first prompt of the list: what the passive panel falls back to on a backend that doesn't know prompt=panel
+         */
+        @Nullable
+        public Prompt first() {
+            List<Prompt> all = allPrompts();
+
+            return all.isEmpty() ? null : all.get(0);
         }
 
         @Nullable

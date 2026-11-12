@@ -18,6 +18,11 @@ public class UtubotSettings {
     public static final int DEFAULT_WAIT_MS = 1200;
     public static final int MAX_WAIT_MS = 3000;
     public static final int NETWORK_SLACK_MS = 500;
+    /** How long a card keeps the focus before the passive panel asks for its summary (Settings choices) */
+    public static final int DEFAULT_PANEL_DELAY_MS = 1800;
+    public static final int[] PANEL_DELAY_CHOICES_MS = {1000, DEFAULT_PANEL_DELAY_MS, 3000, 5000};
+    /** How long the prompt highlight rests in the Summary view before its summary loads */
+    public static final int VIEW_PROMPT_DELAY_MS = 400;
     private static final String PREFS_NAME = "utubot_settings";
     private static final String KEY_URL = "url";
     private static final String KEY_TOKEN = "token";
@@ -27,6 +32,7 @@ public class UtubotSettings {
     private static final String KEY_PANEL = "summary_panel";
     private static final String KEY_AUTO_CAPTIONS = "auto_captions";
     private static final String KEY_WAIT_MS = "wait_ms";
+    private static final String KEY_PANEL_DELAY_MS = "panel_delay_ms";
     private static final String KEY_PAIR_PROMPT_DONE = "pair_prompt_done";
     private static final String KEY_SETUP_PROMPT_DONE = "setup_prompt_done";
     private static final String KEY_UPDATE_URL = "update_url";
@@ -110,9 +116,29 @@ public class UtubotSettings {
 
     /**
      * Where the update checker looks for new versions: the update_url of the imported setup. Empty means no update checks.
+     * A device whose backend was typed by hand before the update address was derived (0.2.0) never stored one: it follows the backend,
+     * the same way a backend typed now does. An address that was stored empty (a setup without update_url) stays empty.
      */
     public String getUpdateUrl() {
-        return mPrefs.getString(KEY_UPDATE_URL, "");
+        if (mPrefs.contains(KEY_UPDATE_URL)) {
+            return mPrefs.getString(KEY_UPDATE_URL, "");
+        }
+
+        return deriveUpdateUrlOfBackend();
+    }
+
+    private String deriveUpdateUrlOfBackend() {
+        String backend = getUrl();
+
+        if (backend.isEmpty()) {
+            return "";
+        }
+
+        try {
+            return UtubotSetup.deriveUpdateUrl(UtubotSetup.requireUrl(backend, "backend address"));
+        } catch (UtubotSetup.SetupException e) {
+            return "";
+        }
     }
 
     public void setUpdateUrl(String url) {
@@ -266,5 +292,30 @@ public class UtubotSettings {
 
     public void setWaitMs(int waitMs) {
         mPrefs.edit().putInt(KEY_WAIT_MS, Math.max(0, Math.min(waitMs, MAX_WAIT_MS))).apply();
+    }
+
+    /**
+     * The pause before the passive panel summarizes the focused card: one of {@link #PANEL_DELAY_CHOICES_MS}
+     */
+    public int getPanelDelayMs() {
+        int stored = mPrefs.getInt(KEY_PANEL_DELAY_MS, DEFAULT_PANEL_DELAY_MS);
+
+        return isPanelDelayChoice(stored) ? stored : DEFAULT_PANEL_DELAY_MS;
+    }
+
+    public void setPanelDelayMs(int delayMs) {
+        if (isPanelDelayChoice(delayMs)) {
+            mPrefs.edit().putInt(KEY_PANEL_DELAY_MS, delayMs).apply();
+        }
+    }
+
+    private static boolean isPanelDelayChoice(int delayMs) {
+        for (int choice : PANEL_DELAY_CHOICES_MS) {
+            if (choice == delayMs) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

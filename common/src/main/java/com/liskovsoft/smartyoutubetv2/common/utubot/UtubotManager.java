@@ -15,6 +15,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Captions;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Summary;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Transcript;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Verdict;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.VideoMeta;
 
@@ -27,13 +28,14 @@ import java.util.Map;
 import java.util.Set;
 
 import io.reactivex.Observable;
+import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.schedulers.Schedulers;
 
 /**
  * The app's side of u-tubot: verdicts for the cards (see HiddenVideoResolver and VideoGroup), and the insight, summary, prompt and
  * caption lookups of the menu, the summary panel and the player. Every network call is blocking inside an Rx io task.
  */
-public class UtubotManager {
+public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel.Source {
     private static final String TAG = UtubotManager.class.getSimpleName();
     public static final int MAX_ASSESS_VIDEOS = 50;
     public static final int INSIGHT_WAIT_MS = 20_000;
@@ -117,7 +119,11 @@ public class UtubotManager {
             }
         }
 
-        return Observable.merge(calls).toList().toObservable().map(results -> true).onErrorReturnItem(true);
+        // The rows are built and shown from whatever this emits (see BrowsePresenter): the main thread, as the other managers of the
+        // resolver do. On the io thread of the last call the adapters of the grids were changed off the UI thread, which raced with the
+        // layout (IllegalStateException: Cannot call this method while RecyclerView is computing a layout) and left the section empty.
+        return Observable.merge(calls).toList().toObservable().map(results -> true).onErrorReturnItem(true)
+                .observeOn(AndroidSchedulers.mainThread());
     }
 
     private boolean assess(List<VideoMeta> metas, String section, int waitMs, int hardTimeoutMs) throws IOException {
@@ -199,16 +205,44 @@ public class UtubotManager {
 
     //region Insight, summary, prompts
 
-    public Observable<Insight> insightObserve(Video video) {
-        VideoMeta meta = UtubotMeta.from(video);
-        return Observable.fromCallable(() -> pollInsight(video.videoId, meta)).subscribeOn(Schedulers.io());
+    /**
+     * Runs a blocking call of a client on an io thread. Disposing the observable cancels the call in flight.
+     */
+    private <T> Observable<T> cancellable(ClientCall<T> call) {
+        return Observable.<T>create(emitter -> {
+            UtubotClient client = newClient();
+            emitter.setCancellable(client::cancel);
+
+            try {
+                T result = call.call(client);
+
+                if (!emitter.isDisposed()) {
+                    emitter.onNext(result);
+                    emitter.onComplete();
+                }
+            } catch (Throwable error) {
+                if (!emitter.isDisposed()) {
+                    emitter.onError(error);
+                }
+            }
+        }).subscribeOn(Schedulers.io());
     }
 
-    private Insight pollInsight(String videoId, @Nullable VideoMeta meta) throws IOException {
-        UtubotClient client = newClient();
+    private interface ClientCall<T> {
+        T call(UtubotClient client) throws IOException;
+    }
+
+    @Override
+    public Observable<Insight> insightObserve(Video video) {
+        VideoMeta meta = UtubotMeta.from(video);
+        return cancellable(client -> pollInsight(client, video.videoId, meta));
+    }
+
+    private Insight pollInsight(UtubotClient client, String videoId, @Nullable VideoMeta meta) throws IOException {
         Insight insight = client.insight(videoId, meta, INSIGHT_WAIT_MS);
 
-        for (int poll = 1; insight.isPending() && poll < MAX_POLLS; poll++) {
+        // A transcript state comes back at once, like a summary's
+        for (int poll = 1; insight.isPending() && !insight.isTransient() && poll < MAX_POLLS; poll++) {
             insight = client.insight(videoId, meta, INSIGHT_WAIT_MS);
         }
 
@@ -216,8 +250,10 @@ public class UtubotManager {
     }
 
     /**
-     * Ready summaries are kept for the session
+     * Ready summaries are kept for the session. Nothing else is: a transcript state (no captions, delayed, transcribing), a
+     * pending job or a failure is the answer of the moment, and the next request asks again.
      */
+    @Override
     public Observable<Summary> summaryObserve(Video video, @Nullable String promptKey) {
         VideoMeta meta = UtubotMeta.from(video);
         String cacheKey = summaryKey(video.videoId, promptKey);
@@ -227,24 +263,39 @@ public class UtubotManager {
             return Observable.just(cached);
         }
 
-        return Observable.fromCallable(() -> pollSummary(video.videoId, promptKey, meta, cacheKey)).subscribeOn(Schedulers.io());
+        return cancellable(client -> pollSummary(client, video.videoId, promptKey, meta, cacheKey));
     }
 
-    private Summary pollSummary(String videoId, @Nullable String promptKey, @Nullable VideoMeta meta, String cacheKey) throws IOException {
-        UtubotClient client = newClient();
+    private Summary pollSummary(UtubotClient client, String videoId, @Nullable String promptKey, @Nullable VideoMeta meta, String cacheKey)
+            throws IOException {
         Summary summary = client.summary(videoId, promptKey, meta, SUMMARY_WAIT_MS);
 
-        for (int poll = 1; summary.isPending() && poll < MAX_POLLS; poll++) {
+        // A transcript state comes back at once: the view shows it and decides (it waits, retries, or asks the user)
+        for (int poll = 1; summary.isPending() && !summary.isTransient() && poll < MAX_POLLS; poll++) {
             summary = client.summary(videoId, promptKey, meta, SUMMARY_WAIT_MS);
         }
 
-        if (!summary.isPending() && !summary.isFailed()) {
+        if (summary.isReady() && !summary.isTransient()) {
             synchronized (mSummaries) {
                 mSummaries.put(cacheKey, summary);
             }
         }
 
         return summary;
+    }
+
+    /**
+     * Starts the background transcription of a video without captions
+     */
+    @Override
+    public Observable<Transcript> transcribeObserve(Video video) {
+        VideoMeta meta = UtubotMeta.from(video);
+        return cancellable(client -> client.transcribe(video.videoId, meta));
+    }
+
+    @Override
+    public Observable<Transcript> transcriptObserve(String videoId) {
+        return cancellable(client -> client.transcript(videoId));
     }
 
     @Nullable
@@ -262,14 +313,17 @@ public class UtubotManager {
      * The prompt picked in the panel, for the rest of the session. Null: the backend's default.
      */
     @Nullable
+    @Override
     public synchronized String getSessionPrompt() {
         return mSessionPrompt;
     }
 
+    @Override
     public synchronized void setSessionPrompt(@Nullable String key) {
         mSessionPrompt = key;
     }
 
+    @Override
     public Observable<PromptList> promptsObserve(boolean forceReload) {
         synchronized (this) {
             if (mPrompts != null && !forceReload) {
@@ -277,15 +331,15 @@ public class UtubotManager {
             }
         }
 
-        return Observable.fromCallable(() -> {
-            PromptList list = newClient().prompts();
+        return cancellable(client -> {
+            PromptList list = client.prompts();
 
             synchronized (this) {
                 mPrompts = list;
             }
 
             return list;
-        }).subscribeOn(Schedulers.io());
+        });
     }
 
     public Observable<Boolean> importPromptsObserve(String url) {
