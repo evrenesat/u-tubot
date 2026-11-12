@@ -13,6 +13,7 @@ from utubot.config import AssessConfig, Config
 from utubot.db import Database
 from utubot.llm import BACKGROUND
 from utubot.youtube import (
+    CLASS_MEDIA,
     FETCH_CLASSES,
     REASON_FORBIDDEN_MEDIA,
     REASON_NETWORK,
@@ -58,10 +59,19 @@ def rows(env, table: str) -> int:
     return env.svc.db.one(f"SELECT COUNT(*) AS n FROM {table}")["n"]
 
 
+MEDIA_COOLDOWN_S = 3600
+
+
+def audio_unreachable(env) -> None:
+    """The audio fallback is off: the media class cools too, so a caption limit stays "delayed"."""
+    env.svc.gate.report_block(REASON_RATE_LIMITED, MEDIA_COOLDOWN_S, CLASS_MEDIA)
+
+
 # ---- transient failures: pending + delayed, never cached ---------------------------------------
 
 
 async def test_429_is_pending_delayed_and_never_cached(env):
+    audio_unreachable(env)
     env.fetcher.error = YoutubeBlocked(REASON_RATE_LIMITED, 120)
     body = (await summary(env, title="A title")).json()
     assert body["status"] == "pending" and body["transcript_status"] == "delayed"
@@ -88,6 +98,9 @@ async def test_429_is_pending_delayed_and_never_cached(env):
     mid = (await summary(env)).json()
     assert mid["transcript_status"] == "delayed" and mid["retry_after_s"] == 60
     await env.clock.advance(61)
+    probing = (await summary(env)).json()
+    assert probing["transcript_status"] == "delayed" and probing["retry_after_s"] == 10
+    await settle()
     ready = (await summary(env)).json()
     assert ready["status"] == "ready" and ready["transcript_status"] == "ok"
     assert ready["source"] == "youtube_captions"
@@ -105,6 +118,7 @@ async def test_network_error_is_delayed_without_opening_the_breaker(env):
 
 
 async def test_background_work_is_paused_not_failed_during_cooldown(env):
+    audio_unreachable(env)
     env.svc.gate.report_block(REASON_RATE_LIMITED, 300, FETCH_CLASSES)
     task = asyncio.create_task(env.svc.transcripts.get(VID, BACKGROUND))
     await settle()
@@ -115,7 +129,7 @@ async def test_background_work_is_paused_not_failed_during_cooldown(env):
     await env.clock.advance(301)
     transcript = await asyncio.wait_for(task, 5)
     assert transcript.source == "youtube_captions" and env.fetcher.calls == [VID]
-    assert env.svc.gate.state() == "closed"
+    assert env.svc.gate.state(*FETCH_CLASSES) == "closed"
 
 
 # ---- no captions: ask first, never build on the title ----------------------------------------
