@@ -187,6 +187,41 @@ public class UtubotSetupFlowTest {
     }
 
     @Test
+    public void clearingTheBackend_dropsTheDerivedUpdateUrl() throws Exception {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        settings.setUrlManually("https://a.example.com");
+        assertEquals("https://a.example.com/app/update.json", settings.getUpdateUrl());
+
+        settings.setUrlManually("");
+
+        assertEquals("", settings.getUrl());
+        assertEquals("", settings.getUpdateUrl());
+    }
+
+    @Test
+    public void clearingTheBackend_dropsAnImportedUpdateUrlToo() throws Exception {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        settings.applySetup(UtubotSetup.parse("{\"utubot_setup\":1,\"backend_url\":\"https://a.example.com\",\"update_url\":\"https://cdn.example.com/update.json\"}"));
+        assertEquals("https://cdn.example.com/update.json", settings.getUpdateUrl());
+
+        settings.setUrlManually("  ");
+
+        assertEquals("", settings.getUpdateUrl());
+        assertEquals("", settings.getToken());
+    }
+
+    @Test
+    public void clearingTheBackend_thenTypingANewOneDerivesItsOwnUpdateUrl() throws Exception {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        settings.setUrlManually("https://a.example.com");
+        settings.setUrlManually("");
+
+        settings.setUrlManually("https://b.example.com");
+
+        assertEquals("https://b.example.com/app/update.json", settings.getUpdateUrl());
+    }
+
+    @Test
     public void upgradedDevice_backendTypedBeforeUpdateUrlsFollowsTheBackend() {
         UtubotSettings settings = freshSettings(prefs -> prefs.putString("url", "https://utubot.example.com/ai"));
 

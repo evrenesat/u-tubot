@@ -34,6 +34,10 @@ public class VerdictCache {
         }
     }
 
+    public synchronized void clear() {
+        mEntries.clear();
+    }
+
     public synchronized int size() {
         return mEntries.size();
     }

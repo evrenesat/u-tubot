@@ -42,6 +42,7 @@ public class UtubotSettings {
     private static UtubotSettings sInstance;
     private final SharedPreferences mPrefs;
     private final List<Runnable> mPanelListeners = new CopyOnWriteArrayList<>();
+    private final List<Runnable> mConnectionListeners = new CopyOnWriteArrayList<>();
 
     private UtubotSettings(Context context) {
         mPrefs = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -67,7 +68,28 @@ public class UtubotSettings {
     }
 
     public void setUrl(String url) {
-        mPrefs.edit().putString(KEY_URL, url != null ? url.trim() : "").apply();
+        String previous = getUrl();
+        String value = url != null ? url.trim() : "";
+
+        mPrefs.edit().putString(KEY_URL, value).apply();
+
+        if (!previous.equals(value)) {
+            notifyConnectionChanged();
+        }
+    }
+
+    /**
+     * Called when the backend address or the token changes: what was fetched from the old connection is no longer valid.
+     * Held strongly, for the life of the process.
+     */
+    public void addConnectionListener(Runnable listener) {
+        mConnectionListeners.add(listener);
+    }
+
+    private void notifyConnectionChanged() {
+        for (Runnable listener : mConnectionListeners) {
+            listener.run();
+        }
     }
 
     /**
@@ -85,6 +107,8 @@ public class UtubotSettings {
                 setPairPromptDone(false);
             }
             setUrl("");
+            // The update address of that backend, imported or derived, goes with it
+            mPrefs.edit().remove(KEY_UPDATE_URL).apply();
             return;
         }
 
@@ -209,7 +233,14 @@ public class UtubotSettings {
     }
 
     public void setToken(String token) {
-        mPrefs.edit().putString(KEY_TOKEN, token != null ? token.trim() : "").apply();
+        String previous = getToken();
+        String value = token != null ? token.trim() : "";
+
+        mPrefs.edit().putString(KEY_TOKEN, value).apply();
+
+        if (!previous.equals(value)) {
+            notifyConnectionChanged();
+        }
     }
 
     /**
