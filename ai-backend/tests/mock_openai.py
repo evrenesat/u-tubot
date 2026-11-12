@@ -16,6 +16,15 @@ class MockOpenAI:
         self.bad_json_first = 0
         self.mode = "plain"
         self.fail_status: int | None = None
+        self.busy_first = 0
+        self.busy_status = 503
+        self.retry_after: str | None = None
+        self.busy_models: set[str] = set()
+        self.empty_first = 0
+        self.finish_reason = "stop"
+        self.length_first = 0
+        self.active = 0
+        self.max_active = 0
         self.app = self._build()
 
     def _build(self) -> FastAPI:
@@ -28,14 +37,35 @@ class MockOpenAI:
             self.requests.append(
                 {"host": request.headers.get("host"), "auth": request.headers.get("authorization")}
             )
-            if self.delay_s:
-                await asyncio.sleep(self.delay_s)
-            if self.fail_status:
-                from fastapi.responses import JSONResponse
+            from fastapi.responses import JSONResponse
 
+            if body["model"] in self.busy_models or self.busy_first > 0:
+                if self.busy_first > 0 and body["model"] not in self.busy_models:
+                    self.busy_first -= 1
+                headers = {"Retry-After": self.retry_after} if self.retry_after else {}
+                return JSONResponse(
+                    {"error": {"code": "engine_busy"}},
+                    status_code=self.busy_status,
+                    headers=headers,
+                )
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                if self.delay_s:
+                    await asyncio.sleep(self.delay_s)
+            finally:
+                self.active -= 1
+            if self.fail_status:
                 return JSONResponse({"error": "boom"}, status_code=self.fail_status)
-            content = self.respond(body)
-            return {"choices": [{"index": 0, "message": {"role": "assistant", "content": content}}]}
+            message: dict[str, Any] = {"role": "assistant", "content": self.respond(body)}
+            if self.empty_first > 0:
+                self.empty_first -= 1
+                message = {"role": "assistant", "content": "", "reasoning_content": "thinking..."}
+            finish = self.finish_reason
+            if self.length_first > 0:
+                self.length_first -= 1
+                finish = "length"
+            return {"choices": [{"index": 0, "message": message, "finish_reason": finish}]}
 
         @app.post("/v1/audio/transcriptions")
         async def transcriptions(request: Request):

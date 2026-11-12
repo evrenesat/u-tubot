@@ -10,7 +10,7 @@ from .bg import TaskRegistry, wait_task
 from .config import Config, UserPolicy
 from .db import Database
 from .errors import public_error
-from .llm import LLMClient
+from .llm import CUT_MARK, INTERACTIVE, ChatResult, LLMClient
 from .prompts import DEFAULT_SYSTEM, Prompt, PromptStore, render
 from .transcripts import Transcript, TranscriptService, fmt_ts
 
@@ -82,7 +82,7 @@ class ContentService:
         self.cfg, self.db, self.llm = cfg, db, llm
         self.transcripts, self.prompts = transcripts, prompts
         self.registry = TaskRegistry(cfg.summary.failure_cooldown_s)
-        self._ask_results: dict[Any, str] = {}
+        self._ask_results: dict[Any, tuple[str, float | None]] = {}
 
     def wait_cap(self, wait_ms: int | None) -> int:
         s = self.cfg.summary
@@ -116,22 +116,26 @@ class ContentService:
         chunks = split_chunks(text, s.chunk_tokens * s.chars_per_token)
         notes = await asyncio.gather(
             *(
-                self.llm.chat(
+                self.llm.chat_result(
                     self.cfg.llm.analysis,
                     [
                         {"role": "system", "content": MAP_SYSTEM},
                         {"role": "user", "content": f"Part {i + 1}/{len(chunks)}:\n{chunk}"},
                     ],
                     max_tokens=s.condensed_max_tokens,
+                    priority=INTERACTIVE,
                 )
                 for i, chunk in enumerate(chunks)
             )
         )
-        merged = truncate_smart("\n\n".join(notes), budget_chars)
-        self.db.execute(
-            "INSERT OR REPLACE INTO condensed(video_id,budget,text,created_at) VALUES(?,?,?,?)",
-            [transcript.video_id, s.token_budget, merged, time.time()],
+        merged = truncate_smart(
+            "\n\n".join(n.text + CUT_MARK if n.truncated else n.text for n in notes), budget_chars
         )
+        if not any(n.truncated for n in notes):
+            self.db.execute(
+                "INSERT OR REPLACE INTO condensed(video_id,budget,text,created_at) VALUES(?,?,?,?)",
+                [transcript.video_id, s.token_budget, merged, time.time()],
+            )
         return merged
 
     def _values(
@@ -155,20 +159,21 @@ class ContentService:
 
     async def _generate(
         self, prompt: Prompt, transcript: Transcript, policy: UserPolicy, question: str = ""
-    ) -> str:
+    ) -> ChatResult:
         body = await self.condensed(transcript) if transcript.text else ""
         values = self._values(
             transcript, body, policy, question or self._title_question(transcript.video_id)
         )
         system = render(prompt.system or DEFAULT_SYSTEM, values)
         user = render(prompt.template, values)
-        text = await self.llm.chat(
+        result = await self.llm.chat_result(
             self.cfg.llm.summary,
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             model=prompt.model,
             max_tokens=prompt.max_tokens,
+            priority=INTERACTIVE,
         )
-        return clean_text(text)
+        return ChatResult(clean_text(result.text), result.truncated)
 
     def _cached_summary(
         self, video_id: str, key: str, chash: str, language: str, ttl_s: float | None = None
@@ -197,6 +202,10 @@ class ContentService:
         ttl = self.cfg.summary.adhoc_ttl_s if adhoc else None
         base = {"video_id": video_id, "prompt": key, "text": None, "source": None, "error": None}
         hit = self._cached_summary(video_id, store_key, chash, policy.language, ttl)
+        if hit is None and not adhoc:
+            hit = self._cached_summary(
+                video_id, ADHOC_KEY, chash, policy.language, self.cfg.summary.adhoc_ttl_s
+            )
         if hit:
             return {**base, "status": "ready", "text": hit["text"], "source": hit["source"]}
         task_key = ("summary", video_id, store_key, chash, policy.language)
@@ -204,14 +213,17 @@ class ContentService:
         if failure:
             return {**base, "status": "failed", "error": failure}
 
-        async def job() -> None:
+        async def job() -> tuple[str, str]:
             transcript = await self.source(video_id, qmeta)
-            text = await self._generate(prompt, transcript, policy)
+            generated = await self._generate(prompt, transcript, policy)
+            text = generated.text + CUT_MARK if generated.truncated else generated.text
+            used_key = ADHOC_KEY if generated.truncated else store_key
             self.db.execute(
                 "INSERT OR REPLACE INTO summaries(video_id,prompt_key,content_hash,language,text,"
                 "source,created_at) VALUES(?,?,?,?,?,?,?)",
-                [video_id, store_key, chash, policy.language, text, transcript.source, time.time()],
+                [video_id, used_key, chash, policy.language, text, transcript.source, time.time()],
             )
+            return text, transcript.source
 
         task = self.registry.start(task_key, job)
         if not await wait_task(task, self.wait_cap(wait_ms)):
@@ -222,8 +234,8 @@ class ContentService:
                 "status": "failed",
                 "error": public_error(task.exception(), "content task"),
             }
-        hit = self._cached_summary(video_id, store_key, chash, policy.language)
-        return {**base, "status": "ready", "text": hit["text"], "source": hit["source"]}
+        text, source = task.result()
+        return {**base, "status": "ready", "text": text, "source": source}
 
     async def insight(
         self, policy: UserPolicy, video_id: str, qmeta: dict[str, Any], wait_ms: int | None
@@ -264,6 +276,7 @@ class ContentService:
                     {"role": "system", "content": render(INSIGHT_SYSTEM, values)},
                     {"role": "user", "content": user},
                 ],
+                priority=INTERACTIVE,
             )
             if not isinstance(data, dict):
                 raise ValueError("insight output is not an object")
@@ -321,7 +334,7 @@ class ContentService:
         task_key = ("ask", video_id, qhash, policy.language)
         results = self._ask_results
 
-        async def job() -> None:
+        async def job() -> str:
             transcript = await self.source(video_id, qmeta)
             body = await self.condensed(transcript) if transcript.text else ""
             values = self._values(transcript, body, policy, question)
@@ -331,16 +344,24 @@ class ContentService:
             )
             if len(results) >= ASK_CACHE_MAX:
                 results.clear()
-            results[task_key] = await self.llm.chat(
+            answer = await self.llm.chat_result(
                 self.cfg.llm.answer,
                 [
                     {"role": "system", "content": render(ASK_SYSTEM, values)},
                     {"role": "user", "content": user},
                 ],
+                priority=INTERACTIVE,
             )
+            if answer.truncated:
+                expires = time.time() + self.cfg.summary.adhoc_ttl_s
+                results[task_key] = (answer.text + CUT_MARK, expires)
+            else:
+                results[task_key] = (answer.text, None)
+            return results[task_key][0]
 
-        if task_key in results:
-            return {"answer": results[task_key], "status": "ready"}
+        cached = results.get(task_key)
+        if cached and (cached[1] is None or cached[1] > time.time()):
+            return {"answer": cached[0], "status": "ready"}
         task = self.registry.start(task_key, job)
         if not await wait_task(task, self.wait_cap(wait_ms)):
             return {"answer": None, "status": "pending"}
@@ -350,4 +371,4 @@ class ContentService:
                 "status": "failed",
                 "error": public_error(task.exception(), "content task"),
             }
-        return {"answer": results.get(task_key), "status": "ready"}
+        return {"answer": task.result(), "status": "ready"}

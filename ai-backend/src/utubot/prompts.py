@@ -153,7 +153,7 @@ BUILTIN_SET = PromptSet(
                 "Give a TL;DR as 5 short bullet points (start each with '- '). Lead with the "
                 "single most important takeaway. Max 900 characters total."
             ),
-            max_tokens=500,
+            max_tokens=700,
         ),
         Prompt(
             id="answer-title",
@@ -167,7 +167,7 @@ BUILTIN_SET = PromptSet(
                 "actually answers it, say so. If the title asks nothing, give a 2 sentence "
                 "summary instead."
             ),
-            max_tokens=300,
+            max_tokens=400,
         ),
         Prompt(
             id="takeaways",
@@ -180,7 +180,7 @@ BUILTIN_SET = PromptSet(
                 "'[mm:ss] takeaway' using the nearest timestamp from the transcript. "
                 "Keep each under 110 characters."
             ),
-            max_tokens=600,
+            max_tokens=900,
         ),
         Prompt(
             id="worth-it",
@@ -194,7 +194,7 @@ BUILTIN_SET = PromptSet(
                 "much of the runtime is real substance versus filler, and name the best part's "
                 "timestamp if there is one. Max 700 characters."
             ),
-            max_tokens=400,
+            max_tokens=600,
         ),
         Prompt(
             id="eli-new",
@@ -206,7 +206,7 @@ BUILTIN_SET = PromptSet(
                 "jargon in plain words, use one everyday analogy, and finish with one sentence "
                 "on why it matters. Max 1000 characters."
             ),
-            max_tokens=500,
+            max_tokens=700,
         ),
     ],
 )

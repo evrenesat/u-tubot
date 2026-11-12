@@ -31,7 +31,8 @@ imported by URL, uploaded in the web UI or imported from the TV. Prompts are per
 - Up to 50 prompts per set; each `id` unique within the set. The effective key is `<set id>/<prompt id>`.
 - `label`: what the TV shows. `default: true` marks the set's preferred prompt (the user's chosen default decides).
 - `system`, `template`: up to 20 000 characters each; `template` is required.
-- `max_tokens`: 16 to 8000 (default 700).
+- `max_tokens`: 16 to 8000 (default 700). This is the budget for the visible answer; the backend adds `[llm] reasoning_headroom_tokens`
+  (default 2048) on top for reasoning models. A cut-off answer is retried once with double the budget.
 - `model`: optional, overrides the summary model: a model name or `provider:model` naming a provider from your config.
 
 ### Variables
