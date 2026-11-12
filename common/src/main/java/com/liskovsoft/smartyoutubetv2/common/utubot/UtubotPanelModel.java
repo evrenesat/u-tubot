@@ -91,6 +91,8 @@ public class UtubotPanelModel {
         public final int progressPercent;
         /** Why the video can't be summarized at all ({@link Phase#FAILED}): asking again changes nothing */
         @Nullable public final String reason;
+        /** The seconds left before a {@link Phase#DELAYED} request is asked again, {@link UtubotModels#UNKNOWN} otherwise */
+        public final int retryInSec;
 
         State(Video video, Phase phase, List<Prompt> prompts, @Nullable String selectedKey, @Nullable String promptLabel, @Nullable String text,
               @Nullable String source, @Nullable String error) {
@@ -106,6 +108,13 @@ public class UtubotPanelModel {
         State(Video video, Phase phase, List<Prompt> prompts, @Nullable String selectedKey, @Nullable String promptLabel, @Nullable String text,
               @Nullable String source, @Nullable String error, @Nullable String message, boolean canTranscribe, int estimateMinutes,
               int progressPercent, @Nullable String reason) {
+            this(video, phase, prompts, selectedKey, promptLabel, text, source, error, message, canTranscribe, estimateMinutes, progressPercent, reason,
+                    UtubotModels.UNKNOWN);
+        }
+
+        State(Video video, Phase phase, List<Prompt> prompts, @Nullable String selectedKey, @Nullable String promptLabel, @Nullable String text,
+              @Nullable String source, @Nullable String error, @Nullable String message, boolean canTranscribe, int estimateMinutes,
+              int progressPercent, @Nullable String reason, int retryInSec) {
             this.video = video;
             this.phase = phase;
             this.prompts = prompts;
@@ -119,6 +128,15 @@ public class UtubotPanelModel {
             this.estimateMinutes = estimateMinutes;
             this.progressPercent = progressPercent;
             this.reason = reason;
+            this.retryInSec = retryInSec;
+        }
+
+        /**
+         * The same state with another countdown
+         */
+        State withRetryIn(int seconds) {
+            return new State(video, phase, prompts, selectedKey, promptLabel, text, source, error, message, canTranscribe, estimateMinutes, progressPercent,
+                    reason, seconds);
         }
 
         /**
@@ -179,7 +197,7 @@ public class UtubotPanelModel {
     private final Scheduler mUiScheduler;
     private final UtubotScheduler mTimer;
     private final RequestGeneration mGeneration = new RequestGeneration();
-    private final Runnable mRetryTask = this::retryDelayed;
+    private final UtubotCountdown mRetryCountdown;
     private final Runnable mPollTask = this::pollTranscript;
     /** The request the timers belong to: when it is outdated, a timer does nothing */
     private long mTimerToken;
@@ -208,6 +226,17 @@ public class UtubotPanelModel {
         mListener = listener;
         mUiScheduler = uiScheduler;
         mTimer = timer;
+        mRetryCountdown = new UtubotCountdown(timer, new UtubotCountdown.Listener() {
+            @Override
+            public void onTick(int remainingSec) {
+                showRetryIn(remainingSec);
+            }
+
+            @Override
+            public void onDone() {
+                retryDelayed();
+            }
+        });
     }
 
     /**
@@ -332,7 +361,7 @@ public class UtubotPanelModel {
     }
 
     private void removeTimers() {
-        mTimer.remove(mRetryTask);
+        mRetryCountdown.cancel();
         mTimer.remove(mPollTask);
     }
 
@@ -448,14 +477,25 @@ public class UtubotPanelModel {
                 UtubotModels.UNKNOWN);
         mListener.onState(mState);
         mTimerToken = token;
-        mTimer.remove(mRetryTask);
-        mTimer.postDelayed(mRetryTask, retryDelayMs(summary.retryAfterSec));
+        mState = mState.withRetryIn(retrySeconds(summary.retryAfterSec));
+        mListener.onState(mState);
+        mRetryCountdown.start(mState.retryInSec);
     }
 
     private void publishTranscribing(int progressPercent, int estimateMinutes) {
         mState = new State(mVideo, Phase.TRANSCRIBING, mPrompts, selectedKeyOf(), labelOf(labelKey()), null, null, null, null, false, estimateMinutes,
                 progressPercent);
         mListener.onState(mState);
+    }
+
+    /**
+     * One second of the wait has passed: the views show what is left
+     */
+    private void showRetryIn(int remainingSec) {
+        if (mState != null && mState.phase == Phase.DELAYED && mGeneration.isCurrent(mTimerToken)) {
+            mState = mState.withRetryIn(remainingSec);
+            mListener.onState(mState);
+        }
     }
 
     /**
@@ -522,13 +562,16 @@ public class UtubotPanelModel {
         }
     }
 
-    private static long retryDelayMs(int retryAfterSec) {
+    /**
+     * The seconds to wait before asking again: what the backend said, within bounds
+     */
+    static int retrySeconds(int retryAfterSec) {
         long delayMs = retryAfterSec == UtubotModels.UNKNOWN ? DEFAULT_RETRY_MS : retryAfterSec * MS_PER_SECOND;
 
-        return Math.max(MIN_RETRY_MS, Math.min(MAX_RETRY_MS, delayMs));
+        return (int) (Math.max(MIN_RETRY_MS, Math.min(MAX_RETRY_MS, delayMs)) / MS_PER_SECOND);
     }
 
-    private static int minutesOf(int seconds) {
+    static int minutesOf(int seconds) {
         return seconds == UtubotModels.UNKNOWN ? 0 : Math.max(1, (seconds + SECONDS_PER_MINUTE - 1) / SECONDS_PER_MINUTE);
     }
 

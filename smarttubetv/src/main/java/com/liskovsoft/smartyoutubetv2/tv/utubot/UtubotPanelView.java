@@ -118,7 +118,7 @@ public class UtubotPanelView extends LinearLayout {
                 showStatus(UtubotStateText.noCaptionsShort(getContext(), state));
                 break;
             case DELAYED:
-                showStatus(UtubotStateText.delayed(getContext(), state));
+                showStatus(UtubotStateText.delayedWithCountdown(getContext(), state));
                 break;
             case TRANSCRIBING:
                 showStatus(UtubotStateText.transcribing(getContext(), state));

@@ -63,6 +63,8 @@ public class UtubotSummaryOverlay extends FrameLayout {
     private Action mAction = Action.NONE;
     /** The view was just opened and its first answer hasn't come yet */
     private boolean mIsFirstAnswerPending;
+    /** The phase of the last state shown: a countdown re-binds the same phase every second and must not move the focus */
+    @Nullable private Phase mBoundPhase;
 
     public UtubotSummaryOverlay(Context context) {
         super(context);
@@ -202,6 +204,7 @@ public class UtubotSummaryOverlay extends FrameLayout {
         mRetry.setVisibility(GONE);
         mAction = Action.NONE;
         mIsFirstAnswerPending = true;
+        mBoundPhase = null;
         mIndicator.setActive(false);
         setVisibility(VISIBLE);
         restoreFocus();
@@ -241,8 +244,8 @@ public class UtubotSummaryOverlay extends FrameLayout {
                 mText.setText(UtubotStateText.noCaptionsLong(getContext(), state));
                 break;
             case DELAYED:
-                mStatus.setText(UtubotStateText.delayed(getContext(), state));
-                mText.setText("");
+                mStatus.setText(UtubotStateText.retryIn(getContext(), state));
+                mText.setText(UtubotStateText.delayed(getContext(), state));
                 break;
             case TRANSCRIBING:
                 mStatus.setText(UtubotStateText.transcribing(getContext(), state));
@@ -266,7 +269,10 @@ public class UtubotSummaryOverlay extends FrameLayout {
         // transcription it takes the focus from the list, which the user hasn't used yet.
         boolean isFirstOffer = mIsFirstAnswerPending && mAction == Action.TRANSCRIBE;
 
-        if (mAction != Action.NONE && (mScroll.hasFocus() || isFirstOffer)) {
+        boolean isNewPhase = state.phase != mBoundPhase;
+        mBoundPhase = state.phase;
+
+        if (mAction != Action.NONE && ((mScroll.hasFocus() && isNewPhase) || isFirstOffer)) {
             mRetry.requestFocus();
         }
 

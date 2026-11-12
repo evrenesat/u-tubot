@@ -2,6 +2,7 @@ package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Transcript;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPanelModel.Phase;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPanelModel.State;
 
@@ -26,11 +27,23 @@ import static org.junit.Assert.assertTrue;
 public class UtubotAnswerModelTest {
     private final List<PublishSubject<Insight>> mCalls = new ArrayList<>();
     private final List<State> mStates = new ArrayList<>();
-    private final UtubotAnswerModel mModel = new UtubotAnswerModel(video -> {
-        PublishSubject<Insight> subject = PublishSubject.create();
-        mCalls.add(subject);
-        return (Observable<Insight>) subject;
-    }, insight -> "answer: " + insight.answer, mStates::add, Schedulers.trampoline());
+    private final List<Transcript> mPollAnswers = new ArrayList<>();
+    private final FakeScheduler mTimer = new FakeScheduler();
+    private int mPolls;
+    private final UtubotAnswerModel mModel = new UtubotAnswerModel(new UtubotAnswerModel.Source() {
+        @Override
+        public Observable<Insight> insightObserve(Video video) {
+            PublishSubject<Insight> subject = PublishSubject.create();
+            mCalls.add(subject);
+            return subject;
+        }
+
+        @Override
+        public Observable<Transcript> transcriptObserve(String videoId) {
+            mPolls++;
+            return mPollAnswers.isEmpty() ? Observable.never() : Observable.just(mPollAnswers.remove(0));
+        }
+    }, insight -> "answer: " + insight.answer, mStates::add, Schedulers.trampoline(), mTimer);
 
     private static Video video() {
         Video video = new Video();
@@ -177,5 +190,116 @@ public class UtubotAnswerModelTest {
 
         mModel.dispose();
         assertEquals(null, mModel.getVideo());
+    }
+
+    @Test
+    public void aDelayedAnswerCountsDownAndAsksAgainByItself() {
+        mModel.show(video());
+        Insight delayed = insight("pending", null);
+        delayed.transcriptStatus = "delayed";
+        delayed.error = "YouTube is limiting transcript downloads; retrying in ~1 min";
+        delayed.retryAfterSec = 3;
+
+        mCalls.get(0).onNext(delayed);
+
+        assertEquals(Phase.DELAYED, last().phase);
+        assertEquals(3, last().retryInSec);
+        assertEquals("YouTube is limiting transcript downloads; retrying in ~1 min", last().message);
+
+        mTimer.advance(1_000);
+        assertEquals(2, last().retryInSec);
+        assertEquals(Phase.DELAYED, last().phase);
+        assertEquals(1, mCalls.size());
+
+        mTimer.advance(2_000);
+        assertEquals(2, mCalls.size());
+        assertEquals(Phase.LOADING, last().phase);
+
+        mCalls.get(1).onNext(insight("ready", "now"));
+        assertEquals("answer: now", last().text);
+        assertEquals(0, mTimer.pending());
+    }
+
+    @Test
+    public void aDelayedAnswerIsNotAskedAgainAfterTheViewClosed() {
+        mModel.show(video());
+        Insight delayed = insight("pending", null);
+        delayed.transcriptStatus = "delayed";
+        delayed.retryAfterSec = 5;
+        mCalls.get(0).onNext(delayed);
+
+        mModel.dispose();
+        mTimer.advance(60_000);
+
+        assertEquals(1, mCalls.size());
+        assertEquals(0, mTimer.pending());
+    }
+
+    @Test
+    public void aTranscriptionTheServerStartedIsFollowedUntilTheAnswerCanBeAskedFor() {
+        mModel.show(video());
+        Insight busy = insight("pending", null);
+        busy.transcriptStatus = "transcribing";
+        busy.progressPercent = 10;
+        busy.estimateSec = 240;
+        mCalls.get(0).onNext(busy);
+
+        assertEquals(Phase.TRANSCRIBING, last().phase);
+        assertEquals(4, last().estimateMinutes);
+        assertEquals(UtubotPanelModel.Action.NONE, last().action());
+
+        Transcript running = new Transcript();
+        running.status = "transcribing";
+        running.progressPercent = 60;
+        running.estimateSec = 240;
+        mPollAnswers.add(running);
+        mTimer.advance(UtubotPanelModel.TRANSCRIPT_POLL_VIEW_MS);
+
+        assertEquals(1, mPolls);
+        assertEquals(Phase.TRANSCRIBING, last().phase);
+        assertEquals(60, last().progressPercent);
+
+        Transcript done = new Transcript();
+        done.status = "ok";
+        mPollAnswers.add(done);
+        mTimer.advance(UtubotPanelModel.TRANSCRIPT_POLL_VIEW_MS);
+
+        assertEquals(2, mCalls.size());
+        assertEquals(Phase.LOADING, last().phase);
+        mCalls.get(1).onNext(insight("ready", "yes"));
+        assertEquals("answer: yes", last().text);
+        assertEquals(0, mTimer.pending());
+    }
+
+    @Test
+    public void aFailedTranscriptionEndsTheFollowingWithItsError() {
+        mModel.show(video());
+        Insight busy = insight("pending", null);
+        busy.transcriptStatus = "transcribing";
+        mCalls.get(0).onNext(busy);
+
+        Transcript failed = new Transcript();
+        failed.status = "failed";
+        failed.error = "transcription failed";
+        mPollAnswers.add(failed);
+        mTimer.advance(UtubotPanelModel.TRANSCRIPT_POLL_VIEW_MS);
+
+        assertEquals(Phase.FAILED, last().phase);
+        assertEquals("transcription failed", last().error);
+        assertEquals(0, mTimer.pending());
+    }
+
+    @Test
+    public void aTranscriptionIsNotFollowedAfterTheViewClosed() {
+        mModel.show(video());
+        Insight busy = insight("pending", null);
+        busy.transcriptStatus = "transcribing";
+        mCalls.get(0).onNext(busy);
+
+        mModel.dispose();
+        mTimer.advance(60_000);
+
+        assertEquals(0, mPolls);
+        assertEquals(0, mTimer.pending());
     }
 }
