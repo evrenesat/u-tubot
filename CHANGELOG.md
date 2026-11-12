@@ -3,6 +3,34 @@
 Versions follow `versionName` in `smarttubetv/build.gradle` (flavor `stutubot`). Release APKs are signed with the u·tubot
 release key; the certificate SHA-256 is in each release's notes on GitHub.
 
+## 0.2.2 (2026-11-12)
+
+Security fixes for backend addresses and tokens. Updates 0.2.1 in place.
+
+- A backend address typed in Advanced follows the same rules as an imported one (https, or http for local network addresses) and
+  is refused with a message otherwise. The update address is derived from the validated address: its origin and path plus
+  `/app/update.json`, without query or fragment.
+- Changing the backend host in Advanced drops the stored token, so it is never sent to another host; pair again afterwards.
+- The import log no longer records the query string of the address.
+- Importing the same setup again on a paired device keeps the pairing and doesn't open the pairing dialog; it opens only when
+  there is no token or the backend changed.
+
+## 0.2.1 (2026-11-12)
+
+Fixes for Import setup and pairing. Updates 0.2.0 in place.
+
+- Import setup now works: the fetch failed on every server with an empty "null" error (the setup file was read with a byte
+  count longer than the file), so nothing was imported and nothing was shown.
+- Settings, u·tubot lists Import setup and Pair with code first, then the switches, Prompts, Test connection and Advanced.
+- The address and pairing code fields submit on OK and on the keyboard's Go, Done, Next, Send or Search key; Back hides the
+  keyboard without closing the dialog; an empty value shows a message.
+- Import shows "Fetching the setup…", then the server name or the reason it failed (address not found, TLS, timeout,
+  connection refused, HTTP status, not a setup file). Each step is logged with the tag `Utubot` (no tokens or codes).
+- After an import the pairing dialog opens; once paired the app tests the connection and shows "Paired as <user>".
+- The first-launch prompt (Import setup, Not now, Don't ask again) comes back on every launch until the app is set up,
+  unless you pick Don't ask again.
+- A backend address typed in Advanced also sets the update address (`<backend>/app/update.json`) when none is stored.
+
 ## 0.2.0 (2026-11-12)
 
 First signed release.

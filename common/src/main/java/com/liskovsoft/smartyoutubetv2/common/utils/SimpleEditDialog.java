@@ -9,8 +9,11 @@ import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import androidx.appcompat.app.AlertDialog;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import com.liskovsoft.sharedutils.helpers.KeyHelpers;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.smartyoutubetv2.common.R;
@@ -94,6 +97,8 @@ public class SimpleEditDialog {
         editField.setText(defaultValue);
         editField.setHint(dialogHint);
         editField.setNextFocusDownId(android.R.id.button1); // OK button
+        // A URI field makes most keyboards show "Go": say which action the key sends, and handle every one of them below
+        editField.setImeOptions(EditorInfo.IME_ACTION_DONE);
 
         if (defaultValue != null) { // move cursor to the end
             editField.setSelection(defaultValue.length());
@@ -118,7 +123,7 @@ public class SimpleEditDialog {
         editField.setOnEditorActionListener((v, actionId, event) -> {
             boolean isEnterKey = event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER;
 
-            if (actionId != EditorInfo.IME_ACTION_DONE && actionId != EditorInfo.IME_ACTION_NEXT && !isEnterKey) {
+            if (!isSubmitAction(actionId) && !isEnterKey) {
                 return false;
             }
 
@@ -129,6 +134,10 @@ public class SimpleEditDialog {
 
             return true;
         });
+
+        // Back hides the keyboard only: some keyboards pass it on to the dialog, which would be lost with the typed text
+        configDialog.setOnKeyListener((dialog, keyCode, event) ->
+                keyCode == KeyEvent.KEYCODE_BACK && consumeBack(event, isKeyboardShown(editField), () -> hideKeyboard(editField)));
 
         try {
             configDialog.show();
@@ -143,9 +152,10 @@ public class SimpleEditDialog {
         configDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener((view) -> {
             String newValue = editField.getText().toString();
 
-            if (newValue.isEmpty()) {
+            if (newValue.trim().isEmpty()) {
                 // Empty fields not allowed
                 editField.setHint(R.string.enter_value);
+                MessageHelpers.showMessage(context, R.string.enter_value);
                 return;
             }
 
@@ -162,6 +172,42 @@ public class SimpleEditDialog {
         configDialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener((view) -> paste(context, editField));
 
         //editField.setNextFocusDownId(configDialog.getButton(AlertDialog.BUTTON_POSITIVE).getId()); // OK button
+    }
+
+    /**
+     * Back while the keyboard is up hides it and nothing more (the dialog stays, with its text).
+     *
+     * @return true if the key is consumed
+     */
+    static boolean consumeBack(KeyEvent event, boolean keyboardShown, Runnable hideKeyboard) {
+        if (!keyboardShown) {
+            return false;
+        }
+
+        if (event.getAction() == KeyEvent.ACTION_UP) {
+            hideKeyboard.run();
+        }
+
+        return true;
+    }
+
+    static boolean isSubmitAction(int actionId) {
+        return actionId == EditorInfo.IME_ACTION_DONE || actionId == EditorInfo.IME_ACTION_NEXT || actionId == EditorInfo.IME_ACTION_GO
+                || actionId == EditorInfo.IME_ACTION_SEND || actionId == EditorInfo.IME_ACTION_SEARCH;
+    }
+
+    private static boolean isKeyboardShown(View view) {
+        WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(view);
+
+        return insets != null && insets.isVisible(WindowInsetsCompat.Type.ime());
+    }
+
+    private static void hideKeyboard(View view) {
+        InputMethodManager imm = (InputMethodManager) view.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+
+        if (imm != null) {
+            imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+        }
     }
 
     /**

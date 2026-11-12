@@ -6,6 +6,11 @@
     <string name="utubot_import_setup_hint">utubot.example.com</string>
     <string name="utubot_importing">Fetching the setup…</string>
     <string name="utubot_import_ok">Setup imported: %s</string>
+    <string name="utubot_error_http">the server answered HTTP %d</string>
+    <string name="utubot_error_dns">the address was not found (DNS)</string>
+    <string name="utubot_error_tls">secure connection failed (TLS certificate or protocol)</string>
+    <string name="utubot_error_timeout">the server did not answer in time</string>
+    <string name="utubot_error_connect">can\'t connect to the server</string>
     <string name="utubot_import_failed">Setup import failed: %s</string>
     <string name="utubot_no_update_source">No update source: import your server\'s setup first</string>
     <string name="utubot_advanced">Advanced</string>
@@ -70,5 +75,11 @@
     <string name="utubot_pair_invalid">The code has %d digits</string>
     <string name="utubot_pairing">Pairing…</string>
     <string name="utubot_paired">Paired as %s</string>
+    <string name="utubot_paired_test_failed">Paired as %1$s, but the connection test failed: %2$s</string>
+    <string name="utubot_not_now">Not now</string>
+    <string name="utubot_not_now_desc">Ask again the next time the app starts</string>
+    <string name="utubot_dont_ask">Don\'t ask again</string>
+    <string name="utubot_dont_ask_desc">You can still use Settings → u·tubot</string>
+    <string name="utubot_pair_wrong_code">the code is wrong, used or expired</string>
     <string name="utubot_pair_failed">Pairing failed: %s</string>
 </resources>

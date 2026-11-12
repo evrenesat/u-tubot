@@ -33,13 +33,16 @@ so the other flavors behave as before.
 
 ## Behaviour
 
-- Settings: Import setup (first item), assess switch, mark only, answer in menu, Summary panel, auto-select HQ captions,
-  Pair with code (6 digits, `POST /v1/pair`, token stored, connection tested), Test connection, Prompts (list, choose
-  default, Import from URL, Refresh all), Advanced (backend URL and token by hand).
+- Settings, always in this order: Import setup, Pair with code (6 digits, `POST /v1/pair`, token stored, connection tested,
+  then "Paired as <user>"), assess switch, mark only, answer in menu, Summary panel, auto-select HQ captions, Prompts (list,
+  choose default, Import from URL, Refresh all), Test connection, Advanced (backend URL and token by hand; a typed backend
+  also sets `<backend>/app/update.json` when no update URL is stored). `UtubotSettingsPresenter.buildCategories` is the list.
 - Import setup (`UtubotSetup`, `UtubotSetupFlow`): the user types a bare host or a URL, the app fetches `/setup.json`
   (`ai/CONTRACT.md`), stores backend URL, update URL and switch defaults, then opens the pairing dialog.
-- The first launch without a backend offers Import setup (skippable); pairing follows. With a backend but no token the
-  pairing dialog is offered once.
+- Every launch without a backend offers Import setup (Not now / Don't ask again); pairing follows. With a backend but no
+  token the pairing dialog is offered the same way. Import errors are mapped to a reason (`UtubotSetupFlow.describeError`);
+  every step is logged with tag `Utubot`. `SimpleEditDialog` submits on OK and on the keyboard's Go/Done/Next/Send/Search
+  action; Back with the keyboard up only hides it.
 - Assess failures, timeouts and pending verdicts leave cards unfiltered. Marks use their own colour (`UtubotPolicy.MARK_COLOR`).
 - Summary panel: right side, 35% width, 700 ms focus debounce, prompt selector, status line, polling while pending.
   RIGHT from the grid edge enters the panel, BACK or LEFT returns. It is hidden while the player is open.

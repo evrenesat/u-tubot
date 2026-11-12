@@ -72,7 +72,7 @@ Verify: `apksigner verify --print-certs u-tubot_0.2.0_arm64-v8a.apk` (compare th
 ### Releasing
 
 1. Bump `versionName`/`versionCode` of the `stutubot` flavor in `smarttubetv/build.gradle` and add a `CHANGELOG.md` section.
-2. Tag and push: `git tag utubot-v0.2.1 && git push origin utubot-v0.2.1`. The workflow `.github/workflows/utubot-release.yml` builds the
+2. Tag and push: `git tag utubot-v0.2.2 && git push origin utubot-v0.2.1`. The workflow `.github/workflows/utubot-release.yml` builds the
    per-ABI APKs and creates the GitHub Release with `SHA256SUMS`. Secrets needed: `UTUBOT_KEYSTORE_B64` (`base64 -w0` of the keystore),
    `UTUBOT_KEYSTORE_PASSWORD`, `UTUBOT_KEY_ALIAS`, `UTUBOT_KEY_PASSWORD`. For a private repository change `runs-on` to your own runner label.
 3. Publish to your server: `utubot app publish ...` ([server.md](server.md)).

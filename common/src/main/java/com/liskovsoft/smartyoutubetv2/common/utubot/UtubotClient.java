@@ -15,7 +15,10 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.net.Proxy;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -40,6 +43,7 @@ public class UtubotClient {
     private static final int LONG_POLL_SLACK_MS = 10_000;
     private static final int IMPORT_TIMEOUT_MS = 30_000;
     private static final int MAX_ERROR_CHARS = 120;
+    private static final int CHUNK_BYTES = 4096;
     private static final long MAX_SETUP_BYTES = 64 * 1024;
     private static final int DEFAULT_READ_TIMEOUT_SEC = 15;
     private static final int HTTP_UNAUTHORIZED = 401;
@@ -124,12 +128,31 @@ public class UtubotClient {
                 throw new HttpException(response.code(), "HTTP " + response.code());
             }
 
-            String body = response.body() != null ? response.body().source().readUtf8(MAX_SETUP_BYTES) : "";
+            String body = response.body() != null ? readBounded(response.body().byteStream(), MAX_SETUP_BYTES) : "";
 
             return UtubotSetup.parse(body);
         } catch (IllegalArgumentException e) {
             throw new UtubotSetup.SetupException("Not a valid address: " + url);
         }
+    }
+
+    /**
+     * The whole stream as text, which may be shorter than the limit (BufferedSource.readUtf8(n) needs exactly n bytes)
+     */
+    static String readBounded(InputStream stream, long maxBytes) throws IOException, UtubotSetup.SetupException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] chunk = new byte[CHUNK_BYTES];
+        int read;
+
+        while ((read = stream.read(chunk)) != -1) {
+            out.write(chunk, 0, read);
+
+            if (out.size() > maxBytes) {
+                throw new UtubotSetup.SetupException("The setup file is too large");
+            }
+        }
+
+        return out.toString(StandardCharsets.UTF_8.name());
     }
 
     public Me me() throws IOException {

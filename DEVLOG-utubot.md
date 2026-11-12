@@ -1,5 +1,24 @@
 # u·tubot devlog
 
+## 2026-11-12 (0.2.2: review fixes)
+
+- Manual backend URLs go through `UtubotSetup.requireUrl`; the update URL is derived by URI resolution (origin + path + `/app/update.json`).
+- `setUrlManually` clears the token and pairing flag when the origin changes. The import log omits the query. `applySetup` returns
+  whether pairing is needed; re-importing on a paired device no longer opens the dialog. Version 0.2.2 (code 4).
+
+## 2026-11-12 (0.2.1: setup import and pairing UI)
+
+- Real-device report on 0.2.0: Import setup did nothing, Settings showed no Import setup / Pair with code. Reproduced on an
+  Android TV 14 (x86) emulator. Root cause of the silent import: `UtubotClient.fetchSetup` used `BufferedSource.readUtf8(64 KiB)`,
+  which throws `EOFException` (null message) unless the body is at least that long, so every import failed and the toast read
+  "failed: null". Now a bounded stream read; errors are mapped to a reason (DNS, TLS, timeout, connect, HTTP status, bad file).
+- The 0.2.0 list did contain Import setup, but Pair with code sat below the switches (off-screen on a TV); the list is now built
+  by `UtubotSettingsPresenter.buildCategories` in the fixed order and covered by a test.
+- `SimpleEditDialog`: the URI field makes keyboards send Go (not Done), which was ignored; every submit action is handled, the
+  field declares Done, Back with the keyboard up is consumed, an empty value says so.
+- First-launch prompt is a choice (Import / Not now / Don't ask again) shown on every launch until configured; pairing ends with
+  an automatic connection test and "Paired as <user>". A typed backend derives `<backend>/app/update.json`. Version 0.2.1 (code 3).
+
 ## 2026-11-12 (release preparation)
 
 - Setup import: the backend serves `/setup.json`; the app's Settings, u·tubot, Import setup fetches it (bare host to

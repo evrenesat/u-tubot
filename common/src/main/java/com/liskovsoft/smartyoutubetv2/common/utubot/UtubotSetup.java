@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
 public final class UtubotSetup {
     public static final int FORMAT_VERSION = 1;
     public static final String SETUP_PATH = "/setup.json";
+    public static final String UPDATE_PATH = "/app/update.json";
     private static final Pattern IPV4 = Pattern.compile("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$");
     private static final String[] LOCAL_SUFFIXES = {".local", ".lan", ".internal", ".home.arpa", ".ts.net"};
     private static final int CGNAT_SECOND_OCTET_FIRST = 64;
@@ -85,6 +86,29 @@ public final class UtubotSetup {
         String query = uri.getRawQuery() != null ? "?" + uri.getRawQuery() : "";
 
         return scheme + "://" + hostPart + port + path + query;
+    }
+
+    /**
+     * The update file of a backend: scheme://host[:port] and the backend's path, without query or fragment, plus /app/update.json
+     */
+    public static String deriveUpdateUrl(String backendUrl) throws SetupException {
+        URI uri = parseUri(backendUrl.trim());
+        return originOf(uri) + stripTrailingSlash(uri.getRawPath() == null ? "" : uri.getRawPath()) + UPDATE_PATH;
+    }
+
+    /**
+     * scheme://host[:port] of a validated address: what a stored token is bound to
+     */
+    public static String originOf(String url) throws SetupException {
+        return originOf(parseUri(url.trim()));
+    }
+
+    private static String originOf(URI uri) {
+        String host = hostOf(uri);
+        String hostPart = host.contains(":") ? "[" + host + "]" : host;
+        String port = uri.getPort() >= 0 ? ":" + uri.getPort() : "";
+
+        return uri.getScheme().toLowerCase(Locale.ROOT) + "://" + hostPart.toLowerCase(Locale.ROOT) + port;
     }
 
     /**
