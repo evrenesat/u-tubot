@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPairing;
 import com.liskovsoft.mediaserviceinterfaces.oauth.Account;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup;
 import com.liskovsoft.sharedutils.helpers.Helpers;
@@ -167,6 +168,7 @@ public class SplashPresenter extends BasePresenter<SplashView> {
     private void checkForUpdates() {
         BootDialogPresenter updatePresenter = BootDialogPresenter.instance(getContext());
         updatePresenter.start();
+        UtubotPairing.promptIfNeeded(getContext());
     }
 
     private void initVideoStateService() {

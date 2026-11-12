@@ -1,0 +1,32 @@
+{
+  "tubeai_prompt_set": 1,
+  "id": "example",
+  "name": "Example prompts",
+  "version": "2026-11-12",
+  "prompts": [
+    {
+      "id": "tldr",
+      "label": "TL;DR",
+      "default": true,
+      "system": "You summarize YouTube videos for a TV viewer. Be faithful to the transcript. Reply in {language}.",
+      "template": "Title: {title}\nChannel: {channel}\nDuration: {duration}\n\nTranscript:\n{transcript}\n\nGive a 5-bullet TL;DR.",
+      "max_tokens": 700,
+      "model": null
+    },
+    {
+      "id": "spoilers",
+      "label": "Spoiler-free pitch",
+      "system": "You write short, spoiler-free pitches. Reply in {language}.",
+      "template": "Title: {title}\n\nTranscript:\n{transcript}\n\nIn 2 sentences, say what this video is about and who would enjoy it, without revealing conclusions or twists.",
+      "max_tokens": 200
+    },
+    {
+      "id": "answer",
+      "label": "Answer the question",
+      "system": "You answer the question a video title poses, using only the transcript. Reply in {language}.",
+      "template": "Title: {title}\nQuestion: {question}\n\nTranscript:\n{transcript}\n\nAnswer the question in at most 3 sentences. If the video does not answer it, say so.",
+      "max_tokens": 250,
+      "model": "fast"
+    }
+  ]
+}

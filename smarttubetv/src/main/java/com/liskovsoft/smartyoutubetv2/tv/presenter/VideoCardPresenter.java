@@ -52,6 +52,7 @@ import com.liskovsoft.smartyoutubetv2.tv.presenter.base.LongClickPresenter;
 import com.liskovsoft.smartyoutubetv2.tv.ui.browse.video.GridFragmentHelper;
 import com.liskovsoft.smartyoutubetv2.tv.ui.widgets.complexcardview.ComplexImageCardView;
 import com.liskovsoft.smartyoutubetv2.tv.util.ViewUtil;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPolicy;
 
 /*
  * A CardPresenter is used to generate Views and bind Objects to them on demand.
@@ -168,6 +169,7 @@ public class VideoCardPresenter extends LongClickPresenter {
 
         ComplexImageCardView cardView = (ComplexImageCardView) viewHolder.view;
         Context context = cardView.getContext();
+        cardView.setTag(R.id.utubot_card_video, video); // read by the Summary panel (see UtubotPanelController)
 
         cardView.setTitleText(video.getTitle());
         cardView.setContentText(getContentText(context, video, cardView.isSelected()));
@@ -326,6 +328,10 @@ public class VideoCardPresenter extends LongClickPresenter {
             text = addMark(context, text, R.string.aislist_mark, AiSListFilterData.instance(context).getMarkColor(video.aiMarkList), selected);
         }
 
+        if (video.utubotMark != null) {
+            text = addMark(context, text, video.utubotMark, UtubotPolicy.MARK_COLOR, selected);
+        }
+
         return text;
     }
 
@@ -375,7 +381,11 @@ public class VideoCardPresenter extends LongClickPresenter {
      * @param markColor the saved ARGB color of the marker or {@link AiSListFilterData#MARK_COLOR_OFF} (the card text color)
      */
     public static CharSequence addMark(Context context, CharSequence secondTitle, int markResId, int markColor, boolean selected) {
-        SpannableString mark = new SpannableString(context.getString(markResId));
+        return addMark(context, secondTitle, context.getString(markResId), markColor, selected);
+    }
+
+    public static CharSequence addMark(Context context, CharSequence secondTitle, String markLabel, int markColor, boolean selected) {
+        SpannableString mark = new SpannableString(markLabel);
         mark.setSpan(new StyleSpan(Typeface.BOLD), 0, mark.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
 
         if (markColor != AiSListFilterData.MARK_COLOR_OFF) {

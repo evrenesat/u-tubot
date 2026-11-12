@@ -8,7 +8,8 @@ on:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-    if: github.event.repository.fork == false
+    # Inherited from Electric Eel: runs only there
+    if: github.repository == 'cygnusx-1-org/electriceel' && github.event.repository.fork == false
     permissions:
       actions: write
     steps:

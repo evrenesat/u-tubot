@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>u·tubot</title>
+<style>
+:root { --bg:#12141a; --fg:#e6e8ee; --mut:#8b93a7; --card:#1b1f29; --acc:#4c9aff; --bad:#ff6b6b; --ok:#5fd38d; }
+@media (prefers-color-scheme: light) { :root { --bg:#f5f6f8; --fg:#1a1d24; --mut:#667; --card:#fff; --acc:#1a63d6; --bad:#c62828; --ok:#1b8a4a; } }
+* { box-sizing: border-box; }
+body { margin:0; font:15px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+main { max-width:960px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+section { background:var(--card); border-radius:10px; padding:14px; }
+h1 { font-size:20px; margin:0; } h2 { font-size:16px; margin:0 0 10px; }
+input, select, textarea, button { font:inherit; color:inherit; background:transparent; border:1px solid var(--mut); border-radius:6px; padding:6px 9px; }
+textarea { width:100%; min-height:260px; font-family:ui-monospace,monospace; font-size:13px; }
+input[type=text], input[type=password], select { min-width:0; }
+button { cursor:pointer; background:var(--acc); border-color:var(--acc); color:#fff; }
+button.sec { background:transparent; color:var(--fg); border-color:var(--mut); }
+button.del { background:transparent; color:var(--bad); border-color:var(--bad); }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
+.row > input[type=text] { flex:1 1 220px; }
+pre { white-space:pre-wrap; word-break:break-word; background:rgba(127,127,127,.12); padding:10px; border-radius:6px; margin:8px 0 0; }
+.mut { color:var(--mut); } .ok { color:var(--ok); } .bad { color:var(--bad); }
+table { width:100%; border-collapse:collapse; } td, th { text-align:left; padding:4px 6px; border-bottom:1px solid rgba(127,127,127,.25); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <header class="row"><h1>u·tubot</h1><span id="health" class="mut"></span></header>
+
+  <section id="download" hidden>
+    <h2>Download</h2>
+    <div id="dlBody" class="mut">No app published yet.</div>
+  </section>
+
+  <section>
+    <h2>Token</h2>
+    <div class="row">
+      <input id="token" type="password" placeholder="user token" autocomplete="off">
+      <button id="saveToken">Save</button><button class="sec" id="clearToken">Forget</button>
+    </div>
+    <div id="me" class="mut">Not signed in.</div>
+  </section>
+
+  <section id="admin" hidden>
+    <h2>Admin</h2>
+    <div class="row"><select id="adminUser"></select><button id="pairBtn">New pairing code</button>
+      <span id="pairOut" class="mut"></span></div>
+    <table id="devices"></table>
+    <div class="row"><button class="sec" id="loadPolicy">Load policy</button><button id="savePolicy">Save policy</button>
+      <span id="policyMsg" class="mut"></span></div>
+    <textarea id="policyJson" style="min-height:140px" spellcheck="false" placeholder="policy fields to change, as JSON"></textarea>
+  </section>
+
+  <section>
+    <h2>Prompt sets</h2>
+    <div id="sets"></div>
+    <div class="row">
+      <input id="importUrl" type="text" placeholder="https://... prompt set URL (short links ok)">
+      <button id="importBtn">Import</button><button class="sec" id="refreshBtn">Refresh all</button>
+    </div>
+    <div class="row"><select id="setPick"></select><button class="sec" id="loadSet">Load into editor</button>
+      <button class="sec" id="newSet">New from template</button></div>
+    <textarea id="setJson" spellcheck="false" placeholder="prompt set JSON"></textarea>
+    <div class="row"><button id="saveSet">Save set</button><span id="setMsg" class="mut"></span></div>
+  </section>
+
+  <section>
+    <h2>Try a summary</h2>
+    <div class="row">
+      <input id="vid" type="text" placeholder="video id (e.g. jNQXAC9IVRw)">
+      <select id="promptPick"></select>
+    </div>
+    <textarea id="adhoc" style="min-height:90px" placeholder="optional ad-hoc prompt text (overrides the selected prompt; uses {title} {transcript} ...)"></textarea>
+    <div class="row"><button id="runSummary">Summarize</button><button class="sec" id="runInsight">Insight</button>
+      <span id="sumMsg" class="mut"></span></div>
+    <pre id="sumOut" hidden></pre>
+  </section>
+
+  <section>
+    <h2>HQ captions</h2>
+    <div class="row">
+      <input id="capVid" type="text" placeholder="video id">
+      <button id="capQueue">Queue</button><button class="sec" id="capStatus">Status</button>
+    </div>
+    <div id="capOut" class="mut"></div>
+    <table id="jobs"></table>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+                del(k) { try { localStorage.removeItem(k); } catch {} } };
+const TEMPLATE = { tubeai_prompt_set: 1, id: "my-prompts", name: "My prompts", version: "1",
+  prompts: [{ id: "tldr", label: "TL;DR", default: true, system: "You summarize YouTube videos for a TV viewer. Reply in {language}.",
+  template: "Title: {title}\nChannel: {channel}\nDuration: {duration}\n\nTranscript:\n{transcript}\n\nGive a 5-bullet TL;DR.", max_tokens: 700, model: null }] };
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "Content-Type": "application/json",
+    Authorization: "Bearer " + store.get("utubot_token"), ...(opts.headers || {}) } });
+  let body = null; try { body = await res.json(); } catch {}
+  if (!res.ok) throw new Error((body && body.error) || ("http " + res.status));
+  return body;
+}
+const q = p => new URLSearchParams(p).toString();
+
+async function health() {
+  try { const h = await (await fetch("/v1/health")).json(); $("health").textContent = h.ok ? "online" : "down"; $("health").className = "ok"; }
+  catch { $("health").textContent = "unreachable"; $("health").className = "bad"; }
+}
+
+async function loadMe() {
+  try {
+    const me = await api("/v1/me");
+    $("me").innerHTML = "<b>" + esc(me.user) + "</b><pre>" + esc(JSON.stringify(me.policy, null, 2)) + "</pre>";
+    $("admin").hidden = !me.admin;
+    if (me.admin) await loadAdmin();
+    await loadPrompts(); await loadJobs();
+  } catch (e) { $("me").innerHTML = '<span class="bad">' + esc(e.message) + "</span>"; }
+}
+
+let adminUsers = [];
+async function loadAdmin() {
+  adminUsers = (await api("/v1/admin/users")).users;
+  $("adminUser").innerHTML = adminUsers.map(u => "<option>" + esc(u.name) + "</option>").join("");
+  $("devices").innerHTML = "<tr><th>user</th><th>device</th><th>last used</th><th></th></tr>" + adminUsers.flatMap(u => u.devices.map(d =>
+    "<tr><td>" + esc(d.user) + "</td><td>" + esc(d.device) + "</td><td>" + (d.last_used ? new Date(d.last_used * 1000).toLocaleString() : "never") +
+    "</td><td><button class='del' data-rev='" + esc(d.id) + "'>revoke</button></td></tr>")).join("");
+}
+$("devices").addEventListener("click", async e => {
+  if (e.target.dataset.rev && confirm("Revoke this device?")) { await api("/v1/admin/devices/" + encodeURIComponent(e.target.dataset.rev), { method: "DELETE" }); await loadAdmin(); }
+});
+$("pairBtn").onclick = async () => {
+  try { const r = await api("/v1/admin/pair", { method: "POST", body: JSON.stringify({ user: $("adminUser").value }) });
+    msg("pairOut", "code " + r.code + " (valid " + Math.round(r.expires_in_s / 60) + " min)"); } catch (e) { msg("pairOut", e.message, true); }
+};
+$("loadPolicy").onclick = () => { const u = adminUsers.find(x => x.name === $("adminUser").value); $("policyJson").value = JSON.stringify(u ? u.policy : {}, null, 2); };
+$("savePolicy").onclick = async () => {
+  try { await api("/v1/admin/users/" + encodeURIComponent($("adminUser").value) + "/policy", { method: "PUT", body: $("policyJson").value });
+    msg("policyMsg", "saved"); await loadAdmin(); } catch (e) { msg("policyMsg", e.message, true); }
+};
+
+let promptState = null;
+async function loadPrompts() {
+  promptState = await api("/v1/prompts");
+  const rows = promptState.sets.map(s => "<div><b>" + esc(s.name) + "</b> <span class='mut'>" + esc(s.id) + " v" + esc(s.version) +
+    (s.source_url ? " - " + esc(s.source_url) : "") + "</span>" +
+    (s.id !== "builtin" ? " <button class='del' data-del='" + esc(s.id) + "'>delete</button>" : "") +
+    "<div class='row'>" + s.prompts.map(p => "<button class='sec' data-def='" + esc(p.key) + "'>" + esc(p.label) + (p.default ? " (default)" : "") + "</button>").join("") + "</div></div>").join("");
+  $("sets").innerHTML = rows + "<div class='mut'>Click a prompt to make it the default.</div>";
+  $("setPick").innerHTML = promptState.sets.map(s => "<option value='" + esc(s.id) + "'>" + esc(s.id) + "</option>").join("");
+  $("promptPick").innerHTML = promptState.sets.flatMap(s => s.prompts).map(p =>
+    "<option value='" + esc(p.key) + "'" + (p.key === promptState.default ? " selected" : "") + ">" + esc(p.key) + " - " + esc(p.label) + "</option>").join("");
+}
+
+$("sets").addEventListener("click", async e => {
+  const t = e.target;
+  try {
+    if (t.dataset.def) { await api("/v1/prompts/default", { method: "PUT", body: JSON.stringify({ key: t.dataset.def }) }); await loadPrompts(); }
+    if (t.dataset.del && confirm("Delete set " + t.dataset.del + "?")) { await api("/v1/prompts/sets/" + encodeURIComponent(t.dataset.del), { method: "DELETE" }); await loadPrompts(); }
+  } catch (err) { $("setMsg").textContent = err.message; $("setMsg").className = "bad"; }
+});
+const msg = (el, text, bad) => { $(el).textContent = text; $(el).className = bad ? "bad" : "ok"; };
+
+$("saveToken").onclick = () => { store.set("utubot_token", $("token").value.trim()); $("token").value = ""; $("download").hidden = true; loadMe(); };
+$("clearToken").onclick = () => { store.del("utubot_token"); $("me").textContent = "Not signed in."; };
+$("importBtn").onclick = async () => {
+  try { const s = await api("/v1/prompts/import", { method: "POST", body: JSON.stringify({ url: $("importUrl").value.trim() }) }); msg("setMsg", "imported " + s.id); await loadPrompts(); }
+  catch (e) { msg("setMsg", e.message, true); }
+};
+$("refreshBtn").onclick = async () => {
+  try { const r = await api("/v1/prompts/refresh", { method: "POST" }); msg("setMsg", JSON.stringify(r.refreshed)); await loadPrompts(); }
+  catch (e) { msg("setMsg", e.message, true); }
+};
+$("loadSet").onclick = async () => {
+  try { $("setJson").value = JSON.stringify(await api("/v1/prompts/sets/" + encodeURIComponent($("setPick").value)), null, 2); msg("setMsg", "loaded"); }
+  catch (e) { msg("setMsg", e.message, true); }
+};
+$("newSet").onclick = () => { $("setJson").value = JSON.stringify(TEMPLATE, null, 2); };
+$("saveSet").onclick = async () => {
+  try {
+    const data = JSON.parse($("setJson").value);
+    await api("/v1/prompts/sets/" + encodeURIComponent(data.id), { method: "PUT", body: JSON.stringify(data) });
+    msg("setMsg", "saved " + data.id); await loadPrompts();
+  } catch (e) { msg("setMsg", e.message, true); }
+};
+
+async function poll(fn, el) {
+  for (let i = 0; i < 40; i++) {
+    const r = await fn();
+    if (r.status !== "pending") return r;
+    msg(el, "pending... " + (i + 1)); await new Promise(r => setTimeout(r, 1500));
+  }
+  throw new Error("still pending");
+}
+function show(r) { $("sumOut").hidden = false; $("sumOut").textContent = r.text ?? JSON.stringify(r, null, 2); }
+$("runSummary").onclick = async () => {
+  const id = $("vid").value.trim(); if (!id) return;
+  msg("sumMsg", "working...");
+  try {
+    const adhoc = $("adhoc").value.trim();
+    const call = () => adhoc
+      ? api("/v1/videos/" + id + "/summary", { method: "POST", body: JSON.stringify({ prompt_text: adhoc, wait_ms: 20000 }) })
+      : api("/v1/videos/" + id + "/summary?" + q({ prompt: $("promptPick").value, wait_ms: 20000 }));
+    const r = await poll(call, "sumMsg");
+    msg("sumMsg", r.status + (r.source ? " (" + r.source + ")" : ""), r.status === "failed");
+    if (r.error) $("sumOut").textContent = r.error; else show(r);
+    $("sumOut").hidden = false;
+  } catch (e) { msg("sumMsg", e.message, true); }
+};
+$("runInsight").onclick = async () => {
+  const id = $("vid").value.trim(); if (!id) return;
+  msg("sumMsg", "working...");
+  try {
+    const r = await poll(() => api("/v1/videos/" + id + "/insight?wait_ms=20000"), "sumMsg");
+    msg("sumMsg", r.status, r.status === "failed"); $("sumOut").hidden = false; $("sumOut").textContent = JSON.stringify(r, null, 2);
+  } catch (e) { msg("sumMsg", e.message, true); }
+};
+
+async function loadJobs() {
+  try {
+    const { jobs } = await api("/v1/captions/jobs");
+    $("jobs").innerHTML = "<tr><th>video</th><th>lang</th><th>status</th><th>progress</th><th>error</th></tr>" + jobs.map(j =>
+      "<tr><td>" + esc(j.video_id) + "</td><td>" + esc(j.lang) + (j.translate_to ? "&rarr;" + esc(j.translate_to) : "") + "</td><td>" + esc(j.status) +
+      "</td><td>" + Math.round(j.progress * 100) + "%</td><td class='bad'>" + esc(j.error || "") + "</td></tr>").join("");
+  } catch {}
+}
+$("capQueue").onclick = async () => {
+  const id = $("capVid").value.trim(); if (!id) return;
+  try { const r = await api("/v1/videos/" + id + "/captions", { method: "POST", body: JSON.stringify({ lang: "auto" }) }); $("capOut").textContent = "job " + r.job_id + " " + r.status; await loadJobs(); }
+  catch (e) { $("capOut").textContent = e.message; }
+};
+$("capStatus").onclick = async () => {
+  const id = $("capVid").value.trim(); if (!id) return;
+  try {
+    const r = await api("/v1/videos/" + id + "/captions");
+    $("capOut").innerHTML = esc(r.status) + " " + Math.round(r.progress * 100) + "% " + r.tracks.map(t =>
+      "<a href='" + esc(t.url) + "?token=" + encodeURIComponent(store.get("utubot_token")) + "' target='_blank'>" + esc(t.label) + "</a>").join(" ");
+    await loadJobs();
+  } catch (e) { $("capOut").textContent = e.message; }
+};
+setInterval(() => { if (store.get("utubot_token")) loadJobs(); }, 5000);
+const ABI_NOTES = { "arm64-v8a": "most current TVs and boxes", "armeabi-v7a": "older and 32-bit TVs",
+  x86: "x86 devices and emulators", x86_64: "x86-64 devices", universal: "works everywhere, larger" };
+async function loadDownload() {
+  if (store.get("utubot_token")) return;
+  try {
+    const res = await fetch("/app/info.json"); if (!res.ok) return;
+    const info = await res.json(); const abis = Object.keys(info.files || {});
+    if (!abis.length) return;
+    const codes = info.downloader_codes || {};
+    let html = "<p>Latest version <b>" + esc(info.version_name) + "</b></p><table>" +
+      "<tr><th>Build</th><th>For</th><th>Downloader code</th></tr>" +
+      abis.map(a => "<tr><td><a href='" + esc(info.files[a].path) + "'>" + esc(a) + "</a></td><td>" +
+        esc(ABI_NOTES[a] || "") + "</td><td>" + esc(codes[a] || "") + "</td></tr>").join("") + "</table>" +
+      "<ol><li>Install <b>Downloader</b> on the TV (or use ADB / a USB stick).</li>" +
+      "<li>Enter the code above, or open this page's link for your build.</li>" +
+      "<li>Allow installs from unknown sources for Downloader, install, open u·tubot.</li>" +
+      "<li>In the app: Settings, u·tubot, Import setup, and type this server's address.</li></ol>";
+    $("dlBody").innerHTML = html; $("dlBody").className = ""; $("download").hidden = false;
+  } catch {}
+}
+loadDownload();
+health(); if (store.get("utubot_token")) loadMe();
+</script>
+</body>
+</html>

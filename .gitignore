@@ -82,3 +82,5 @@ changelog_override.txt
 .env
 
 .settings/
+utubot.properties
+temp/

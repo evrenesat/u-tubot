@@ -8,6 +8,7 @@ import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.BrowseSection;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.VideoGroup;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -24,7 +25,7 @@ import io.reactivex.Observable;
  * so a hidden video never appears first and vanishes after. The categories of Home are held the same way (see VideoCategoryManager).<br/>
  * The dates of shorts are held too (see ShortsDateManager): the card never gets its date after it's shown, and Hide old videos reads it.
  * So are the live streams that ended in History (see StreamedManager): its cards come without the date that tells them.<br/>
- * A failed lookup doesn't hold the group back: its videos are shown.
+ * The u-tubot verdicts are held the same way (see UtubotManager). A failed lookup doesn't hold the group back: its videos are shown.
  */
 public class HiddenVideoResolver {
     private static final String TAG = HiddenVideoResolver.class.getSimpleName();
@@ -121,9 +122,10 @@ public class HiddenVideoResolver {
 
         Observable<Boolean> shortsDates = ShortsDateManager.instance(context).resolve(mediaGroups);
         Observable<Boolean> streamed = streamedManager.resolve(streamedIds);
+        Observable<Boolean> utubot = UtubotManager.instance(context).resolve(mediaGroups, section);
 
         if (!isAiSListUsed && authors.isEmpty() && !isWatchLaterEnabled) {
-            return Observable.zip(shortsDates, streamed, (dates, streams) -> true);
+            return Observable.zip(shortsDates, streamed, utubot, (dates, streams, verdicts) -> true);
         }
 
         return Observable.zip(
@@ -134,7 +136,8 @@ public class HiddenVideoResolver {
                 isWatchLaterEnabled ? watchLaterManager.resolve() : Observable.just(true),
                 shortsDates,
                 streamed,
-                (lists, handles, collaborations, watchLater, dates, streams) -> true)
+                utubot,
+                (lists, handles, collaborations, watchLater, dates, streams, verdicts) -> true)
                 // Show the videos rather than nothing
                 .onErrorReturn(error -> {
                     Log.e(TAG, "Can't resolve the hidden videos: %s", error.getMessage());

@@ -1,0 +1,40 @@
+[Unit]
+Description=u·tubot backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust the checkout path (and the user, if you do not want root) for your host.
+WorkingDirectory=/opt/utubot/ai-backend
+EnvironmentFile=/etc/utubot/env
+Environment=UTUBOT_CONFIG=/etc/utubot/config.toml
+Environment=HF_HOME=/var/lib/utubot/cache/huggingface
+Environment=TORCH_HOME=/var/lib/utubot/cache/torch
+Environment=XDG_CACHE_HOME=/var/lib/utubot/cache
+Environment=HOME=/var/lib/utubot
+# Installed venv, no `uv run`: nothing is synced or downloaded when the service starts.
+ExecStart=/opt/utubot/ai-backend/.venv/bin/utubot serve --host 127.0.0.1 --port 8790
+Restart=on-failure
+RestartSec=3
+StateDirectory=utubot
+CacheDirectory=utubot
+# Hardening. Home directories stay readable but read-only, in case the checkout lives there.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/utubot
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+# ffmpeg (/usr/bin) and ctranslate2/onnx need exec and JIT mappings, so no MemoryDenyWriteExecute.
+
+[Install]
+WantedBy=multi-user.target

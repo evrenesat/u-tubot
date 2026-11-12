@@ -227,6 +227,7 @@ public class ModernVideoCard extends LinearLayout {
     public void bind(Video video) {
         stopPreview(true);
         mVideo = video;
+        setTag(R.id.utubot_card_video, video); // read by the Summary panel (see UtubotPanelController)
         mKind = kindOf(video);
         // As the classic channel cards: the "AI" marker before the name of a listed channel
         mTitle.setText(mKind == KIND_CHANNEL && video.aiMarkList != -1 ? VideoCardPresenter.addMark(getContext(), video.getTitle(),

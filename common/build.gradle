@@ -54,6 +54,16 @@ def gitBuildId = {
 }()
 def asJavaString = { String value -> value.isEmpty() ? 'null' : "\"${value}\"" }
 
+// Optional u-tubot build-time defaults for private builds: -PutubotUrl / -PutubotToken, else the gitignored utubot.properties at the repo root.
+// Public builds leave them empty: the user imports a setup instead.
+def utubotProps = new Properties()
+def utubotPropsFile = rootProject.file('utubot.properties')
+if (utubotPropsFile.exists()) {
+    utubotPropsFile.withInputStream { utubotProps.load(it) }
+}
+def utubotProp = { String key -> (project.findProperty(key) ?: utubotProps.getProperty(key) ?: '').toString() }
+def asJavaLiteral = { String value -> '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"' }
+
 android {
     namespace 'com.liskovsoft.smartyoutubetv2.common'
     // FIX: Default interface methods are only supported starting with Android N (--min-api 24)
@@ -86,6 +96,9 @@ android {
         buildConfigField 'boolean', 'MEDIA_SERVICE_CORE_DIRTY', "${mediaServiceCoreDirty}"
         buildConfigField 'String', 'SHARED_MODULES_COMMIT', asJavaString(sharedModulesCommit)
         buildConfigField 'boolean', 'SHARED_MODULES_DIRTY', "${sharedModulesDirty}"
+        buildConfigField 'boolean', 'UTUBOT_ENABLED', 'false'
+        buildConfigField 'String', 'UTUBOT_URL', '""'
+        buildConfigField 'String', 'UTUBOT_TOKEN', '""'
     }
 
     buildTypes {
@@ -109,6 +122,12 @@ android {
         stbeta {}
         ststable {}
         stfdroid {}
+        stutubot {
+            matchingFallbacks = ['ststable']
+            buildConfigField 'boolean', 'UTUBOT_ENABLED', 'true'
+            buildConfigField 'String', 'UTUBOT_URL', asJavaLiteral(utubotProp('utubotUrl'))
+            buildConfigField 'String', 'UTUBOT_TOKEN', asJavaLiteral(utubotProp('utubotToken'))
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 package com.liskovsoft.smartyoutubetv2.common.exoplayer.selector;
 
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptions;
 import android.text.TextUtils;
 import android.util.Pair;
 import com.google.android.exoplayer2.Format;
@@ -58,7 +59,8 @@ public class TrackSelectorUtil {
             trackName = joinWithSeparator(buildLanguageString(format), buildAudioPropertyString(format), buildBitrateString(format),
                     extractCodec(format), buildChannels(format), buildDrcMark(format), buildVbMark(format));
         } else if (MimeTypes.isText(format.sampleMimeType)) {
-            trackName = buildLanguageString(format);
+            String utubotName = UtubotCaptions.getTrackName(format.id);
+            trackName = utubotName != null ? utubotName : buildLanguageString(format);
         } else {
             trackName = joinWithSeparator(buildLanguageString(format), buildBitrateString(format), extractCodec(format));
         }

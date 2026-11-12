@@ -9,6 +9,8 @@ import com.liskovsoft.sharedutils.prefs.GlobalPreferences;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.service.VideoStateService;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.service.VideoStateService.State;
 import com.liskovsoft.smartyoutubetv2.common.misc.AiSListManager;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.misc.ChannelGroupFilter;
 import com.liskovsoft.smartyoutubetv2.common.misc.ChildModeManager;
 import com.liskovsoft.smartyoutubetv2.common.misc.DuplicateFilter;
@@ -548,7 +550,7 @@ public class VideoGroup {
         if (isChannelBlocked(video) || isNotInterested(video) || isHiddenWithMenu(video) || isAiListed(video) || isHiddenCategory(video) || isOld(video) || isHiddenCollaboration(video)
                 || isHiddenWatchLater(video) || isHiddenShow(video) || isHiddenStreamed(video) || isHiddenTopChannel(video) || isHiddenExploreTopic(video)
                 || hasHiddenKeyword(video) || isWatchedSuggestion(video) || isUnsubscribedChannel(video) || isHiddenChannelGroupChannel(video)
-                || isWatchedInChannelGroup(video) || isHiddenOpened(video) || isDuplicate(video)) {
+                || isWatchedInChannelGroup(video) || isHiddenOpened(video) || isHiddenByUtubot(video) || isDuplicate(video)) {
             if (video.videoId != null) {
                 mHiddenVideoCount++;
             }
@@ -1185,6 +1187,18 @@ public class VideoGroup {
         }
 
         return aiSListSection == AiSListManager.SECTION_CHANNEL_PAGE ? MediaGroup.TYPE_CHANNEL : -1;
+    }
+
+    /**
+     * The cached u-tubot verdict, asked for before the group is created (see HiddenVideoResolver). Also marks the video.
+     */
+    private boolean isHiddenByUtubot(Video video) {
+        // No context before the app is initialized (GlobalPreferences)
+        if (!UtubotSettings.isBuiltIn() || video.isChapter || video.videoId == null || GlobalPreferences.context() == null) {
+            return false;
+        }
+
+        return UtubotManager.instance(GlobalPreferences.context()).apply(video, getAiSListSection());
     }
 
     /**

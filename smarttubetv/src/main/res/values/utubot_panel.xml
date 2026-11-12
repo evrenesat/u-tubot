@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="utubot_card_video" type="id" />
+    <integer name="utubot_panel_width_percent">35</integer>
+    <integer name="utubot_panel_focus_debounce_ms">700</integer>
+    <integer name="utubot_panel_edge_check_ms">150</integer>
+    <integer name="utubot_panel_title_lines">2</integer>
+    <color name="utubot_panel_background">#E6101418</color>
+    <color name="utubot_panel_title">#FFFFFFFF</color>
+    <color name="utubot_panel_status">#FFB0BEC5</color>
+    <color name="utubot_panel_text">#FFECEFF1</color>
+    <dimen name="utubot_panel_padding">20dp</dimen>
+    <dimen name="utubot_panel_gap">10dp</dimen>
+    <dimen name="utubot_panel_title_size">20sp</dimen>
+    <dimen name="utubot_panel_status_size">14sp</dimen>
+    <dimen name="utubot_panel_text_size">17sp</dimen>
+    <dimen name="utubot_panel_spinner_min_height">48dp</dimen>
+</resources>

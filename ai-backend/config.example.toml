@@ -1,0 +1,178 @@
+# u·tubot configuration. Copy to config.toml (or point UTUBOT_CONFIG at it).
+# Every value shown is the built-in default unless marked "example".
+
+[server]
+host = "127.0.0.1"          # bind address; keep loopback and front it with a reverse proxy
+port = 8790
+data_dir = "/var/lib/utubot"          # SQLite db, users.toml, media scratch (dev: "./data")
+app_dir = "/var/lib/utubot/app"       # APKs + update.json served without auth under /app/ (dev: "./app")
+public_base_url = "https://utubot.example.com"   # example; default http://127.0.0.1:8790; the public URL of this server: used in /setup.json and APK download URLs
+# users_file = "/var/lib/utubot/users.toml"   # token hashes written by `utubot user add`
+
+[security]
+# Peers allowed to set X-Forwarded-For. The real client is the right-most entry that is not
+# itself a trusted proxy. Loopback only by default; when a reverse proxy runs on another
+# address, add that address (see docs/server.md).
+trusted_proxies = ["127.0.0.1", "::1"]
+rate_per_token_per_min = 240
+rate_per_ip_per_min = 600
+rate_window_s = 60
+pair_code_digits = 6
+pair_code_ttl_s = 900             # one-time pairing codes live 15 minutes
+pair_attempts_per_ip_per_min = 5
+pair_lockout_failures = 5         # failed codes from one IP before it is locked out
+pair_lockout_s = 900
+pair_global_failures = 40         # failed codes from all IPs per window before pairing locks globally
+pair_global_window_s = 3600
+max_body_bytes = 262144
+max_device_name_chars = 64
+max_devices_per_user = 20
+
+# ---- LLM providers (all OpenAI-compatible chat completions) -----------------------------
+[llm]
+default_provider = "local"
+timeout_s = 120.0
+retries_on_bad_json = 1           # one retry when the model returns unparsable JSON
+max_concurrency = 4
+
+# First provider: a local OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio ...).
+# Omit api_key_env for servers that need no key.
+[llm.providers.local]
+base_url = "http://127.0.0.1:11434/v1"
+
+# OpenAI itself. api_key_env names the env var holding the key (never the key itself).
+# [llm.providers.openai]
+# base_url = "https://api.openai.com/v1"
+# api_key_env = "UTUBOT_OPENAI_API_KEY"
+
+# OpenRouter.
+# [llm.providers.openrouter]
+# base_url = "https://openrouter.ai/api/v1"
+# api_key_env = "UTUBOT_OPENROUTER_API_KEY"
+
+# An LLM router or gateway on your network (any OpenAI-compatible endpoint).
+# [llm.providers.router]
+# base_url = "http://router.internal:8787/v1"
+# api_key_env = "UTUBOT_ROUTER_API_KEY"
+
+# Any configured provider can be named per task or per prompt: model = "openai:gpt-4o-mini".
+
+# Per-task model selection. "provider" is optional (defaults to default_provider);
+# "model" may also be written "provider:model".
+[llm.triage]                # batched title triage, JSON output
+model = "llama3.2:3b"
+reasoning_effort = "none"
+max_tokens = 2500
+temperature = 0.2
+
+[llm.summary]               # prompt-set summaries (a prompt's own `model` overrides this)
+model = "llama3.1:8b"             # example name; use any model your provider serves
+# model = "openrouter:anthropic/claude-sonnet-5.5"   # example override for higher quality
+max_tokens = 900
+temperature = 0.2
+
+[llm.answer]                # POST /ask
+model = "llama3.1:8b"
+max_tokens = 600
+
+[llm.analysis]              # insight and tier-2 inflation analysis
+model = "llama3.1:8b"
+max_tokens = 900
+
+[llm.captions]              # optional caption translation
+model = "llama3.1:8b"
+max_tokens = 2000
+
+[assess]
+batch_size = 25                    # titles per triage call
+max_videos_per_request = 50
+wait_ms_cap = 3000
+default_wait_ms = 1200
+background_concurrency = 2
+tier2_daily_cap_per_user = 100     # transcript-based deep analyses per user per UTC day
+tier2_clickbait_threshold = 0.6
+triage_cache_ttl_s = 604800
+title_max_chars = 200
+description_max_chars = 300
+
+[transcripts]
+cache_ttl_s = 2592000
+max_concurrency = 2
+fetch_timeout_s = 60.0
+default_language = "en"
+# cookies_file = "/var/lib/utubot/cookies.txt"   # only if YouTube starts blocking this host
+skip_if_longer_than_s = 14400
+
+[summary]
+token_budget = 24000               # transcript tokens (chars/4) sent to the model
+chunk_tokens = 8000                # map-reduce chunk size for longer transcripts
+chars_per_token = 4
+strategy = "map_reduce"            # or "truncate" (keep head 60% + tail 40%)
+default_wait_ms = 20000
+wait_ms_cap = 60000
+adhoc_ttl_s = 3600
+max_summary_chars = 1200
+max_import_bytes = 262144          # prompt-set import size cap
+import_timeout_s = 15.0
+import_allow_hosts = []            # exact hostnames exempt from the private-address/port guard
+import_max_redirects = 5
+
+[captions]
+asr_backend = "faster_whisper"     # "faster_whisper" (local CPU) or "openai" (remote /v1/audio/transcriptions)
+asr_url = "http://127.0.0.1:8000/v1/audio/transcriptions"
+asr_api_key_env = "UTUBOT_ASR_API_KEY"
+asr_model = "whisper-1"
+asr_chunk_s = 600                  # long audio is split into chunks of this length for the remote API
+whisper_model = "small"            # faster_whisper model size (CPU, int8)
+whisper_compute_type = "int8"
+whisper_threads = 4
+diarization = "none"               # "none" or "pyannote" (needs the diarization extra and a token)
+hf_token_env = "UTUBOT_HF_TOKEN"
+keep_media = false                 # keep downloaded audio under data_dir/media after transcription
+max_duration_s = 10800
+max_chars_per_line = 42
+max_lines = 2
+min_cue_s = 1.0
+max_cue_s = 7.0
+job_concurrency = 1
+
+# ---- Setup import and public download page ------------------------------------------------
+# GET /setup.json (no auth) lets the TV app configure itself from a short address.
+# It publishes server.public_base_url, so set that to the URL TVs will use.
+[setup]
+name = "u·tubot server"            # shown in the app after import
+pairing = true                     # the app goes straight to the 6-digit pairing dialog
+# prompt_set_urls = ["https://example.com/my-prompts.json"]   # example; sets for the app to import
+[setup.defaults]                   # app switch values applied on import
+assess = true
+mark_only = false
+answer_in_menu = true
+summary_panel = false
+auto_captions = true
+
+# The landing page "/" shows a public Download section from `utubot app publish`.
+# Downloader (AFTVnews) short codes, shown when non-empty; keys are ABIs.
+[app]
+downloader_codes = { arm64-v8a = "", armeabi-v7a = "" }
+
+# ---- Users --------------------------------------------------------------------------------
+# Tokens are not stored here. `utubot user add NAME [--admin]` writes a sha256 hash to
+# users.toml; `utubot user pair NAME` makes a one-time code for per-device tokens.
+[default_policy]
+language = "en"
+hide_topics = []
+mark_topics = []
+hide_clickbait_above = 0.9
+mark_clickbait_above = 0.6
+hide_low_quality_above = 0.9
+mark_low_quality_above = 0.65
+mark_inflated_ratio_below = 0.35
+inflated_min_duration_s = 300
+answer_in_label = false
+
+[[users]]
+name = "owner"
+admin = true
+[users.policy]
+hide_topics = ["reaction videos", "AI-generated narration slop"]
+mark_topics = ["celebrity gossip"]

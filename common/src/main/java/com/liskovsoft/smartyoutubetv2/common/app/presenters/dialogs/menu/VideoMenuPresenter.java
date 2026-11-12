@@ -1,6 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.app.presenters.dialogs.menu;
 
 import android.content.Context;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotMenu;
 import com.liskovsoft.mediaserviceinterfaces.MediaItemService;
 import com.liskovsoft.mediaserviceinterfaces.ServiceManager;
 import com.liskovsoft.mediaserviceinterfaces.data.FeedbackEndpoint;
@@ -232,6 +233,7 @@ public class VideoMenuPresenter extends BaseMenuPresenter {
         }
 
         appendReturnToBackgroundVideoButton();
+        UtubotMenu.append(getContext(), mDialogPresenter, mVideo);
 
         for (Long menuItem : MainUIData.instance(getContext()).getMenuItemsOrdered(mMenu)) {
             MenuAction menuAction = mMenuMapping.get(menuItem);
@@ -253,6 +255,7 @@ public class VideoMenuPresenter extends BaseMenuPresenter {
         }
 
         appendReturnToBackgroundVideoButton();
+        UtubotMenu.append(getContext(), mDialogPresenter, mVideo);
 
         for (Long menuItem : MainUIData.instance(getContext()).getMenuItemsOrdered(mMenu)) {
             MenuAction menuAction = mMenuMapping.get(menuItem);

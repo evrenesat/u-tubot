@@ -1,139 +1,78 @@
-# Electric Eel
+# u·tubot
 
-<p align="center" style="margin-top: -2em;">
-<a href="https://discord.gg/vDuSpJEDrW"><picture><source height="24px" media="(prefers-color-scheme: dark)" srcset="/assets/icons/Discord.png" /><img height="24px" src="/assets/icons/Discord.png" /></picture></a>
+u·tubot is an Android TV YouTube client with an AI layer you host yourself. A small backend asks the language model of your
+choice (local or cloud, anything OpenAI-compatible) to mark or hide clickbait, low-quality and unwanted videos in your rows,
+summarize or answer the video you are looking at, and build high-quality captions with Whisper. The TV app stays thin: it sends
+video metadata and shows the results. Several people can share one server with their own policies.
 
-<hr style="display: inline-block; width: 100%; border: 1px dotted #ff00cc;">
-  
-<!-- <img width="100" src="https://github.com/cygnusx-1-org/electriceel/blob/master/smarttubetv/src/ststable/res/mipmap-nodpi/app_icon.png" alt="logo"/> -->
+## Download
 
-![The app collage 1](./images/collage1.png)
-![The app collage 2](./images/collage2.png)
-![The app collage 3](./images/collage3.png)
-![The app collage 4](./images/collage4.png)
+Get the APK for your TV from [GitHub Releases](https://github.com/evrenesat/u-tubot/releases): `arm64-v8a` for most current
+boxes, `armeabi-v7a` for older or 32-bit systems, `universal` when unsure. Each release lists the signing certificate and checksums.
 
-Electric Eel is a fork of [SmartTube](https://github.com/yuliskov/SmartTube), and a free and open-source media client for Android TVs and TV boxes.
+**Downloader codes** (AFTVnews Downloader app: type the code, install):
 
-### Features
-- Ability to control Home rows and their order
-- Ability to add Subscriptions and individual subscribed channels as Home rows
-- Ability to create non-local YouTube playlists again, but requires you to create a YouTube channel in each YouTube account
-- Ability to move local playlists to YouTube
-- Ability to autoplay music videos without autoplaying non-music videos
-- Frame by frame forward playback support
-- Quick toggles
-- Ability to exclude channels from individual hidden video types
-- Ability to mute words censored in YouTube auto-captions
-- Ability to re-order YouTube clients
-- Ability to hide or mark various video types like Collabs, Watch later, Streamed, Live, etc 
-- Ability to import and export playlists
-- Filtering of channels via [AiSList](https://github.com/Override92/AiSList)'s lists
-- Hide shorts checkboxes for Sports, Live, "My videos", Gaming, News and Music
-- Hide videos older than setting with period, sections and quick toggle
-- Videos once marked as "Not interested" disappear in every row
-- "Don't recommend channel" and "Not interested" are available in Gaming, Music, Sports, etc now
-- Settings are per account
-- Apply to copy all settings from one account to another
-- Refactored Settings to use more cards
-- Keyword filtering that hides videos by the words in their titles
-- Full-screen word picker for keywords and a Hide words item to the context menu
-- Blocking videos in different sections by category
-- "My videos" includes a rows section with a Shorts row after the videos
-- View release notes with rendered markdown and images in app
+| Build | Code |
+|---|---|
+| arm64-v8a | **3235617** |
+| armeabi-v7a | TBD |
 
-### SmartTub Features
-- Clean interface 
-- SponsorBlock integration  
-- Adjustable playback speed  
-- 8K resolution support  
-- 60fps playback  
-- HDR compatibility  
-- View live chat  
-- Customizable buttons  
-- Does not require Google Services  
-- Helpful international community
+**Install:** install *Downloader* on the TV, enter the code (or a release URL), allow unknown sources when asked, install, open.
+ADB and USB work too. Details and update notes: [docs/install.md](docs/install.md). Upgrading from the unpublished 0.1.0 debug
+build needs one uninstall first.
 
-### ❌ Limitations
-- Not supported on phones and tablets  
-- Comment functionality is unstable  
-- Voice search and casting performance may be inferior to official apps, depending on your device  
+## Features
 
-## Test hardware
-- [Nvidia Shield Pro 2019](https://www.bestbuy.com/product/nvidia-shield-android-tv-pro-16gb-4k-hdr-streaming-device-with-google-assistant-and-geforce-now-black/J3L2TZ9S46/sku/6370425) (3gb RAM, 16gb storage, WiFi 802.11ac, Gigabit Ethernet)
-- [FireTV Stick 4K MAX Gen2](https://www.bestbuy.com/product/amazon-fire-tv-stick-2nd-gen-4k-max-streaming-device-wi-fi-6e-ambient-experience-16-gb-free-live-tv-black/J39HW6PCWK) (2gb RAM, 16gb storage, WiFi 6E)
-- [Onn 4k Pro](https://www.walmart.com/ip/4K-PRO-STREAMING/18382213962) (3gb RAM, 32gb storage, WiFi 6, 10/100 Ethernet)
-- Interested in your device make and model being explicitly tested? Please [donate](https://buymeacoffee.com/edgan).
+- **Marks and hiding** on video cards: clickbait, low quality, inflated length (`12m≈2m`) and topics you do not want, with
+  per-user thresholds. A mark-only mode never hides anything.
+- **Summary panel**: focus a card and a side panel shows its summary, with a prompt selector.
+- **Your own prompts**: prompt sets are JSON files you host anywhere and import by URL; edit and test them in a web UI.
+- **AI answer** to the question a title poses, from the video menu.
+- **HQ captions** prepared in the background (yt-dlp, Whisper on CPU or a remote API, optional speaker labels).
+- **Import setup**: type your server's address and the app configures itself, then pairs with a 6-digit code. No tokens on the TV.
+- **Self-update** from your own server, one APK per CPU architecture.
+- **Any LLM**: Ollama, llama.cpp, vLLM, LM Studio, OpenAI, OpenRouter or a router, mixed per task.
 
-## Device support
-> [!IMPORTANT]  
-> Starting in October 2025 new Amazon FireTV devices no longer run Android under the hood. Electric Eel will **not** be compatible with the Fire Stick 4k Select and newer devices which run Amazon's own VegaOS.
+## Quick start
 
-![Device support image](images/new/compatibility.png)
-* **Supported:** all Android TVs and TV boxes (incl. All FireTV devices released before Oct. 2025, NVIDIA Shield & Chromecast with Google TV), even older ones with Android 7.0 (Nougat).
-* **Not supported:** Smartphones, non-Android platforms like Samsung Tizen, LG webOS, Apple TV, etc.
+**TV:** install the APK, open *Settings, u·tubot, Import setup* (offered on first launch), type your server's address, then enter the
+6-digit pairing code.
 
-## Installation
+**Server:** Python 3.12, uv and ffmpeg.
 
-### LocalSend
-The recommend method of installation the first time is to use [LocalSend](https://localsend.org/).
+```sh
+cd ai-backend
+uv sync
+cp config.example.toml config.toml        # set providers, models, public_base_url
+uv run utubot user add owner --admin
+uv run utubot serve
+uv run utubot user pair owner             # the code to type on the TV
+```
 
-### [Downloader](https://play.google.com/store/apps/details?id=com.esaba.downloader&hl=en_US) codes
-**2566384** `ElectricEel_stable_32.68.5_arm64-v8a.apk`
-
-**3574784** `ElectricEel_stable_32.68.5_armeabi-v7a.apk`
-
-[Downloader code generator](https://go.aftvnews.com/)
-
-### Discoverium
-You can install [Discoverium](https://github.com/cygnusx-1-org/Discoverium/), and then install `Electric Eel` via it.
-
-[Discoverium](https://github.com/cygnusx-1-org/Discoverium/) now has `Android TV` support.
+Full guide with TLS, systemd and publishing APKs: [docs/server.md](docs/server.md).
 
 ## Screenshots
-[Screenshots](/images/screenshots)
 
-### YouTube Data API key creation / YDAKC
+_Coming soon._
 
-Certain content filtering features require the YouTube Data API, and using it requires a personal key. The
-ydakc command line tool allows you to create one after logging into your `Google` account.
+## Documentation
 
-See [YDAKC](https://github.com/cygnusx-1-org/YoutubeDataAPIKeyCreation/).
+- [docs/install.md](docs/install.md): installing on a TV, Import setup, pairing, updates
+- [docs/server.md](docs/server.md): running the backend, configuration reference, reverse proxy, publishing APKs
+- [docs/llm-providers.md](docs/llm-providers.md): connecting language models
+- [docs/prompt-sets.md](docs/prompt-sets.md): writing and importing prompts
+- [docs/policy.md](docs/policy.md): marks, hiding, topics
+- [docs/captions.md](docs/captions.md): HQ captions, ASR, speaker labels
+- [docs/privacy.md](docs/privacy.md): what is sent and stored
+- [docs/development.md](docs/development.md): building, testing, releasing, merging upstream
+- [ai/CONTRACT.md](ai/CONTRACT.md): app/backend wire contract and the setup file
+- [CHANGELOG.md](CHANGELOG.md)
 
-### Updating
+## Credits
 
-The app has a built-in updater. You only need to follow the installation procedure **once**. A few seconds after launching Electric Eel, it will notify you if there is any update and also show a changelog. You can disable automatic update checks or manually update in the settings under `Settings | Updates`.
+Based on [Electric Eel](https://github.com/cygnusx-1-org/electriceel) by cygnusx-1-org, itself based on
+[SmartTube](https://github.com/yuliskov/SmartTube) by yuliskov. See their repositories for the features of the base app.
 
-If the installation fails, either your **disk space is full** or the update didn't download correctly; clear up space and try updating again (_Settings > Updates > Check for updates_).
+## License
 
-
-## Compatibility
-
-Electric Eel requires Android 4.3 or above. It does not work on non-Android devices (incl. LG or Samsung TVs). On unsupported TVs, you can use a TV stick or TV box. Though this app technically runs on smartphones and tablets, it is not optimized for such and offers no official support!
-
-It has been successfully tested on TVs, TV boxes and TV sticks that are based on Android, including:
-
-- Android TVs & Google TVs (e.g. Philips, Sony)
-- Chromecast with Google TV & TVs with _Chromecast built-in_
-- Amazon FireTV stick (all generations)
-- NVIDIA Shield
-- TV boxes running Android (many cheap chinese no-name boxes)
-- Xiaomi Mi Box
-
-
-### SponsorBlock
-
-Electric Eel includes optional SponsorBlock integration. From the [SponsorBlock website](https://sponsor.ajay.app/):
-
-> SponsorBlock is an open-source crowdsourced browser extension and open API for **skipping sponsor segments** in YouTube videos. [...] the extension automatically skips sponsors **it knows about** using a privacy preserving query system. It also supports skipping **other categories**, such as intros, outros and reminders to subscribe [and non-music parts in music videos].
-
-You can select which categories you want to skip in the settings. Unlike the browser addon, in Electric Eel you cannot submit new segments (TVs and TV remotes aren't great devices for such precise operations). Note that SponsorBlock is a free and voluntary project based on user submissions, so don't expect it to 100% work every time. Sometimes, sponsor segments are not yet submitted to the database, sometimes the SponsorBlock servers are offline/overloaded.
-
-
-## Support
-
-You can report in our Telegram group or via [issue tracker on Github](https://github.com/cygnusx-1-org/electriceel/issues) (account required).
-
-## Donations
-[<img src="./assets/badges/buymeacoffee_badge.png"
-    alt="Buy me a coffee"
-    height="80">](https://buymeacoffee.com/edgan)
+MIT, see [LICENSE](LICENSE). The original copyright notices of SmartTube and Electric Eel are kept.

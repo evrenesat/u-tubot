@@ -15,6 +15,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.BrowsePresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.base.BasePresenter;
 import com.liskovsoft.smartyoutubetv2.common.prefs.GeneralData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utils.LoadingManager;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 
@@ -28,7 +29,6 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
     private static final long[] RETRY_DELAYS_MS = {10_000, 20_000};
     private final AppUpdateChecker mUpdateChecker;
     private final AppDialogPresenter mSettingsPresenter;
-    private final String[] mUpdateManifestUrls;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final Runnable mRetryCheck = this::forceCheck;
     private boolean mIsForceCheck;
@@ -39,7 +39,6 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         super(context);
         mUpdateChecker = new AppUpdateChecker(context, this);
         mSettingsPresenter = AppDialogPresenter.instance(context);
-        mUpdateManifestUrls = context.getResources().getStringArray(R.array.update_urls);
     }
 
     public static AppUpdatePresenter instance(Context context) {
@@ -69,6 +68,20 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         mHandler.removeCallbacks(mRetryCheck);
     }
 
+    /**
+     * The built-in u-tubot flavor has no update source of its own: it follows the update_url of the imported setup, and
+     * without one nothing is checked.
+     */
+    private String[] getUpdateUrls() {
+        if (UtubotSettings.isBuiltIn()) {
+            String url = UtubotSettings.instance(getContext()).getUpdateUrl();
+
+            return url.isEmpty() ? new String[0] : new String[]{url};
+        }
+
+        return getContext().getResources().getStringArray(R.array.update_urls);
+    }
+
     public void start(boolean forceCheck) {
         // The running forced check reports back, after its retries
         if (mIsForceCheckRunning) {
@@ -77,18 +90,27 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
 
         mIsForceCheck = forceCheck;
 
+        if (getUpdateUrls().length == 0) {
+            if (forceCheck) {
+                MessageHelpers.showMessage(getContext(), R.string.utubot_no_update_source);
+            }
+
+            onFinish();
+            return;
+        }
+
         if (forceCheck) {
             mIsForceCheckRunning = true;
             mFailedAttempts = 0;
             LoadingManager.showLoading(getContext(), true);
             forceCheck();
         } else {
-            mUpdateChecker.checkForUpdates(mUpdateManifestUrls);
+            mUpdateChecker.checkForUpdates(getUpdateUrls());
         }
     }
 
     void forceCheck() {
-        mUpdateChecker.forceCheckForUpdates(mUpdateManifestUrls);
+        mUpdateChecker.forceCheckForUpdates(getUpdateUrls());
     }
 
     private void finishForceCheck() {

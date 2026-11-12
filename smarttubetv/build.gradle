@@ -29,6 +29,22 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
+// u-tubot release signing: UTUBOT_KEYSTORE, UTUBOT_KEYSTORE_PASSWORD, UTUBOT_KEY_ALIAS, UTUBOT_KEY_PASSWORD from the environment,
+// else storeFile, storePassword, keyAlias, keyPassword from keystore.properties
+def requestedTasks = getGradle().getStartParameter().getTaskRequests().toString()
+def buildingUtubotRelease = requestedTasks.contains("StutubotRelease")
+def utubotSigning = { String envName, String propName -> System.getenv(envName) ?: keystoreProperties[propName] }
+def utubotKeystore = utubotSigning("UTUBOT_KEYSTORE", "storeFile")
+def utubotStorePassword = utubotSigning("UTUBOT_KEYSTORE_PASSWORD", "storePassword")
+def utubotKeyAlias = utubotSigning("UTUBOT_KEY_ALIAS", "keyAlias")
+def utubotKeyPassword = utubotSigning("UTUBOT_KEY_PASSWORD", "keyPassword")
+
+if (buildingUtubotRelease && !(utubotKeystore && utubotStorePassword && utubotKeyAlias && utubotKeyPassword)) {
+    throw new GradleException("The u-tubot release APK needs a signing key. Set UTUBOT_KEYSTORE, UTUBOT_KEYSTORE_PASSWORD, " +
+            "UTUBOT_KEY_ALIAS and UTUBOT_KEY_PASSWORD, or storeFile, storePassword, keyAlias and keyPassword in a gitignored " +
+            "keystore.properties at the repo root (see docs/development.md). Debug builds need no key.")
+}
+
 // The first letter of the flavor name must be in uppercase
 if (new File("${projectDir}/google-services.json").exists() && (getGradle().getStartParameter().getTaskRequests().toString().contains("Stbeta") ||
         getGradle().getStartParameter().getTaskRequests().toString().contains("Ststable"))) {
@@ -92,7 +108,12 @@ android {
 
     signingConfigs {
         release {
-            if (keystorePropertiesFile.exists()) {
+            if (buildingUtubotRelease) {
+                storeFile = file(utubotKeystore)
+                storePassword = utubotStorePassword
+                keyAlias = utubotKeyAlias
+                keyPassword = utubotKeyPassword
+            } else if (keystorePropertiesFile.exists()) {
                 storeFile = file(keystoreProperties['storeFile'])
                 storePassword = keystoreProperties['storePassword']
                 keyAlias = keystoreProperties['keyAlias']
@@ -109,7 +130,7 @@ android {
 
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
 
-            if (keystorePropertiesFile.exists()) {
+            if (keystorePropertiesFile.exists() || buildingUtubotRelease) {
                 signingConfig signingConfigs.release
             }
         }
@@ -125,14 +146,15 @@ android {
     // https://stackoverflow.com/questions/18332474/how-to-set-versionname-in-apk-filename-using-gradle
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
-            def project = "ElectricEel"
             def flavor = variant.productFlavors[-1].name.substring(2) // remove st prefix
+            def project = flavor == "utubot" ? "u-tubot" : "ElectricEel"
             def buildType = variant.buildType.name.take(1)
             def version = variant.versionName
             def arch = output.getFilter(com.android.build.OutputFile.ABI)
             arch = arch != null ? arch : "universal"
 
-            def newApkName = sprintf("%s_%s_%s_%s.apk", [project, flavor, version, arch])
+            // u-tubot_<version>_<abi>.apk, the names `utubot app publish` detects the ABI from
+            def newApkName = flavor == "utubot" ? sprintf("%s_%s_%s.apk", [project, version, arch]) : sprintf("%s_%s_%s_%s.apk", [project, flavor, version, arch])
 
             // gradle 4.6 migration
             output.outputFileName = new File(newApkName)
@@ -166,6 +188,12 @@ android {
         }
         ststable {
             applicationId "org.cygnusx1.electriceel.stable"
+        }
+        stutubot {
+            applicationId "dev.utubot.tv"
+            versionCode 2
+            versionName "0.2.0"
+            matchingFallbacks = ['ststable']
         }
     }
 }

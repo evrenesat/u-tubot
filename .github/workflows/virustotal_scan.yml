@@ -14,6 +14,8 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
+    # Inherited from Electric Eel: runs only there, so it never publishes or scans from this repository
+    if: github.repository == 'cygnusx-1-org/electriceel'
     env:
       HAS_VT_KEY: ${{ secrets.VIRUS_TOTAL_API_KEY != '' }}
 

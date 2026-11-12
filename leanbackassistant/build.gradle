@@ -38,6 +38,9 @@ android {
     productFlavors {
         stbeta {}
         ststable {}
+        stutubot {
+            matchingFallbacks = ['ststable']
+        }
         stfdroid {}
     }
 }

@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.WindowManager;
 
+import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotPanelController;
 import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.SearchPresenter;
 import com.liskovsoft.smartyoutubetv2.common.autoframerate.ModeSyncManager;
@@ -31,6 +32,7 @@ public abstract class LeanbackActivity extends MotherActivity {
     private ModeSyncManager mModeSyncManager;
     private DoubleBackManager2 mDoubleBackManager;
     private GlobalKeyTranslator mGlobalKeyTranslator;
+    private UtubotPanelController mUtubotPanel; // Summary panel (see UtubotPanelController)
     private final Runnable sOnFinish = () -> Utils.forceFinishTheApp(this);
     private final Runnable mRestoreWindowFocus = this::restoreWindowFocusIfLost;
     private final Runnable mMakeWindowFocusable = () -> getWindow().clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
@@ -45,6 +47,7 @@ public abstract class LeanbackActivity extends MotherActivity {
                 new PlayerKeyTranslator(this) :
                 new GlobalKeyTranslator(this);
         mGlobalKeyTranslator.apply();
+        mUtubotPanel = this instanceof PlaybackActivity ? null : new UtubotPanelController(this);
     }
 
     @Override
@@ -64,6 +67,10 @@ public abstract class LeanbackActivity extends MotherActivity {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         Log.d(TAG, event);
+
+        if (mUtubotPanel != null && mUtubotPanel.dispatchKeyEvent(event)) {
+            return true;
+        }
 
         KeyEvent newEvent = mGlobalKeyTranslator.translate(event);
         return super.dispatchKeyEvent(newEvent);
@@ -96,6 +103,10 @@ public abstract class LeanbackActivity extends MotherActivity {
         }
 
         Utils.postDelayed(mRestoreWindowFocus, WINDOW_FOCUS_CHECK_MS);
+
+        if (mUtubotPanel != null) {
+            mUtubotPanel.onResume();
+        }
     }
 
     @Override
@@ -103,6 +114,10 @@ public abstract class LeanbackActivity extends MotherActivity {
         super.onPause();
 
         Utils.removeCallbacks(mRestoreWindowFocus);
+
+        if (mUtubotPanel != null) {
+            mUtubotPanel.onPause();
+        }
     }
 
     /**
@@ -132,6 +147,10 @@ public abstract class LeanbackActivity extends MotherActivity {
     protected void onDestroy() {
         super.onDestroy();
         mBackgroundManager.onDestroy();
+
+        if (mUtubotPanel != null) {
+            mUtubotPanel.onDestroy();
+        }
     }
 
     @Override

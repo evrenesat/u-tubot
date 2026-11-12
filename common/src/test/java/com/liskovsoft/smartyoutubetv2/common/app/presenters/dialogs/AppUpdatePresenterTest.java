@@ -5,8 +5,10 @@ import android.content.Context;
 
 import com.liskovsoft.appupdatechecker2.AppUpdateChecker;
 import com.liskovsoft.appupdatechecker2.AppUpdateCheckerListener;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 
 import org.junit.After;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -32,12 +34,28 @@ public class AppUpdatePresenterTest {
     @Before
     public void setUp() {
         mActivity = Robolectric.buildActivity(Activity.class).setup().get();
+        // The stutubot flavor checks only the update URL of an imported setup
+        UtubotSettings.instance(mActivity).setUpdateUrl("https://updates.example.com/app/update.json");
         mPresenter = new CountingPresenter(mActivity);
     }
 
     @After
     public void tearDown() {
         AppUpdatePresenter.unhold();
+    }
+
+    /**
+     * u-tubot without an imported setup has no update source: nothing is checked
+     */
+    @Test
+    public void noUpdateSource_noCheck() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        UtubotSettings.instance(mActivity).setUpdateUrl("");
+
+        mPresenter.start(true);
+        idle(60_000);
+
+        assertEquals(0, mPresenter.mChecks);
     }
 
     /**

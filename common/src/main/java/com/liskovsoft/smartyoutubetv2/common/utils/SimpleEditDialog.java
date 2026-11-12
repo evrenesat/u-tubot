@@ -46,6 +46,13 @@ public class SimpleEditDialog {
     }
 
     /**
+     * Digits only, e.g. a pairing code
+     */
+    public static void showNumber(Context context, String dialogTitle, String dialogHint, OnChange onChange, Runnable onDismiss) {
+        show(context, dialogTitle, dialogHint, "", onChange, onDismiss, InputType.TYPE_CLASS_NUMBER);
+    }
+
+    /**
      * A name, e.g. of a subscription group: the keyboard starts with a capital letter
      */
     public static void showName(Context context, String dialogTitle, String defaultValue, OnChange onChange) {

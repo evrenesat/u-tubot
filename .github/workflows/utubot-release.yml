@@ -1,0 +1,117 @@
+name: u-tubot release
+
+# Push a tag like utubot-v0.2.0 to build the per-ABI release APKs, sign them and attach them to a GitHub Release.
+# The tag must match versionName in smarttubetv/build.gradle (stutubot flavor).
+#
+# Secrets (Settings, Secrets and variables, Actions):
+#   UTUBOT_KEYSTORE_B64    base64 of the release keystore (base64 -w0 utubot-release.jks)
+#   UTUBOT_KEYSTORE_PASSWORD, UTUBOT_KEY_ALIAS, UTUBOT_KEY_PASSWORD
+on:
+  push:
+    tags: [ "utubot-v*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build, for example utubot-v0.2.0'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  # The Android build needs these two repositories checked out next to this one. Pinned for reproducible releases:
+  # bump the SHAs on purpose when the base app is synced.
+  SHARED_MODULES_SHA: 18ba193b83b65da775d5861e1cd4d179c62360a6
+  MEDIA_SERVICE_CORE_SHA: 173b3c3059288d87526e52c0dacdb48f06bbb013
+
+jobs:
+  release:
+    # Public repositories use the free hosted runner. For a private repository use the label of your own
+    # self-hosted runner instead, for example: runs-on: [self-hosted, my-runner-label]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Resolve the tag
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          case "$TAG" in utubot-v*) ;; *) echo "tag must look like utubot-vX.Y.Z" >&2; exit 1 ;; esac
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=${TAG#utubot-v}" >> "$GITHUB_ENV"
+
+      - name: Checkout u-tubot
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          path: u-tubot
+          ref: ${{ env.TAG }}
+
+      - name: Checkout SharedModules
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: cygnusx-1-org/SharedModules
+          ref: ${{ env.SHARED_MODULES_SHA }}
+          path: SharedModules
+
+      - name: Checkout MediaServiceCore
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: cygnusx-1-org/MediaServiceCore
+          ref: ${{ env.MEDIA_SERVICE_CORE_SHA }}
+          path: MediaServiceCore
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Set up the Android SDK
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;30.0.3" "ndk;30.0.16248370" >/dev/null
+
+      - name: Check the version
+        working-directory: u-tubot
+        run: |
+          GRADLE_VERSION=$(awk '/stutubot \{/{f=1} f && /versionName/{gsub(/"/,"",$2); print $2; exit}' smarttubetv/build.gradle)
+          if [ "$GRADLE_VERSION" != "$VERSION" ]; then
+            echo "tag says $VERSION but smarttubetv/build.gradle says $GRADLE_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Decode the signing key
+        env:
+          UTUBOT_KEYSTORE_B64: ${{ secrets.UTUBOT_KEYSTORE_B64 }}
+        run: |
+          test -n "$UTUBOT_KEYSTORE_B64" || { echo "secret UTUBOT_KEYSTORE_B64 is not set" >&2; exit 1; }
+          echo "$UTUBOT_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/utubot-release.jks"
+          echo "UTUBOT_KEYSTORE=$RUNNER_TEMP/utubot-release.jks" >> "$GITHUB_ENV"
+
+      - name: Build the release APKs
+        working-directory: u-tubot
+        env:
+          UTUBOT_KEYSTORE_PASSWORD: ${{ secrets.UTUBOT_KEYSTORE_PASSWORD }}
+          UTUBOT_KEY_ALIAS: ${{ secrets.UTUBOT_KEY_ALIAS }}
+          UTUBOT_KEY_PASSWORD: ${{ secrets.UTUBOT_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew :common:testStutubotDebugUnitTest :smarttubetv:assembleStutubotRelease
+
+      - name: Collect the APKs and checksums
+        run: |
+          mkdir release
+          cp u-tubot/smarttubetv/build/outputs/apk/stutubot/release/u-tubot_*.apk release/
+          cd release
+          sha256sum u-tubot_*.apk > SHA256SUMS
+          cat SHA256SUMS
+          rm -f "$RUNNER_TEMP/utubot-release.jks"
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v v="$VERSION" '/^## /{f=($2==v); next} f' u-tubot/CHANGELOG.md > notes.md
+          test -s notes.md || echo "See CHANGELOG.md." > notes.md
+          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "u·tubot $VERSION" --notes-file notes.md

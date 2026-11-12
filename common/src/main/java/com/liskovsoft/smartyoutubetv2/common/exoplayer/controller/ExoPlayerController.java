@@ -27,6 +27,9 @@ import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo;
 import com.liskovsoft.sharedutils.mylogger.Log;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptions;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.BuildConfig;
 import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
@@ -67,6 +70,7 @@ public class ExoPlayerController implements Player.EventListener {
     private static final String TAG = ExoPlayerController.class.getSimpleName();
     private final Context mContext;
     private final ExoMediaSourceFactory mMediaSourceFactory;
+    private boolean mUtubotCaptionsSelectPending;
     private final TrackSelectorManager mTrackSelectorManager;
     private final TrackInfoFormatter2 mTrackFormatter;
     private final TrackErrorFixer mTrackErrorFixer;
@@ -450,7 +454,9 @@ public class ExoPlayerController implements Player.EventListener {
         resetPlayerState(); // fixes occasional video artifacts and problems with quality switching
         setQualityInfo("");
 
-        mTrackSelectorManager.setMergedSource(mediaSource instanceof MergingMediaSource);
+        boolean isMerged = mediaSource instanceof MergingMediaSource;
+        mediaSource = attachUtubotCaptions(mediaSource);
+        mTrackSelectorManager.setMergedSource(isMerged);
         mTrackSelectorManager.invalidate();
         mOnSourceChanged = true;
         mEventListener.onSourceChanged(getVideo());
@@ -461,6 +467,40 @@ public class ExoPlayerController implements Player.EventListener {
         // Its first seconds are looked at closely: the check may be 2 s away, past its first frame
         Utils.removeCallbacks(mHealthCheck);
         Utils.postDelayed(mHealthCheck, PlaybackHealth.START_TICK_MS);
+    }
+
+    /**
+     * The HQ captions of the backend, when they were fetched in time (see setVideo). Not in the merged live sources: their tracks
+     * are filtered by codec and bitrate, which a text track has none of.
+     */
+    private MediaSource attachUtubotCaptions(MediaSource mediaSource) {
+        Video video = getVideo();
+
+        if (!UtubotSettings.isBuiltIn() || video == null || mediaSource instanceof MergingMediaSource) {
+            return mediaSource;
+        }
+
+        MediaSource merged = UtubotCaptions.attach(mContext, mediaSource, video.videoId);
+        mUtubotCaptionsSelectPending = merged != mediaSource && UtubotSettings.instance(mContext).isAutoCaptionsEnabled();
+        return merged;
+    }
+
+    /**
+     * Selects the HQ captions track once the tracks are there, when it's set to
+     */
+    private void selectUtubotCaptions() {
+        if (!mUtubotCaptionsSelectPending) {
+            return;
+        }
+
+        mUtubotCaptionsSelectPending = false;
+
+        for (MediaTrack track : mTrackSelectorManager.getSubtitleTracks()) {
+            if (UtubotCaptions.isCaptionTrack(track.format)) {
+                mTrackSelectorManager.selectTrack(track);
+                return;
+            }
+        }
     }
 
     public long getPositionMs() {
@@ -614,6 +654,10 @@ public class ExoPlayerController implements Player.EventListener {
     
     public void setVideo(Video video) {
         mVideo = new WeakReference<>(video);
+
+        if (UtubotSettings.isBuiltIn() && video != null) {
+            UtubotManager.instance(mContext).prefetchCaptions(video.videoId);
+        }
     }
     
     public Video getVideo() {
@@ -668,6 +712,7 @@ public class ExoPlayerController implements Player.EventListener {
         }
 
         notifyOnVideoLoad();
+        selectUtubotCaptions();
 
         for (TrackSelection selection : trackSelections.getAll()) {
             if (selection != null) {

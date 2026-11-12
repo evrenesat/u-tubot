@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- No built-in update source: the app uses the update_url of the imported setup (UtubotSettings.getUpdateUrl) -->
+    <string-array name="update_urls" />
+</resources>
