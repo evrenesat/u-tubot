@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The rows of the short About (AboutSimpleSettingsPresenter): an empty address hides the row. Flavors override them. -->
+    <string name="about_donation_url" translatable="false">https://buymeacoffee.com/edgan</string>
+    <string name="about_feedback_url" translatable="false">https://github.com/cygnusx-1-org/electriceel/issues</string>
+    <string name="about_releases_url" translatable="false">https://github.com/cygnusx-1-org/electriceel/releases</string>
+    <string name="about_git_repository_url" translatable="false">https://github.com/cygnusx-1-org/electriceel</string>
+    <!-- Row of the short About with the state of the app (flavors with a backend) -->
+    <string name="about_server" translatable="false">Server</string>
+    <string name="about_server_not_set" translatable="false">Not set up</string>
+    <!-- The credit row: its title opens the repositories of the array (name|address). Empty: no row. -->
+    <string name="about_credit" translatable="false"></string>
+    <string-array name="about_credits" />
+</resources>

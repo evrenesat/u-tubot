@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app is called u·tubot here: the translations say Electric Eel -->
+    <string name="app_exit_shortcut">Afslut u·tubot</string>
+    <string name="msg_restart_app">Genstart venligst u·tubot for at anvende indstillingerne</string>
+    <string name="msg_player_error_source2">URL virker ikke, ellers er enhedens ur forkert.\nDette er normalt en fejl i u·tubot.</string>
+    <string name="finish_on_disconnect">Luk u·tubot efter at have afbrudt telefonen/tabletten</string>
+    <string name="enable_voice_search_desc">Den officielle app erstattes med en såkaldt \"bro\", som videresender globale søgeforespørgsler til u·tubot.</string>
+    <string name="select_channel_section">Åbn tilsvarende sektion, når u·tubot startes fra en sektion i Android TV-launcheren. </string>
+    <string name="msg_player_error_video_source">Video-URL virker ikke, ellers er enhedens ur forkert.\nDette er normalt en fejl i u·tubot.</string>
+    <string name="msg_player_error_audio_source">Lyd-URL virker ikke, ellers er enhedens ur forkert.\nDette er normalt en fejl i u·tubot.</string>
+    <string name="msg_player_error_subtitle_source">Undertekst-URL virker ikke, ellers er enhedens ur forkert.\nDette er normalt en fejl i u·tubot.</string>
+    <string name="tunneled_video_playback_desc">Afspil videoer direkte til displayet uden, at u·tubot behandler den. Det giver bedre lyd- og billedsynkronisering samt jævnere afspilning. Bemærk: Pause fungerer muligvis ikke korrekt!</string>
+    <string name="alt_presets_behavior_desc">u·tubot vil forsøge at opretholde båndbredden svarende til den valgte forudindstilling i stedet for at matche mellem opløsning, FPS og codec.</string>
+    <string name="disable_mic_permission">Deaktiver venligst mikrofonadgang for u·tubot for, at denne genkender kan fungere korrekt.</string>
+    <string name="lost_setting_warning">u·tubot-indstillingerne bliver ændret. Sørg for, at du har sikkerhedskopieret indstillingerne.</string>
+    <string name="player_only_mode">Vis kun afspilleren, hvis videoen åbnes uden for u·tubot</string>
+    <string name="prefer_ipv4_desc">Kan løse problemer, når u·tubot slet ikke virker.\nBemærk: Kan forårsage frysninger og nedbrud (især på Android 8-enheder eller Dune HD).</string>
+</resources>

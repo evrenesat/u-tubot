@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app is called u·tubot here: the translations say Electric Eel -->
+    <string name="stable_restore">Palauta vakaa versio (kaikki u·tubotin tiedot menetetään)</string>
+</resources>
