@@ -251,10 +251,14 @@ audio_format = "bestaudio/best"    # yt-dlp selector used only when no usable fo
 
 # An engine chain: each engine is used when its key variable is set (none needed when api_key_env is omitted).
 # Per audio file the router picks, among healthy engines that serve the video's language, the lowest `priority`
-# number; a failing engine is skipped for `asr_unhealthy_s` and the work falls through to the next one.
+# number; a failing engine is skipped for `asr_unhealthy_s` and the work falls through to the next one. One 5xx or
+# unreadable answer tied to a single file does not count: the engine is marked after two different files failed in a row,
+# or at once for a connect/timeout failure, 429 or an authentication error.
 # Audio is cut into overlapping chunks of at most `max_chunk_s` (0 = no cutting), `max_parallel` at a time per engine
-# (shared by all jobs), then stitched. `languages` is an optional allow-list (checked only when the video's language is
-# known); `background_only` keeps an engine away from jobs somebody is waiting for. `speed_factor` (audio seconds per
+# (shared by all jobs), then stitched. `languages` is an optional allow-list: checked when the video's language is
+# known; when it is not, engines without a list go first and a chunk an allow-listed engine took is redone by the next
+# engine that serves the detected language. `background_only` keeps an engine away from jobs somebody is waiting for.
+# `speed_factor` (audio seconds per
 # second for one stream) and `overhead_s` feed the "estimate_s" shown to users.
 # [[captions.asr_engines]]          # a GPU box: everything, three 10 minute chunks at once
 # name = "gpu"

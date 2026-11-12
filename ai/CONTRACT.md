@@ -60,18 +60,28 @@ is no text they say why:
 |---|---|---|---|
 | `ok` | `ready` | `source` | shows the text |
 | `delayed` | `pending` | `error` (user-facing, "YouTube is limiting transcript downloads; retrying in ~N min"), `retry_after_s` | shows `error`, asks again after `retry_after_s` (not before) |
-| `none` | `needs_transcript` | `can_transcribe`, `message` ("No captions. Transcribe the audio in the background?"), `estimate_s` (rough seconds, may be null) | shows `message`; when `can_transcribe` offers a "Transcribe in background?" action that calls `POST /v1/videos/{id}/transcribe` |
+| `none` | `needs_transcript` | `can_transcribe`, `message` ("No captions. Transcribe the audio in the background?", or while YouTube limits the caption API "Captions are temporarily unavailable from YouTube; transcribe the audio instead (~N s)?"), `estimate_s` (rough seconds, may be null) | shows `message`; when `can_transcribe` offers a "Transcribe in background?" action that calls `POST /v1/videos/{id}/transcribe` |
 | `transcribing` | `pending` | `progress` 0.0-1.0 (finished chunks over all chunks of the speech-recognition step), `estimate_s` | shows progress, asks again later |
 | `failed` | `failed` | `error`, `reason`, `can_transcribe` | shows `error`; `reason` is `private`, `members_only`, `age_restricted`, `unavailable`, `forbidden`, `too_long`, `live` (video problems) or absent (a transcription job failed); offers the transcribe action again only when `can_transcribe` |
 | `null` | any | none | the problem is not the transcript (model busy, generic failure) |
 
-`delayed` means YouTube slowed the server down (HTTP 429, bot check, 403 on the watch request, network error, an incomplete answer or an open cooldown); it is never
-cached, so the same request works once `retry_after_s` has passed. `none` is remembered by the backend for 3 days
+`delayed` means YouTube slowed the server down (HTTP 429, bot check, 403 on the watch request, network error, an incomplete answer or an open cooldown) **and the
+audio cannot stand in** (see below); it is never cached, so the same request works once `retry_after_s` has passed. `none` is remembered by the backend for 3 days
 (`[transcripts] no_captions_ttl_s`) and then checked again; `can_transcribe` is false for live streams and videos
 longer than `[captions] max_duration_s`, or when no configured speech engine serves the video's language. The summary of a video whose transcription is queued or running answers `pending` with
 `transcript_status: "transcribing"` until the transcript exists, then works normally with `source: "asr"`.
 
-**Automatic transcription.** When a `summary`, `insight` or `ask` request finds no captions, the user's policy decides whether the
+**Captions limited.** YouTube limits the caption API (timedtext) separately from the audio download. While the backend's caption breaker is
+open, or waiting for its single background probe, or a caption fetch has just been refused (429, 403), a request is treated like "no
+captions" instead of `delayed` whenever a speech engine can take the video (not live, within `[captions] max_duration_s`, an engine serves
+its language) and the audio endpoint is healthy: the policy below starts the transcription (`pending` + `transcribing`) or the answer is
+`needs_transcript` with the "Captions are temporarily unavailable ..." `message`, `can_transcribe: true` and `estimate_s`. `delayed` is
+what remains when no engine is available, the video cannot be transcribed, the audio endpoint is cooling too (a bot check) or the problem
+is a network error. This answer is never remembered; the transcript made from the audio has `source: "asr"` and is kept: captions that
+arrive later do not replace it and it is not fetched again. After a caption cooldown the backend sends exactly one background request to
+find out whether captions work again; no request of a user is ever used for that (`docs/server.md`, YouTube limits).
+
+**Automatic transcription.** When a `summary`, `insight` or `ask` request finds no captions (or the captions are limited, see above), the user's policy decides whether the
 backend asks or just does it. `auto_transcribe` (`off`, `on_open`, `on_dwell`; default `on_open`) and `auto_transcribe_max_minutes`
 (default 30) are per-user settings. With `on_open` or `on_dwell` and a video of known length up to the maximum, the request itself queues
 the transcription (no user prompt) and answers `status: "pending"`, `transcript_status: "transcribing"`, `progress`, `estimate_s`

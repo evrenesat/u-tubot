@@ -33,7 +33,7 @@ engine fails, the work falls through to the next.
 | `url` | required for `openai` | the full transcription URL |
 | `model` | `whisper-1` / `small` | model name sent to the server; the faster-whisper size (`tiny` ... `large-v3`) for `faster_whisper` |
 | `api_key_env` | none | name of the environment variable holding the key. Set: the engine is enabled only while the variable is non-empty. Omitted: no key is sent |
-| `languages` | all | allow-list of language codes (`["en", "tr"]`). Applied only when the video's language is known from its metadata; an unknown language may reach any engine |
+| `languages` | all | allow-list of language codes (`["en", "tr"]`). Known video language (from its metadata): engines whose list lacks it are dropped. Unknown language: engines without a list are preferred; if an allow-listed engine took a chunk anyway and the detected language is outside its list, the chunk is redone by the next engine that serves that language (its transcript is kept only when none does) |
 | `max_chunk_s` | `600` | longest audio piece sent in one request (`0`: never cut). Respect the server's own limit; the last chunk may run up to 3 s over |
 | `max_parallel` | `1` | requests in flight to this engine at once, shared by all jobs (a box that handles one job at a time gets `1`) |
 | `timeout_s` | `900` | per request; connecting gives up after 10 s so a switched-off machine fails fast |
@@ -44,9 +44,13 @@ engine fails, the work falls through to the next.
 
 How an engine is chosen for a file: drop engines that are disabled, background-only (for interactive jobs) or whose `languages` do not
 include the video's known language; put engines that failed in the last `asr_unhealthy_s` (300 s) after the healthy ones; sort by
-`priority`. A failed request (connection error, timeout, 5xx, 429, 401/403/404) marks the engine unhealthy and moves that chunk to the next
-engine, which re-cuts it to its own `max_chunk_s` if that is smaller. A request the engine rejected for its input (400, 413, 415, 422)
-falls through without marking it unhealthy. When every engine is unhealthy they are all tried again, so a single-engine setup recovers
+`priority`; with an unknown language, engines without a `languages` list go before restricted ones. A failed request moves that chunk to the
+next engine, which re-cuts it to its own `max_chunk_s` if that is smaller. Whether the engine is also marked unhealthy depends on what
+failed: a connect or timeout failure, a 429 or a 401/403/404 mark it at once; a single 5xx, or an answer that is not a transcript, may be the
+file's fault and only counts once a second, *different* file has failed on that engine with no success in between; a request rejected for its
+input (400, 413, 415, 422) never counts. A chunk that waited for an engine's `max_parallel` slot, or the next piece of a re-cut chunk, checks the engine
+again: if it became unhealthy meanwhile and a healthy engine remains later in the chain, the work moves on at once instead of waiting
+out another timeout. When every engine is unhealthy they are all tried again, so a single-engine setup recovers
 by itself. The engines used and their models are stored with the transcript (`engine` is `mac+lan-cpu` when two shared the work).
 
 **Example: three engines** (placeholders; use your own hosts and variable names):
@@ -158,6 +162,9 @@ js_runtime_path = "/usr/local/bin/deno"  # the executable (example path)
 remote_components = ["ejs:github"]       # lets yt-dlp fetch its solver script once; it is cached
 ```
 
+`js_runtime` is always passed to yt-dlp: without `js_runtime_path` yt-dlp looks the runtime up on `PATH` (so `js_runtime = "node"` works
+alone). `remote_components` needs yt-dlp 2025.11.12 or newer, which is the floor in `pyproject.toml`.
+
 On a host with only `js_runtime_path`, yt-dlp still logs `n challenge solving failed`: the solver script (`yt-dlp-ejs`) must come from
 `remote_components` or be installed as the matching package (`yt-dlp[default]`). Both the metadata fetch and the audio download get
 these options.
@@ -194,6 +201,13 @@ only). The backend never summarises such a video from its title. What happens in
   background job; when the user then opens the video, it is promoted. Background-only engines never take interactive jobs.
 - **Explicit.** `POST /v1/videos/ID/transcribe` queues a job regardless of the policy (one per user and video; asking again returns
   the same job).
+- **YouTube limits the caption API.** When the caption class is cooling (or its probe is out, see
+  [server.md](server.md#youtube-limits-and-the-transcription-fallback)), or a caption fetch has just been refused (429, 403), and the
+  `media` class is healthy and an engine can take the video, the request is treated like "no captions": the policy above decides between
+  starting the job (`pending` + `transcribing`) and `needs_transcript` with the message "Captions are temporarily unavailable from YouTube;
+  transcribe the audio instead (~N s)?". The answer is `delayed` only when no engine is available, the video cannot be transcribed (live,
+  too long), or the media class is cooling as well (a bot check blocks both). The result is stored with source `asr`; captions fetched
+  later never replace it, and ASR never replaces captions stored first (the first transcript stays, no refetch).
 
 A job downloads the audio through the YouTube gate ([server.md](server.md#youtube-limits-and-the-transcription-fallback)), runs the ffmpeg
 and chunked ASR steps above (language from the video's metadata when known, else detected) and stores the text, its segments, the
@@ -203,7 +217,8 @@ the estimate is described [above](#estimates). `transcribe_max_active_per_user` 
 interactive first, then oldest first (`job_concurrency` runs that many at a time).
 
 Jobs wait while the **media** endpoint class is cooling; a limit on the caption or metadata endpoints does not hold them back (the check
-for captions that appeared since is then skipped and the audio is transcribed). A job whose download is refused (429, network) goes back to the queue,
+for captions that appeared since is then skipped and the audio is transcribed). An interactive job also skips that check while the caption
+class waits for its probe. A job whose download is refused (429, network) goes back to the queue,
 at most `job_max_attempts` (3) times, then fails; a problem of the one video (private, members-only, 403/410 on its media, live, longer than
 `max_duration_s`) fails it at once without touching the YouTube breakers. Before downloading, the job asks YouTube once more for
 captions when those endpoints are healthy: if they exist they are used and the audio is skipped, and a transcript from the audio never

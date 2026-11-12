@@ -1,5 +1,11 @@
 # u·tubot devlog
 
+## 2026-11-12 (audio when captions are limited)
+
+- Backend only: when YouTube limits the caption API the audio is transcribed instead of answering "delayed" (policy permitting), the
+  caption class is probed by one background request after a cooldown, plus review follow-ups of the engine chain and the yt-dlp runtime
+  option. Details in `ai-backend/DEVLOG.md`, `docs/server.md`, `docs/captions.md`, `ai/CONTRACT.md`.
+
 ## 2026-11-12 (app review follow-ups)
 
 Findings of the review of PR 20 (app round 1), each with a unit test.
@@ -38,6 +44,7 @@ Findings of the review of PR 20 (app round 1), each with a unit test.
 - `UtubotBadgeController` (the value of a `WeakHashMap<Activity, ...>` in `UtubotAppHooks`) held its activity and its badge view
   (which holds the activity as its context) strongly; both are weak references now. `mReturnFocus` was already a weak reference and
   is cleared in `closeOverlay`.
+
 
 ## 2026-11-12 (fast transcripts)
 

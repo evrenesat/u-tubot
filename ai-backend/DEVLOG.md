@@ -1,5 +1,41 @@
 # DEVLOG
 
+## 2026-11-12 (audio when captions are limited)
+
+- Why: production showed "YouTube is limiting transcript downloads, retrying in 34 minutes". Only the caption class (timedtext) was 429;
+  audio downloads worked and the fast engine transcribes 30 minutes in about 30 s. The caption breaker also kept escalating because each
+  probe after a cooldown was an interactive request that hit 429 again.
+- Fallback: `Transcription.state()` (cheap, also behind `GET /transcript`), `blocked()` and `problem()` ask `captions_limited()` (the
+  breaker is open or the probe is out: `YoutubeGate.interactive_ok(*FETCH_CLASSES)` is false) or get a fetch ended by a back-off reason
+  (`rate_limited`, `forbidden`, `bot_check`, `cooldown`) and call `audio_fallback()`: `media` healthy and `can_transcribe` (not live, within
+  `max_duration_s`, an engine serves the language) give the "no captions" fields (`transcript_status: none`, `can_transcribe`, `estimate_s`,
+  message "Captions are temporarily unavailable from YouTube; transcribe the audio instead (~N s)?"; no `(~N s)` when the length is
+  unknown), which `auto()` turns into a started job under the user's policy (`on_open` explicit, `on_dwell` also the panel, up to
+  `auto_transcribe_max_minutes`). Nothing is remembered. A network error, no engine, a live or too long video, or a cooling `media`
+  class (a bot check opens metadata and media) keep `delayed`. Existing delayed tests now cool `media` (`audio_unreachable`).
+- Probing: `PROBE_CLASSES = (captions,)` are probe-only once half-open. `_acquire` refuses an interactive request for such a class
+  (`YoutubeCooldown`, hint `captions_probe_retry_s`), lets exactly one background request through (`_Breaker.probing`, released in
+  `_release`) and holds the other background waiters behind it; `promote` skips probe-bound waiters. `TranscriptService.probe_captions`
+  starts that background fetch for the video of the first content request that finds the class half-open (never from `GET /transcript`,
+  skipped for cached, held and no-captions videos). A probe that only answers the metadata class leaves the class half-open. An
+  interactive transcript job skips its caption recheck while the probe is out; a background job may be the probe.
+- Caps: `[youtube] captions_cooldown_max_s` (1800) is the ceiling of the caption class, `Retry-After` included, never above
+  `cooldown_max_s`. Old tests that probed with an interactive request now probe with `BACKGROUND`.
+- Stored transcripts: `_fetch` upserts captions with `WHERE source != 'asr'` (and clears engine/model/segments for caption rows), so a late
+  or in-flight caption fetch returns the stored ASR transcript instead of replacing it; `cached()` already returned ASR first, so there is
+  no refetch.
+- Engines (PR #22 review): `_chunk_on` re-checks health after `limiter.acquire` and `_span_on` before each sub-chunk
+  (`_passed_over`: unhealthy and a healthy engine later in the chain, `EngineError(penalize=False)`); unknown language sorts engines
+  without `languages` first and `_span` redoes a chunk an allow-listed engine took when the detected language is outside its list (the
+  result is kept as a last resort); `EngineError.isolated` (5xx, unreadable or oddly shaped answer, a non-connect/timeout transport error)
+  marks the engine only after two different files failed with no success between (`_record_failure`, keyed by the wav path); connect and
+  timeout failures, 429 and 401/403/404 still mark at once.
+- yt-dlp: `ytdlp_runtime_options` always passes `js_runtimes={js_runtime: {path}|{}}` (yt-dlp looks the runtime up on PATH without a path);
+  `pyproject.toml` requires `yt-dlp>=2025.11.12`, the first release with `remote_components` (checked in the 2025.10.22 and 2025.11.12
+  wheels; the lock holds 2026.10.26 and its specifier is updated).
+- Tests: `test_gate_probe.py`, `test_audio_fallback.py` (policy, panel, 429 now, probe flow, escalation cap, late captions, jobs), engine
+  and media additions.
+
 ## 2026-11-12 (fast transcripts, issue #19)
 
 - Gate: `YoutubeGate` keeps one shared pacer and one breaker per endpoint class (`captions` = timedtext, `metadata` = watch/player/yt-dlp

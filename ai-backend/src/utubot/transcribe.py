@@ -114,16 +114,9 @@ class Transcription:
             else None,
         }
 
-    def captions_limited(self, video_id: str) -> bool:
-        """True while interactive caption fetches are held back: a cooldown, or the probe is out.
-
-        Also asks for the background probe once a cooldown is over (a no-op otherwise), because
-        nothing interactive may do it.
-        """
-        if self.transcripts.gate.interactive_ok(*FETCH_CLASSES):
-            return False
-        self.transcripts.probe_captions(video_id)
-        return True
+    def captions_limited(self) -> bool:
+        """True while interactive caption fetches are held back: a cooldown, or the probe is out."""
+        return not self.transcripts.gate.interactive_ok(*FETCH_CLASSES)
 
     def audio_fallback(
         self, video_id: str, hint: dict[str, Any] | None = None
@@ -250,7 +243,7 @@ class Transcription:
             }
         if self.transcripts.no_captions(video_id):
             return self.none_fields(video_id, hint)
-        if self.captions_limited(video_id):
+        if self.captions_limited():
             return self.audio_fallback(video_id, hint)
         return None
 
@@ -259,8 +252,11 @@ class Transcription:
     ) -> dict[str, Any] | None:
         """Response fields when the transcript is not usable right now; None when it is.
 
-        `promote`: the caller is waiting on a running or queued transcription, so it goes first.
+        `promote`: the caller is waiting on a running or queued transcription, so it goes first. A
+        caller that finds the caption class waiting for its probe starts that background request
+        (`TranscriptService.probe_captions`), because no interactive request may.
         """
+        self.transcripts.probe_captions(video_id)
         state = self.state(video_id, hint)
         if state is None or state["transcript_status"] == OK:
             return None

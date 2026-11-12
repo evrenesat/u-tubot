@@ -382,6 +382,16 @@ async def test_a_probe_does_not_start_for_a_video_that_cannot_teach_it_anything(
     assert env.fetcher.calls == ["defghijklmn"]
 
 
+async def test_polling_the_transcript_status_never_contacts_youtube(env):
+    await half_open_captions(env)
+    state = (
+        await env.client.get(f"/v1/videos/{VID}/transcript", params={"duration_s": DURATION_S})
+    ).json()
+    await settle()
+    assert state["transcript_status"] == "none" and state["message"] == OFFER
+    assert env.fetcher.calls == []
+
+
 async def test_an_interactive_caption_request_is_never_sent_while_the_class_cools(env):
     cool_captions(env)
     spy = Spy(env)
