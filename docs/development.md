@@ -8,6 +8,7 @@ ai/           CONTRACT.md (wire contract, setup file), APP_INTEGRATION.md (touch
 common/       Android library; AI code in .../common/utubot/
 smarttubetv/  Android app; panel code in .../tv/utubot/
 docs/         user documentation
+assets/brand/ SVG sources of the symbol, banner and wordmark; render.py makes the PNGs
 ```
 
 The rest is Electric Eel (a fork of SmartTube). Keep AI code in the `utubot` packages and hooks in upstream files small; every
@@ -153,14 +154,22 @@ Everything in `main` that CI accepts is shipped, so protect `main` (pull request
 The workflows check out `SharedModules` and `MediaServiceCore` at the commits pinned in `.github/actions/android-env/action.yml`;
 update them when you merge the base app.
 
+## Brand assets
+
+The symbol (a play triangle holding a lowercase u, with the interpunct as a lime ball on its tip), the banner and the wordmark are SVGs in
+`assets/brand/` with three flat colors (indigo `#4B3FE0`, white, lime `#C8F23A`; `#0F1124` behind the banner) and no fonts: the wordmark is
+drawn with paths. `uv run assets/brand/render.py` renders them to the PNGs of the `stutubot` flavor (`smarttubetv/src/stutubot/res/mipmap-nodpi/`:
+`app_icon`, `app_icon_alt`, `app_banner`, `app_logo`, `app_logo_semi_red`, `app_logo_semi_grey`) and to the previews in `assets/brand/png/`.
+It needs the cairo library (`apt install libcairo2`). Edit the SVGs, render, commit both.
+
 ## Merging upstream
 
-`master` mirrors Electric Eel; work lands on `feat/ai-layer`.
+`master` mirrors Electric Eel; `main` is the default branch and work lands on it through pull requests.
 
 ```sh
 git fetch electriceel
 git checkout master && git merge electriceel/master
-git checkout feat/ai-layer && git merge master
+git checkout -b feat/sync-electriceel origin/main && git merge master   # then open a PR
 ```
 
 Conflicts can only be in the files listed in [../ai/APP_INTEGRATION.md](../ai/APP_INTEGRATION.md): re-apply the small hooks (grep

@@ -1,4 +1,10 @@
-# u·tubot
+<p align="center">
+  <img src="assets/brand/utubot-symbol.svg" alt="u·tubot symbol" width="96" height="96">
+</p>
+
+<h1 align="center">u·tubot</h1>
+
+> **Unofficial.** Not affiliated with Google or YouTube. Built on Electric Eel and SmartTube, which are separate projects; please don't report u·tubot issues to them.
 
 u·tubot is an Android TV YouTube client with an AI layer you host yourself. A small backend asks the language model of your
 choice (local or cloud, anything OpenAI-compatible) to mark or hide clickbait, low-quality and unwanted videos in your rows,
@@ -71,7 +77,8 @@ _Coming soon._
 ## Credits
 
 Based on [Electric Eel](https://github.com/cygnusx-1-org/electriceel) by cygnusx-1-org, itself based on
-[SmartTube](https://github.com/yuliskov/SmartTube) by yuliskov. See their repositories for the features of the base app.
+[SmartTube](https://github.com/yuliskov/SmartTube) by yuliskov. See their repositories for the features of the base app. They are
+separate projects: report u·tubot problems in [this repository's issues](https://github.com/evrenesat/u-tubot/issues), not there.
 
 ## License
 

@@ -1,5 +1,30 @@
 # u·tubot devlog
 
+## 2026-11-12 (own identity)
+
+- New symbol: a play triangle holding a lowercase u, the interpunct a lime ball on its tip (an indigo ring cuts it off the white tip), on an
+  indigo rounded square: three flat colors, no fonts, nothing near YouTube's red. Refined from the first draft with a larger, bolder u (the
+  margin to the triangle's edges is measured, not guessed) and checked at 48 to 160 px on dark and light backgrounds. SVG sources, wordmark
+  and banner in `assets/brand/`; `uv run assets/brand/render.py` (cairosvg pinned) renders the `stutubot` PNGs (icon, alternative icon,
+  banner, the grey/red/default header logos) and the previews, and stops when the banner no longer repeats the symbol and wordmark markup.
+  The `-v30` icon variant is gone: the same PNG serves every API level.
+- Release notes (Settings, Updates) read this repository's releases (`api.github.com/repos/evrenesat/u-tubot/releases`) and list only the
+  tags starting `utubot-v` (`release_notes_tag_prefix`, `GitHubReleases.parse(json, tagPrefix)`), newest first, the installed version bold
+  with "(installed)". When GitHub can't be reached the changelog of the backend's `update.json` stands in (`fallbackToUpdateChannel`, not
+  cached). It is the only release-notes view: the short About has none. Tests: `GitHubReleasesTest` (filter, order, drafts, installed),
+  `GitHubReleasesLoadTest` (the tag filter over HTTP, GitHub's errors, the fallback and its own failure).
+- About (short, the flavor's): Server (the backend address and a QR code of it, or "Not set up" which opens the setup), Feedback (issues),
+  Releases, Git repository, all of this repository; no Donation; one credit "Based on Electric Eel and SmartTube" that opens QR codes of both
+  repositories. `UtubotAboutTest` drives the dialog (rows, the address each QR code holds); `UtubotBrandingTest` checks every address and
+  array of the flavor and the name.
+- Settings, Debugging (Submit data to Electric Eel's server) is hidden in the flavor and `DataSubmitter.autoSubmit` does nothing without a server;
+  the Danish and Finnish strings that said "Electric Eel" and the Android TV search label (default and Turkish) say u·tubot.
+- README header with the symbol and a permanent disclaimer; `AGENTS.md` and `docs/development.md` say `main` is the default branch and
+  work lands by pull request (`master` mirrors Electric Eel).
+- Still upstream-named, on purpose or out of scope: the credit row and README credits; the "electriceel-storage" server protocol of
+  Settings, System, Storage sync; the `SmartTubeBackup` backup folder name; internal package names and the `org.smarttube` search authority.
+- Screenshots (Modern skin, emulator): `docs/screenshots/branding/`.
+
 ## 2026-11-12 (audio when captions are limited)
 
 - Backend only: when YouTube limits the caption API the audio is transcribed instead of answering "delayed" (policy permitting), the

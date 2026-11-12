@@ -74,6 +74,11 @@ changelog. A backend typed by hand in *Advanced* (also on 0.2.0) uses `<server>/
 update source: without a server the app never checks for updates. Updates must be signed with the same key as the
 installed app, and the TV asks once to allow installs from the app.
 
+*Settings, Updates, Release notes* lists the u·tubot releases of this repository (tags `utubot-v*`, newest first, the installed
+version in bold). It is the only release-notes view. When GitHub can't be reached it shows the changelog of your server's
+`update.json` instead. *Settings, About* has the server address, the feedback, releases and repository links of this
+repository, and the credit to Electric Eel and SmartTube.
+
 ## 5. Using it
 
 - Cards in rows get marks (clickbait, low quality, inflated length, unwanted topics) or are hidden, following the policy

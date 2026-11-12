@@ -18,8 +18,19 @@ so the other flavors behave as before.
 | `app/presenters/dialogs/AppUpdatePresenter.java` | `getUpdateUrls()`: stored setup URL (or the one derived from the backend) for the built-in flavor, none means no check; the update dialog always opens for the built-in flavor; `UtubotUpdateChecker` instead of the shared checker; an update found while the player is open or the app is in the background is reported to `UtubotUpdates.onUpdateDeferred()` | self-update from the user's own backend, https-only downloads, no lost prompt |
 | `app/presenters/dialogs/BootDialogPresenter.java` | `UtubotUpdates.start` instead of the one check at boot | check shortly after the start, then every 6 hours |
 | `tv/ui/main/MainApplication.java` | `UtubotAppHooks.install` | busy badge on every screen but the player, which screen is up (video menu) |
-| `smarttubetv/src/stutubot/res/` | app label and icons | branding |
+| `smarttubetv/src/stutubot/res/` | app label; icon, alternative icon, banner and the three header logos, rendered from `assets/brand/*.svg` by `assets/brand/render.py` | own identity, not Electric Eel's |
 | `smarttubetv/src/stutubot/AndroidManifest.xml` | literal `android:label="u·tubot"` on `<application>` (merged over main's `@string/app_name`; keep both the same) | the system installer's "App installed" screen read the label without resources and showed the class name |
+| `common/src/stutubot/res/values/links.xml` | releases, sources, web site, feedback and About addresses of this repository, no donations, no Submit data server, the "Based on Electric Eel and SmartTube" credit | no upstream link is shown as ours |
+| `common/src/stutubot/res/values/release_notes.xml` | release notes URL of this repository, tag prefix `utubot-v` | Settings, Updates, Release notes lists our releases only |
+| `common/src/stutubot/res/values-da`, `values-fi` | the strings whose translation says "Electric Eel" | the app is called u·tubot |
+| `leanbackassistant/src/stutubot/res/values/strings.xml`, `values-tr/strings.xml` | search label and description (main has a Turkish one that says Electric Eel) | Android TV search settings |
+| `common/src/main/res/values/release_notes.xml` | `release_notes_tag_prefix`, empty | other flavors list every release |
+| `common/src/main/res/values/about_links.xml` | addresses and credit of the short About, defaults are Electric Eel's | flavors override them |
+| `misc/GitHubReleases.java` | `parse(json, tagPrefix)` keeps only the tags that start with the prefix; the changelog of the update channel (`update.json`) stands in when GitHub fails; `isInstalled` | one repository holds more than app releases; Settings, Updates, Release notes is the one place for them |
+| `app/presenters/settings/AboutSimpleSettingsPresenter.java` | addresses from the resources above, no row without an address, Server row (built-in flavor), credit row | per-flavor About |
+| `app/presenters/settings/UpdatesSettingsPresenter.java` | the release list marks the installed version; the update channel as fallback | release notes of the flavor only |
+| `misc/AppDataSourceManager.java` | Settings, Debugging only with a Submit data server (`DataSubmitter.isConfigured`) | diagnostics must not go to Electric Eel's server |
+| `diagnostics/DataSubmitter.java` | `isConfigured`, `autoSubmit` does nothing without it | same |
 | `.gitignore` | `utubot.properties`, `temp/` | local secrets and scratch |
 | `app/models/data/Video.java` | `utubotMark` field (copied in `copy`) | label of the card mark |
 | `app/models/data/VideoGroup.java` | `isHiddenByUtubot` in the add-filter chain | hides or marks a card from the cached verdict |
@@ -123,7 +134,7 @@ package `dev.utubot.tv` and the same signing key, otherwise Android refuses it. 
 
 ## Merging upstream
 
-1. Merge Electric Eel into `master`, then `master` into `feat/ai-app`.
+1. Merge Electric Eel into `master`, then `master` into a branch cut from `main` and open a PR.
 2. Conflicts appear only in the files above. Re-apply the hooks, they are one to a few lines each (grep `Utubot`/`utubot`).
 3. Run the unit tests and build both flavors: the layer must not change other flavors.
 
