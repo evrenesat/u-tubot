@@ -1,0 +1,162 @@
+name: u-tubot CI
+
+# Every pull request and every push to main gets one run with a conclusion, so a deployment can tell exactly which commit is green.
+# The backend and the app are tested only when their files changed. A skipped job counts as passed.
+#
+# On a push to main, a change to the app (since the newest utubot-v* tag, so a failed or cancelled earlier push is not lost)
+# also starts the release workflow once the app tests pass.
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One group per commit on main, so no run on main is ever cancelled; a newer push to a pull request replaces the older run.
+  group: utubot-ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.scan.outputs.backend }}
+      app: ${{ steps.scan.outputs.app }}
+      release: ${{ steps.scan.outputs.release }}
+    steps:
+      - name: Find what changed
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          # Files that never change the app. Anything else, a new module included, counts as an app change.
+          NON_APP: '^(ai-backend/|ai/|docs/|updates/|fastlane/|images/|assets/|scripts/|\.github/|[^/]+\.md$|LICENSE$|crowdin\.yml$)'
+          # What the backend job covers: the backend, its contract, the documentation and the release script its tests cover.
+          BACKEND: '^(ai-backend/|ai/|docs/|scripts/utubot_release\.py$)'
+          # The definition of this pipeline: changing it re-runs both jobs but never publishes a release.
+          PIPELINE: '^\.github/(workflows/utubot-ci\.yml$|actions/)'
+        run: |
+          set -euo pipefail
+          ZERO_SHA=0000000000000000000000000000000000000000
+
+          # File names (old names of renames too) of a range or pull request, one per line.
+          pr_files() { gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[] | .filename, (.previous_filename // empty)'; }
+          range_files() { gh api --paginate "repos/$REPO/compare/$1...$SHA" --jq '.files[] | .filename, (.previous_filename // empty)'; }
+          has_match() { [[ -n $(grep -E "$1" <<<"$2" || true) ]]; }
+          has_app_file() { [[ -n $(grep -Ev "$NON_APP" <<<"$1" || true) ]]; }
+
+          # Sets backend and app from a list of changed files.
+          classify() {
+            backend=false
+            app=false
+            if has_match "$BACKEND|$PIPELINE" "$1"; then backend=true; fi
+            if has_app_file "$1" || has_match "$PIPELINE" "$1"; then app=true; fi
+          }
+
+          # Any failure to list files keeps these defaults: run everything.
+          backend=true
+          app=true
+          release=false
+
+          if [ "$EVENT_NAME" = pull_request ]; then
+            if files=$(pr_files); then classify "$files"; fi
+          elif [ "$BEFORE" != "$ZERO_SHA" ] && files=$(range_files "$BEFORE"); then
+            classify "$files"
+          fi
+
+          if [ "$EVENT_NAME" = push ]; then
+            last=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/utubot-v" --jq '.[].ref' \
+              | sed -n 's#^refs/tags/utubot-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' | sort -V | tail -1 || true)
+            if [ -z "$last" ]; then
+              release=true
+            elif since=$(range_files "utubot-v$last"); then
+              if has_app_file "$since"; then release=true; fi
+            else
+              release=true
+            fi
+            if [ "$release" = true ]; then app=true; fi
+          fi
+
+          {
+            echo "backend=$backend"
+            echo "app=$app"
+            echo "release=$release"
+          } | tee -a "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"
+
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ai-backend
+    steps:
+      - name: Checkout u-tubot
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: ai-backend/uv.lock
+
+      - name: Install the dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check
+
+      - name: Check the formatting
+        run: uv run ruff format --check
+
+      - name: Test
+        run: uv run pytest -q
+
+  app:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout u-tubot
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          path: u-tubot
+          persist-credentials: false
+
+      - name: Set up the Android build
+        uses: ./u-tubot/.github/actions/android-env
+
+      - name: Unit tests and TV module compile
+        working-directory: u-tubot
+        run: |
+          chmod +x gradlew
+          ./gradlew :common:testStutubotDebugUnitTest :smarttubetv:compileStutubotDebugJavaWithJavac
+
+  release:
+    # Hosted by this repository only: forks do not hold the signing key.
+    needs: [changes, app]
+    if: github.event_name == 'push' && github.repository == 'evrenesat/u-tubot' && needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Start the release workflow for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run utubot-release.yml --repo "$GITHUB_REPOSITORY" --ref main --field sha="$GITHUB_SHA"
