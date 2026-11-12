@@ -186,6 +186,53 @@ public class UtubotSetupFlowTest {
     }
 
     @Test
+    public void upgradedDevice_backendTypedBeforeUpdateUrlsFollowsTheBackend() {
+        UtubotSettings settings = freshSettings(prefs -> prefs.putString("url", "https://utubot.example.com/ai"));
+
+        assertEquals("https://utubot.example.com/ai/app/update.json", settings.getUpdateUrl());
+    }
+
+    @Test
+    public void upgradedDevice_aStoredUpdateUrlWinsOverTheBackend() {
+        UtubotSettings settings = freshSettings(prefs -> prefs.putString("url", "https://utubot.example.com").putString("update_url", "https://cdn.example.com/update.json"));
+
+        assertEquals("https://cdn.example.com/update.json", settings.getUpdateUrl());
+    }
+
+    @Test
+    public void upgradedDevice_anUpdateUrlStoredEmptyByASetupStaysEmpty() {
+        UtubotSettings settings = freshSettings(prefs -> prefs.putString("url", "https://utubot.example.com").putString("update_url", ""));
+
+        assertEquals("", settings.getUpdateUrl());
+    }
+
+    @Test
+    public void upgradedDevice_noBackendOrAnUnsafeOneMeansNoUpdateSource() {
+        assertEquals("", freshSettings(prefs -> prefs.putString("token", "t")).getUpdateUrl());
+        assertEquals("", freshSettings(prefs -> prefs.putString("url", "http://utubot.example.com")).getUpdateUrl());
+        assertEquals("", freshSettings(prefs -> prefs.putString("url", "ftp://utubot.example.com")).getUpdateUrl());
+    }
+
+    @Test
+    public void upgradedDevice_aBackendTypedLaterKeepsTheDerivedAddressInStep() throws Exception {
+        UtubotSettings settings = freshSettings(prefs -> prefs.putString("url", "https://a.example.com"));
+
+        settings.setUrlManually("https://b.example.com");
+
+        assertEquals("https://b.example.com/app/update.json", settings.getUpdateUrl());
+    }
+
+    /**
+     * The settings with only these values stored, as an upgrade leaves them
+     */
+    private UtubotSettings freshSettings(java.util.function.Function<android.content.SharedPreferences.Editor, android.content.SharedPreferences.Editor> store) {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        store.apply(StoredSettings.cleared(settings)).commit();
+
+        return settings;
+    }
+
+    @Test
     public void deriveUpdateUrl_trimsTheSlash() throws Exception {
         assertEquals("http://10.0.0.5:8790/app/update.json", UtubotSetup.deriveUpdateUrl(" http://10.0.0.5:8790/ "));
     }

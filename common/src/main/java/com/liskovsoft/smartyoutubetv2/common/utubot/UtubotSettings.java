@@ -110,9 +110,29 @@ public class UtubotSettings {
 
     /**
      * Where the update checker looks for new versions: the update_url of the imported setup. Empty means no update checks.
+     * A device whose backend was typed by hand before the update address was derived (0.2.0) never stored one: it follows the backend,
+     * the same way a backend typed now does. An address that was stored empty (a setup without update_url) stays empty.
      */
     public String getUpdateUrl() {
-        return mPrefs.getString(KEY_UPDATE_URL, "");
+        if (mPrefs.contains(KEY_UPDATE_URL)) {
+            return mPrefs.getString(KEY_UPDATE_URL, "");
+        }
+
+        return deriveUpdateUrlOfBackend();
+    }
+
+    private String deriveUpdateUrlOfBackend() {
+        String backend = getUrl();
+
+        if (backend.isEmpty()) {
+            return "";
+        }
+
+        try {
+            return UtubotSetup.deriveUpdateUrl(UtubotSetup.requireUrl(backend, "backend address"));
+        } catch (UtubotSetup.SetupException e) {
+            return "";
+        }
     }
 
     public void setUpdateUrl(String url) {

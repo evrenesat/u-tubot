@@ -5,6 +5,7 @@ import android.content.Context;
 
 import com.liskovsoft.appupdatechecker2.AppUpdateChecker;
 import com.liskovsoft.appupdatechecker2.AppUpdateCheckerListener;
+import com.liskovsoft.smartyoutubetv2.common.utubot.StoredSettings;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 
 import org.junit.After;
@@ -22,6 +23,7 @@ import java.io.File;
 import java.net.UnknownHostException;
 import java.time.Duration;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
@@ -56,6 +58,49 @@ public class AppUpdatePresenterTest {
         idle(60_000);
 
         assertEquals(0, mPresenter.mChecks);
+    }
+
+    /**
+     * A TV set up by hand on 0.2.0 (backend typed under Advanced, no update address ever stored) and then upgraded: the manual check
+     * and the automatic one both use the update file of the backend
+     */
+    @Test
+    public void backendWithoutAStoredUpdateUrl_bothChecksUseTheDerivedOne() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        useStoredBackendOnly("http://10.0.0.5:8790/");
+        mPresenter = new CountingPresenter(mActivity);
+
+        assertArrayEquals(new String[]{"http://10.0.0.5:8790/app/update.json"}, mPresenter.getUpdateUrls());
+
+        mPresenter.start(true);
+        assertEquals(1, mPresenter.mChecks);
+        assertNull("the manual check must not say there is no update source", ShadowToast.getTextOfLatestToast());
+        assertEquals("the automatic check consults the same address", "http://10.0.0.5:8790/app/update.json",
+                UtubotSettings.instance(mActivity).getUpdateUrl());
+    }
+
+    /**
+     * A setup that says nothing about updates is stored as such: no check, however the backend looks
+     */
+    @Test
+    public void setupWithoutUpdateUrl_noCheck() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        settings.setUrl("https://utubot.example.com");
+        settings.setUpdateUrl("");
+
+        mPresenter.start(true);
+
+        assertEquals(0, mPresenter.getUpdateUrls().length);
+        assertEquals(0, mPresenter.mChecks);
+        assertEquals("No update source: import your server's setup first", ShadowToast.getTextOfLatestToast());
+    }
+
+    /**
+     * Only the backend stored, as an upgrade from 0.2.0 leaves it
+     */
+    private void useStoredBackendOnly(String backend) {
+        StoredSettings.cleared(UtubotSettings.instance(mActivity)).putString("url", backend).commit();
     }
 
     /**
