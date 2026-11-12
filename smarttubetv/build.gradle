@@ -33,6 +33,24 @@ if (keystorePropertiesFile.exists()) {
 // else storeFile, storePassword, keyAlias, keyPassword from keystore.properties
 def requestedTasks = getGradle().getStartParameter().getTaskRequests().toString()
 def buildingUtubotRelease = requestedTasks.contains("StutubotRelease")
+// u-tubot version: <series>.<patch>, series (major.minor) from utubot.version, patch counted by the release workflow, which passes
+// the full name as UTUBOT_VERSION_NAME. versionCode = major * 1000000 + minor * 1000 + patch, so it grows with the name.
+// UTUBOT_VERSION_CODE or -PutubotVersionCode overrides the derived code. A local build without a name is "<series>.0-dev".
+def utubotVersionMajorStep = 1000000
+def utubotVersionMinorStep = 1000
+def utubotSeriesFile = rootProject.file("utubot.version")
+def utubotSeries = utubotSeriesFile.exists() ? utubotSeriesFile.text.trim() : "0.0"
+def utubotInput = { String envName, String propName -> System.getenv(envName) ?: project.findProperty(propName) }
+def utubotVersionName = (utubotInput("UTUBOT_VERSION_NAME", "utubotVersionName") ?: "${utubotSeries}.0-dev").toString()
+def utubotVersionCodeOf = { String name ->
+    def parts = (name =~ /^(\d+)\.(\d+)\.(\d+)/)
+    if (!parts.find()) {
+        throw new GradleException("u-tubot version name '${name}' must start with <major>.<minor>.<patch>")
+    }
+    return parts.group(1).toInteger() * utubotVersionMajorStep + parts.group(2).toInteger() * utubotVersionMinorStep + parts.group(3).toInteger()
+}
+def utubotVersionCode = utubotInput("UTUBOT_VERSION_CODE", "utubotVersionCode")?.toString()?.toInteger() ?: utubotVersionCodeOf(utubotVersionName)
+
 def utubotSigning = { String envName, String propName -> System.getenv(envName) ?: keystoreProperties[propName] }
 def utubotKeystore = utubotSigning("UTUBOT_KEYSTORE", "storeFile")
 def utubotStorePassword = utubotSigning("UTUBOT_KEYSTORE_PASSWORD", "storePassword")
@@ -191,8 +209,8 @@ android {
         }
         stutubot {
             applicationId "dev.utubot.tv"
-            versionCode 4
-            versionName "0.2.2"
+            versionCode utubotVersionCode
+            versionName utubotVersionName
             matchingFallbacks = ['ststable']
         }
     }
