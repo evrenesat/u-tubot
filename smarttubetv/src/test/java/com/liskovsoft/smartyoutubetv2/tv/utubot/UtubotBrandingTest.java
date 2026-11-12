@@ -5,6 +5,9 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 
+import com.liskovsoft.smartyoutubetv2.common.app.models.data.SettingsItem;
+import com.liskovsoft.smartyoutubetv2.common.misc.AppDataSourceManager;
+
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.smartyoutubetv2.tv.R;
@@ -16,6 +19,9 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.ConscryptMode;
+
+import java.io.IOException;
+import java.nio.file.Paths;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -111,5 +117,58 @@ public class UtubotBrandingTest {
         assertEquals("u·tubot", context.getString(R.string.app_name));
         assertEquals("the title of the browse screen", "u·tubot", context.getString(R.string.browse_title));
         assertFalse(context.getString(R.string.app_name).contains("Electric"));
+    }
+
+    /**
+     * The Settings tile of the layer has its own icon (the symbol), not the crossed-out "AI" that Content filtering uses
+     */
+    @Test
+    public void theSettingsTileHasTheSymbolIcon() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        Context context = RuntimeEnvironment.getApplication();
+        SettingsItem tile = null;
+
+        for (SettingsItem item : AppDataSourceManager.instance().getSettingItems(context)) {
+            if (context.getString(com.liskovsoft.smartyoutubetv2.common.R.string.utubot_title).equals(item.title)) {
+                tile = item;
+            }
+        }
+
+        assertTrue("no u·tubot tile in Settings", tile != null);
+        assertEquals(com.liskovsoft.smartyoutubetv2.common.R.drawable.settings_utubot, tile.imageResId);
+        assertNotEquals(com.liskovsoft.smartyoutubetv2.common.R.drawable.settings_aislist, tile.imageResId);
+    }
+
+    /**
+     * The icon is white on transparent with the canvas and the padding of the About icon (assets/brand/render.py draws it)
+     */
+    @Test
+    public void theSettingsIconMatchesTheAboutIconsCanvasAndPadding() throws IOException {
+        PngPixels icon = settingsIcon("settings_utubot.png");
+        PngPixels about = settingsIcon("settings_about.png");
+
+        assertEquals(about.width, icon.width);
+        assertEquals(about.height, icon.height);
+        int[] iconBounds = icon.visibleBounds();
+        int[] aboutBounds = about.visibleBounds();
+        assertEquals("padding above", aboutBounds[1], iconBounds[1]);
+        assertEquals("padding below", about.height - aboutBounds[3], icon.height - iconBounds[3]);
+        assertTrue("the shape fills the width the canvas leaves", iconBounds[2] - iconBounds[0] > icon.width * 3 / 4);
+        boolean hasHole = false;
+
+        for (int y = 0; y < icon.height; y++) {
+            for (int x = 0; x < icon.width; x++) {
+                assertTrue("not white at " + x + "," + y, icon.alpha(x, y) == 0 || icon.rgb(x, y) == 0xFFFFFF);
+                hasHole |= icon.alpha(x, y) == 0 && x > iconBounds[0] + icon.width / 4 && x < iconBounds[2] - icon.width / 4
+                        && y > iconBounds[1] + icon.height / 4 && y < iconBounds[3] - icon.height / 4;
+            }
+        }
+
+        assertTrue("the u is a hole in the shape", hasHole);
+    }
+
+    private static PngPixels settingsIcon(String name) throws IOException {
+        // The unit tests run in the module's directory
+        return PngPixels.read(Paths.get("..", "common", "src", "main", "res", "drawable-nodpi", name));
     }
 }
