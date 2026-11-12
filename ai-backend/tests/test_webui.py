@@ -190,6 +190,8 @@ async def test_admin_creates_users_and_sets_passwords(env):
     )
     assert login.status_code == 200 and login.json()["admin"] is False
     assert (await env.client.post("/v1/users", json={"name": "newbie"})).status_code == 409
+    assert (await env.client.post("/v1/users", json={"name": "NEWBIE"})).status_code == 409
+    assert (await env.client.post("/v1/users", json={"name": "OWNER"})).status_code == 409
     assert (await env.client.post("/v1/users", json={"name": "bad name!"})).status_code == 400
     assert (
         await env.client.post("/v1/users", json={"name": "weakling", "password": "short"})

@@ -85,7 +85,7 @@ export function field(label, control, hint) {
 }
 
 export function textInput(value, { placeholder = "", type = "text", autocomplete = "off", maxlength } = {}) {
-  return h("input", { type, value: value ?? "", placeholder, autocomplete, maxlength, spellcheck: "false", autocapitalize: "off" });
+  return h("input", { type, value: value ?? "", placeholder, autocomplete, maxlength, spellcheck: "false", autocapitalize: "none", autocorrect: "off", inputmode: type === "text" ? "text" : null });
 }
 
 export function numberInput(value, { min, max, step = 1 } = {}) {
