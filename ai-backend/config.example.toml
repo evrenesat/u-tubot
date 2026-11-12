@@ -33,12 +33,22 @@ max_devices_per_user = 20
 default_provider = "local"
 timeout_s = 120.0
 retries_on_bad_json = 1           # one retry when the model returns unparsable JSON
-max_concurrency = 4
+json_retry_max_tokens = 6000      # max_tokens for the one JSON retry (reasoning models)
+# Fail-fast endpoints answer 503/429 when busy. Retries use exponential backoff with jitter and
+# honour Retry-After, until the per-task deadline; then the task's `fallback` models are tried.
+retry_max_attempts = 4            # per model
+retry_base_s = 1.0
+retry_max_s = 15.0
+deadline_interactive_s = 45.0     # summary, ask, insight requested by a user
+deadline_background_s = 120.0     # triage, tier-2 analysis, caption translation
 
 # First provider: a local OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio ...).
 # Omit api_key_env for servers that need no key.
 [llm.providers.local]
 base_url = "http://127.0.0.1:11434/v1"
+max_concurrent = 2                # in-flight requests; interactive work is served before background
+reserved_interactive = 1          # slots background work may not use (capped at max_concurrent - 1)
+json_mode = false                 # true: send response_format json_object for triage/analysis
 
 # OpenAI itself. api_key_env names the env var holding the key (never the key itself).
 # [llm.providers.openai]
@@ -55,12 +65,16 @@ base_url = "http://127.0.0.1:11434/v1"
 # base_url = "http://router.internal:8787/v1"
 # api_key_env = "UTUBOT_ROUTER_API_KEY"
 
+# Busy-prone local endpoint with a cloud fallback: see the `fallback` lines below.
+# [llm.providers.openrouter] is the cloud side; give it its own max_concurrent (default 2).
+
 # Any configured provider can be named per task or per prompt: model = "openai:gpt-4o-mini".
 
 # Per-task model selection. "provider" is optional (defaults to default_provider);
 # "model" may also be written "provider:model".
 [llm.triage]                # batched title triage, JSON output
 model = "llama3.2:3b"
+# fallback = ["openrouter:openai/gpt-4o-mini"]   # tried when the primary stays busy/unavailable
 reasoning_effort = "none"
 max_tokens = 2500
 temperature = 0.2
@@ -70,17 +84,21 @@ model = "llama3.1:8b"             # example name; use any model your provider se
 # model = "openrouter:anthropic/claude-sonnet-5.5"   # example override for higher quality
 max_tokens = 900
 temperature = 0.2
+# fallback = ["openrouter:anthropic/claude-sonnet-5.5"]
 
 [llm.answer]                # POST /ask
 model = "llama3.1:8b"
+# fallback = ["openrouter:anthropic/claude-sonnet-5.5"]
 max_tokens = 600
 
 [llm.analysis]              # insight and tier-2 inflation analysis
 model = "llama3.1:8b"
+# fallback = ["openrouter:openai/gpt-4o-mini"]
 max_tokens = 900
 
 [llm.captions]              # optional caption translation
 model = "llama3.1:8b"
+# fallback = ["openrouter:openai/gpt-4o-mini"]
 max_tokens = 2000
 
 [assess]
@@ -89,6 +107,7 @@ max_videos_per_request = 50
 wait_ms_cap = 3000
 default_wait_ms = 1200
 background_concurrency = 2
+coalesce_ms = 300                  # merge /v1/assess calls arriving within this window into shared batches
 tier2_daily_cap_per_user = 100     # transcript-based deep analyses per user per UTC day
 tier2_clickbait_threshold = 0.6
 triage_cache_ttl_s = 604800

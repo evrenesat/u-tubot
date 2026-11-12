@@ -1,5 +1,26 @@
 # DEVLOG
 
+## 2026-11-12 (LLM backpressure)
+
+- Production: the TV triggers /v1/assess per row, background triage saturated a fail-fast
+  endpoint (503 engine_busy at its concurrency cap) and an interactive summary failed. Some
+  triage calls failed with `no JSON found` (reasoning model, content empty or cut at max_tokens).
+- `llm.py`: per-provider `PriorityLimiter` (`max_concurrent`, default 2; interactive before
+  background; `reserved_interactive` slots background cannot take). Replaces the global
+  `llm.max_concurrency`. Retries on 429/502/503/504 and connection errors with exponential
+  backoff + jitter and Retry-After (seconds or date), bounded by a per-task deadline
+  (`deadline_interactive_s`, `deadline_background_s`); never on other 4xx. Per-task
+  `fallback = ["provider:model"]` after the prompt's own model; not used after a 4xx.
+- JSON: `json_mode` per provider sends `response_format`; empty content with reasoning is a
+  failure (reasoning is never parsed), retried once with `json_retry_max_tokens` and a
+  "JSON only" nudge; failure kind logged (empty, truncated, no-json) without content. Plain
+  `chat` also raises on empty output instead of caching an empty summary.
+- `assess.py`: `coalesce_ms` window merges uncached videos from concurrent requests into shared
+  batches (full batch flushes at once, in-flight dedupe unchanged).
+- `errors.py`: busy failures surface as "the language model is busy, try again in a moment".
+- Tests: `tests/test_backpressure.py` plus mock server knobs (busy, Retry-After, empty content).
+  Docs: `docs/llm-providers.md` section "Fail-fast endpoints and backpressure".
+
 ## 2026-11-12 (overnight build)
 
 - Built the backend: config, SQLite, OpenAI-compatible client (think-block and fence tolerant,

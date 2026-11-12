@@ -10,7 +10,7 @@ from .bg import TaskRegistry, wait_task
 from .config import Config, UserPolicy
 from .db import Database
 from .errors import public_error
-from .llm import LLMClient
+from .llm import INTERACTIVE, LLMClient
 from .prompts import DEFAULT_SYSTEM, Prompt, PromptStore, render
 from .transcripts import Transcript, TranscriptService, fmt_ts
 
@@ -123,6 +123,7 @@ class ContentService:
                         {"role": "user", "content": f"Part {i + 1}/{len(chunks)}:\n{chunk}"},
                     ],
                     max_tokens=s.condensed_max_tokens,
+                    priority=INTERACTIVE,
                 )
                 for i, chunk in enumerate(chunks)
             )
@@ -167,6 +168,7 @@ class ContentService:
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             model=prompt.model,
             max_tokens=prompt.max_tokens,
+            priority=INTERACTIVE,
         )
         return clean_text(text)
 
@@ -264,6 +266,7 @@ class ContentService:
                     {"role": "system", "content": render(INSIGHT_SYSTEM, values)},
                     {"role": "user", "content": user},
                 ],
+                priority=INTERACTIVE,
             )
             if not isinstance(data, dict):
                 raise ValueError("insight output is not an object")
@@ -337,6 +340,7 @@ class ContentService:
                     {"role": "system", "content": render(ASK_SYSTEM, values)},
                     {"role": "user", "content": user},
                 ],
+                priority=INTERACTIVE,
             )
 
         if task_key in results:

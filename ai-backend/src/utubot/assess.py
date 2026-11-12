@@ -174,6 +174,41 @@ class Assessor:
         self._bg = asyncio.Semaphore(cfg.assess.background_concurrency)
         self.tier2 = TaskRegistry()
         self._tasks: set[asyncio.Task] = set()
+        self._pending: dict[str, list[VideoMeta]] = {}
+        self._pending_topics: dict[str, list[str]] = {}
+
+    def _spawn(self, coro: Any) -> None:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def _enqueue(self, videos: list[VideoMeta], topics: list[str], thash: str) -> None:
+        cfg = self.cfg.assess
+        queue = self._pending.setdefault(thash, [])
+        self._pending_topics[thash] = topics
+        first = not queue
+        queue.extend(videos)
+        while len(queue) >= cfg.batch_size:
+            batch, queue[:] = queue[: cfg.batch_size], queue[cfg.batch_size :]
+            self._spawn(self._run_batch(batch, topics, thash))
+        if not queue:
+            return
+        if cfg.coalesce_ms <= 0:
+            self._flush(thash)
+        elif first:
+            self._spawn(self._flush_later(thash))
+
+    async def _flush_later(self, thash: str) -> None:
+        await asyncio.sleep(self.cfg.assess.coalesce_ms / 1000.0)
+        self._flush(thash)
+
+    def _flush(self, thash: str) -> None:
+        queue = self._pending.get(thash)
+        if not queue:
+            return
+        batch = list(queue)
+        queue.clear()
+        self._spawn(self._run_batch(batch, self._pending_topics[thash], thash))
 
     def _cached_triage(self, video_id: str, thash: str) -> dict[str, Any] | None:
         return self.db.get_json(
@@ -243,11 +278,8 @@ class Assessor:
                 self._inflight[key] = fut
                 todo.append(video)
             waiting.append(fut)
-        for i in range(0, len(todo), cfg.batch_size):
-            batch = todo[i : i + cfg.batch_size]
-            task = asyncio.create_task(self._run_batch(batch, topics, thash))
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+        if todo:
+            self._enqueue(todo, topics, thash)
         if waiting and wait_ms:
             await asyncio.wait(waiting, timeout=wait_ms / 1000.0)
         results = []
@@ -417,6 +449,8 @@ class Assessor:
         )
 
     async def drain(self) -> None:
-        pending = [t for t in self._tasks if not t.done()]
-        if pending:
+        while True:
+            pending = [t for t in self._tasks if not t.done()]
+            if not pending:
+                return
             await asyncio.gather(*pending, return_exceptions=True)

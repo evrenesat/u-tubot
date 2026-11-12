@@ -57,11 +57,12 @@ published in `/setup.json` and in APK download links), `users_file` (default `da
 `pair_attempts_per_ip_per_min`, `pair_lockout_failures`, `pair_lockout_s`, `pair_global_failures`, `pair_global_window_s`),
 `max_body_bytes`, `max_device_name_chars`, `max_devices_per_user`.
 
-**`[llm]`**: `default_provider`, `timeout_s`, `retries_on_bad_json`, `max_concurrency`; `[llm.providers.NAME]` with `base_url`
-and `api_key_env`; per-task tables `[llm.triage]`, `[llm.summary]`, `[llm.answer]`, `[llm.analysis]`, `[llm.captions]`, each with
-`model`, optional `provider`, `reasoning_effort`, `max_tokens`, `temperature`. See [llm-providers.md](llm-providers.md).
+**`[llm]`**: `default_provider`, `timeout_s`, `retries_on_bad_json`, `json_retry_max_tokens`, `retry_max_attempts`, `retry_base_s`, `retry_max_s`,
+`deadline_interactive_s`, `deadline_background_s`; `[llm.providers.NAME]` with `base_url`, `api_key_env`, `max_concurrent`,
+`reserved_interactive`, `json_mode`; per-task tables `[llm.triage]`, `[llm.summary]`, `[llm.answer]`, `[llm.analysis]`, `[llm.captions]`, each with
+`model`, optional `provider`, `fallback`, `reasoning_effort`, `max_tokens`, `temperature`. See [llm-providers.md](llm-providers.md).
 
-**`[assess]`**: `batch_size` (titles per triage call), `max_videos_per_request`, `wait_ms_cap`, `default_wait_ms`,
+**`[assess]`**: `batch_size` (titles per triage call), `coalesce_ms`, `max_videos_per_request`, `wait_ms_cap`, `default_wait_ms`,
 `background_concurrency`, `tier2_daily_cap_per_user` (transcript-based deep analyses per user per UTC day),
 `tier2_clickbait_threshold`, `triage_cache_ttl_s`, `title_max_chars`, `description_max_chars`.
 

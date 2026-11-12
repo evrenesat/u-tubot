@@ -18,11 +18,15 @@ class LLMTask(BaseModel):
     reasoning_effort: str | None = None
     max_tokens: int = 1024
     temperature: float = 0.2
+    fallback: list[str] = Field(default_factory=list)
 
 
 class ProviderConfig(BaseModel):
     base_url: str = DEFAULT_LLM_BASE_URL
     api_key_env: str | None = None
+    max_concurrent: int = 2
+    reserved_interactive: int = 1
+    json_mode: bool = False
 
 
 class LLMConfig(BaseModel):
@@ -32,7 +36,12 @@ class LLMConfig(BaseModel):
     default_provider: str = DEFAULT_PROVIDER
     timeout_s: float = 120.0
     retries_on_bad_json: int = 1
-    max_concurrency: int = 4
+    json_retry_max_tokens: int = 6000
+    retry_max_attempts: int = 4
+    retry_base_s: float = 1.0
+    retry_max_s: float = 15.0
+    deadline_interactive_s: float = 45.0
+    deadline_background_s: float = 120.0
     triage: LLMTask = LLMTask(model="fast", reasoning_effort="none", max_tokens=2500)
     summary: LLMTask = LLMTask(model="worker", max_tokens=900)
     answer: LLMTask = LLMTask(model="worker", max_tokens=600)
@@ -47,6 +56,7 @@ class AssessConfig(BaseModel):
     wait_ms_cap: int = 3000
     default_wait_ms: int = 1200
     background_concurrency: int = 2
+    coalesce_ms: int = 300
     tier2_daily_cap_per_user: int = 40
     tier2_clickbait_threshold: float = 0.6
     triage_cache_ttl_s: int = 7 * 86400
