@@ -15,7 +15,7 @@ boxes, `armeabi-v7a` for older or 32-bit systems, `universal` when unsure. Each 
 | Build | Code |
 |---|---|
 | arm64-v8a | **3235617** |
-| armeabi-v7a | TBD |
+| armeabi-v7a | **5947444** |
 
 **Install:** install *Downloader* on the TV, enter the code (or a release URL), allow unknown sources when asked, install, open.
 ADB and USB work too. Details and update notes: [docs/install.md](docs/install.md). Upgrading from the unpublished 0.1.0 debug
