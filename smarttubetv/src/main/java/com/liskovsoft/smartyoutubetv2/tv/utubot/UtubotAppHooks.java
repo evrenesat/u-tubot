@@ -6,6 +6,7 @@ import android.os.Bundle;
 
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUiHost;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUpdates;
 import com.liskovsoft.smartyoutubetv2.tv.ui.dialogs.AppDialogActivity;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.PlaybackActivity;
 
@@ -26,12 +27,18 @@ public final class UtubotAppHooks {
         }
 
         application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+            // The controller holds its activity weakly: a value that held its key would keep the entry from ever being collected
             private final Map<Activity, UtubotBadgeController> mControllers = new WeakHashMap<>();
 
             @Override
             public void onActivityResumed(Activity activity) {
                 if (!(activity instanceof AppDialogActivity)) {
                     UtubotUiHost.setPlayerScreen(activity instanceof PlaybackActivity);
+
+                    if (!(activity instanceof PlaybackActivity)) {
+                        // The player closed or the app came back: an update that was found meanwhile is offered now
+                        UtubotUpdates.onScreenAvailable();
+                    }
                 }
 
                 if (activity instanceof PlaybackActivity) {

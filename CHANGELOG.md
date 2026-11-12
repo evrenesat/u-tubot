@@ -35,6 +35,24 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
   never stored an update address, now uses `<backend>/app/update.json` for both the automatic and the manual "Check for updates".
 - Backend: `utubot app sync-github` publishes the newest GitHub Release into the update channel after checking each APK's SHA-256
   and signing certificate, so a server follows new app releases on its own.
+- Fixed: the access token could be sent with a caption request to another host whose address merely started like the backend's
+  (`https://backend.example.com.evil.net/...`). The header is now sent only when scheme, host and port are the backend's and the
+  path is under the backend's path.
+- Fixed: the prompt list, summaries, verdicts, captions and the prompt picked for the session stayed in the app after the prompt
+  list changed (choose default, Import from URL, Refresh all, the prompt sets of an imported setup) or after the backend address or
+  token changed (import setup, Advanced, pairing), and showed the old backend's data until the app was restarted. They are dropped
+  at once, and an answer that arrives after the switch is not kept.
+- Fixed: an update found while a video was playing was never offered until the next 6 hour check. It is now offered when the player
+  closes (a few seconds after the screen comes back) or at the latest after 5 minutes, never during playback.
+- Fixed: clearing the backend in Advanced left its update address stored, so the app kept checking the old server for updates.
+- Fixed: with the Summary view open, OK or Enter pressed while the screen below had taken the focus (after a list reload) opened or
+  played the card under the view. The first OK, like the first D-pad key, now brings the focus back to the view.
+- The app downloads an update only from an https address, or an http address of a local network host (the rule of the backend
+  address); `update.json` entries with any other address are skipped, and a file with no usable address is an error.
+- The application's label is now a literal "u·tubot" in the manifest (the icon, banner and logo were set already). The system
+  installer's "App installed" screen showed the application class name and the generic icon during a self-update; an installer that
+  reads the package file without its resources no longer needs them for the name.
+- Fixed: a screen's badge controller held its activity strongly while being the value of a weak map keyed by that activity.
 
 Backend (`ai-backend/`) changes in this release:
 

@@ -286,6 +286,84 @@ public class UtubotPanelControllerTest {
         assertSame(mSecondCard, focus());
     }
 
+    private UtubotSummaryOverlay overlay() {
+        ViewGroup content = mActivity.findViewById(android.R.id.content);
+
+        for (int i = 0; i < content.getChildCount(); i++) {
+            if (content.getChildAt(i) instanceof UtubotSummaryOverlay) {
+                return (UtubotSummaryOverlay) content.getChildAt(i);
+            }
+        }
+
+        throw new AssertionError("no overlay in the content");
+    }
+
+    private void openTheSummaryViewOn(View card) {
+        card.requestFocus();
+        idle(DELAY_MS + 100);
+        assertTrue(mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_INFO)));
+        mController.dispatchKeyEvent(up(KeyEvent.KEYCODE_INFO));
+        idle(0);
+        assertTrue(overlay().isOpen());
+        assertTrue("the view has the focus once it is open", overlay().hasFocus());
+    }
+
+    /**
+     * The grid took the focus back (a reload, the framework's own refocusing) and the post that brings it to the view is still queued
+     */
+    private void theGridTakesTheFocusBack(View card) {
+        card.requestFocus();
+        assertSame(card, focus());
+        assertFalse(overlay().hasFocus());
+    }
+
+    @Test
+    public void okWhileTheGridHasTheFocusBringsItBackToTheViewInsteadOfActivatingTheCard() {
+        resume();
+        int[] clicks = {0};
+        mFirstCard.setOnClickListener(view -> clicks[0]++);
+        openTheSummaryViewOn(mFirstCard);
+
+        for (int key : new int[]{KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER}) {
+            theGridTakesTheFocusBack(mFirstCard);
+
+            assertTrue("the press is used here, it never reaches the card", mController.dispatchKeyEvent(down(key)));
+            assertTrue("the view has the focus again", overlay().hasFocus());
+            assertTrue("the release of the used press is swallowed too", mController.dispatchKeyEvent(up(key)));
+        }
+
+        assertEquals(0, clicks[0]);
+        assertTrue(overlay().isOpen());
+    }
+
+    @Test
+    public void theDpadWhileTheGridHasTheFocusBringsItBackToTheView() {
+        resume();
+        openTheSummaryViewOn(mFirstCard);
+        theGridTakesTheFocusBack(mFirstCard);
+
+        assertTrue(mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_DPAD_RIGHT)));
+        assertTrue(overlay().hasFocus());
+    }
+
+    @Test
+    public void okInTheViewIsTheViewsOwn() {
+        resume();
+        openTheSummaryViewOn(mFirstCard);
+
+        assertFalse("with the focus in the view the key goes on to the view's own widgets", mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_DPAD_CENTER)));
+    }
+
+    @Test
+    public void okOnACardWithoutTheViewIsTheAppsOwn() {
+        resume();
+        mFirstCard.requestFocus();
+        idle(DELAY_MS + 100);
+
+        assertFalse(mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_DPAD_CENTER)));
+        assertFalse(mController.dispatchKeyEvent(up(KeyEvent.KEYCODE_DPAD_CENTER)));
+    }
+
     @Test
     public void theInfoKeyOnTheSidebarDoesNothing() {
         resume();

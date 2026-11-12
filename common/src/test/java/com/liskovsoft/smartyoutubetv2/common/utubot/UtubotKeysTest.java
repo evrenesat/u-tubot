@@ -104,6 +104,24 @@ public class UtubotKeysTest {
     }
 
     @Test
+    public void okAndEnterActivateTheFocusedViewLikeTheDpadMovesIt() {
+        for (int key : new int[]{KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_A}) {
+            assertTrue(UtubotKeys.isSelectKey(key));
+            assertTrue(UtubotKeys.actsOnFocus(key));
+            assertFalse(UtubotKeys.isDirectionKey(key));
+        }
+
+        for (int key : new int[]{KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT}) {
+            assertTrue(UtubotKeys.actsOnFocus(key));
+            assertFalse(UtubotKeys.isSelectKey(key));
+        }
+
+        for (int key : new int[]{KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_HOME, KeyEvent.KEYCODE_BUTTON_B}) {
+            assertFalse(UtubotKeys.actsOnFocus(key));
+        }
+    }
+
+    @Test
     public void keyClasses() {
         assertTrue(UtubotKeys.isSummaryKey(KeyEvent.KEYCODE_INFO));
         assertFalse(UtubotKeys.isSummaryKey(KeyEvent.KEYCODE_MENU));

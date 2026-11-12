@@ -373,4 +373,66 @@ public class UtubotClientTest {
         assertNull(client.authorizationFor("https://other/x.vtt"));
         assertNull(new UtubotClient("https://host", "").authorizationFor("https://host/x.vtt"));
     }
+
+    @Test
+    public void theTokenNeverGoesToAHostThatOnlyStartsLikeTheBackend() {
+        UtubotClient client = new UtubotClient("https://u.example.com", TOKEN);
+
+        assertEquals("Bearer " + TOKEN, client.authorizationFor("https://u.example.com/v1/x.vtt"));
+        assertNull(client.authorizationFor("https://u.example.com.evil.net/x"));
+        assertNull(client.authorizationFor("https://u.example.comevil.net/x"));
+        assertNull(client.authorizationFor("https://u.example.com@evil.net/x"));
+        assertNull(client.authorizationFor("https://evil.net/https://u.example.com/x"));
+        assertNull(client.authorizationFor("https://evil.net/x?u=https://u.example.com/"));
+    }
+
+    @Test
+    public void theTokenNeverGoesToAnotherPortOrSchemeOfTheHost() {
+        UtubotClient client = new UtubotClient("https://u.example.com", TOKEN);
+
+        assertNull(client.authorizationFor("https://u.example.com:8443/v1/x.vtt"));
+        assertNull(client.authorizationFor("http://u.example.com/v1/x.vtt"));
+        assertNull(client.authorizationFor("http://u.example.com:443/v1/x.vtt"));
+        assertEquals("the default port written out is the same port", "Bearer " + TOKEN, client.authorizationFor("https://u.example.com:443/v1/x.vtt"));
+
+        UtubotClient lan = new UtubotClient("http://10.0.0.5:8790", TOKEN);
+
+        assertEquals("Bearer " + TOKEN, lan.authorizationFor("http://10.0.0.5:8790/v1/x.vtt"));
+        assertNull(lan.authorizationFor("http://10.0.0.5:8791/v1/x.vtt"));
+        assertNull(lan.authorizationFor("http://10.0.0.5/v1/x.vtt"));
+        assertNull(lan.authorizationFor("https://10.0.0.5:8790/v1/x.vtt"));
+    }
+
+    @Test
+    public void theHostIsComparedAsAHostNotAsText() {
+        UtubotClient client = new UtubotClient("https://U.Example.com/", TOKEN);
+
+        assertEquals("Bearer " + TOKEN, client.authorizationFor("HTTPS://u.example.COM/v1/x.vtt"));
+        assertNull(client.authorizationFor("https://u.example.net/v1/x.vtt"));
+    }
+
+    @Test
+    public void aBackendUnderAPathOnlyVouchesForItsOwnPath() {
+        UtubotClient client = new UtubotClient("https://u.example.com/ai/", TOKEN);
+
+        assertEquals("Bearer " + TOKEN, client.authorizationFor("https://u.example.com/ai/v1/x.vtt"));
+        assertEquals("Bearer " + TOKEN, client.authorizationFor("https://u.example.com/ai"));
+        assertNull(client.authorizationFor("https://u.example.com/other/v1/x.vtt"));
+        assertNull(client.authorizationFor("https://u.example.com/aiother/v1/x.vtt"));
+        assertNull(client.authorizationFor("https://u.example.com/"));
+        assertNull("a dot segment can't climb out of the backend's path", client.authorizationFor("https://u.example.com/ai/../other/x.vtt"));
+        assertNull(client.authorizationFor("https://u.example.com/ai/%2e%2e/other/x.vtt"));
+    }
+
+    @Test
+    public void anAddressThatIsNotAnAbsoluteHttpAddressGetsNoToken() {
+        UtubotClient client = new UtubotClient("https://u.example.com", TOKEN);
+
+        assertNull(client.authorizationFor(null));
+        assertNull(client.authorizationFor(""));
+        assertNull(client.authorizationFor("/v1/x.vtt"));
+        assertNull(client.authorizationFor("ftp://u.example.com/x.vtt"));
+        assertNull(client.authorizationFor("file:///data/x.vtt"));
+        assertNull(new UtubotClient("", TOKEN).authorizationFor("https://u.example.com/x.vtt"));
+    }
 }

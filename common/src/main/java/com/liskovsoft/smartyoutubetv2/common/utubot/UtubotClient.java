@@ -120,6 +120,13 @@ public class UtubotClient {
     }
 
     /**
+     * Both clients talk to the same backend with the same token
+     */
+    boolean isSameConnectionAs(UtubotClient other) {
+        return mBaseUrl.equals(other.mBaseUrl) && mToken.equals(other.mToken);
+    }
+
+    /**
      * Cancels the calls of this client in flight, and refuses new ones. Safe from any thread.
      */
     public void cancel() {
@@ -292,12 +299,41 @@ public class UtubotClient {
     }
 
     /**
-     * The Authorization header value for a backend address, null for the other hosts or without a token (the token never leaves for
-     * a foreign host)
+     * The Authorization header value for an address of the backend, null for anything else or without a token. The token never
+     * leaves for a foreign address: scheme, host and port must be the backend's exactly (a prefix of the text is not enough:
+     * https://backend.example.com.evil.net/ starts with https://backend.example.com) and the path must lie under the backend's.
      */
     @Nullable
-    public String authorizationFor(String absoluteUrl) {
-        return mToken.isEmpty() || !absoluteUrl.startsWith(mBaseUrl) ? null : "Bearer " + mToken;
+    public String authorizationFor(@Nullable String absoluteUrl) {
+        if (mToken.isEmpty() || absoluteUrl == null) {
+            return null;
+        }
+
+        HttpUrl base = HttpUrl.parse(mBaseUrl);
+        HttpUrl target = HttpUrl.parse(absoluteUrl.trim());
+
+        return base != null && target != null && isUnder(base, target) ? "Bearer " + mToken : null;
+    }
+
+    private static boolean isUnder(HttpUrl base, HttpUrl target) {
+        if (!base.scheme().equals(target.scheme()) || !base.host().equals(target.host()) || base.port() != target.port()) {
+            return false;
+        }
+
+        List<String> basePath = withoutTrailingEmpty(base.encodedPathSegments());
+        List<String> targetPath = target.encodedPathSegments();
+
+        return targetPath.size() >= basePath.size() && targetPath.subList(0, basePath.size()).equals(basePath);
+    }
+
+    private static List<String> withoutTrailingEmpty(List<String> segments) {
+        int size = segments.size();
+
+        while (size > 0 && segments.get(size - 1).isEmpty()) {
+            size--;
+        }
+
+        return segments.subList(0, size);
     }
 
     private interface Parser<T> {

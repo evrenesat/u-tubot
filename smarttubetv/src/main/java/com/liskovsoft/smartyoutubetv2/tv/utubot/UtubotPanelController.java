@@ -211,9 +211,16 @@ public class UtubotPanelController implements UtubotUiHost.Host {
 
         boolean isViewOpen = mOverlay != null && mOverlay.isOpen();
 
-        // The focus never rests on the screen under the view: the first key takes it back instead of moving the grid
-        if (isViewOpen && UtubotKeys.isDirectionKey(key) && !mOverlay.hasFocus()) {
+        // The focus never rests on the screen under the view: the first key takes it back instead of moving the grid or, for OK and
+        // Enter, activating the card under the view
+        if (isViewOpen && UtubotKeys.actsOnFocus(key) && !mOverlay.hasFocus()) {
             mOverlay.restoreFocus();
+
+            if (UtubotKeys.isSelectKey(key)) {
+                // The rest of the press (repeats, release) is not the view's either
+                mSwallowedKey = key;
+            }
+
             return true;
         }
 

@@ -66,6 +66,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     private UtubotManager(Context context) {
         mContext = context.getApplicationContext();
         mSettings = UtubotSettings.instance(mContext);
+        mSettings.addConnectionListener(this::onConnectionChanged);
     }
 
     public static synchronized UtubotManager instance(Context context) {
@@ -82,6 +83,33 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
     public UtubotClient newClient() {
         return new UtubotClient(mSettings.getUrl(), mSettings.getToken());
+    }
+
+    /**
+     * Another backend or another token: the verdicts, summaries, captions and prompts of the old connection are not the new one's
+     */
+    private void onConnectionChanged() {
+        mVerdicts.clear();
+
+        synchronized (mSummaries) {
+            mSummaries.clear();
+        }
+
+        synchronized (mCaptions) {
+            mCaptions.clear();
+        }
+
+        synchronized (this) {
+            mPrompts = null;
+            mSessionPrompt = null;
+        }
+    }
+
+    /**
+     * The client still talks to the backend of the settings: an answer that arrives after a switch of backend or token is not kept
+     */
+    private boolean isCurrent(UtubotClient client) {
+        return client.isSameConnectionAs(newClient());
     }
 
     //region Assess
@@ -127,10 +155,13 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     private boolean assess(List<VideoMeta> metas, String section, int waitMs, int hardTimeoutMs) throws IOException {
-        List<Verdict> verdicts = newClient().assess(metas, section, waitMs, hardTimeoutMs);
+        UtubotClient client = newClient();
+        List<Verdict> verdicts = client.assess(metas, section, waitMs, hardTimeoutMs);
 
-        for (Verdict verdict : verdicts) {
-            mVerdicts.put(verdict);
+        if (isCurrent(client)) {
+            for (Verdict verdict : verdicts) {
+                mVerdicts.put(verdict);
+            }
         }
 
         return true;
@@ -275,7 +306,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             summary = client.summary(videoId, promptKey, meta, SUMMARY_WAIT_MS);
         }
 
-        if (summary.isReady() && !summary.isTransient()) {
+        if (summary.isReady() && !summary.isTransient() && isCurrent(client)) {
             synchronized (mSummaries) {
                 mSummaries.put(cacheKey, summary);
             }
@@ -335,7 +366,9 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             PromptList list = client.prompts();
 
             synchronized (this) {
-                mPrompts = list;
+                if (isCurrent(client)) {
+                    mPrompts = list;
+                }
             }
 
             return list;
@@ -344,23 +377,45 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
     public Observable<Boolean> importPromptsObserve(String url) {
         return Observable.fromCallable(() -> {
-            newClient().importPrompts(url);
+            try {
+                newClient().importPrompts(url);
+            } finally {
+                forgetPrompts();
+            }
+
             return true;
         }).subscribeOn(Schedulers.io());
     }
 
     public Observable<Boolean> refreshPromptsObserve() {
         return Observable.fromCallable(() -> {
-            newClient().refreshPrompts();
+            try {
+                newClient().refreshPrompts();
+            } finally {
+                forgetPrompts();
+            }
+
             return true;
         }).subscribeOn(Schedulers.io());
     }
 
     public Observable<Boolean> setDefaultPromptObserve(String key) {
         return Observable.fromCallable(() -> {
-            newClient().setDefaultPrompt(key);
+            try {
+                newClient().setDefaultPrompt(key);
+            } finally {
+                forgetPrompts();
+            }
+
             return true;
         }).subscribeOn(Schedulers.io());
+    }
+
+    /**
+     * The list on the backend changed (or may have): the next request reads it again
+     */
+    private synchronized void forgetPrompts() {
+        mPrompts = null;
     }
 
     //endregion
@@ -379,8 +434,10 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             return;
         }
 
-        captionsObserve(videoId).subscribe(captions -> {
-            if (captions.isReady()) {
+        UtubotClient client = newClient();
+
+        Observable.fromCallable(() -> client.captions(videoId)).subscribeOn(Schedulers.io()).subscribe(captions -> {
+            if (captions.isReady() && isCurrent(client)) {
                 synchronized (mCaptions) {
                     mCaptions.put(videoId, captions);
                 }

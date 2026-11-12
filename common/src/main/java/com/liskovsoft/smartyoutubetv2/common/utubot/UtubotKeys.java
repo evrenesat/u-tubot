@@ -42,6 +42,21 @@ public final class UtubotKeys {
     }
 
     /**
+     * OK on the remote, Enter on a keyboard, A on a gamepad: the keys that activate the focused view
+     */
+    public static boolean isSelectKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER ||
+                keyCode == KeyEvent.KEYCODE_BUTTON_A;
+    }
+
+    /**
+     * A key that works on the view that has the focus: it moves the focus (D-pad) or activates the view (OK, Enter)
+     */
+    public static boolean actsOnFocus(int keyCode) {
+        return isDirectionKey(keyCode) || isSelectKey(keyCode);
+    }
+
+    /**
      * @param isViewOpen the Summary view (or the AI answer) is up
      * @param isPanelMode the passive panel mode is on (the Summary view's key works with it)
      * @param isCardFocused a card with a video has the focus

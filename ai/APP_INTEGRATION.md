@@ -15,10 +15,11 @@ so the other flavors behave as before.
 | `leanbackassistant/build.gradle` | `stutubot` flavor with `matchingFallbacks` | module variant matching |
 | `smarttubetv/build.gradle` | `stutubot` flavor, applicationId, version, release signing from `UTUBOT_KEYSTORE*` or `keystore.properties`, APK name `u-tubot_<ver>_<abi>.apk` | side-by-side install, signed releases |
 | `common/src/stutubot/res/values/update_urls.xml` | empty `update_urls` array | no built-in update source: the stored `update_url` of the imported setup is used |
-| `app/presenters/dialogs/AppUpdatePresenter.java` | `getUpdateUrls()`: stored setup URL (or the one derived from the backend) for the built-in flavor, none means no check; the update dialog always opens for the built-in flavor | self-update from the user's own backend |
+| `app/presenters/dialogs/AppUpdatePresenter.java` | `getUpdateUrls()`: stored setup URL (or the one derived from the backend) for the built-in flavor, none means no check; the update dialog always opens for the built-in flavor; `UtubotUpdateChecker` instead of the shared checker; an update found while the player is open or the app is in the background is reported to `UtubotUpdates.onUpdateDeferred()` | self-update from the user's own backend, https-only downloads, no lost prompt |
 | `app/presenters/dialogs/BootDialogPresenter.java` | `UtubotUpdates.start` instead of the one check at boot | check shortly after the start, then every 6 hours |
 | `tv/ui/main/MainApplication.java` | `UtubotAppHooks.install` | busy badge on every screen but the player, which screen is up (video menu) |
 | `smarttubetv/src/stutubot/res/` | app label and icons | branding |
+| `smarttubetv/src/stutubot/AndroidManifest.xml` | literal `android:label="u·tubot"` on `<application>` (merged over main's `@string/app_name`; keep both the same) | the system installer's "App installed" screen read the label without resources and showed the class name |
 | `.gitignore` | `utubot.properties`, `temp/` | local secrets and scratch |
 | `app/models/data/Video.java` | `utubotMark` field (copied in `copy`) | label of the card mark |
 | `app/models/data/VideoGroup.java` | `isHiddenByUtubot` in the add-filter chain | hides or marks a card from the cached verdict |
@@ -78,9 +79,24 @@ so the other flavors behave as before.
 - Auto-update (`UtubotUpdates`, `UtubotUpdateSchedule`): 20 s after the app starts, then every 6 hours (a check that can't happen now, e.g.
   the player is open, is tried again after 5 minutes), through `AppUpdatePresenter` (the checker of `SharedModules`, `appupdatechecker2`: version
   check, APK of the device's ABI, update dialog, installer). On by default; Settings, Updates, "Notify about updates" is its switch.
+  An update found while the player is open (or the app is in the background) is not dropped: `AppUpdatePresenter` tells
+  `UtubotUpdates.onUpdateDeferred()`, the schedule checks again after 5 minutes, and `UtubotAppHooks` calls
+  `UtubotUpdates.onScreenAvailable()` when a screen other than the player resumes, which brings that check forward to 5 seconds
+  later. The dialog never opens during playback (`AppUpdatePresenter.canShowUpdateDialog`).
+  `UtubotUpdateChecker` (a subclass of the shared `AppUpdateChecker`) filters the APK addresses of `update.json` before the shared
+  downloader sees them: https, or http for a private host (`UtubotSetup.isPrivateHost`), judged as OkHttp reads the address; the
+  shared checker only asks `URLUtil.isValidUrl`. With none left the check fails ("The update file offers no https download").
+  Redirects are the downloader's own; the installer checks the package name and the signing key of whatever it gets.
   `UtubotSettings.getUpdateUrl()` returns the stored `update_url`, or `<backend>/app/update.json` when none was ever stored (a
   backend typed on 0.2.0); a setup that stored an empty address keeps none.
-- HQ captions: fetched with the `Authorization` header (never `?token=`); the header is only sent to the backend host.
+- HQ captions: fetched with the `Authorization` header (never `?token=`); the header is only sent to the backend: same scheme, host
+  and port, path under the backend's (`UtubotClient.authorizationFor`).
+- What the app keeps of the backend (`UtubotManager`: verdicts, summaries, captions, the prompt list, the session prompt) is dropped when
+  `UtubotSettings.setUrl` or `setToken` changes a value (applySetup, Advanced, pairing all go through them), and the prompt list
+  also when a prompt is made default, imported or refreshed. A request in flight during a switch is not stored
+  (`UtubotManager.isCurrent`). Clearing the backend in Advanced also removes the stored update address.
+- With the Summary view open the focus never rests on the screen under it: the first D-pad key, OK or Enter after the grid took
+  the focus back restores the view's focus and is used (`UtubotKeys.actsOnFocus`).
 
 ## update.json (self-update)
 
