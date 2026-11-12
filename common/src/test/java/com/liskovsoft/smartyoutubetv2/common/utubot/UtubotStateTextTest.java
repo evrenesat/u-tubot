@@ -33,11 +33,26 @@ public class UtubotStateTextTest {
         return new State(new Video(), phase, Collections.emptyList(), null, null, null, null, null, message, canTranscribe, estimateMinutes, progressPercent);
     }
 
-    @Test
-    public void thePanelPointsToTheInfoKeyForAVideoThatCanBeTranscribed() {
-        State state = state(Phase.NEEDS_TRANSCRIPT, "No captions. Transcribe the audio in the background?", true, 4, UtubotModels.UNKNOWN);
+    private static State delayedState(@Nullable String message, int retryInSec) {
+        return new State(new Video(), Phase.DELAYED, Collections.emptyList(), null, null, null, null, null, message, false, 0, UtubotModels.UNKNOWN, null,
+                retryInSec);
+    }
 
-        assertEquals("No captions — press Info to transcribe", UtubotStateText.noCaptionsShort(mActivity, state));
+    @Test
+    public void thePanelShowsTheServersMessageForAVideoThatCanBeTranscribed() {
+        State state = state(Phase.NEEDS_TRANSCRIPT, "Captions are temporarily unavailable from YouTube; transcribe the audio instead (~90 s)?", true, 2,
+                UtubotModels.UNKNOWN);
+
+        assertEquals("Captions are temporarily unavailable from YouTube; transcribe the audio instead (~90 s)?",
+                UtubotStateText.noCaptionsShort(mActivity, state));
+    }
+
+    @Test
+    public void thePanelPointsToTheInfoKeyWhenTheServerSaidNothing() {
+        assertEquals("No captions — press Info to transcribe",
+                UtubotStateText.noCaptionsShort(mActivity, state(Phase.NEEDS_TRANSCRIPT, null, true, 4, UtubotModels.UNKNOWN)));
+        assertEquals("No captions — press Info to transcribe",
+                UtubotStateText.noCaptionsShort(mActivity, state(Phase.NEEDS_TRANSCRIPT, "  ", true, 4, UtubotModels.UNKNOWN)));
     }
 
     @Test
@@ -66,9 +81,34 @@ public class UtubotStateTextTest {
 
     @Test
     public void transcribingShowsThePercentageWhenItIsKnown() {
-        assertEquals("Transcribing… 0%", UtubotStateText.transcribing(mActivity, state(Phase.TRANSCRIBING, null, false, 4, 0)));
-        assertEquals("Transcribing… 42%", UtubotStateText.transcribing(mActivity, state(Phase.TRANSCRIBING, null, false, 4, 42)));
-        assertEquals("Transcribing…", UtubotStateText.transcribing(mActivity, state(Phase.TRANSCRIBING, null, false, 4, UtubotModels.UNKNOWN)));
+        assertEquals("Transcribing… 0%", UtubotStateText.transcribing(mActivity, state(Phase.TRANSCRIBING, null, false, 0, 0)));
+        assertEquals("Transcribing… 42%", UtubotStateText.transcribing(mActivity, state(Phase.TRANSCRIBING, null, false, 0, 42)));
+        assertEquals("Transcribing…", UtubotStateText.transcribing(mActivity, state(Phase.TRANSCRIBING, null, false, 0, UtubotModels.UNKNOWN)));
+    }
+
+    @Test
+    public void transcribingShowsTheEstimateNextToTheProgress() {
+        assertEquals("Transcribing… 42% (~4 min)", UtubotStateText.transcribing(mActivity, state(Phase.TRANSCRIBING, null, false, 4, 42)));
+        assertEquals("Transcribing… (~4 min)", UtubotStateText.transcribing(mActivity, state(Phase.TRANSCRIBING, null, false, 4, UtubotModels.UNKNOWN)));
+        assertEquals("Transcribing… 42%", UtubotStateText.transcribing(mActivity, state(Phase.TRANSCRIBING, null, false, 0, 42)));
+    }
+
+    @Test
+    public void aDelayCountsDownInSecondsThenMinutes() {
+        assertEquals("Retrying in 42 s", UtubotStateText.retryIn(mActivity, delayedState("x", 42)));
+        assertEquals("Retrying in 59 s", UtubotStateText.retryIn(mActivity, delayedState("x", 59)));
+        assertEquals("Retrying in 1:00", UtubotStateText.retryIn(mActivity, delayedState("x", 60)));
+        assertEquals("Retrying in 2:05", UtubotStateText.retryIn(mActivity, delayedState("x", 125)));
+        assertEquals("", UtubotStateText.retryIn(mActivity, delayedState("x", UtubotModels.UNKNOWN)));
+    }
+
+    @Test
+    public void theDelayedTextIsTheServersErrorThenTheCountdown() {
+        assertEquals("YouTube is limiting transcript downloads; retrying in ~1 min\nRetrying in 30 s",
+                UtubotStateText.delayedWithCountdown(mActivity, delayedState("YouTube is limiting transcript downloads; retrying in ~1 min", 30)));
+        assertEquals("YouTube is slowing us down, trying again shortly\nRetrying in 30 s",
+                UtubotStateText.delayedWithCountdown(mActivity, delayedState(null, 30)));
+        assertEquals("Server words", UtubotStateText.delayedWithCountdown(mActivity, delayedState("Server words", UtubotModels.UNKNOWN)));
     }
 
     @Test

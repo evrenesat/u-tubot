@@ -30,12 +30,27 @@ public final class UtubotMeta {
         meta.title = video.getTitle();
         meta.channel = video.getAuthor();
         meta.channelId = video.channelId;
-        meta.durationSec = video.getDurationMs() > 0 ? TimeUnit.MILLISECONDS.toSeconds(video.getDurationMs()) : parseClock(video.badge);
+        meta.durationSec = durationSec(video);
         meta.isShort = video.isShorts;
         meta.isLive = video.isLive;
         meta.description = video.description;
         fillStats(meta, video.getSecondTitle());
         return meta;
+    }
+
+    /**
+     * The length of a video in seconds, 0 when not known. The backend's automatic transcription needs it: it only starts for a video
+     * of known length. A card carries it in its own field, in its media item (a copy of a card keeps the item but not the field) or in
+     * the clock of its badge.
+     */
+    static long durationSec(Video video) {
+        long durationMs = video.getDurationMs();
+
+        if (durationMs <= 0 && video.mediaItem != null) {
+            durationMs = video.mediaItem.getDurationMs();
+        }
+
+        return durationMs > 0 ? TimeUnit.MILLISECONDS.toSeconds(durationMs) : parseClock(video.badge);
     }
 
     /**

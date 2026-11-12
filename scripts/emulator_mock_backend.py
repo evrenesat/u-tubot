@@ -9,11 +9,16 @@ The emulator reaches the host as 10.0.2.2. Point the app at it with Import setup
 
 The state of the summaries is changed while it runs:
 
-    GET /__mock/set?mode=ready|needs_transcript|delayed|failed&delay=SECONDS[&delayed=N]
+    GET /__mock/set?mode=ready|needs_transcript|delayed|failed|auto_transcribe&delay=SECONDS[&delayed=N][&message=TEXT]
+                   [&estimate=SECONDS][&retry_after=SECONDS][&progress=0.4]
 
 `delay` holds every summary back that many seconds (to see the working indicator), `delayed` is how many answers of mode `delayed`
 come before a ready one. After `POST /v1/videos/ID/transcribe` the video reports `transcribing`, 25% more with each
 `GET /v1/videos/ID/transcript`, and then its summaries are ready. A video id that ends in 0 gets a summary without a "→ " first line.
+`message` is the text of a `needs_transcript` answer or the `error` of a `delayed` one (the caption-limited wording of the real server,
+for example), `estimate` is the `estimate_s` of a transcription, `retry_after` the `retry_after_s` of a `delayed` answer. Mode
+`auto_transcribe` is the server's automatic policy: the first summary or insight request of a video starts the transcription itself and
+answers `pending` + `transcribing` (at `progress`), without the app asking.
 """
 import argparse
 import json
@@ -24,7 +29,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-STATE = {"mode": "ready", "delay": 1.0, "delayed_left": 2, "progress": {}, "transcribing": set()}
+DEFAULT_MESSAGE = "No captions. Transcribe the audio in the background?"
+DEFAULT_DELAYED_ERROR = "YouTube is slowing us down, trying again shortly"
+DEFAULT_ESTIMATE_S = 240
+DEFAULT_RETRY_AFTER_S = 4
+STATE = {"mode": "ready", "delay": 1.0, "delayed_left": 2, "progress": {}, "transcribing": set(), "message": None,
+         "estimate": DEFAULT_ESTIMATE_S, "retry_after": DEFAULT_RETRY_AFTER_S, "start_progress": 0.0}
 LOCK = threading.Lock()
 PROMPTS = [
     ("glance", "Glance", False, True),
@@ -56,19 +66,24 @@ def prompt_list():
 def summary(video_id, prompt, hints):
     mode = STATE["mode"]
     base = {"video_id": video_id, "prompt": "builtin/glance" if prompt == "panel" else prompt, "source": "youtube_captions", "error": None, "text": None}
+    if mode == "auto_transcribe" and video_id not in STATE["transcribing"]:
+        with LOCK:
+            STATE["transcribing"].add(video_id)
+            STATE["progress"][video_id] = STATE["start_progress"]
     if mode == "needs_transcript" and video_id not in STATE["transcribing"]:
         return {**base, "status": "needs_transcript", "transcript_status": "none", "can_transcribe": True,
-                "message": "No captions. Transcribe the audio in the background?", "estimate_s": 240}
+                "message": STATE["message"] or DEFAULT_MESSAGE, "estimate_s": STATE["estimate"]}
     if mode == "delayed":
         with LOCK:
             if STATE["delayed_left"] > 0:
                 STATE["delayed_left"] -= 1
                 return {**base, "status": "pending", "transcript_status": "delayed",
-                        "error": "YouTube is slowing us down, trying again shortly", "retry_after_s": 4}
+                        "error": STATE["message"] or DEFAULT_DELAYED_ERROR,
+                        "retry_after_s": STATE["retry_after"]}
     if video_id in STATE["transcribing"]:
         p = STATE["progress"].get(video_id, 0.0)
         if p < 1.0:
-            return {**base, "status": "pending", "transcript_status": "transcribing", "progress": round(p, 2), "estimate_s": 240}
+            return {**base, "status": "pending", "transcript_status": "transcribing", "progress": round(p, 2), "estimate_s": STATE["estimate"]}
     if mode == "failed":
         return {**base, "status": "failed", "error": "the language model request failed, try again later"}
     if prompt in ("panel", "builtin/glance"):
@@ -115,7 +130,7 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["transcribing"].add(vid)
                 STATE["progress"][vid] = 0.0
             return self.send_json({"video_id": vid, "status": "queued", "job_id": "job1", "transcript_status": "transcribing",
-                                   "progress": 0.0, "estimate_s": 240})
+                                   "progress": 0.0, "estimate_s": STATE["estimate"]})
         return self.send_json({"error": "not found"}, 404)
 
     def do_PUT(self):
@@ -134,6 +149,10 @@ class Handler(BaseHTTPRequestHandler):
                     STATE["progress"].clear()
                 if "delay" in q:
                     STATE["delay"] = float(q["delay"][0])
+                STATE["message"] = q["message"][0] if "message" in q else None
+                STATE["estimate"] = int(q["estimate"][0]) if "estimate" in q else DEFAULT_ESTIMATE_S
+                STATE["retry_after"] = int(q["retry_after"][0]) if "retry_after" in q else DEFAULT_RETRY_AFTER_S
+                STATE["start_progress"] = float(q["progress"][0]) if "progress" in q else 0.0
             return self.send_json({k: (list(v) if isinstance(v, set) else v) for k, v in STATE.items()})
         if path == "/v1/health":
             return self.send_json({"ok": True, "version": "mock"})
@@ -186,7 +205,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"video_id": vid, "transcript_status": "unknown", "source": None})
             if p >= 1.0:
                 return self.send_json({"video_id": vid, "transcript_status": "ok", "source": "asr"})
-            return self.send_json({"video_id": vid, "transcript_status": "transcribing", "progress": p, "estimate_s": 240})
+            return self.send_json({"video_id": vid, "transcript_status": "transcribing", "progress": p, "estimate_s": STATE["estimate"]})
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/insight$", path)
         if m:
             time.sleep(STATE["delay"])

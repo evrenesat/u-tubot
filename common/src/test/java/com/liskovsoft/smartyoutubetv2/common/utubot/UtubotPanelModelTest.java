@@ -487,6 +487,88 @@ public class UtubotPanelModelTest {
     }
 
     @Test
+    public void aDelayedAnswerCountsTheSecondsDownToTheNextRequest() {
+        mPanel.show(video("aaaaaaaaaaa", "First"));
+        mSource.last().answer.onNext(delayed(3));
+
+        assertEquals(3, lastState().retryInSec);
+        assertEquals(Phase.DELAYED, lastState().phase);
+        assertEquals("YouTube is slowing us down", lastState().message);
+
+        mTimer.advance(1_000);
+        assertEquals(2, lastState().retryInSec);
+        assertEquals(Phase.DELAYED, lastState().phase);
+        assertEquals("YouTube is slowing us down", lastState().message);
+        assertEquals(1, mSource.calls.size());
+
+        mTimer.advance(1_000);
+        assertEquals(1, lastState().retryInSec);
+        assertEquals(1, mSource.calls.size());
+
+        mTimer.advance(1_000);
+        assertEquals(2, mSource.calls.size());
+        assertEquals(Phase.LOADING, lastState().phase);
+        assertEquals(UtubotModels.UNKNOWN, lastState().retryInSec);
+    }
+
+    @Test
+    public void theCountdownStartsFromTheBoundedWait() {
+        mPanel.show(video("aaaaaaaaaaa", "First"));
+
+        mSource.last().answer.onNext(delayed(0));
+        assertEquals(1, lastState().retryInSec);
+
+        mTimer.advance(1_000);
+        mSource.last().answer.onNext(delayed(100_000));
+        assertEquals(600, lastState().retryInSec);
+
+        mTimer.advance(1_000);
+        mSource.last().answer.onNext(delayed(UtubotModels.UNKNOWN));
+        assertEquals(10, lastState().retryInSec);
+    }
+
+    @Test
+    public void noCountdownRunsOnceTheCardIsGone() {
+        mPanel.show(video("aaaaaaaaaaa", "First"));
+        mSource.last().answer.onNext(delayed(30));
+        mTimer.advance(2_000);
+        int states = mStates.size();
+
+        mPanel.waitFor(video("bbbbbbbbbbb", "Second"));
+        mTimer.advance(60_000);
+
+        assertEquals(states + 1, mStates.size());
+        assertEquals(Phase.WAITING, lastState().phase);
+        assertEquals(UtubotModels.UNKNOWN, lastState().retryInSec);
+    }
+
+    @Test
+    public void aStateThatIsNotDelayedCarriesNoCountdown() {
+        mView.show(video("aaaaaaaaaaa", "First"));
+        mSource.last().answer.onNext(needsTranscript(true, 90));
+        assertEquals(UtubotModels.UNKNOWN, lastState().retryInSec);
+
+        mSource.last().answer.onNext(transcribing(10));
+        assertEquals(UtubotModels.UNKNOWN, lastState().retryInSec);
+    }
+
+    @Test
+    public void aTranscriptionTheServerStartedKeepsItsEstimateWhileItIsFollowed() {
+        mPanel.show(video("aaaaaaaaaaa", "First"));
+        mSource.last().answer.onNext(transcribing(0));
+        assertEquals(4, lastState().estimateMinutes);
+
+        Transcript running = transcript("transcribing", 50);
+        running.estimateSec = 120;
+        mSource.pollAnswers.add(running);
+        mTimer.advance(UtubotPanelModel.TRANSCRIPT_POLL_PANEL_MS);
+
+        assertEquals(50, lastState().progressPercent);
+        assertEquals(2, lastState().estimateMinutes);
+        assertEquals(UtubotPanelModel.Action.NONE, lastState().action());
+    }
+
+    @Test
     public void aDelayedAnswerKeepsAskingWhileItStaysDelayed() {
         mPanel.show(video("aaaaaaaaaaa", "First"));
         mSource.last().answer.onNext(delayed(5));

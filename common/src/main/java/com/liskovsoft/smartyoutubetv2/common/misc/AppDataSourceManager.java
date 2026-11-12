@@ -58,7 +58,7 @@ public class AppDataSourceManager {
 
         if (UtubotSettings.isBuiltIn()) {
             settingItems.add(new SettingsItem(
-                    context.getString(R.string.utubot_title), () -> UtubotSettingsPresenter.instance(context).show(), R.drawable.settings_aislist));
+                    context.getString(R.string.utubot_title), () -> UtubotSettingsPresenter.instance(context).show(), R.drawable.settings_utubot));
         }
 
         settingItems.add(new SettingsItem(

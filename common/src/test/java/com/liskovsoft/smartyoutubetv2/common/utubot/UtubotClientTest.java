@@ -153,6 +153,44 @@ public class UtubotClientTest {
         assertTrue(mQuery.get().contains("wait_ms=20000"));
     }
 
+    /**
+     * The backend's automatic transcription needs the length of the video (and names the job with the title): every request that can
+     * start one carries title, channel and duration_s
+     */
+    @Test
+    public void everyRequestThatCanStartATranscriptionCarriesTitleChannelAndLength() throws Exception {
+        AtomicReference<String> insightQuery = new AtomicReference<>();
+        mServer.on("/v1/videos/abc/insight", request -> {
+            insightQuery.set(request.query);
+            return new TinyHttpServer.Response(200, "{\"video_id\":\"abc\",\"status\":\"ready\",\"transcript_status\":\"ok\"}");
+        });
+        mServer.on("/v1/videos/abc/transcribe", request -> {
+            mQuery.set(request.query);
+            return new TinyHttpServer.Response(200, "{\"video_id\":\"abc\",\"status\":\"queued\",\"transcript_status\":\"transcribing\"}");
+        });
+        VideoMeta meta = new VideoMeta();
+        meta.videoId = "abc";
+        meta.title = "A title & more";
+        meta.channel = "A channel";
+        meta.durationSec = 754;
+        UtubotClient client = new UtubotClient(base(), TOKEN);
+
+        client.insight("abc", meta, 1000);
+        assertQueryCarries(insightQuery.get());
+
+        client.summary("abc", "panel", meta, 1000);
+        assertQueryCarries(mQuery.get());
+
+        client.transcribe("abc", meta);
+        assertQueryCarries(mQuery.get());
+    }
+
+    private static void assertQueryCarries(String query) {
+        assertTrue(query, query.contains("title=A%20title%20%26%20more") || query.contains("title=A+title+%26+more"));
+        assertTrue(query, query.contains("channel=A%20channel") || query.contains("channel=A+channel"));
+        assertTrue(query, query.contains("duration_s=754"));
+    }
+
     @Test
     public void transcribeStartsTheJobWithAPostAndTheMetadata() throws Exception {
         mServer.on("/v1/videos/abc/transcribe", request -> {

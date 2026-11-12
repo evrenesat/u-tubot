@@ -57,7 +57,9 @@ An end-to-end test (`UtubotBackendE2eTest`) runs against a real backend when `UT
 ### Checking the TV app on an emulator
 
 The panel, the Summary view and the updates are checked on an Android TV emulator (`-no-window -no-audio -memory 2048 -cores 2`) with
-`scripts/emulator_mock_backend.py`, which stands in for the backend (summaries in every state, transcripts, `/app/update.json`).
+`scripts/emulator_mock_backend.py`, which stands in for the backend (summaries in every state, transcripts, `/app/update.json`). Its
+`/__mock/set` URL picks the state, including the server's own wording (`message`, `estimate`, `retry_after`) and `auto_transcribe`, the
+automatic policy that starts a transcription itself (see the script's header).
 Unit tests cover the logic (`UtubotPanelModelTest`, `PanelCoordinatorTest`, `UtubotPanelControllerTest`, ...); the emulator shows what
 they can't: the real skins, focus and the framework's own refocusing.
 
@@ -160,6 +162,8 @@ The symbol (a play triangle holding a lowercase u, with the interpunct as a lime
 `assets/brand/` with three flat colors (indigo `#4B3FE0`, white, lime `#C8F23A`; `#0F1124` behind the banner) and no fonts: the wordmark is
 drawn with paths. `uv run assets/brand/render.py` renders them to the PNGs of the `stutubot` flavor (`smarttubetv/src/stutubot/res/mipmap-nodpi/`:
 `app_icon`, `app_icon_alt`, `app_banner`, `app_logo`, `app_logo_semi_red`, `app_logo_semi_grey`) and to the previews in `assets/brand/png/`.
+It also cuts the Settings tile icon `common/src/main/res/drawable-nodpi/settings_utubot.png` (white on transparent) from `utubot-symbol-mono.svg`
+and fits it into the canvas and padding of `settings_about.png`.
 It needs the cairo library (`apt install libcairo2`). Edit the SVGs, render, commit both.
 
 ## Merging upstream

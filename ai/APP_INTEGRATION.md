@@ -37,7 +37,8 @@ so the other flavors behave as before.
 | `misc/HiddenVideoResolver.java` | `UtubotManager.resolve(...)` zipped into the existing resolve | one assess call per row emission, bounded by wait_ms and a hard timeout; failures show the videos unfiltered. It emits on the main thread: the rows are shown from what the resolver emits, so a background thread here changed the grids' adapters off the UI thread (empty Modern screen) |
 | `app/presenters/SplashPresenter.java` | `UtubotPairing.promptIfNeeded` | first-launch pairing dialog when no token |
 | `app/presenters/dialogs/menu/VideoMenuPresenter.java` | `UtubotMenu.append` (two places) | AI answer, Summary panel toggle, Prepare HQ captions |
-| `misc/AppDataSourceManager.java` | Settings entry "u·tubot" | settings screen |
+| `misc/AppDataSourceManager.java` | Settings entry "u·tubot", with its own tile icon `R.drawable.settings_utubot` | settings screen; Content filtering keeps `settings_aislist` |
+| `common/src/main/res/drawable-nodpi/settings_utubot.png` | new: the symbol, white on transparent, 302x302 with the canvas and padding of `settings_about.png`; `assets/brand/render.py` draws it from `utubot-symbol-mono.svg` | tile of the u·tubot Settings entry |
 | `utils/SimpleEditDialog.java` | `showNumber` | numeric pairing code dialog |
 | `exoplayer/controller/ExoPlayerController.java` | captions prefetch in `setVideo`, `attachUtubotCaptions` on source change, `selectUtubotCaptions` | HQ caption tracks, auto-select |
 | `exoplayer/selector/TrackSelectorUtil.java` | track name lookup | "u·tubot: label" in the subtitle picker |
@@ -76,14 +77,24 @@ so the other flavors behave as before.
   on the right (Right enters, Up and Down page, Left goes back), the title, the source line, the indicator and Retry (or
   "Transcribe in background") on top. It uses the `default` prompt (or the kept one). Back closes it; the focus returns to the card.
   Menu keeps the video menu (Electric Eel's `KeyHelpers.isMenuKey`), so Info is the key.
-- Transcript states (`UtubotPanelModel`, "Transcript status" of `ai/CONTRACT.md`): a summary can answer `needs_transcript` (message,
-  `can_transcribe`, `estimate_s`: the view offers `POST /v1/videos/{id}/transcribe`, then follows `GET /v1/videos/{id}/transcript`),
-  `pending` with `transcript_status` `delayed` (message in `error`, asked again after `retry_after_s`, 1 s to 10 min, while the card or
-  view is shown), `transcribing` (progress, followed every 4 s in the view and every 20 s in the panel, which must not poll faster
-  than a pending summary) or `failed` (`error`, `reason`: the transcribe action returns with `can_transcribe`, Retry goes with a
-  `reason`). The manager keeps ready summaries only; these states are never cached. An insight (the AI answer) can say the same
-  (`UtubotAnswerModel`): it shows the state, and its transcribe button opens the Summary view of the video and starts there.
-  Older backends simply never send them.
+- Transcript states (`UtubotPanelModel`, "Transcript status" of `ai/CONTRACT.md`): the words are the server's, the app's own strings are
+  the fallback for an answer that has none (`UtubotStateText`, one place for the panel, the Summary view and the AI answer).
+  - `needs_transcript`: the panel and the view show the server's `message` (the plain "No captions..." question, or "Captions are
+    temporarily unavailable from YouTube; transcribe the audio instead (~N s)?" while YouTube limits the caption API); only without
+    one the local "No captions — press Info to transcribe" / "This video has no captions..." is shown. The view offers
+    `POST /v1/videos/{id}/transcribe` with the `estimate_s` in minutes on the button, then follows `GET /v1/videos/{id}/transcript`.
+  - `pending` + `transcribing` (a job the server's auto policy started, or the user's): "Transcribing… N% (~M min)" (progress when known,
+    `estimate_s` in whole minutes when given), nothing to press. It is followed every 4 s in the view and the answer and every 20 s in
+    the panel (no faster than a pending summary's long poll) until the transcript is `ok`, then the summary or answer is asked for again.
+  - `pending` + `delayed`: the server's `error` text and a "Retrying in 42 s" / "Retrying in 2:05" countdown from `retry_after_s`
+    (1 s to 10 min), ticked once a second by `UtubotCountdown` while the card or view is shown; at zero the request is repeated.
+  - `failed`: `error`; `reason` set means asking again changes nothing, otherwise Retry (and the transcribe action with `can_transcribe`).
+  The manager keeps ready summaries only; these states are never cached. The AI answer (`UtubotAnswerModel`) waits like the view:
+  it counts a delay down and follows a running transcription (its transcribe button still opens the Summary view of the video and
+  starts there). Older backends simply never send any of this.
+- Video metadata: every `insight`, `summary` and `transcribe` request carries `title`, `channel` and `duration_s` from the `Video`
+  (`UtubotMeta`, `UtubotClient.addMeta`); the server's automatic transcription only starts for a video of known length. The length is the
+  card's duration, else its media item's (a copy of a card keeps the item, not the field), else the clock in its badge.
 - Working indicator: `UtubotWorkingIndicator` (three pulsing dots, redrawn about 12 times a second, only while active, attached and shown), in the panel, the
   view and the answer, and `UtubotBadgeController` (badge at the top right of every screen but the player, shown after 300 ms of work,
   kept for 700 ms) fed by `UtubotBusyTracker`, which counts every `UtubotClient` call in flight.

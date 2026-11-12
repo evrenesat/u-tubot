@@ -7,6 +7,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.TextView;
 
 import androidx.annotation.Nullable;
 
@@ -103,6 +104,8 @@ public class UtubotPanelViewTest {
 
     private static final class StubSource implements UtubotPanelModel.Source {
         String text = "→ Yes.\nLine two.\nLine three.";
+        /** What the backend answers instead of a ready summary */
+        @Nullable Summary answer;
 
         @Nullable
         @Override
@@ -130,6 +133,10 @@ public class UtubotPanelViewTest {
 
         @Override
         public Observable<Summary> summaryObserve(Video video, @Nullable String promptKey) {
+            if (answer != null) {
+                return Observable.just(answer);
+            }
+
             Summary summary = new Summary();
             summary.status = "ready";
             summary.text = text;
@@ -282,5 +289,80 @@ public class UtubotPanelViewTest {
         assertTrue(mPanel instanceof View);
         assertEquals(1f, mPanel.getAlpha(), 0f);
         assertTrue(mPanel.getBackground() != null);
+    }
+
+    private static Summary answer(String status, String transcriptStatus) {
+        Summary summary = new Summary();
+        summary.status = status;
+        summary.transcriptStatus = transcriptStatus;
+
+        return summary;
+    }
+
+    private String shownText() {
+        StringBuilder text = new StringBuilder();
+        collectText(mPanel, text);
+
+        return text.toString();
+    }
+
+    private static void collectText(View view, StringBuilder text) {
+        if (view instanceof TextView) {
+            text.append(((TextView) view).getText()).append('\n');
+        }
+
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+
+            for (int i = 0; i < group.getChildCount(); i++) {
+                collectText(group.getChildAt(i), text);
+            }
+        }
+    }
+
+    @Test
+    public void aVideoWithoutCaptionsShowsTheServersMessage() {
+        mSource.answer = answer("needs_transcript", "none");
+        mSource.answer.canTranscribe = true;
+        mSource.answer.message = "Captions are temporarily unavailable from YouTube; transcribe the audio instead (~90 s)?";
+
+        mModel.show(video("Title"));
+
+        assertTrue(shownText().contains("Captions are temporarily unavailable from YouTube; transcribe the audio instead (~90 s)?"));
+        assertFalse(shownText().contains("press Info to transcribe"));
+    }
+
+    @Test
+    public void aVideoWithoutCaptionsAndWithoutAMessageShowsTheAppsOwnWords() {
+        mSource.answer = answer("needs_transcript", "none");
+        mSource.answer.canTranscribe = true;
+
+        mModel.show(video("Title"));
+
+        assertTrue(shownText().contains("No captions — press Info to transcribe"));
+    }
+
+    @Test
+    public void aTranscriptionTheServerStartedShowsItsProgressAndEstimateWithoutAskingForAnything() {
+        mSource.answer = answer("pending", "transcribing");
+        mSource.answer.progressPercent = 35;
+        mSource.answer.estimateSec = 240;
+
+        mModel.show(video("Title"));
+
+        assertTrue(shownText().contains("Transcribing… 35% (~4 min)"));
+        assertEquals(UtubotPanelModel.Action.NONE, mModel.getState().action());
+        assertTrue(mModel.getState().isWorking());
+    }
+
+    @Test
+    public void aDelayedAnswerShowsTheServersErrorAndTheCountdown() {
+        mSource.answer = answer("pending", "delayed");
+        mSource.answer.error = "YouTube is limiting transcript downloads; retrying in ~1 min";
+        mSource.answer.retryAfterSec = 45;
+
+        mModel.show(video("Title"));
+
+        assertTrue(shownText().contains("YouTube is limiting transcript downloads; retrying in ~1 min\nRetrying in 45 s"));
     }
 }
