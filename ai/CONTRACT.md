@@ -282,14 +282,17 @@ Stored for later threshold tuning.
   the list. The first Back hides the panel and keeps the focus on the card; the toggle turns the mode off.
 - Context menu: "AI answer" (shows `answer_short` in the item label when
   known), "Summary panel on/off", "Prepare HQ captions".
-- Summary panel and Summary view: handle `transcript_status`. `delayed`: show the `error` text and retry after
+- Summary panel and Summary view: handle `transcript_status`. `delayed`: show the `error` text and a "Retrying in N s" countdown, and retry after
   `retry_after_s` (1 s at least, 10 min at most) while the card or view is shown. `none` (`status: "needs_transcript"`): show
   `message` and, when `can_transcribe`, a "Transcribe in background?" action that calls `POST /v1/videos/{id}/transcribe`;
   afterwards the view follows `GET /v1/videos/{id}/transcript` (every 4 s; the passive panel every 20 s, no faster than it
   polled a `pending` summary, one long poll) until the transcript is `ok`, then asks for the summary again.
-  `transcribing`: "Transcribing… N%" and the same follow-up. `failed`: show `error`; offer the action again only with
+  `transcribing`: "Transcribing… N% (~M min)" (the `estimate_s` when given) and the same follow-up, with nothing to press when the
+  server started the job itself. `failed`: show `error`; offer the action again only with
   `can_transcribe`, and no Retry when `reason` is present. None of these answers is kept by the app. The AI answer shows
-  the same states for an insight (Retry; the transcription is started from the Summary view of the video).
+  the same states for an insight, counts a delay down and follows a running transcription like the view does (the transcription the user
+  starts is started from the Summary view of the video). `message` is shown as the server wrote it in the panel, the view and the answer;
+  the app's own wording is only the fallback. Every `insight`, `summary` and `transcribe` call carries `title`, `channel` and `duration_s`.
 - Settings → u·tubot → Prompts: list sets, "Import from URL", "Refresh all",
   choose default.
 - Player: when `captions_ready`, offer the u·tubot track(s) in the subtitle
