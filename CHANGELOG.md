@@ -63,6 +63,16 @@ Backend (`ai-backend/`) changes in this release:
   stitched with the repeated seams removed, and stored with segments, engine and model.
 - A chain of speech-to-text engines (`[[captions.asr_engines]]`: OpenAI-compatible servers such as oMLX or a CPU STT box, and local
   faster-whisper) picked by health, language and priority, with fall-through on failure; the old `asr_*` keys still work as one engine.
+- When YouTube limits only the caption API ("YouTube is limiting transcript downloads, retrying in 34 minutes") the audio is
+  transcribed instead of waiting, as for a video without captions: the user's `auto_transcribe` policy starts it (`pending` +
+  `transcribing`) or the answer is `needs_transcript` with "Captions are temporarily unavailable from YouTube; transcribe the audio
+  instead (~N s)?". "Delayed" remains only without a speech engine or when the audio endpoint is limited too. A transcript made from the
+  audio is never replaced by captions fetched later. After a caption cooldown one background request probes the endpoint (never a
+  user's request) and its cooldown is capped at 30 minutes (`[youtube] captions_cooldown_max_s`).
+- Speech engines: an engine that went unhealthy while a chunk waited is skipped, an unknown video language prefers engines without a
+  language allow-list (a chunk an allow-listed engine took in another language is redone by the next one), and a single 5xx or unreadable
+  answer no longer marks an engine unhealthy (two different files in a row, or a connect/timeout failure). yt-dlp's JavaScript runtime
+  option is passed on without `js_runtime_path` (looked up on PATH); the yt-dlp floor is 2025.11.12.
 - YouTube limits are tracked per endpoint class (caption API, metadata, audio download): a 429 on captions no longer pauses audio
   downloads. `GET /v1/status` shows each class and the engine chain. `[youtube] js_runtime_path` / `remote_components` let yt-dlp solve
   YouTube's JavaScript challenge under systemd.

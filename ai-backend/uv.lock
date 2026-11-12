@@ -2025,7 +2025,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "uvicorn", specifier = ">=0.32" },
-    { name = "yt-dlp", specifier = ">=2025.1.1" },
+    { name = "yt-dlp", specifier = ">=2025.11.12" },
 ]
 provides-extras = ["asr", "diarization"]
 

@@ -93,6 +93,8 @@ class YoutubeConfig(BaseModel):
     jitter_s: float = 1.5
     cooldown_base_s: float = 300.0
     cooldown_max_s: float = 3600.0
+    captions_cooldown_max_s: float = 1800.0
+    captions_probe_retry_s: float = 10.0
     network_retry_s: float = 60.0
     max_background_queue: int = 5
     js_runtime: Literal["deno", "node", "bun", "quickjs"] = "deno"
@@ -176,6 +178,7 @@ class AsrEngineConfig(BaseModel):
 class CaptionsConfig(BaseModel):
     asr_engines: list[AsrEngineConfig] = Field(default_factory=list)
     asr_unhealthy_s: float = 300.0
+    asr_failure_window_s: float = 600.0
     asr_chunk_overlap_s: float = 2.0
     asr_backend: Literal["openai", "faster_whisper"] = ASR_KIND_OPENAI
     asr_url: str = "http://127.0.0.1:8000/v1/audio/transcriptions"

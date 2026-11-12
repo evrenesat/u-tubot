@@ -132,10 +132,10 @@ async def test_a_success_closes_only_the_classes_it_answered():
     async def metadata_only():
         return Answer()
 
-    await gate.run(metadata_only, classes=FETCH_CLASSES)
+    await gate.run(metadata_only, BACKGROUND, classes=FETCH_CLASSES)
     assert gate.state(CLASS_METADATA) == STATE_CLOSED
     assert gate.state(CLASS_CAPTIONS) == STATE_HALF_OPEN
-    await gate.run(fetch_ok, classes=FETCH_CLASSES)
+    await gate.run(fetch_ok, BACKGROUND, classes=FETCH_CLASSES)
     assert gate.state(CLASS_CAPTIONS) == STATE_CLOSED
 
 
@@ -149,7 +149,7 @@ async def test_a_per_video_error_closes_only_the_class_that_answered():
         raise YoutubeVideoError("private", CLASS_METADATA)
 
     with pytest.raises(YoutubeVideoError):
-        await gate.run(private, classes=FETCH_CLASSES)
+        await gate.run(private, BACKGROUND, classes=FETCH_CLASSES)
     assert gate.state(CLASS_METADATA) == STATE_CLOSED
     assert gate.state(CLASS_CAPTIONS) == STATE_HALF_OPEN
 
@@ -182,7 +182,7 @@ async def test_state_is_persisted_per_class_and_restored(tmp_path):
     assert again.state(CLASS_CAPTIONS) == STATE_OPEN
     await clock.advance(901)
     assert again.state(CLASS_CAPTIONS) == STATE_HALF_OPEN
-    await again.run(fetch_ok, classes=(CLASS_CAPTIONS,))
+    await again.run(fetch_ok, BACKGROUND, classes=(CLASS_CAPTIONS,))
     assert make_gate(clock, db).state(CLASS_CAPTIONS) == STATE_CLOSED
 
 
@@ -197,7 +197,7 @@ async def test_the_old_single_breaker_row_is_adopted_by_every_class_once(tmp_pat
         assert gate.cooldown_remaining(name) == pytest.approx(500)
     assert db.one("SELECT COUNT(*) AS n FROM youtube_gate")["n"] == 0
     await clock.advance(501)
-    await gate.run(fetch_ok, classes=CLASSES)
+    await gate.run(fetch_ok, BACKGROUND, classes=CLASSES)
     assert make_gate(clock, db).healthy()
     assert make_gate(clock, db).state() == STATE_CLOSED
 

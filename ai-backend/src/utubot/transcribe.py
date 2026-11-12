@@ -16,10 +16,25 @@ from .captions.asr import normalize_language
 from .captions.engines import AsrRouter
 from .captions.jobs import ACTIVE, KIND_TRANSCRIPT, JobQueue
 from .config import Config, UserPolicy
-from .errors import MSG_NO_CAPTIONS, MSG_NO_CAPTIONS_UNAVAILABLE, MSG_TRANSCRIBE, delayed_message
+from .errors import (
+    MSG_NO_CAPTIONS,
+    MSG_NO_CAPTIONS_UNAVAILABLE,
+    MSG_TRANSCRIBE,
+    captions_limited_message,
+    delayed_message,
+)
 from .llm import BACKGROUND, INTERACTIVE
 from .transcripts import HOLD_DELAYED, SOURCE_ASR, NoCaptions, TranscriptService
-from .youtube import YoutubeDelayed, YoutubeVideoError
+from .youtube import (
+    CLASS_MEDIA,
+    FETCH_CLASSES,
+    REASON_BOT_CHECK,
+    REASON_COOLDOWN,
+    REASON_FORBIDDEN,
+    REASON_RATE_LIMITED,
+    YoutubeDelayed,
+    YoutubeVideoError,
+)
 
 OK = "ok"
 DELAYED = "delayed"
@@ -39,6 +54,10 @@ MIN_SPEED_FACTOR = 0.01
 SECONDS_PER_MINUTE = 60
 AUTO_OFF = "off"
 AUTO_ON_DWELL = "on_dwell"
+# YouTube told the server to back off (or the breaker is open); the audio may still be reachable.
+BACK_OFF_REASONS = frozenset(
+    {REASON_RATE_LIMITED, REASON_FORBIDDEN, REASON_BOT_CHECK, REASON_COOLDOWN}
+)
 
 
 class TranscribeRefused(Exception):
@@ -93,6 +112,32 @@ class Transcription:
             "estimate_s": self.estimate_s(meta.get("duration_s"), meta.get("language"))
             if can
             else None,
+        }
+
+    def captions_limited(self) -> bool:
+        """True while interactive caption fetches are held back: a cooldown, or the probe is out."""
+        return not self.transcripts.gate.interactive_ok(*FETCH_CLASSES)
+
+    def audio_fallback(
+        self, video_id: str, hint: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        """`needs_transcript` fields for a video whose captions YouTube will not give us just now.
+
+        The audio is reachable (the `media` class is healthy) and a speech engine can take it, so the
+        transcription stands in for the captions, subject to the user's policy like "no captions".
+        None when it cannot: the answer is then "delayed". Nothing of this is remembered.
+        """
+        if not self.transcripts.gate.healthy(CLASS_MEDIA):
+            return None
+        meta = self._meta(video_id, hint)
+        if not self.can_transcribe(meta):
+            return None
+        estimate = self.estimate_s(meta.get("duration_s"), meta.get("language"))
+        return {
+            "transcript_status": NONE,
+            "can_transcribe": True,
+            "message": captions_limited_message(estimate),
+            "estimate_s": estimate,
         }
 
     def auto_allowed(self, policy: UserPolicy, meta: dict[str, Any], *, passive: bool) -> bool:
@@ -198,6 +243,8 @@ class Transcription:
             }
         if self.transcripts.no_captions(video_id):
             return self.none_fields(video_id, hint)
+        if self.captions_limited():
+            return self.audio_fallback(video_id, hint)
         return None
 
     def blocked(
@@ -205,8 +252,11 @@ class Transcription:
     ) -> dict[str, Any] | None:
         """Response fields when the transcript is not usable right now; None when it is.
 
-        `promote`: the caller is waiting on a running or queued transcription, so it goes first.
+        `promote`: the caller is waiting on a running or queued transcription, so it goes first. A
+        caller that finds the caption class waiting for its probe starts that background request
+        (`TranscriptService.probe_captions`), because no interactive request may.
         """
+        self.transcripts.probe_captions(video_id)
         state = self.state(video_id, hint)
         if state is None or state["transcript_status"] == OK:
             return None
@@ -219,6 +269,12 @@ class Transcription:
     ) -> dict[str, Any] | None:
         """Response fields for a transcript fetch that ended in an expected outcome."""
         if isinstance(exc, YoutubeDelayed):
+            self.transcripts.probe_captions(video_id)
+            fallback = (
+                self.audio_fallback(video_id, hint) if exc.reason in BACK_OFF_REASONS else None
+            )
+            if fallback:
+                return {"status": STATUS_FOR[NONE], **fallback}
             return {
                 "status": STATUS_FOR[DELAYED],
                 "transcript_status": DELAYED,

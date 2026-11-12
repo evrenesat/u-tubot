@@ -81,7 +81,8 @@ to `"none"` and `max_tokens` to 160. See [llm-providers.md](llm-providers.md).
 
 **`[youtube]`**: pacing and circuit breaker for everything that reaches YouTube, see [YouTube limits](#youtube-limits-and-the-transcription-fallback).
 `max_concurrent` (default `1`), `min_interval_s` (`3.0`), `jitter_s` (`1.5`), `cooldown_base_s` (`300`), `cooldown_max_s` (`3600`),
-`network_retry_s` (`60`), `max_background_queue` (`5`).
+`captions_cooldown_max_s` (`1800`, the lower ceiling of the caption class), `captions_probe_retry_s` (`10`), `network_retry_s` (`60`),
+`max_background_queue` (`5`), and the yt-dlp JavaScript runtime (`js_runtime`, `js_runtime_path`, `remote_components`).
 
 **`[transcripts]`**: `cache_ttl_s`, `no_captions_ttl_s` (default 3 days), `video_failure_ttl_s` (1 h), `empty_track_retry_s` (1 h), `fetch_timeout_s`, `default_language`, `cookies_file`
 (only if YouTube blocks the host), `skip_if_longer_than_s`. (`max_concurrency` is gone: `[youtube] max_concurrent` replaces it;
@@ -95,7 +96,7 @@ the background after a panel summary; a user's `auto_long` policy field override
 background long summaries in flight including the transcript fetch; further ones are skipped until one ends, `0` disables them). See [prompt-sets.md](prompt-sets.md).
 
 **`[captions]`**: the ASR engine chain (`[[captions.asr_engines]]`, or the single `asr_*` keys), chunking, diarization and the estimate
-inputs, see [captions.md](captions.md). Also `asr_unhealthy_s` (`300`), `asr_chunk_overlap_s` (`2`), `download_overhead_s` and
+inputs, see [captions.md](captions.md). Also `asr_unhealthy_s` (`300`), `asr_failure_window_s` (`600`), `asr_chunk_overlap_s` (`2`), `download_overhead_s` and
 `download_speed_factor` (the estimate shown before a transcription), `transcribe_max_active_per_user` (default `5`), `job_max_attempts`
 (`3`), `media_orphan_age_s` (`3600`), `max_download_bytes` (400 MiB), `audio_format` (yt-dlp's fallback selector).
 
@@ -131,14 +132,32 @@ still worked, now it only pauses caption fetches.
   bot" check, or a 403 on the watch, player or metadata request. It opens the class that received it; the bot check comes from yt-dlp's
   player request, so it opens both yt-dlp classes (`metadata` and `media`) but not `captions`. A transcript fetch needs `metadata` and
   `captions`, a transcript job's download needs `media`. The cooldown is the `Retry-After` header when YouTube sends one, else `cooldown_base_s`
-  (5 min) doubled for each consecutive block up to `cooldown_max_s` (60 min); no cooldown is longer than that. While it is open
+  (5 min) doubled for each consecutive block up to `cooldown_max_s` (60 min), and for the caption class up to
+  `captions_cooldown_max_s` (30 min); no cooldown is longer than its ceiling, `Retry-After` included. While it is open
   interactive requests are answered at once without touching YouTube, and background work (caption and transcript jobs, tier-2)
   **waits** (it is neither failed nor dropped) and resumes when the cooldown ends. The first request afterwards is a probe: any
   answer from YouTube (a transcript, "no captions", even "this video is private") closes the breaker and resets the escalation,
-  another block doubles that class's cooldown. The state of each class survives restarts (a state saved by the older single breaker is
+  another block doubles that class's cooldown. For the **caption class the probe is never an interactive request**: once its cooldown is
+  over, exactly one *background* request goes out (the first background fetch in the queue, or one the backend starts itself for the
+  video somebody just asked about) while the other background fetches wait behind it, and interactive requests keep being answered
+  without touching YouTube (`captions_probe_retry_s` is the retry hint if nothing else can answer) until that probe has been answered. A
+  probe that finds a video with no caption track at all (a complete yt-dlp answer) counts as an answer for the caption class too and
+  closes it, so back-to-back probes do not follow. The state of each class survives restarts (a state saved by the older single breaker is
   adopted by all three once). The log records each transition (`youtube gate open: class=... reason=... cooldown_s=...`,
   `half-open`, `closed`); URLs never appear in it. `GET /v1/status` shows each class (`youtube.classes`: `state`,
   `cooldown_remaining_s`, `strikes`) next to the combined `youtube.state`, and the engine chain (`asr.engines`: health, no URLs).
+- **Audio instead of waiting.** While the caption class cools down or waits for its probe, or a caption fetch has just been refused
+  (429, 403), the audio is usually still reachable (`media` is a separate class) and a speech engine can transcribe a 30 minute video in
+  well under a minute. The request is then treated like "no captions" instead of "delayed", under the user's policy: with
+  `auto_transcribe` allowing it and the video within `auto_transcribe_max_minutes` the transcription starts at once (`pending` +
+  `transcribing`, `progress`, `estimate_s`); otherwise it answers `needs_transcript` with `can_transcribe`, `estimate_s` and a message
+  such as "Captions are temporarily unavailable from YouTube; transcribe the audio instead (~N s)?". This is never remembered (no
+  "no captions" entry). "Delayed" stays for the cases where the audio cannot help: no engine serves the video, the video is live or too
+  long, the `media` class cools too (a bot check blocks metadata and media together) or the problem is a network error rather than a
+  limit. A transcript stored from the audio is kept: captions fetched later, even by a probe that was already in flight, never replace it,
+  and a video with an `asr` transcript is not asked for captions again. In the other direction, stored captions that are still fresh
+  (`transcripts.cache_ttl_s`) are kept and an expired captions row is replaced by the audio transcript; a transcription job whose
+  result could not be stored fails (recorded, `failed`) instead of ending silently.
 - **Problems of one video stay with that video.** A 403 or 410 on a caption or media URL and members-only, age-gated, private or
   unavailable videos are failures of that video (`transcript_status: "failed"` with a `reason`), remembered for
   `transcripts.video_failure_ttl_s` (1 h) so they are not re-fetched; they never touch the breaker.
@@ -158,7 +177,8 @@ still worked, now it only pauses caption fetches.
 
 | Situation | Response |
 |---|---|
-| 429, cooldown, bot check, network error, empty or incomplete YouTube answer, a caption file that parses to nothing | `status: "pending"`, `transcript_status: "delayed"`, a user-facing `error` ("YouTube is limiting transcript downloads; retrying in ~N min") and `retry_after_s`. Never cached as "no captions"; ask again after `retry_after_s` (a caption file that parses to nothing is held for `transcripts.empty_track_retry_s`, 1 h). |
+| 429, cooldown, bot check, network error, empty or incomplete YouTube answer, a caption file that parses to nothing, when the audio cannot stand in (below) | `status: "pending"`, `transcript_status: "delayed"`, a user-facing `error` ("YouTube is limiting transcript downloads; retrying in ~N min") and `retry_after_s`. Never cached as "no captions"; ask again after `retry_after_s` (a caption file that parses to nothing is held for `transcripts.empty_track_retry_s`, 1 h). |
+| The caption API is limited (cooldown, probe out, 429/403 just now) and a speech engine can take the video while `media` is healthy | like "no captions" below, with the message "Captions are temporarily unavailable from YouTube; transcribe the audio instead (~N s)?": started by the policy (`pending` + `transcribing`) or offered (`needs_transcript`). Never `delayed`, never remembered. |
 | Private, members-only, age-gated or unavailable video, 403/410 on its caption or media URL, too long or live | `status: "failed"`, `transcript_status: "failed"`, `error`, `reason`, `can_transcribe`. |
 | YouTube lists no captions (from a complete yt-dlp answer) | `status: "needs_transcript"`, `transcript_status: "none"`, `can_transcribe`, `message` and `estimate_s`. The TV offers "Transcribe in background?". |
 | No captions and the user's policy allows it (`auto_transcribe` `on_open`/`on_dwell`, video up to `auto_transcribe_max_minutes`, default 30) | the transcription is queued by the request itself and it answers `status: "pending"`, `transcript_status: "transcribing"`, `progress`, `estimate_s`. No question is asked. The side panel (`prompt=panel`) only does this for `on_dwell`. |
@@ -167,7 +187,7 @@ still worked, now it only pauses caption fetches.
 `GET /v1/videos/ID/transcript` shows the state (with `job_id` only for your own job) and `GET /v1/jobs` lists your caption and transcript
 jobs (`waiting`, `processing`, `ready`, `failed`). Jobs wait while the `media` breaker is open and run when it closes (a caption or metadata limit does not hold them back); a job that YouTube
 keeps refusing is retried `captions.job_max_attempts` (3) times and then fails. Before spending effort on the audio a transcript job
-asks YouTube once more for captions and uses them if they exist (ASR never replaces real captions). Videos that are live or longer than
+asks YouTube once more for captions and uses them if they exist (ASR never replaces captions stored first, and captions fetched later never replace ASR). Videos that are live or longer than
 `captions.max_duration_s` (3 h) cannot be transcribed (`can_transcribe: false`).
 
 A systemd service often lacks `deno` on its `PATH`: set `[youtube] js_runtime_path` (and `remote_components = ["ejs:github"]`) so yt-dlp

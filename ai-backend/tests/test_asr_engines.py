@@ -165,7 +165,9 @@ async def test_a_short_file_is_sent_whole_and_words_are_requested_only_when_aske
     assert fake.want_words == [True, False] and plain.segments
 
 
-async def test_a_known_language_skips_engines_that_do_not_list_it_and_unknown_keeps_them(tmp_path):
+async def test_a_known_language_skips_engines_that_do_not_list_it_and_unknown_prefers_open_ones(
+    tmp_path,
+):
     mac = engine_cfg("mac", priority=10)
     box = engine_cfg("box", languages=["en", "tr"], priority=5)
     local = engine_cfg("local", priority=30)
@@ -173,7 +175,7 @@ async def test_a_known_language_skips_engines_that_do_not_list_it_and_unknown_ke
     assert [e.name for e in r.candidates("es")] == ["mac", "local"]
     assert [e.name for e in r.candidates("tr")] == ["box", "mac", "local"]
     assert [e.name for e in r.candidates("en-US")] == ["box", "mac", "local"]
-    assert [e.name for e in r.candidates(None)] == ["box", "mac", "local"]
+    assert [e.name for e in r.candidates(None)] == ["mac", "local", "box"]
 
 
 async def test_the_language_reaches_the_engine_normalised(tmp_path):
@@ -319,7 +321,7 @@ async def test_chunks_of_one_file_may_end_up_on_different_engines(tmp_path):
         async def transcribe_chunk(self, wav, language, want_words):
             if not self.chunks:
                 self.chunks.append((-1.0, 0.0))
-                raise EngineError("asr http 502")
+                raise EngineError("asr http 502", isolated=True)
             return await super().transcribe_chunk(wav, language, want_words)
 
     mac, local = FlakyOnce("mac"), FakeEngine("local")
@@ -485,11 +487,19 @@ async def test_the_openai_engine_posts_the_chunk_with_model_key_and_granularitie
 
 
 @pytest.mark.parametrize(
-    ("status", "penalize"),
-    [(500, True), (503, True), (429, True), (401, True), (404, True), (413, False), (422, False)],
+    ("status", "penalize", "isolated"),
+    [
+        (500, True, True),
+        (503, True, True),
+        (429, True, False),
+        (401, True, False),
+        (404, True, False),
+        (413, False, False),
+        (422, False, False),
+    ],
 )
 async def test_http_errors_mark_the_engine_unhealthy_except_input_rejections(
-    tmp_path, status, penalize
+    tmp_path, status, penalize, isolated
 ):
     engine = OpenAIEngine(
         engine_cfg("mac"), serve(lambda request: httpx.Response(status, text="no"))
@@ -497,6 +507,7 @@ async def test_http_errors_mark_the_engine_unhealthy_except_input_rejections(
     with pytest.raises(EngineError) as exc:
         await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 2), None, False)
     assert exc.value.penalize is penalize and str(status) in str(exc.value)
+    assert exc.value.isolated is isolated
 
 
 async def test_transport_failures_and_bad_bodies_are_engine_errors_without_leaking_the_url(
@@ -552,3 +563,272 @@ def test_the_documented_three_engine_chain_loads_and_routes_as_described():
     assert [e.name for e in router.candidates("en", BACKGROUND)] == ["mac", "lan-cpu", "local"]
     assert [e.name for e in router.candidates("ja", BACKGROUND)] == ["mac", "local"]
     assert "http" in chain and "example" in chain
+
+
+# ---- a failure tied to one file does not condemn the engine --------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("error", "isolated"),
+    [
+        (httpx.ConnectError("refused"), False),
+        (httpx.ConnectTimeout("slow"), False),
+        (httpx.ReadTimeout("slow"), False),
+        (httpx.ReadError("reset"), True),
+        (httpx.RemoteProtocolError("closed"), True),
+    ],
+)
+async def test_only_connect_and_timeout_failures_count_at_once(tmp_path, error, isolated):
+    def fail(request):
+        raise error
+
+    engine = OpenAIEngine(engine_cfg("mac"), serve(fail))
+    with pytest.raises(EngineError) as exc:
+        await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 2), None, False)
+    assert exc.value.penalize and exc.value.isolated is isolated
+
+
+@pytest.mark.parametrize(
+    "body",
+    [httpx.Response(200, text="<html>"), httpx.Response(200, json={"segments": [{"text": "hi"}]})],
+)
+async def test_an_answer_that_does_not_parse_is_tied_to_the_file(tmp_path, body):
+    engine = OpenAIEngine(engine_cfg("mac"), serve(lambda request: body))
+    with pytest.raises(EngineError) as exc:
+        await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 2), None, False)
+    assert exc.value.penalize and exc.value.isolated
+
+
+async def test_one_5xx_on_one_file_leaves_the_engine_healthy_but_the_chunk_still_moves_on(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 60)
+    mac = FakeEngine("mac", fail=EngineError("asr http 503", isolated=True))
+    local = FakeEngine("local")
+    r = router(
+        [engine_cfg("mac", priority=1), engine_cfg("local", priority=2)],
+        {"mac": mac, "local": local},
+    )
+    result, _ = await run(r, wav)
+    assert result.engine == "local" and r.healthy("mac")
+
+
+async def test_two_different_files_failing_in_a_row_mark_the_engine_unhealthy(tmp_path):
+    first = make_wav(tmp_path / "a.wav", 60)
+    second = make_wav(tmp_path / "b.wav", 60)
+    mac = FakeEngine("mac", fail=EngineError("asr http 500", isolated=True))
+    r = router(
+        [engine_cfg("mac", priority=1), engine_cfg("local", priority=2)],
+        {"mac": mac, "local": FakeEngine("local")},
+    )
+    await run(r, first)
+    assert r.healthy("mac")
+    await run(r, second)
+    assert not r.healthy("mac")
+
+
+async def test_the_same_file_failing_twice_is_still_one_file(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 1300)
+    mac = FakeEngine("mac", fail=EngineError("asr http 500", isolated=True))
+    r = router(
+        [engine_cfg("mac", priority=1, max_chunk_s=600), engine_cfg("local", priority=2)],
+        {"mac": mac, "local": FakeEngine("local")},
+    )
+    await run(r, wav)
+    assert len(mac.chunks) == 3 and r.healthy("mac")
+    await run(r, wav)
+    assert r.healthy("mac")
+
+
+async def test_two_failures_days_apart_do_not_mark_the_engine(tmp_path):
+    files = [make_wav(tmp_path / f"{n}.wav", 60) for n in "abc"]
+    clock = Clock()
+    mac = FakeEngine("mac", fail=EngineError("asr http 500", isolated=True))
+    r = router(
+        [engine_cfg("mac", priority=1), engine_cfg("local", priority=2)],
+        {"mac": mac, "local": FakeEngine("local")},
+        clock=clock,
+    )
+    window = r.cfg.asr_failure_window_s
+    assert window == 600.0
+    await run(r, files[0])
+    clock.t += window + 1
+    await run(r, files[1])
+    assert r.healthy("mac")
+    clock.t += window / 2
+    await run(r, files[2])
+    assert not r.healthy("mac")
+
+
+async def test_a_success_between_two_failures_breaks_the_streak(tmp_path):
+    files = [make_wav(tmp_path / f"{n}.wav", 60) for n in "abc"]
+    mac = FakeEngine("mac", fail=EngineError("asr http 500", isolated=True))
+    r = router(
+        [engine_cfg("mac", priority=1), engine_cfg("local", priority=2)],
+        {"mac": mac, "local": FakeEngine("local")},
+    )
+    await run(r, files[0])
+    mac.fail = None
+    await run(r, files[1])
+    mac.fail = EngineError("asr http 500", isolated=True)
+    await run(r, files[2])
+    assert r.healthy("mac")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        EngineError("asr transport error: ReadTimeout"),
+        EngineError("asr http 429"),
+        EngineError("asr http 401"),
+    ],
+)
+async def test_a_timeout_or_an_engine_wide_error_marks_it_at_once(tmp_path, error):
+    r = router(
+        [engine_cfg("mac", priority=1), engine_cfg("local", priority=2)],
+        {"mac": FakeEngine("mac", fail=error), "local": FakeEngine("local")},
+    )
+    await run(r, make_wav(tmp_path / "a.wav", 60))
+    assert not r.healthy("mac")
+
+
+# ---- an engine that went unhealthy while a chunk waited is not waited on -------------------------
+
+
+async def test_a_queued_chunk_skips_an_engine_that_failed_while_it_waited(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 1200)
+    mac = FakeEngine("mac", delay=0.05, fail=EngineError("asr transport error: ReadTimeout"))
+    local = FakeEngine("local")
+    r = router(
+        [engine_cfg("mac", priority=1, max_parallel=1), engine_cfg("local", priority=2)],
+        {"mac": mac, "local": local},
+    )
+    result, _ = await run(r, wav)
+    assert len(mac.chunks) == 1
+    assert result.engine == "local" and not r.healthy("mac")
+    assert transcript_words(result) == [f"w{k}" for k in range(1200 * WORDS_PER_S)]
+
+
+async def test_a_job_with_no_healthy_engine_left_keeps_trying_the_last_one(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 1200)
+    only = FakeEngine("only", delay=0.01)
+    r = router([engine_cfg("only", max_parallel=1)], {"only": only})
+    r._penalize(r.cfg.engines()[0])
+    result, _ = await run(r, wav)
+    assert len(only.chunks) == 2 and result.engine == "only"
+
+
+async def test_a_span_stops_between_sub_chunks_when_the_engine_went_unhealthy(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 600)
+    r = None
+
+    class Breaks(FakeEngine):
+        async def transcribe_chunk(self, wav, language, want_words):
+            out = await super().transcribe_chunk(wav, language, want_words)
+            r._penalize(r.cfg.engines()[1])
+            return out
+
+    mac = FakeEngine("mac", fail=EngineError("asr transport error: ReadTimeout"))
+    box, local = Breaks("box"), FakeEngine("local")
+    r = router(
+        [
+            engine_cfg("mac", priority=1, max_chunk_s=600),
+            engine_cfg("box", priority=2, max_chunk_s=200),
+            engine_cfg("local", priority=3, max_chunk_s=600),
+        ],
+        {"mac": mac, "box": box, "local": local},
+    )
+    result, _ = await run(r, wav)
+    assert len(box.chunks) == 1 and len(local.chunks) == 1
+    assert result.engine == "local"
+    assert transcript_words(result) == [f"w{k}" for k in range(600 * WORDS_PER_S)]
+
+
+# ---- unknown language: prefer engines without an allow-list, re-run when it did not fit ----------
+
+
+class Detects(FakeEngine):
+    def __init__(self, name: str, language: str, **kw):
+        super().__init__(name, **kw)
+        self.language = language
+
+    async def transcribe_chunk(self, wav, language, want_words):
+        out = await super().transcribe_chunk(wav, language, want_words)
+        out.language = self.language
+        return out
+
+
+async def test_an_unknown_language_goes_to_an_engine_without_an_allow_list_first(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 60)
+    box, mac = FakeEngine("box"), FakeEngine("mac")
+    r = router(
+        [engine_cfg("box", priority=1, languages=["en", "tr"]), engine_cfg("mac", priority=9)],
+        {"box": box, "mac": mac},
+    )
+    result, _ = await run(r, wav)
+    assert result.engine == "mac" and box.chunks == []
+    result, _ = await run(r, wav, "tr")
+    assert result.engine == "box"
+
+
+async def test_a_chunk_an_allow_listed_engine_took_in_another_language_is_redone(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 60)
+    box = Detects("box", "ja")
+    mac = Detects("mac", "ja")
+    r = router(
+        [engine_cfg("box", priority=1, languages=["en", "tr"]), engine_cfg("mac", priority=9)],
+        {"box": box, "mac": mac},
+    )
+    r._penalize(r.cfg.engines()[1])
+    result, _ = await run(r, wav)
+    assert len(box.chunks) == 1 and len(mac.chunks) == 1
+    assert result.engine == "mac" and result.language == "ja"
+
+
+async def test_a_detected_language_inside_the_list_keeps_the_chunk(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 60)
+    box, mac = Detects("box", "tr"), FakeEngine("mac")
+    r = router(
+        [engine_cfg("box", priority=1, languages=["en", "tr"]), engine_cfg("mac", priority=9)],
+        {"box": box, "mac": mac},
+    )
+    r._penalize(r.cfg.engines()[1])
+    result, _ = await run(r, wav)
+    assert result.engine == "box" and mac.chunks == []
+
+
+async def test_the_misfit_is_kept_when_no_later_engine_serves_the_detected_language(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 60)
+    box = Detects("box", "ja")
+    other = Detects("other", "ja")
+    r = router(
+        [
+            engine_cfg("box", priority=1, languages=["en", "tr"]),
+            engine_cfg("other", priority=2, languages=["en", "de"]),
+        ],
+        {"box": box, "other": other},
+    )
+    result, _ = await run(r, wav)
+    assert result.engine == "box" and other.chunks == [] and result.language == "ja"
+
+
+async def test_the_misfit_is_the_last_resort_when_the_engine_that_serves_it_fails(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 60)
+    box = Detects("box", "ja")
+    mac = FakeEngine("mac", fail=EngineError("asr transport error: ReadTimeout"))
+    r = router(
+        [engine_cfg("box", priority=1, languages=["en"]), engine_cfg("mac", priority=9)],
+        {"box": box, "mac": mac},
+    )
+    r._penalize(r.cfg.engines()[1])
+    result, _ = await run(r, wav)
+    assert result.engine == "box" and len(mac.chunks) == 1
+
+
+async def test_a_known_language_is_never_second_guessed(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 60)
+    box, mac = Detects("box", "ja"), FakeEngine("mac")
+    r = router(
+        [engine_cfg("box", priority=1, languages=["en"]), engine_cfg("mac", priority=9)],
+        {"box": box, "mac": mac},
+    )
+    result, _ = await run(r, wav, "en")
+    assert result.engine == "box" and mac.chunks == []

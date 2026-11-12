@@ -13,7 +13,7 @@ from ..llm import BACKGROUND, INTERACTIVE
 from ..transcripts import NoCaptions, TranscriptService
 from ..youtube import CLASS_MEDIA, FETCH_CLASSES, YoutubeDelayed, YoutubeVideoError
 from .asr import normalize_language
-from .pipeline import CaptionPipeline, sweep_media
+from .pipeline import CaptionPipeline, PipelineError, sweep_media
 
 log = logging.getLogger("utubot.jobs")
 ACTIVE = ("queued", "running")
@@ -299,11 +299,19 @@ class JobQueue:
         """ASR, unless YouTube has captions after all: those are used and the audio is skipped.
 
         The caption check needs the metadata and caption endpoints; when either is cooling or answers
-        "delayed" the check is skipped, because the audio comes from another endpoint (`media`).
+        "delayed" the check is skipped, because the audio comes from another endpoint (`media`). An
+        interactive job also skips it while the caption class waits for its background probe
+        (`YoutubeGate.interactive_ok`); a background job may be that probe.
         """
         video_id = job["video_id"]
         priority = job["priority"]
-        if self.pipeline.gate.healthy(*FETCH_CLASSES):
+        gate = self.pipeline.gate
+        check = (
+            gate.interactive_ok(*FETCH_CLASSES)
+            if priority == INTERACTIVE
+            else gate.healthy(*FETCH_CLASSES)
+        )
+        if check:
             try:
                 await self.transcripts.get(video_id, priority, recheck=True)
                 return
@@ -327,6 +335,8 @@ class JobQueue:
             model=out.model,
             segments=out.segment_rows(),
         )
+        if self.transcripts.cached(video_id) is None:
+            raise PipelineError("the transcript could not be stored")
 
     def _fail(self, job: dict[str, Any], message: str) -> None:
         now = time.time()

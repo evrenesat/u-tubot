@@ -218,12 +218,12 @@ async def test_breaker_exponential_cooldown_5_to_60_minutes_and_reset_on_success
     seen = []
     for _ in range(6):
         with pytest.raises(YoutubeBlocked) as info:
-            await gate.run(blocked())
+            await gate.run(blocked(), BACKGROUND)
         seen.append(info.value.retry_after_s)
         await clock.advance(info.value.retry_after_s + 1)
         assert gate.state() == STATE_HALF_OPEN and gate.healthy()
     assert seen == pytest.approx([300, 600, 1200, 2400, 3600, 3600])
-    assert await gate.run(ok) == "ok"
+    assert await gate.run(ok, BACKGROUND) == "ok"
     assert gate.state() == STATE_CLOSED
     with pytest.raises(YoutubeBlocked) as info:
         await gate.run(blocked())
@@ -313,7 +313,7 @@ async def test_breaker_state_survives_a_restart(tmp_path):
     assert again.cooldown_remaining() == pytest.approx(600)
     await clock.advance(601)
     assert again.state() == STATE_HALF_OPEN
-    await again.run(ok)
+    await again.run(ok, BACKGROUND)
     assert make_gate(clock, db).state() == STATE_CLOSED
 
 
@@ -324,7 +324,7 @@ async def test_state_transitions_are_logged_without_urls(caplog):
     with pytest.raises(YoutubeBlocked):
         await gate.run(blocked(300))
     await clock.advance(301)
-    await gate.run(ok)
+    await gate.run(ok, BACKGROUND)
     text = caplog.text
     assert "youtube gate open" in text and "reason=rate_limited" in text
     assert "half-open" in text and "gate closed" in text
@@ -444,7 +444,7 @@ async def test_a_per_video_error_never_opens_the_breaker_and_counts_as_a_live_an
         await gate.run(blocked())
     await clock.advance(301)
     with pytest.raises(YoutubeVideoError):
-        await gate.run(private)
+        await gate.run(private, BACKGROUND)
     assert gate.state() == STATE_CLOSED
     with pytest.raises(YoutubeBlocked) as again:
         await gate.run(blocked())

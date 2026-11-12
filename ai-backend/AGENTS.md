@@ -22,6 +22,11 @@
   directly. Never put a URL (they carry signed tokens) into a log line or exception message: classify failures with
   `classify_failure` / `classify_status` and raise `... from None`. Name the endpoint class of the request (`captions`, `metadata`,
   `media`; `klass=` on the classifiers, `classes=` on the gate): breakers are per class, pacing is shared. Never gate audio on caption state.
+  The caption class is probed after a cooldown by exactly one background request (`YoutubeGate.interactive_ok`, `TranscriptService.probe_captions`);
+  never send an interactive caption request while `interactive_ok` is false, and cap its escalation with `captions_cooldown_max_s`.
+- While captions are limited (breaker open or probing, or a fetch just got 429/403) and the audio can stand in (`media` healthy, an engine
+  takes the video) the answer is the "no captions" one (`Transcription.audio_fallback`, then `auto`), never `delayed`; the first stored
+  transcript stays (captions never replace `asr`, `asr` never replaces captions).
 - Speech to text goes through the engine chain (`captions/engines.py`, `[[captions.asr_engines]]`); chunking and stitching live in
   `captions/chunking.py`, the audio format pick in `captions/formats.py`. Never hardcode an engine, URL or key. Transcripts made from
   audio keep their segments, engine and model (`TranscriptService.store_asr`).

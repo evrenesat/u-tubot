@@ -6,7 +6,9 @@ rate stays what the owner configured. The breakers are one per endpoint class (`
 timedtext API, `metadata`: watch/player/yt-dlp extraction, `media`: audio downloads): a 429 on one
 class must not stop the others. A breaker opens when YouTube answers 429/403 or asks for a bot check:
 interactive callers get `YoutubeCooldown` at once, background callers wait (paused, not failed)
-until the cooldown ends. Nothing here logs a URL.
+until the cooldown ends. The caption class (`PROBE_CLASSES`) is probed with care: once its cooldown
+is over, exactly one background request goes out and decides whether the class closes or cools
+again; interactive callers keep getting `YoutubeCooldown` until then. Nothing here logs a URL.
 """
 
 from __future__ import annotations
@@ -37,6 +39,8 @@ CLASSES = (CLASS_METADATA, CLASS_CAPTIONS, CLASS_MEDIA)
 FETCH_CLASSES = (CLASS_METADATA, CLASS_CAPTIONS)
 MEDIA_CLASSES = (CLASS_MEDIA,)
 YTDLP_CLASSES = (CLASS_METADATA, CLASS_MEDIA)
+# After a cooldown these take one background probe at a time; an interactive request never probes.
+PROBE_CLASSES = (CLASS_CAPTIONS,)
 
 STATE_CLOSED = "closed"
 STATE_OPEN = "open"
@@ -173,12 +177,12 @@ class YoutubeCooldown(YoutubeDelayed):
 def ytdlp_runtime_options(cfg: YoutubeConfig) -> dict[str, Any]:
     """yt-dlp options for the JavaScript runtime that solves YouTube's "n challenge".
 
-    Without one yt-dlp cannot unscramble some stream URLs and warns about it. A service started by
-    systemd often has no `deno` on its PATH, so `[youtube] js_runtime_path` names the executable.
+    Without one yt-dlp cannot unscramble some stream URLs and warns about it. The configured runtime
+    is always passed on; a service started by systemd often has no `deno` on its PATH, so
+    `[youtube] js_runtime_path` names the executable, else yt-dlp looks the runtime up on PATH.
     """
-    opts: dict[str, Any] = {}
-    if cfg.js_runtime_path:
-        opts["js_runtimes"] = {cfg.js_runtime: {"path": cfg.js_runtime_path}}
+    runtime: dict[str, Any] = {"path": cfg.js_runtime_path} if cfg.js_runtime_path else {}
+    opts: dict[str, Any] = {"js_runtimes": {cfg.js_runtime: runtime}}
     if cfg.remote_components:
         opts["remote_components"] = list(cfg.remote_components)
     return opts
@@ -288,6 +292,7 @@ class _Breaker:
     until: float = 0.0
     strikes: int = 0
     probe_logged: bool = False
+    probing: bool = False
 
 
 def _as_classes(klass: str | Iterable[str] | None, default: Iterable[str]) -> tuple[str, ...]:
@@ -385,6 +390,27 @@ class YoutubeGate:
         """False while any given class (default: all) is open; a half-open one lets probes through."""
         return self.cooldown_remaining(*classes) <= 0
 
+    def _probe_only(self, classes: Iterable[str]) -> tuple[str, ...]:
+        """The given classes that are half-open and take one background probe at a time."""
+        return tuple(
+            name
+            for name in classes
+            if name in PROBE_CLASSES and self._breakers[name].strikes and self._remaining(name) <= 0
+        )
+
+    def interactive_ok(self, *classes: str) -> bool:
+        """Would an interactive request for these classes (default: all) be sent to YouTube now?
+
+        False while one is open, and while a probe-only class (captions) waits for its background
+        probe: callers should look for another way (the audio) instead of asking.
+        """
+        names = classes or CLASSES
+        return self.cooldown_remaining(*names) <= 0 and not self._probe_only(names)
+
+    def probe_pending(self) -> bool:
+        """True while a probe-only class is half-open: one background request should go out."""
+        return bool(self._probe_only(PROBE_CLASSES))
+
     def snapshot(self) -> dict[str, dict[str, Any]]:
         """Per-class breaker state for the status endpoint."""
         return {
@@ -403,7 +429,11 @@ class YoutubeGate:
         """Make queued work for `key` interactive (a user started waiting on a background fetch)."""
         changed = False
         for waiter in self._waiters:
-            if waiter.key == key and waiter.priority != INTERACTIVE:
+            if (
+                waiter.key == key
+                and waiter.priority != INTERACTIVE
+                and not self._probe_bound(waiter)
+            ):
                 waiter.priority = INTERACTIVE
                 changed = True
         if changed:
@@ -432,7 +462,10 @@ class YoutubeGate:
                 cooldown = hint_s
             else:
                 cooldown = cfg.cooldown_base_s * 2 ** (breaker.strikes - 1)
-            cooldown = min(max(cooldown, cfg.min_interval_s), cfg.cooldown_max_s)
+            ceiling = cfg.cooldown_max_s
+            if name == CLASS_CAPTIONS:
+                ceiling = min(ceiling, cfg.captions_cooldown_max_s)
+            cooldown = min(max(cooldown, cfg.min_interval_s), ceiling)
             breaker.until = max(breaker.until, self._clock.now() + cooldown)
             breaker.probe_logged = False
             self._save(name)
@@ -469,9 +502,21 @@ class YoutubeGate:
                 worst, which = left, name
         return worst, which
 
+    def _probe_bound(self, waiter: _Waiter) -> bool:
+        """Does the waiter need a probe-only class that is cooling or waiting for its probe?"""
+        return any(
+            name in PROBE_CLASSES and self._breakers[name].strikes for name in waiter.classes
+        )
+
+    def _probe_busy(self, waiter: _Waiter) -> bool:
+        """A probe for one of the waiter's half-open probe-only classes is already out."""
+        return any(self._breakers[name].probing for name in self._probe_only(waiter.classes))
+
     def _best(self) -> _Waiter | None:
-        """The next waiter to run: classes that are cooling never hold up the ones that are not."""
-        runnable = [w for w in self._waiters if self._cooling(w)[0] <= 0]
+        """The next waiter to run: classes that are cooling or probed never hold up the others."""
+        runnable = [
+            w for w in self._waiters if self._cooling(w)[0] <= 0 and not self._probe_busy(w)
+        ]
         return min(runnable, key=lambda w: (w.priority, w.seq), default=None)
 
     def _poke(self) -> None:
@@ -497,7 +542,10 @@ class YoutubeGate:
             if sleeper is not None:
                 sleeper.cancel()
 
-    async def _acquire(self, priority: int, key: str | None, classes: tuple[str, ...]) -> None:
+    async def _acquire(
+        self, priority: int, key: str | None, classes: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        """Wait for a paced slot; returns the probe-only classes this request is the probe of."""
         waiter = _Waiter(priority, next(self._seq), key, classes)
         self._waiters.append(waiter)
         try:
@@ -507,6 +555,12 @@ class YoutubeGate:
                     if waiter.priority == INTERACTIVE:
                         raise YoutubeCooldown(cooling, which)
                     await self._wait_change(cooling)
+                    continue
+                probed = self._probe_only(classes)
+                if probed and waiter.priority == INTERACTIVE:
+                    raise YoutubeCooldown(self.cfg.captions_probe_retry_s, probed[0])
+                if probed and self._probe_busy(waiter):
+                    await self._wait_change(None)
                     continue
                 if self._in_use < self._limit and self._best() is waiter:
                     wait = self._ready_at - self._clock.now()
@@ -525,8 +579,13 @@ class YoutubeGate:
             if breaker.strikes and not breaker.probe_logged:
                 breaker.probe_logged = True
                 log.info("youtube gate half-open: class=%s probing", name)
+        for name in probed:
+            self._breakers[name].probing = True
+        return probed
 
-    def _release(self) -> None:
+    def _release(self, probed: tuple[str, ...] = ()) -> None:
+        for name in probed:
+            self._breakers[name].probing = False
         self._in_use -= 1
         self._ready_at = max(self._ready_at, self._clock.now() + self._gap())
         self._poke()
@@ -538,11 +597,11 @@ class YoutubeGate:
         key: str | None = None,
         classes: Sequence[str] = FETCH_CLASSES,
     ):
-        await self._acquire(priority, key, tuple(classes))
+        probed = await self._acquire(priority, key, tuple(classes))
         try:
             yield
         finally:
-            self._release()
+            self._release(probed)
 
     async def run(
         self,

@@ -43,6 +43,8 @@ log = logging.getLogger("utubot.asr")
 
 STATUS_INPUT_REJECTED = frozenset({400, 413, 415, 422})
 HTTP_ERROR_FLOOR = 400
+HTTP_SERVER_ERROR_FLOOR = 500
+ISOLATED_FAILURES_TO_PENALIZE = 2
 ERROR_TEXT_CHARS = 200
 CONNECT_TIMEOUT_S = 10.0
 ENGINE_SEPARATOR = "+"
@@ -50,11 +52,17 @@ MIN_SPEED_FACTOR = 0.01
 
 
 class EngineError(ASRError):
-    """An engine could not transcribe one chunk. `penalize` marks the engine unhealthy."""
+    """An engine could not transcribe one chunk.
 
-    def __init__(self, message: str, *, penalize: bool = True):
+    `penalize` lets the failure count against the engine's health. With `isolated` it may be the
+    file's fault (a 5xx or an answer that does not parse): the engine is only marked unhealthy once
+    two different files failed in a row on it (`AsrRouter._record_failure`).
+    """
+
+    def __init__(self, message: str, *, penalize: bool = True, isolated: bool = False):
         super().__init__(message)
         self.penalize = penalize
+        self.isolated = isolated
 
 
 @dataclass
@@ -132,17 +140,27 @@ class OpenAIEngine:
                         headers=self._headers(),
                     )
         except httpx.HTTPError as exc:
-            raise EngineError(f"asr transport error: {type(exc).__name__}") from None
+            raise EngineError(
+                f"asr transport error: {type(exc).__name__}",
+                isolated=not isinstance(exc, httpx.ConnectError | httpx.TimeoutException),
+            ) from None
         if resp.status_code >= HTTP_ERROR_FLOOR:
             raise EngineError(
                 f"asr http {resp.status_code}: {resp.text[:ERROR_TEXT_CHARS]}",
                 penalize=resp.status_code not in STATUS_INPUT_REJECTED,
+                isolated=resp.status_code >= HTTP_SERVER_ERROR_FLOOR,
             )
         try:
             body = resp.json()
         except ValueError:
-            raise EngineError("asr answered something that is not JSON") from None
-        return parse_verbose_json(body, wav_duration(wav), want_words)
+            raise EngineError("asr answered something that is not JSON", isolated=True) from None
+        duration = wav_duration(wav)
+        try:
+            return parse_verbose_json(body, duration, want_words)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise EngineError(
+                "asr answered an unexpected transcript shape", isolated=True
+            ) from None
 
 
 class FasterWhisperEngine:
@@ -201,6 +219,7 @@ class _Job:
     priority: int
     scratch: Path
     total_s: float
+    source: str
 
 
 @dataclass
@@ -213,6 +232,15 @@ class SpanResult:
 
 def _base(code: str | None) -> str | None:
     return code.split("-")[0].lower() if code else None
+
+
+def dominant_language(detected: list[tuple[str | None, float]]) -> str | None:
+    """The language the most audio seconds were detected as, None when none was."""
+    votes: dict[str, float] = {}
+    for code, seconds in detected:
+        if code:
+            votes[code] = votes.get(code, 0.0) + seconds
+    return max(votes, key=votes.__getitem__) if votes else None
 
 
 def engine_enabled(cfg: AsrEngineConfig) -> bool:
@@ -247,6 +275,7 @@ class AsrRouter:
         self._clock = clock
         self._enabled = enabled
         self._unhealthy_until: dict[str, float] = {}
+        self._failed_files: dict[str, dict[str, float]] = {}
         self._limiters: dict[str, PriorityLimiter] = {}
         self._engines: dict[str, tuple[str, AsrEngine]] = {}
 
@@ -277,12 +306,39 @@ class AsrRouter:
             "asr engine %s unhealthy for %d s", engine.name, round(self.cfg.asr_unhealthy_s)
         )
 
+    def _record_failure(self, engine: AsrEngineConfig, exc: EngineError, source: str) -> None:
+        """Count a failure against the engine's health.
+
+        One that may be the file's fault (`exc.isolated`: a 5xx, an answer that does not parse) only
+        counts once a second, different file has failed on the engine within `asr_failure_window_s`
+        with no success in between; a connect or timeout failure, a 429 or an auth error marks it
+        at once.
+        """
+        if not exc.penalize:
+            return
+        if exc.isolated:
+            now = self._clock()
+            files = self._failed_files.setdefault(engine.name, {})
+            files[source] = now
+            for old in [f for f, at in files.items() if now - at > self.cfg.asr_failure_window_s]:
+                del files[old]
+            if len(files) < ISOLATED_FAILURES_TO_PENALIZE:
+                return
+        self._failed_files.pop(engine.name, None)
+        self._penalize(engine)
+
+    def _passed_over(self, engine: AsrEngineConfig, rest: list[AsrEngineConfig]) -> bool:
+        """The engine is unhealthy and a healthy one remains later in the chain: do not wait on it."""
+        return not self.healthy(engine.name) and any(self.healthy(e.name) for e in rest)
+
     def candidates(self, language: str | None, priority: int = BACKGROUND) -> list[AsrEngineConfig]:
         """Engines that may take this job: healthy ones first, then by priority (lower first).
 
         Disabled engines, engines that do not serve a known `language` and (for interactive work)
         background-only engines never appear. Unhealthy engines come last, not never, so a chain whose
-        engines all failed recently is still tried.
+        engines all failed recently is still tried. When the language is not known, engines without
+        a language allow-list go before the restricted ones (`_span` re-runs a chunk that a
+        restricted engine did take when the detected language is outside its list).
         """
         usable = [
             e
@@ -291,7 +347,14 @@ class AsrRouter:
             and serves(e, language)
             and not (e.background_only and priority == INTERACTIVE)
         ]
-        return sorted(usable, key=lambda e: (not self.healthy(e.name), e.priority))
+        return sorted(
+            usable,
+            key=lambda e: (
+                not self.healthy(e.name),
+                language is None and bool(e.languages),
+                e.priority,
+            ),
+        )
 
     def available(self, language: str | None = None) -> bool:
         return bool(self.candidates(language, BACKGROUND))
@@ -328,34 +391,45 @@ class AsrRouter:
             for e in self.cfg.engines()
         ]
 
-    async def _chunk_on(self, engine: AsrEngineConfig, span: Span, job: _Job) -> ChunkResult:
+    async def _chunk_on(
+        self, engine: AsrEngineConfig, span: Span, job: _Job, rest: list[AsrEngineConfig]
+    ) -> ChunkResult:
         limiter = self._limiter(engine)
         await limiter.acquire(job.priority)
         try:
+            if self._passed_over(engine, rest):
+                raise EngineError(f"asr engine {engine.name} went unhealthy", penalize=False)
             if span.start <= 0 and span.end >= job.total_s:
-                return await self._engine(engine).transcribe_chunk(
+                result = await self._engine(engine).transcribe_chunk(
                     job.wav, job.language, job.want_words
                 )
-            part = job.scratch / f"{engine.name}-{span.index}-{int(span.start * 1000)}.wav"
-            await asyncio.to_thread(write_chunk, job.wav, span, part)
-            try:
-                return await self._engine(engine).transcribe_chunk(
-                    part, job.language, job.want_words
-                )
-            finally:
-                part.unlink(missing_ok=True)
+            else:
+                part = job.scratch / f"{engine.name}-{span.index}-{int(span.start * 1000)}.wav"
+                await asyncio.to_thread(write_chunk, job.wav, span, part)
+                try:
+                    result = await self._engine(engine).transcribe_chunk(
+                        part, job.language, job.want_words
+                    )
+                finally:
+                    part.unlink(missing_ok=True)
         finally:
             limiter.release()
+        self._failed_files.pop(engine.name, None)
+        return result
 
-    async def _span_on(self, engine: AsrEngineConfig, span: Span, job: _Job) -> SpanResult:
+    async def _span_on(
+        self, engine: AsrEngineConfig, span: Span, job: _Job, rest: list[AsrEngineConfig]
+    ) -> SpanResult:
         subspans = plan_chunks(span.duration, engine.max_chunk_s, self.cfg.asr_chunk_overlap_s)
         segments: list[list[Segment]] = []
         words: list[list[Word]] = []
         languages: list[tuple[str | None, float]] = []
         placed: list[Span] = []
         for sub in subspans:
+            if self._passed_over(engine, rest):
+                raise EngineError(f"asr engine {engine.name} went unhealthy", penalize=False)
             absolute = Span(sub.index, span.start + sub.start, span.start + sub.end)
-            result = await self._chunk_on(engine, absolute, job)
+            result = await self._chunk_on(engine, absolute, job, rest)
             placed.append(absolute)
             segments.append(shift(result.segments, absolute.start))
             words.append(shift(result.words, absolute.start))
@@ -366,17 +440,30 @@ class AsrRouter:
 
     async def _span(self, chain: list[AsrEngineConfig], span: Span, job: _Job) -> SpanResult:
         failure: EngineError | None = None
+        misfit: SpanResult | None = None
+        detected: str | None = None
         for position, engine in enumerate(chain):
             rest = chain[position + 1 :]
-            if not self.healthy(engine.name) and any(self.healthy(e.name) for e in rest):
+            if (detected and not serves(engine, detected)) or self._passed_over(engine, rest):
                 continue
             try:
-                return await self._span_on(engine, span, job)
+                result = await self._span_on(engine, span, job, rest)
             except EngineError as exc:
                 failure = exc
-                if exc.penalize:
-                    self._penalize(engine)
+                self._record_failure(engine, exc, job.source)
                 log.warning("asr engine %s failed a chunk: %s", engine.name, exc)
+                continue
+            found = dominant_language(result.languages)
+            if job.language is None and found and not serves(engine, found):
+                if any(serves(e, found) for e in rest):
+                    misfit, detected = result, found
+                    log.info(
+                        "asr engine %s took %s audio outside its languages", engine.name, found
+                    )
+                    continue
+            return result
+        if misfit is not None:
+            return misfit
         raise ASRError("all speech-to-text engines failed") from failure
 
     async def transcribe(
@@ -406,7 +493,7 @@ class AsrRouter:
             return result
 
         with tempfile.TemporaryDirectory(prefix="asr-", dir=wav.parent) as scratch:
-            job = _Job(wav, language, want_words, priority, Path(scratch), total)
+            job = _Job(wav, language, want_words, priority, Path(scratch), total, str(wav))
             results = await gather_all([run(span, job) for span in spans])
         return self._merge(results, spans)
 
@@ -414,12 +501,7 @@ class AsrRouter:
     def _merge(results: list[SpanResult], spans: list[Span]) -> ASRResult:
         segments = stitch_segments([r.segments for r in results], spans)
         words = stitch_words([r.words for r in results], spans)
-        votes: dict[str, float] = {}
-        for result in results:
-            for code, seconds in result.languages:
-                if code:
-                    votes[code] = votes.get(code, 0.0) + seconds
-        language = max(votes, key=votes.__getitem__) if votes else None
+        language = dominant_language([item for r in results for item in r.languages])
         used = list(dict.fromkeys(e.name for r in results for e in r.engines))
         models = list(dict.fromkeys(e.model for r in results for e in r.engines))
         return ASRResult(
