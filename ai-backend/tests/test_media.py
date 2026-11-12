@@ -182,8 +182,9 @@ async def test_a_429_while_downloading_audio_is_attributed_to_the_media_class(
     assert exc.value.klass == CLASS_MEDIA
 
 
-def test_runtime_options_are_empty_unless_configured():
-    assert ytdlp_runtime_options(YoutubeConfig()) == {}
+def test_the_runtime_is_always_passed_on_and_looked_up_on_path_without_a_path():
+    assert ytdlp_runtime_options(YoutubeConfig()) == {"js_runtimes": {"deno": {}}}
+    assert ytdlp_runtime_options(YoutubeConfig(js_runtime="bun")) == {"js_runtimes": {"bun": {}}}
     cfg = YoutubeConfig(
         js_runtime="node", js_runtime_path="/usr/bin/node", remote_components=["ejs:github"]
     )
@@ -191,7 +192,35 @@ def test_runtime_options_are_empty_unless_configured():
         "js_runtimes": {"node": {"path": "/usr/bin/node"}},
         "remote_components": ["ejs:github"],
     }
-    assert ytdlp_runtime_options(YoutubeConfig(js_runtime="bun")) == {}
+    only_components = YoutubeConfig(remote_components=["ejs:npm"])
+    assert ytdlp_runtime_options(only_components) == {
+        "js_runtimes": {"deno": {}},
+        "remote_components": ["ejs:npm"],
+    }
+
+
+def test_yt_dlp_accepts_a_runtime_without_a_path_and_the_lock_carries_the_floor():
+    import re
+    import tomllib
+    from pathlib import Path
+
+    import yt_dlp
+
+    cfg = YoutubeConfig(js_runtime="node", remote_components=["ejs:github"])
+    with yt_dlp.YoutubeDL({"quiet": True, **ytdlp_runtime_options(cfg)}) as ydl:
+        assert ydl.params["js_runtimes"] == {"node": {}}
+        assert ydl.params["remote_components"] == {"ejs:github"}
+    root = Path(__file__).resolve().parents[1]
+    requirement = next(
+        r
+        for r in tomllib.loads((root / "pyproject.toml").read_text())["project"]["dependencies"]
+        if r.startswith("yt-dlp")
+    )
+    floor = requirement.removeprefix("yt-dlp>=")
+    assert floor >= "2025.11.12"  # first release with `remote_components`
+    assert re.search(
+        rf'name = "yt-dlp", specifier = ">={re.escape(floor)}"', (root / "uv.lock").read_text()
+    )
 
 
 def test_the_default_downloader_and_the_metadata_fetch_use_the_configured_runtime(

@@ -299,11 +299,19 @@ class JobQueue:
         """ASR, unless YouTube has captions after all: those are used and the audio is skipped.
 
         The caption check needs the metadata and caption endpoints; when either is cooling or answers
-        "delayed" the check is skipped, because the audio comes from another endpoint (`media`).
+        "delayed" the check is skipped, because the audio comes from another endpoint (`media`). An
+        interactive job also skips it while the caption class waits for its background probe
+        (`YoutubeGate.interactive_ok`); a background job may be that probe.
         """
         video_id = job["video_id"]
         priority = job["priority"]
-        if self.pipeline.gate.healthy(*FETCH_CLASSES):
+        gate = self.pipeline.gate
+        check = (
+            gate.interactive_ok(*FETCH_CLASSES)
+            if priority == INTERACTIVE
+            else gate.healthy(*FETCH_CLASSES)
+        )
+        if check:
             try:
                 await self.transcripts.get(video_id, priority, recheck=True)
                 return

@@ -16,11 +16,24 @@ MSG_TRANSCRIBE = "transcription failed"
 MSG_JOB_RETRIES = "YouTube kept refusing the download, try again later"
 MSG_NO_CAPTIONS = "No captions. Transcribe the audio in the background?"
 MSG_NO_CAPTIONS_UNAVAILABLE = "No captions are available for this video."
+MSG_CAPTIONS_LIMITED = (
+    "Captions are temporarily unavailable from YouTube; transcribe the audio instead"
+)
 SECONDS_PER_MINUTE = 60
+ESTIMATE_IN_SECONDS_BELOW_S = 120
 
 
 def minutes_hint(seconds: float) -> int:
     return max(1, math.ceil(seconds / SECONDS_PER_MINUTE))
+
+
+def captions_limited_message(estimate_s: int | None) -> str:
+    """Offer the audio when YouTube holds the captions back; `estimate_s` is the rough job time."""
+    if not estimate_s:
+        return f"{MSG_CAPTIONS_LIMITED}?"
+    if estimate_s < ESTIMATE_IN_SECONDS_BELOW_S:
+        return f"{MSG_CAPTIONS_LIMITED} (~{estimate_s} s)?"
+    return f"{MSG_CAPTIONS_LIMITED} (~{minutes_hint(estimate_s)} min)?"
 
 
 def delayed_message(exc: YoutubeDelayed) -> str:

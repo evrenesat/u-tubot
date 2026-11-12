@@ -93,6 +93,8 @@ class YoutubeConfig(BaseModel):
     jitter_s: float = 1.5
     cooldown_base_s: float = 300.0
     cooldown_max_s: float = 3600.0
+    captions_cooldown_max_s: float = 1800.0
+    captions_probe_retry_s: float = 10.0
     network_retry_s: float = 60.0
     max_background_queue: int = 5
     js_runtime: Literal["deno", "node", "bun", "quickjs"] = "deno"

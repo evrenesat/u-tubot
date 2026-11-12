@@ -121,7 +121,10 @@ async def test_timedtext_429_with_retry_after_opens_the_breaker_and_is_not_cache
     assert "SECRETSIG" not in caplog.text and "sig=" not in caplog.text
     rig.handler = lambda req: httpx.Response(200, text=CAPTIONS)
     await rig.clock.advance(121)
-    transcript = await rig.svc.get(VID)
+    with pytest.raises(YoutubeCooldown):
+        await rig.svc.get(VID)
+    assert rig.extracts == 1
+    transcript = await rig.svc.get(VID, BACKGROUND)
     assert transcript.source == "youtube_captions"
     assert rig.gate.healthy() and rig.extracts == 2
 

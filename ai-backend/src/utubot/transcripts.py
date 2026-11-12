@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -13,7 +14,7 @@ import yt_dlp
 
 from .config import Config
 from .db import METADATA_ONLY, Database
-from .llm import INTERACTIVE, parse_retry_after
+from .llm import BACKGROUND, INTERACTIVE, parse_retry_after
 from .youtube import (
     CLASS_CAPTIONS,
     CLASS_METADATA,
@@ -31,6 +32,8 @@ from .youtube import (
     classify_status,
     ytdlp_runtime_options,
 )
+
+log = logging.getLogger("utubot.transcripts")
 
 TIMESTAMP_BLOCK_S = 20
 SOURCE_CAPTIONS = "youtube_captions"
@@ -300,6 +303,7 @@ class TranscriptService:
         self.gate = gate or YoutubeGate(cfg.youtube, db)
         self.fetcher: Fetcher = fetcher or YoutubeFetcher(cfg)
         self._inflight: dict[str, asyncio.Task[Transcript]] = {}
+        self._probe: asyncio.Task[None] | None = None
 
     def cached_meta(self, video_id: str) -> dict[str, Any] | None:
         return self.db.get_json("video_meta", "video_id=?", [video_id])
@@ -375,9 +379,10 @@ class TranscriptService:
         model: str | None = None,
         segments: list[tuple[float, float, str]] | None = None,
     ) -> bool:
-        """Keep an ASR transcript unless the video has YouTube captions; they always win.
+        """Keep an ASR transcript unless the video already has stored YouTube captions.
 
-        `segments` are `(start_s, end_s, text)` rows kept next to the text with the engine and model
+        A transcript stored first stays: ASR does not replace captions, and captions fetched later
+        do not replace ASR (`_fetch`). `segments` are `(start_s, end_s, text)` rows kept next to the text with the engine and model
         that produced them.
         """
         stored = self.db.execute_rc(
@@ -429,10 +434,38 @@ class TranscriptService:
             task.add_done_callback(lambda _t: self._inflight.pop(video_id, None))
             task.add_done_callback(lambda t: t.cancelled() or t.exception())
         elif priority == INTERACTIVE:
-            if not self.gate.healthy(*FETCH_CLASSES):
-                raise YoutubeCooldown(self.gate.cooldown_remaining(*FETCH_CLASSES))
+            if not self.gate.interactive_ok(*FETCH_CLASSES):
+                raise YoutubeCooldown(
+                    self.gate.cooldown_remaining(*FETCH_CLASSES)
+                    or self.cfg.youtube.captions_probe_retry_s,
+                    CLASS_CAPTIONS,
+                )
             self.gate.promote(video_id)
         return await asyncio.shield(task)
+
+    def probe_captions(self, video_id: str) -> bool:
+        """After a caption cooldown, send the one background request that decides the next step.
+
+        Interactive requests never probe a class that just came out of a cooldown (the gate refuses
+        them), so the first caller that finds it half-open asks for this video's captions in the
+        background. The answer closes the class or opens it again; either way the caller carries on
+        with the audio. Returns True when a probe was started.
+        """
+        if not self.gate.probe_pending() or (self._probe is not None and not self._probe.done()):
+            return False
+        if self.cached(video_id) or self.hold(video_id) or self.no_captions(video_id):
+            return False
+        try:
+            self._probe = asyncio.get_running_loop().create_task(self._probe_run(video_id))
+        except RuntimeError:
+            return False
+        return True
+
+    async def _probe_run(self, video_id: str) -> None:
+        try:
+            await self.get(video_id, BACKGROUND)
+        except Exception as exc:
+            log.info("caption probe ended: %s", type(exc).__name__)
 
     async def _fetch(self, video_id: str, priority: int) -> Transcript:
         try:
@@ -456,12 +489,18 @@ class TranscriptService:
                 "DELETE FROM transcripts WHERE video_id=? AND source=?", [video_id, SOURCE_CAPTIONS]
             )
             raise NoCaptions(video_id)
-        self.db.execute(
-            "INSERT OR REPLACE INTO transcripts(video_id,lang,source,text,fetched_at)"
-            " VALUES(?,?,?,?,?)",
-            [video_id, result.lang, SOURCE_CAPTIONS, result.text, time.time()],
+        stored = self.db.execute_rc(
+            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at) VALUES(?,?,?,?,?)"
+            " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
+            " text=excluded.text, fetched_at=excluded.fetched_at, engine=NULL, model=NULL,"
+            " segments=NULL WHERE transcripts.source != ?",
+            [video_id, result.lang, SOURCE_CAPTIONS, result.text, time.time(), SOURCE_ASR],
         )
         self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])
+        if not stored:
+            kept = self.cached(video_id)
+            if kept is not None:
+                return kept
         return Transcript(
             video_id, result.text, result.lang, SOURCE_CAPTIONS, self.cached_meta(video_id) or {}
         )

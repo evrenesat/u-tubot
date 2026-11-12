@@ -165,7 +165,9 @@ async def test_a_short_file_is_sent_whole_and_words_are_requested_only_when_aske
     assert fake.want_words == [True, False] and plain.segments
 
 
-async def test_a_known_language_skips_engines_that_do_not_list_it_and_unknown_keeps_them(tmp_path):
+async def test_a_known_language_skips_engines_that_do_not_list_it_and_unknown_prefers_open_ones(
+    tmp_path,
+):
     mac = engine_cfg("mac", priority=10)
     box = engine_cfg("box", languages=["en", "tr"], priority=5)
     local = engine_cfg("local", priority=30)
@@ -173,7 +175,7 @@ async def test_a_known_language_skips_engines_that_do_not_list_it_and_unknown_ke
     assert [e.name for e in r.candidates("es")] == ["mac", "local"]
     assert [e.name for e in r.candidates("tr")] == ["box", "mac", "local"]
     assert [e.name for e in r.candidates("en-US")] == ["box", "mac", "local"]
-    assert [e.name for e in r.candidates(None)] == ["box", "mac", "local"]
+    assert [e.name for e in r.candidates(None)] == ["mac", "local", "box"]
 
 
 async def test_the_language_reaches_the_engine_normalised(tmp_path):
@@ -319,7 +321,7 @@ async def test_chunks_of_one_file_may_end_up_on_different_engines(tmp_path):
         async def transcribe_chunk(self, wav, language, want_words):
             if not self.chunks:
                 self.chunks.append((-1.0, 0.0))
-                raise EngineError("asr http 502")
+                raise EngineError("asr http 502", isolated=True)
             return await super().transcribe_chunk(wav, language, want_words)
 
     mac, local = FlakyOnce("mac"), FakeEngine("local")

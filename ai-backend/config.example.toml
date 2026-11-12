@@ -168,13 +168,18 @@ description_max_chars = 300
 # opens a circuit breaker, one per endpoint class: `captions` (the timedtext API), `metadata`
 # (watch/player pages through yt-dlp) and `media` (audio downloads). A limit on one class does not stop the
 # others (a caption 429 leaves audio downloads running). Interactive requests for a cooling class answer
-# "delayed" at once, background work (tier-2, caption and transcript jobs) waits and resumes.
+# at once without touching YouTube: "delayed", or, when only captions are limited and a speech engine is
+# available, a transcription of the audio (or an offer of one). Background work (tier-2, caption and
+# transcript jobs) waits and resumes. After a caption cooldown, one background request probes the class;
+# interactive requests stay away from it until that probe has been answered.
 [youtube]
 max_concurrent = 1
 min_interval_s = 3.0
 jitter_s = 1.5
 cooldown_base_s = 300.0            # first cooldown without a Retry-After header (5 min), doubles per consecutive block
 cooldown_max_s = 3600.0            # ceiling for any cooldown, Retry-After included (60 min)
+captions_cooldown_max_s = 1800.0   # tighter ceiling for the caption API (timedtext) class (30 min); the audio fallback covers the wait
+captions_probe_retry_s = 10.0      # retry hint to clients while the one background probe of a caption class that just cooled down is out
 network_retry_s = 60.0             # retry hint to clients after a network error (does not open the breaker)
 max_background_queue = 5           # tier-2 is not scheduled while this many background fetches wait
 # yt-dlp needs a JavaScript runtime to unscramble some YouTube stream URLs (the "n challenge"). A service started
