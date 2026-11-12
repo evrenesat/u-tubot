@@ -51,7 +51,7 @@ public final class UtubotSetupFlow {
             return;
         }
 
-        Log.d(TAG, "Import setup: fetching %s", url);
+        Log.d(TAG, "Import setup: fetching %s", withoutQuery(url));
         MessageHelpers.showMessage(context, context.getString(R.string.utubot_importing));
         RxHelper.disposeActions(sAction);
         sAction = Observable.fromCallable(() -> UtubotClient.fetchSetup(url))
@@ -62,6 +62,19 @@ public final class UtubotSetupFlow {
                             Log.e(TAG, "Import setup failed: %s: %s", error.getClass().getSimpleName(), error.getMessage());
                             MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_import_failed, describeError(context, error)));
                         });
+    }
+
+    /**
+     * scheme://host[:port]/path of an address: the query may carry a secret
+     */
+    static String withoutQuery(String url) {
+        try {
+            java.net.URI uri = new java.net.URI(url);
+            return new java.net.URI(uri.getScheme(), uri.getRawAuthority(), uri.getPath(), null, null).toString();
+        } catch (java.net.URISyntaxException e) {
+            int cut = url.indexOf('?');
+            return cut >= 0 ? url.substring(0, cut) : url;
+        }
     }
 
     /**
@@ -94,12 +107,12 @@ public final class UtubotSetupFlow {
 
     private static void apply(Context context, UtubotSetup setup) {
         UtubotSettings settings = UtubotSettings.instance(context);
-        settings.applySetup(setup);
+        boolean needsPairing = settings.applySetup(setup);
         String name = setup.name.isEmpty() ? setup.backendUrl : setup.name;
         Log.d(TAG, "Import setup ok: server %s, pairing %s", name, setup.pairing);
         MessageHelpers.showMessage(context, context.getString(R.string.utubot_import_ok, name));
 
-        if (setup.pairing) {
+        if (setup.pairing && needsPairing) {
             UtubotPairing.showDialog(context);
         }
     }

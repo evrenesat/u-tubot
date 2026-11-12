@@ -155,7 +155,7 @@ public class UtubotSetupFlowTest {
     }
 
     @Test
-    public void manualBackend_derivesUpdateUrl() {
+    public void manualBackend_derivesUpdateUrl() throws Exception {
         UtubotSettings settings = UtubotSettings.instance(mActivity);
         settings.setUpdateUrl("");
 
@@ -165,7 +165,7 @@ public class UtubotSetupFlowTest {
     }
 
     @Test
-    public void manualBackend_keepsAnImportedUpdateUrl() {
+    public void manualBackend_keepsAnImportedUpdateUrl() throws Exception {
         UtubotSettings settings = UtubotSettings.instance(mActivity);
         settings.setUrl("https://a.example.com");
         settings.setUpdateUrl("https://cdn.example.com/update.json");
@@ -176,7 +176,7 @@ public class UtubotSetupFlowTest {
     }
 
     @Test
-    public void manualBackend_followsADerivedUpdateUrl() {
+    public void manualBackend_followsADerivedUpdateUrl() throws Exception {
         UtubotSettings settings = UtubotSettings.instance(mActivity);
         settings.setUrlManually("https://a.example.com");
 
@@ -186,8 +186,91 @@ public class UtubotSetupFlowTest {
     }
 
     @Test
-    public void deriveUpdateUrl_trimsTheSlash() {
+    public void deriveUpdateUrl_trimsTheSlash() throws Exception {
         assertEquals("http://10.0.0.5:8790/app/update.json", UtubotSetup.deriveUpdateUrl(" http://10.0.0.5:8790/ "));
+    }
+
+    @Test
+    public void deriveUpdateUrl_keepsThePathAndDropsQueryAndFragment() throws Exception {
+        assertEquals("https://h.example.com:8443/ai/app/update.json", UtubotSetup.deriveUpdateUrl("https://h.example.com:8443/ai/?x=1#f"));
+        assertEquals("https://h.example.com/app/update.json", UtubotSetup.deriveUpdateUrl("https://h.example.com?token=s"));
+    }
+
+    @Test
+    public void manualBackend_rejectsPlainHttpToAPublicHost() {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        settings.setUrl("https://ok.example.com");
+        settings.setUpdateUrl("");
+
+        try {
+            settings.setUrlManually("http://evil.example.com");
+            fail();
+        } catch (UtubotSetup.SetupException e) {
+            assertTrue(e.getMessage().contains("http"));
+        }
+
+        assertEquals("https://ok.example.com", settings.getUrl());
+        assertEquals("", settings.getUpdateUrl());
+    }
+
+    @Test
+    public void manualBackend_rejectsGarbageAndOtherSchemes() {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+
+        for (String bad : new String[]{"ftp://x.example.com", "not a url", "https://"}) {
+            try {
+                settings.setUrlManually(bad);
+                fail(bad);
+            } catch (UtubotSetup.SetupException expected) {
+                // rejected
+            }
+        }
+    }
+
+    @Test
+    public void manualBackend_acceptsPrivateHttp() throws Exception {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        settings.setUpdateUrl("");
+
+        settings.setUrlManually("http://10.0.0.5:8790");
+
+        assertEquals("http://10.0.0.5:8790/app/update.json", settings.getUpdateUrl());
+    }
+
+    @Test
+    public void manualBackend_hostChangeDropsTheToken() throws Exception {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        settings.setUrlManually("https://a.example.com");
+        settings.setToken("secret");
+
+        settings.setUrlManually("https://a.example.com/");
+        assertEquals("secret", settings.getToken());
+
+        settings.setUrlManually("https://b.example.com");
+        assertEquals("", settings.getToken());
+        assertFalse(settings.isPairPromptDone());
+    }
+
+    @Test
+    public void applySetup_needsPairingOnlyWithoutATokenOrOnANewBackend() throws Exception {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        UtubotSetup setup = UtubotSetup.parse("{\"utubot_setup\":1,\"backend_url\":\"https://a.example.com\"}");
+        settings.setUrl("");
+        settings.setToken("");
+
+        assertTrue(settings.applySetup(setup));
+
+        settings.setToken("secret");
+        assertFalse(settings.applySetup(setup));
+        assertEquals("secret", settings.getToken());
+
+        UtubotSetup other = UtubotSetup.parse("{\"utubot_setup\":1,\"backend_url\":\"https://b.example.com\"}");
+        assertTrue(settings.applySetup(other));
+    }
+
+    @Test
+    public void withoutQuery_dropsQueryAndFragment() {
+        assertEquals("https://h.example.com:8443/setup.json", UtubotSetupFlow.withoutQuery("https://h.example.com:8443/setup.json?code=abc#x"));
     }
 
     @Test

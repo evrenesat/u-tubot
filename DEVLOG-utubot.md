@@ -1,5 +1,11 @@
 # u·tubot devlog
 
+## 2026-11-12 (0.2.2: review fixes)
+
+- Manual backend URLs go through `UtubotSetup.requireUrl`; the update URL is derived by URI resolution (origin + path + `/app/update.json`).
+- `setUrlManually` clears the token and pairing flag when the origin changes. The import log omits the query. `applySetup` returns
+  whether pairing is needed; re-importing on a paired device no longer opens the dialog. Version 0.2.2 (code 4).
+
 ## 2026-11-12 (0.2.1: setup import and pairing UI)
 
 - Real-device report on 0.2.0: Import setup did nothing, Settings showed no Import setup / Pair with code. Reproduced on an

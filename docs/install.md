@@ -34,7 +34,7 @@ publish the same files on the server's own landing page (`https://utubot.example
 
 ```sh
 adb connect TV_IP:5555
-adb install u-tubot_0.2.1_arm64-v8a.apk
+adb install u-tubot_0.2.2_arm64-v8a.apk
 ```
 
 **With a USB stick** and any file manager app on the TV.

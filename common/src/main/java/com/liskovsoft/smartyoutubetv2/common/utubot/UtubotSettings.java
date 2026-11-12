@@ -65,16 +65,46 @@ public class UtubotSettings {
     }
 
     /**
-     * A backend address typed in Advanced: without an update address of an imported setup, the backend's own is used
+     * A backend address typed in Advanced. It must pass the same rules as an imported one (https, or http for private hosts).
+     * The token belongs to its host: it is dropped when the host changes. Without an update address of an imported setup,
+     * the backend's own is used.
      */
-    public void setUrlManually(String url) {
+    public void setUrlManually(String input) throws UtubotSetup.SetupException {
+        String text = input == null ? "" : input.trim();
         String previous = getUrl();
+
+        if (text.isEmpty()) {
+            if (!previous.isEmpty()) {
+                setToken("");
+                setPairPromptDone(false);
+            }
+            setUrl("");
+            return;
+        }
+
+        String url = UtubotSetup.requireUrl(text, "backend address");
         String update = getUpdateUrl();
-        boolean derivedBefore = !previous.isEmpty() && update.equals(UtubotSetup.deriveUpdateUrl(previous));
+        boolean derivedBefore = false;
+        boolean sameOrigin = false;
+
+        if (!previous.isEmpty()) {
+            try {
+                derivedBefore = update.equals(UtubotSetup.deriveUpdateUrl(previous));
+                sameOrigin = UtubotSetup.originOf(previous).equals(UtubotSetup.originOf(url));
+            } catch (UtubotSetup.SetupException e) {
+                // A stored address that doesn't parse is not a trusted origin
+            }
+        }
+
+        if (!sameOrigin) {
+            setToken("");
+            setPairPromptDone(false);
+        }
+
         setUrl(url);
 
-        if (!getUrl().isEmpty() && (update.isEmpty() || derivedBefore)) {
-            setUpdateUrl(UtubotSetup.deriveUpdateUrl(getUrl()));
+        if (update.isEmpty() || derivedBefore) {
+            setUpdateUrl(UtubotSetup.deriveUpdateUrl(url));
         }
     }
 
@@ -91,8 +121,10 @@ public class UtubotSettings {
 
     /**
      * Stores what an imported setup says. The token of a previous backend is dropped when the backend address changes.
+     *
+     * @return true when the device has no token for this backend and needs the pairing
      */
-    public void applySetup(UtubotSetup setup) {
+    public boolean applySetup(UtubotSetup setup) {
         String previous = getUrl();
 
         if (!previous.equals(setup.backendUrl)) {
@@ -121,6 +153,8 @@ public class UtubotSettings {
         }
 
         mPrefs.edit().putString(KEY_PENDING_PROMPT_SETS, String.join(LIST_SEPARATOR, setup.promptSetUrls)).apply();
+
+        return getToken().isEmpty();
     }
 
     /**

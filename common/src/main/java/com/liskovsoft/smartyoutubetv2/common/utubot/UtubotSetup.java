@@ -89,10 +89,26 @@ public final class UtubotSetup {
     }
 
     /**
-     * The update file of a backend: its /app/update.json
+     * The update file of a backend: scheme://host[:port] and the backend's path, without query or fragment, plus /app/update.json
      */
-    public static String deriveUpdateUrl(String backendUrl) {
-        return stripTrailingSlash(backendUrl.trim()) + UPDATE_PATH;
+    public static String deriveUpdateUrl(String backendUrl) throws SetupException {
+        URI uri = parseUri(backendUrl.trim());
+        return originOf(uri) + stripTrailingSlash(uri.getRawPath() == null ? "" : uri.getRawPath()) + UPDATE_PATH;
+    }
+
+    /**
+     * scheme://host[:port] of a validated address: what a stored token is bound to
+     */
+    public static String originOf(String url) throws SetupException {
+        return originOf(parseUri(url.trim()));
+    }
+
+    private static String originOf(URI uri) {
+        String host = hostOf(uri);
+        String hostPart = host.contains(":") ? "[" + host + "]" : host;
+        String port = uri.getPort() >= 0 ? ":" + uri.getPort() : "";
+
+        return uri.getScheme().toLowerCase(Locale.ROOT) + "://" + hostPart.toLowerCase(Locale.ROOT) + port;
     }
 
     /**

@@ -103,7 +103,12 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
         AppDialogPresenter.instance(context).closeDialog();
         SimpleEditDialog.showUrl(context, context.getString(R.string.utubot_backend_url), context.getString(R.string.utubot_backend_url_hint),
                 mSettings.getUrl(), newValue -> {
-                    mSettings.setUrlManually(newValue);
+                    try {
+                        mSettings.setUrlManually(newValue);
+                    } catch (UtubotSetup.SetupException e) {
+                        MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_import_failed, e.getMessage()));
+                        return false;
+                    }
                     return true;
                 });
     }

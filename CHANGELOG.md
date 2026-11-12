@@ -3,6 +3,18 @@
 Versions follow `versionName` in `smarttubetv/build.gradle` (flavor `stutubot`). Release APKs are signed with the u·tubot
 release key; the certificate SHA-256 is in each release's notes on GitHub.
 
+## 0.2.2 (2026-11-12)
+
+Security fixes for backend addresses and tokens. Updates 0.2.1 in place.
+
+- A backend address typed in Advanced follows the same rules as an imported one (https, or http for local network addresses) and
+  is refused with a message otherwise. The update address is derived from the validated address: its origin and path plus
+  `/app/update.json`, without query or fragment.
+- Changing the backend host in Advanced drops the stored token, so it is never sent to another host; pair again afterwards.
+- The import log no longer records the query string of the address.
+- Importing the same setup again on a paired device keeps the pairing and doesn't open the pairing dialog; it opens only when
+  there is no token or the backend changed.
+
 ## 0.2.1 (2026-11-12)
 
 Fixes for Import setup and pairing. Updates 0.2.0 in place.
