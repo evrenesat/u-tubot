@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- A literal label next to the icon from main: the system installer's "App installed" screen and some launchers read the
+         label of a package file without resolving its resources, and then show the application class name. Keep it the same as
+         app_name in src/stutubot/res/values/strings.xml (UtubotAppHooksTest checks). -->
+    <application
+        android:label="u·tubot"
+        tools:replace="android:label" />
+
+</manifest>
