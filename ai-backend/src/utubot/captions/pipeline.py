@@ -6,6 +6,7 @@ import logging
 import shutil
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,24 +17,29 @@ from ..db import Database
 from ..llm import BACKGROUND, LLMClient
 from ..transcripts import segments_to_text
 from ..youtube import (
+    CLASS_MEDIA,
+    MEDIA_CLASSES,
     REASON_LIVE,
     REASON_TOO_LONG,
     YoutubeGate,
     YoutubeVideoError,
     classify_failure,
+    ytdlp_runtime_options,
 )
 from .asr import (
     LANGUAGE_NAMES,
     ASRBackend,
     ASRError,
     ASRResult,
+    make_asr,
     normalize_language,
     run_ffmpeg,
     wav_duration,
 )
 from .diarize import Diarizer, assign_speakers, make_diarizer
+from .formats import audio_selector
 from .segment import build_cues, count_speakers, to_vtt, wrap_lines
-from .types import Cue
+from .types import Cue, Segment
 
 log = logging.getLogger("utubot.captions")
 VIDEO_URL = "https://www.youtube.com/watch?v={}"
@@ -50,6 +56,20 @@ Progress = Callable[[float], None]
 
 class PipelineError(RuntimeError):
     pass
+
+
+@dataclass
+class AsrTranscript:
+    """A plain-text transcript from audio, with the segments and the engine that made them."""
+
+    text: str
+    language: str | None
+    segments: list[Segment]
+    engine: str | None
+    model: str | None
+
+    def segment_rows(self) -> list[tuple[float, float, str]]:
+        return [(round(seg.start, 2), round(seg.end, 2), seg.text) for seg in self.segments]
 
 
 def audio_filter(max_duration_s: int, verdict: dict[str, str]) -> Callable[..., str | None]:
@@ -80,27 +100,37 @@ async def download_audio(
     max_duration_s: int,
     max_bytes: int,
     network_retry_s: float = 60.0,
+    extra_opts: dict[str, Any] | None = None,
 ) -> Path:
-    """Best audio through yt-dlp. `started` is called when the first bytes arrive."""
+    """The original-language audio at the lowest bitrate through yt-dlp (see `formats.py`).
+
+    `fmt` is yt-dlp's own selector, used only when no usable format was recognised. `started` is
+    called when the first bytes arrive.
+    """
 
     def _hook(_status: dict[str, Any]) -> None:
         started()
 
     def _run() -> Path:
         verdict: dict[str, str] = {}
+        fallback: list[Callable] = []
         opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
             "noplaylist": True,
-            "format": fmt,
+            "format": audio_selector(lambda: fallback[0] if fallback else None),
             "outtmpl": str(out_dir / "audio.%(ext)s"),
             "match_filter": audio_filter(max_duration_s, verdict),
             "max_filesize": max_bytes,
             "progress_hooks": [_hook],
+            **(extra_opts or {}),
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
+                build = getattr(ydl, "build_format_selector", None)
+                if build is not None:
+                    fallback.append(build(fmt))
                 info = ydl.extract_info(VIDEO_URL.format(video_id), download=True)
                 if info is None:
                     raise YoutubeVideoError(verdict.get("reason", REASON_TOO_LONG))
@@ -109,7 +139,7 @@ async def download_audio(
                     raise YoutubeVideoError(REASON_TOO_LONG)
                 return path
         except yt_dlp.utils.YoutubeDLError as exc:
-            raise classify_failure(exc, network_retry_s, media=True) from None
+            raise classify_failure(exc, network_retry_s, media=True, klass=CLASS_MEDIA) from None
 
     return await asyncio.to_thread(_run)
 
@@ -138,13 +168,14 @@ class CaptionPipeline:
         self,
         cfg: Config,
         db: Database,
-        asr: ASRBackend,
+        asr: ASRBackend | None,
         llm: LLMClient | None = None,
         diarizer: Diarizer | None = None,
         downloader: Downloader | None = None,
         gate: YoutubeGate | None = None,
     ):
-        self.cfg, self.db, self.asr, self.llm = cfg, db, asr, llm
+        self.cfg, self.db, self.llm = cfg, db, llm
+        self.asr = asr or make_asr(cfg.captions)
         self.gate = gate or YoutubeGate(cfg.youtube, db)
         self.diarizer = diarizer or make_diarizer(cfg.captions)
         self.downloader = downloader or (
@@ -156,19 +187,28 @@ class CaptionPipeline:
                 max_duration_s=cfg.captions.max_duration_s,
                 max_bytes=cfg.captions.max_download_bytes,
                 network_retry_s=cfg.youtube.network_retry_s,
+                extra_opts=ytdlp_runtime_options(cfg.youtube),
             )
         )
 
     async def _recognise(
-        self, video_id: str, requested: str | None, work: Path, progress: Progress
+        self,
+        video_id: str,
+        requested: str | None,
+        work: Path,
+        progress: Progress,
+        *,
+        priority: int = BACKGROUND,
+        want_words: bool = True,
     ) -> tuple[ASRResult, Path]:
         """Audio download (through the YouTube gate), 16 kHz mono WAV, ASR. Shared by both jobs."""
         c = self.cfg.captions
         progress(0.02)
         src = await self.gate.run_started(
             lambda started: self.downloader(video_id, work, started),
-            BACKGROUND,
+            priority,
             key=f"audio:{video_id}",
+            classes=MEDIA_CLASSES,
         )
         progress(0.2)
         wav = work / "audio16k.wav"
@@ -187,36 +227,59 @@ class CaptionPipeline:
         progress(0.25)
         if wav_duration(wav, c.sample_rate) > c.max_duration_s:
             raise YoutubeVideoError(REASON_TOO_LONG)
-        result = await self.asr.transcribe(wav, requested, lambda f: progress(0.25 + 0.6 * f))
-        if not result.words:
+        result = await self.asr.transcribe(
+            wav,
+            requested,
+            lambda f: progress(0.25 + 0.6 * f),
+            priority=priority,
+            want_words=want_words,
+        )
+        if not (result.words if want_words else result.segments):
             raise PipelineError("ASR returned no words")
         return result, wav
 
-    async def transcribe(self, video_id: str, progress: Progress) -> tuple[str, str | None]:
-        """Plain-text transcript from the audio (language auto-detected): `(text, language)`."""
+    async def transcribe(
+        self,
+        video_id: str,
+        progress: Progress,
+        *,
+        priority: int = BACKGROUND,
+        language: str | None = None,
+    ) -> AsrTranscript:
+        """Plain-text transcript from the audio. `language` is a hint; unset, the engine detects it."""
         work = self.cfg.media_dir / video_id
         work.mkdir(parents=True, exist_ok=True)
         try:
-            result, _wav = await self._recognise(video_id, None, work, progress)
-            cues = build_cues(result.words, self.cfg.captions)
-            text = segments_to_text([(cue.start, " ".join(cue.lines)) for cue in cues])
+            result, _wav = await self._recognise(
+                video_id, language, work, progress, priority=priority, want_words=False
+            )
+            text = segments_to_text([(seg.start, seg.text) for seg in result.segments])
             if not text:
                 raise PipelineError("ASR returned no text")
             progress(1.0)
-            return text, result.language
+            return AsrTranscript(
+                text, result.language, result.segments, result.engine, result.model
+            )
         finally:
             if not self.cfg.captions.keep_media:
                 shutil.rmtree(work, ignore_errors=True)
 
     async def run(
-        self, video_id: str, lang: str, translate_to: str | None, progress: Progress
+        self,
+        video_id: str,
+        lang: str,
+        translate_to: str | None,
+        progress: Progress,
+        priority: int = BACKGROUND,
     ) -> str:
         c = self.cfg.captions
         work = self.cfg.media_dir / video_id
         work.mkdir(parents=True, exist_ok=True)
         try:
             requested = None if lang == "auto" else lang
-            result, wav = await self._recognise(video_id, requested, work, progress)
+            result, wav = await self._recognise(
+                video_id, requested, work, progress, priority=priority
+            )
             turns = await self.diarizer.diarize(wav)
             progress(0.9)
             assign_speakers(result.words, turns)

@@ -9,9 +9,10 @@ from typing import Any
 from ..config import Config
 from ..db import Database
 from ..errors import MSG_JOB, MSG_JOB_RETRIES, MSG_TRANSCRIBE
-from ..llm import BACKGROUND
+from ..llm import BACKGROUND, INTERACTIVE
 from ..transcripts import NoCaptions, TranscriptService
-from ..youtube import YoutubeDelayed, YoutubeVideoError
+from ..youtube import CLASS_MEDIA, FETCH_CLASSES, YoutubeDelayed, YoutubeVideoError
+from .asr import normalize_language
 from .pipeline import CaptionPipeline, sweep_media
 
 log = logging.getLogger("utubot.jobs")
@@ -99,11 +100,27 @@ class JobQueue:
         )
         return dict(row) if row else None
 
-    def enqueue_transcript(self, user: str, video_id: str, title: str | None) -> dict[str, Any]:
-        """Queue an ASR transcript; the same user asking again gets the job already queued."""
-        return self.find_active_transcript(user, video_id) or self._insert(
-            user, video_id, KIND_TRANSCRIPT, LANG_AUTO, None, title
+    def enqueue_transcript(
+        self, user: str, video_id: str, title: str | None, priority: int = BACKGROUND
+    ) -> dict[str, Any]:
+        """Queue an ASR transcript; the same user asking again gets the job already queued.
+
+        `INTERACTIVE` jobs (someone is waiting on the transcript) are claimed before background ones.
+        """
+        existing = self.find_active_transcript(user, video_id)
+        if existing is not None:
+            return existing
+        return self._insert(user, video_id, KIND_TRANSCRIPT, LANG_AUTO, None, title, priority)
+
+    def promote_transcript(self, video_id: str) -> None:
+        """Someone now waits on this video's transcript: queued work goes first, a running download too."""
+        self.db.execute(
+            "UPDATE jobs SET priority=? WHERE kind=? AND video_id=? AND priority>?"
+            " AND status IN ('queued','running')",
+            [INTERACTIVE, KIND_TRANSCRIPT, video_id, INTERACTIVE],
         )
+        self.pipeline.gate.promote(f"audio:{video_id}")
+        self._wake.set()
 
     def _insert(
         self,
@@ -113,13 +130,14 @@ class JobQueue:
         lang: str,
         translate_to: str | None,
         title: str | None,
+        priority: int = BACKGROUND,
     ) -> dict[str, Any]:
         job_id = uuid.uuid4().hex[:12]
         now = time.time()
         self.db.execute(
             "INSERT INTO jobs(id,user,video_id,lang,translate_to,status,progress,created_at,"
-            "updated_at,kind,title) VALUES(?,?,?,?,?,'queued',0,?,?,?,?)",
-            [job_id, user, video_id, lang, translate_to, now, now, kind, title],
+            "updated_at,kind,title,priority) VALUES(?,?,?,?,?,'queued',0,?,?,?,?,?)",
+            [job_id, user, video_id, lang, translate_to, now, now, kind, title, priority],
         )
         self._wake.set()
         return dict(self.db.one("SELECT * FROM jobs WHERE id=?", [job_id]))
@@ -134,7 +152,7 @@ class JobQueue:
     def transcript_job(self, video_id: str) -> dict[str, Any] | None:
         """The active ASR transcript job for a video, else its most recent failed one (if newest)."""
         row = self.db.one(
-            "SELECT id, status, progress, error, updated_at FROM jobs WHERE kind=? AND video_id=?"
+            "SELECT id, status, progress, error, updated_at, priority FROM jobs WHERE kind=? AND video_id=?"
             " ORDER BY (status IN ('queued','running')) DESC, created_at DESC LIMIT 1",
             [KIND_TRANSCRIPT, video_id],
         )
@@ -193,7 +211,9 @@ class JobQueue:
         now = self.pipeline.gate.now()
         out = []
         for r in rows:
-            retry = max(self.pipeline.gate.cooldown_remaining(), (r["not_before"] or 0) - now)
+            retry = max(
+                self.pipeline.gate.cooldown_remaining(CLASS_MEDIA), (r["not_before"] or 0) - now
+            )
             title = r["title"] or (self.transcripts.cached_meta(r["video_id"]) or {}).get("title")
             state = JOB_STATES.get(r["status"], r["status"])
             out.append(
@@ -253,14 +273,14 @@ class JobQueue:
         return self.get(job_id) or job
 
     def _claim(self) -> dict[str, Any] | None:
-        """Next queued job; none while the YouTube breaker is open (queued work waits, not fails)."""
-        if not self.pipeline.gate.healthy():
+        """Next queued job, interactive first; none while the media breaker is open (work waits)."""
+        if not self.pipeline.gate.healthy(CLASS_MEDIA):
             return None
         row = self.db.one(
             "SELECT * FROM jobs WHERE status='queued' AND (not_before IS NULL OR not_before<=?)"
             " AND NOT EXISTS"
             " (SELECT 1 FROM jobs r WHERE r.video_id=jobs.video_id AND r.status='running')"
-            " ORDER BY created_at LIMIT 1",
+            " ORDER BY priority, created_at LIMIT 1",
             [self.pipeline.gate.now()],
         )
         if not row:
@@ -276,20 +296,37 @@ class JobQueue:
         )
 
     async def _run_transcript(self, job: dict[str, Any]) -> None:
-        """ASR, unless YouTube has captions after all: those are used and the audio is skipped."""
+        """ASR, unless YouTube has captions after all: those are used and the audio is skipped.
+
+        The caption check needs the metadata and caption endpoints; when either is cooling or answers
+        "delayed" the check is skipped, because the audio comes from another endpoint (`media`).
+        """
         video_id = job["video_id"]
-        try:
-            await self.transcripts.get(video_id, BACKGROUND, recheck=True)
-            return
-        except NoCaptions:
-            pass
-        except YoutubeVideoError as exc:
-            if not exc.can_transcribe:
-                raise
-        text, lang = await self.pipeline.transcribe(
-            video_id, lambda f: self._set_progress(job["id"], f)
+        priority = job["priority"]
+        if self.pipeline.gate.healthy(*FETCH_CLASSES):
+            try:
+                await self.transcripts.get(video_id, priority, recheck=True)
+                return
+            except (NoCaptions, YoutubeDelayed):
+                pass
+            except YoutubeVideoError as exc:
+                if not exc.can_transcribe:
+                    raise
+        hint = normalize_language((self.transcripts.cached_meta(video_id) or {}).get("language"))
+        out = await self.pipeline.transcribe(
+            video_id,
+            lambda f: self._set_progress(job["id"], f),
+            priority=priority,
+            language=hint,
         )
-        self.transcripts.store_asr(video_id, text, lang)
+        self.transcripts.store_asr(
+            video_id,
+            out.text,
+            out.language or hint,
+            engine=out.engine,
+            model=out.model,
+            segments=out.segment_rows(),
+        )
 
     def _fail(self, job: dict[str, Any], message: str) -> None:
         now = time.time()
@@ -331,6 +368,7 @@ class JobQueue:
                     job["lang"],
                     job["translate_to"],
                     lambda f: self._set_progress(job["id"], f),
+                    job["priority"],
                 )
             now = time.time()
             self.db.execute(

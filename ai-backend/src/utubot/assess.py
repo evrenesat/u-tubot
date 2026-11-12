@@ -13,7 +13,7 @@ from .db import Database
 from .llm import BACKGROUND, LLMClient, LLMError
 from .models import Flag, Verdict, VideoMeta
 from .transcripts import NoCaptions, TranscriptService
-from .youtube import YoutubeDelayed
+from .youtube import FETCH_CLASSES, YoutubeDelayed
 
 TRIAGE_SYSTEM = (
     "You triage YouTube videos for a TV viewer using only the title, channel and metadata. "
@@ -406,7 +406,7 @@ class Assessor:
     def _tier2_gate_ok(self, video_id: str) -> bool:
         """Background transcript work only while YouTube is happy and nothing useless would run."""
         gate = self.transcripts.gate
-        if not gate.healthy():
+        if not gate.healthy(*FETCH_CLASSES):
             return False
         if self.transcripts.cached(video_id) is not None:
             return True

@@ -40,12 +40,14 @@ option. Highlights:
 - `[default_policy]` and `[[users]] policy` hold the defaults of every per-user setting (filtering, models per task, transcript
   policy, TV settings); users override them in the web UI.
 - `[assess]` batch size, wait cap, tier-2 daily cap per user (30).
-- `[youtube]` pacing and circuit breaker for every request to YouTube (`max_concurrent`, `min_interval_s`, `jitter_s`,
-  `cooldown_base_s`, `cooldown_max_s`); `[transcripts] no_captions_ttl_s`.
+- `[youtube]` pacing and circuit breakers (one per endpoint class: captions, metadata, media) for every request to YouTube
+  (`max_concurrent`, `min_interval_s`, `jitter_s`, `cooldown_base_s`, `cooldown_max_s`), the JavaScript runtime for yt-dlp
+  (`js_runtime_path`, `remote_components`); `[transcripts] no_captions_ttl_s`.
 - `[setup]`, `[app]` the public `/setup.json` (TVs import it by address), the landing page download codes and the GitHub
   update channel (`github_repo`, `signing_cert_sha256`, `apksigner_path`; `utubot app sync-github`, see `../docs/server.md`, Updates).
-- `[captions]` ASR backend (`openai` or `faster_whisper`), diarization (`none` or `pyannote`).
-- Environment: `UTUBOT_CONFIG`, `UTUBOT_LLM_API_KEY`, `UTUBOT_ASR_API_KEY`, `UTUBOT_HF_TOKEN`.
+- `[captions]` the ASR engine chain (`[[captions.asr_engines]]`: `openai`-compatible servers and local `faster_whisper`, picked by health,
+  language and priority, chunked and run in parallel; or the single `asr_*` keys), diarization (`none` or `pyannote`).
+- Environment: `UTUBOT_CONFIG`, `UTUBOT_LLM_API_KEY`, `UTUBOT_ASR_API_KEY` (and any variable an ASR engine names), `UTUBOT_HF_TOKEN`.
 
 ## Auth and pairing
 
@@ -82,7 +84,8 @@ Jobs survive restarts. Needs `ffmpeg` on PATH.
 Everything that reaches YouTube goes through `youtube.py` (`YoutubeGate`: pacing plus a 429/403/bot-check circuit breaker).
 Summaries, insights and answers are never made from the title alone: a transient YouTube problem answers `pending` with
 `transcript_status: "delayed"` and `retry_after_s`, a video without captions answers `needs_transcript` and the user can start
-`POST /v1/videos/ID/transcribe` (audio, ASR, stored with source `asr`). `GET /v1/videos/ID/transcript` and `GET /v1/jobs` show
+`POST /v1/videos/ID/transcribe` (audio, chunked ASR, stored with source `asr`); with the default policy (`auto_transcribe = "on_open"`,
+videos up to 30 minutes) the request that finds no captions starts it by itself and answers `pending` + `transcribing`. `GET /v1/videos/ID/transcript` and `GET /v1/jobs` show
 progress. See `../docs/server.md` and `../ai/CONTRACT.md`.
 
 ## Tests

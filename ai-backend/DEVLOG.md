@@ -1,5 +1,45 @@
 # DEVLOG
 
+## 2026-11-12 (fast transcripts, issue #19)
+
+- Gate: `YoutubeGate` keeps one shared pacer and one breaker per endpoint class (`captions` = timedtext, `metadata` = watch/player/yt-dlp
+  extract, `media` = audio download; state in `youtube_gate_class`, the old single row is adopted by all three once). Why: the TV
+  home screen's timedtext fetches got 429 while googlevideo audio downloads still worked, and the single breaker paused those too. Errors
+  carry `klass` (`classify_failure`/`classify_status` take it), `run(..., classes=)` names what an operation needs, a block opens the class
+  that got it (a bot check opens both yt-dlp classes), a success closes the classes it `answered` (`FetchResult.answered`). Pacing stays
+  shared on purpose (the owner's request rate is one number); `healthy()/state()/cooldown_remaining()` without arguments mean "all
+  classes", `snapshot()` feeds `GET /v1/status` (`youtube.classes`, `asr.engines`). Jobs are claimed while `media` is healthy; a transcript
+  job skips its "did captions appear?" recheck when `metadata`/`captions` cool or answer delayed and goes straight to the audio.
+- Audio: `captions/formats.py` picks the lowest-bitrate audio of the original track from yt-dlp's format list (a yt-dlp `format`
+  callable; fallback chain in the module doc and `docs/captions.md`; `audio_format` is only the last resort). Real multi-track videos
+  (checked on a 29 minute lecture with 20 languages) mark only the original (`... original (default)`), other tracks are plain language
+  names, so "marked original wins" is the operative rule; dubbed/descriptive notes are excluded when no marker exists.
+- JS runtime: `[youtube] js_runtime`, `js_runtime_path`, `remote_components` go to yt-dlp (`js_runtimes`, `remote_components`) for the
+  metadata fetch and the download. Verified live without deno on PATH: no option = "No supported JavaScript runtime"; path only =
+  "n challenge solving failed" (the solver script is missing); path + `remote_components = ["ejs:github"]` = clean and one more format.
+- ASR: `captions/engines.py` (`AsrRouter`, `OpenAIEngine`, `FasterWhisperEngine`) replaced `OpenAIASR`/`FasterWhisperASR`.
+  `[[captions.asr_engines]]` (name, kind, url, model, api_key_env, languages, max_chunk_s, max_parallel, timeout_s, priority,
+  background_only, speed_factor, overhead_s); the old `asr_*` keys become one engine `default` (key optional). Selection: enabled (key
+  env set, package present) -> serves a known language -> not background-only for interactive jobs -> healthy first -> priority (lower
+  first). Failures fall through per chunk, the next engine re-cuts to its own limit; 5xx/429/transport/401/403/404 mark the engine
+  unhealthy for `asr_unhealthy_s`, input rejections (400/413/415/422) do not; all unhealthy = try anyway. Per-engine `PriorityLimiter`
+  (`max_parallel`) is shared by all jobs. Unknown video language lets restricted engines through (documented caveat).
+- Chunking (`captions/chunking.py`): `plan_chunks` with 2 s overlap and a tail fold, WAV slicing in a thread, `stitch_*` cut at each
+  overlap midpoint then drop a repeated seam (>= 2 words, only when the next chunk starts inside the overlap). Progress = done chunks /
+  chunks. Transcripts keep `segments` (JSON), `engine`, `model` (new `transcripts` columns, migrated); `GET .../transcript` shows them.
+- Policy: `Transcription.auto` acts on `auto_transcribe` / `auto_transcribe_max_minutes` (fields from the web UI branch's
+  `UserPolicy`): explicit requests (summary view, insight, ask, ad-hoc) start on `on_open`/`on_dwell`, `prompt=panel` only on
+  `on_dwell`; known length <= limit, `can_transcribe`, queue not full, else `needs_transcript` as before. Jobs have a `priority`
+  (explicit = interactive, panel = background, promoted when the user opens the video); claim order is priority then age.
+- Estimates: `download_overhead_s + duration / download_speed_factor + engine.overhead_s + duration / (speed_factor x min(max_parallel,
+  chunks))` for the engine the selection would pick now.
+- Real check (public videos, stub caption fetch, real yt-dlp and ASR endpoint): 5.6 min video: 3.9 s download (2.0 MB), 4.7 s ASR, 17.6 s
+  whole job (about 4 s of that is the gate's mandatory gap between the caption check and the download); 29.5 min lecture: 2.5 s download
+  (10.7 MB), 3.4 s ffmpeg, 16.4 s ASR (3 chunks in parallel, ~108x real time), 30.7 s whole job. Seams at 598 s and 1196 s were clean.
+- Tests: `test_gate_classes.py`, `test_audio_formats.py`, `test_chunking.py`, `test_asr_engines.py` (stub engines, mock HTTP, the documented
+  chain), `test_auto_transcribe.py` (policy, priorities, estimates, migration, end to end with ffmpeg), plus media/flow updates. The
+  ask-first flow tests opt the owner out with `auto_transcribe = "off"`.
+
 ## 2026-11-12 (R4: phone web UI, per-user settings, web sign-in; issue #9)
 
 - UI: `web/index.html` is now a static shell; `web/ui/app.css` and `web/ui/js/**` (ES modules, no build, no npm, no external requests)

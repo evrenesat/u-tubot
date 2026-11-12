@@ -61,15 +61,25 @@ is no text they say why:
 | `ok` | `ready` | `source` | shows the text |
 | `delayed` | `pending` | `error` (user-facing, "YouTube is limiting transcript downloads; retrying in ~N min"), `retry_after_s` | shows `error`, asks again after `retry_after_s` (not before) |
 | `none` | `needs_transcript` | `can_transcribe`, `message` ("No captions. Transcribe the audio in the background?"), `estimate_s` (rough seconds, may be null) | shows `message`; when `can_transcribe` offers a "Transcribe in background?" action that calls `POST /v1/videos/{id}/transcribe` |
-| `transcribing` | `pending` | `progress` 0.0-1.0, `estimate_s` | shows progress, asks again later |
+| `transcribing` | `pending` | `progress` 0.0-1.0 (finished chunks over all chunks of the speech-recognition step), `estimate_s` | shows progress, asks again later |
 | `failed` | `failed` | `error`, `reason`, `can_transcribe` | shows `error`; `reason` is `private`, `members_only`, `age_restricted`, `unavailable`, `forbidden`, `too_long`, `live` (video problems) or absent (a transcription job failed); offers the transcribe action again only when `can_transcribe` |
 | `null` | any | none | the problem is not the transcript (model busy, generic failure) |
 
 `delayed` means YouTube slowed the server down (HTTP 429, bot check, 403 on the watch request, network error, an incomplete answer or an open cooldown); it is never
 cached, so the same request works once `retry_after_s` has passed. `none` is remembered by the backend for 3 days
 (`[transcripts] no_captions_ttl_s`) and then checked again; `can_transcribe` is false for live streams and videos
-longer than `[captions] max_duration_s`. The summary of a video whose transcription is queued or running answers `pending` with
+longer than `[captions] max_duration_s`, or when no configured speech engine serves the video's language. The summary of a video whose transcription is queued or running answers `pending` with
 `transcript_status: "transcribing"` until the transcript exists, then works normally with `source: "asr"`.
+
+**Automatic transcription.** When a `summary`, `insight` or `ask` request finds no captions, the user's policy decides whether the
+backend asks or just does it. `auto_transcribe` (`off`, `on_open`, `on_dwell`; default `on_open`) and `auto_transcribe_max_minutes`
+(default 30) are per-user settings. With `on_open` or `on_dwell` and a video of known length up to the maximum, the request itself queues
+the transcription (no user prompt) and answers `status: "pending"`, `transcript_status: "transcribing"`, `progress`, `estimate_s`
+instead of `needs_transcript`; asking again returns the progress, then the real answer. The side panel's request (`summary?prompt=panel`)
+is passive: it starts a transcription only for `on_dwell`; the Summary view, `insight`, `ask` and ad-hoc summaries are explicit and start
+one for `on_open` as well as `on_dwell`. Everything else keeps `needs_transcript` (policy `off`, a longer or unknown-length video, a full
+per-user queue, no engine for the language) and the app shows the question as before. Explicit requests run the job at interactive
+priority (claimed first, interactive engine use); a side-panel job is background work and is promoted when the user then opens the video.
 
 ## Endpoints
 
@@ -194,6 +204,8 @@ Nothing is queued when a transcript already exists.
 {"video_id":"...","job_id":"a1b2c3d4e5f6","status":"queued|running|ready",
  "transcript_status":"transcribing|ok","progress":0.0,"estimate_s":630}
 ```
+The job is interactive (the user asked), whatever the automatic-transcription policy says. `estimate_s` is the audio download plus the
+chosen speech engine's chunked recognition time.
 `400` when the video cannot be transcribed (live, or longer than the configured maximum), `429` when the user
 already has the maximum number of active transcriptions (`[captions] transcribe_max_active_per_user`, 5).
 
@@ -202,11 +214,11 @@ Where the transcript stands. Cheap: never contacts YouTube.
 
 ```json
 {"video_id":"...","transcript_status":"ok|delayed|none|transcribing|failed|unknown",
- "source":"youtube_captions|asr","lang":"en",
+ "source":"youtube_captions|asr","lang":"en","engine":"mac","model":"whisper-large-v3-turbo",
  "progress":0.4,"estimate_s":630,"job_id":"...",
  "can_transcribe":true,"message":"...","error":null}
 ```
-Only the fields that apply are present (`source`/`lang` with `ok`, `progress`/`estimate_s`/`job_id` with `transcribing`,
+Only the fields that apply are present (`source`/`lang` with `ok`, plus `engine`/`model` when the source is `asr`, `progress`/`estimate_s`/`job_id` with `transcribing`,
 `can_transcribe`/`message`/`estimate_s` with `none`, `error`/`reason`/`can_transcribe` with `failed`,
 `error`/`retry_after_s` with `delayed`). `job_id` appears only for the caller's own job, never another user's.
 `unknown` (only here) means the backend has not looked yet.
@@ -405,9 +417,11 @@ when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-adm
 ### Status and updates
 
 - `GET /v1/status` -> `{"version","uptime_s","youtube":{"state":"closed|half_open|open","healthy":true,"cooldown_remaining_s":0,
-  "background_waiting":0},"usage":{"day":"2026-11-12","llm":{"calls","errors","prompt_tokens","completion_tokens"},
+  "background_waiting":0,"classes":{"captions|metadata|media":{"state":"closed|half_open|open","cooldown_remaining_s":0,"strikes":0}}},
+  "asr":{"engines":[{"name","kind","model","enabled","healthy","unhealthy_for_s","languages","priority","max_parallel","background_only"}]},"usage":{"day":"2026-11-12","llm":{"calls","errors","prompt_tokens","completion_tokens"},
   "transcripts":{"youtube_captions","asr"},"analyses":{"used","cap"}},"jobs":{"waiting","processing","failed"}}` (counts of the caller's jobs; usage
-  is for the current UTC day).
+  is for the current UTC day). `youtube.state`, `healthy` and `cooldown_remaining_s` summarise the three endpoint classes (open if any is open, the longest
+  cooldown); `classes` has each one, because a limit on one does not stop the others. Engine entries never carry URLs or keys.
 - `GET /v1/updates` -> `{"channel":{"published":true,"version_name","version_code","changelog","files":{"arm64-v8a":{"file","size"}},
   "published_at"},"github":{"configured":true,"repo","checked_at","latest":{"tag","version","published_at","url"}|"error":"..."},
   "behind":true,"last_sync":{"checked_at","status","version_name","error"}|null,"update_url"}`. `last_sync` is the last real

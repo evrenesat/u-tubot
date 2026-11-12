@@ -12,15 +12,18 @@ from tests.fakes import FakeClock, settle
 from utubot.captions import pipeline as pipeline_mod
 from utubot.captions.jobs import JobQueue
 from utubot.captions.pipeline import CaptionPipeline, audio_filter, download_audio, sweep_media
-from utubot.config import Config
+from utubot.config import Config, YoutubeConfig
 from utubot.db import Database
 from utubot.llm import BACKGROUND, INTERACTIVE
 from utubot.transcripts import TranscriptService
 from utubot.youtube import (
+    CLASS_MEDIA,
     REASON_LIVE,
     REASON_TOO_LONG,
+    YoutubeBlocked,
     YoutubeGate,
     YoutubeVideoError,
+    ytdlp_runtime_options,
 )
 
 VID = "abcdefghijk"
@@ -91,6 +94,128 @@ async def test_download_audio_passes_duration_and_size_limits_and_signals_the_st
     opts = fake_ydl.created[0]
     assert opts["max_filesize"] == 123456 and callable(opts["match_filter"])
     assert path.exists() and started == [1]
+
+
+ORIGINAL_NOTE = "English (United States) original (default), low"
+DUBBED_NOTE = "Spanish (United States) dubbed-auto, low"
+
+
+def track(format_id: str, abr: float, note: str) -> dict:
+    return {
+        "format_id": format_id,
+        "format_note": note,
+        "acodec": "opus",
+        "vcodec": "none",
+        "abr": abr,
+        "protocol": "https",
+        "url": f"https://media.invalid/{format_id}",
+    }
+
+
+async def test_download_audio_selects_the_original_track_not_the_cheapest_dub(tmp_path, fake_ydl):
+    await download_audio(
+        VID,
+        tmp_path,
+        lambda: None,
+        fmt="bestaudio/best",
+        max_duration_s=MAX_DURATION_S,
+        max_bytes=1 << 20,
+    )
+    select = fake_ydl.created[0]["format"]
+    formats = [track("249-1", 40, DUBBED_NOTE), track("249-0", 50, ORIGINAL_NOTE)]
+    assert [f["format_id"] for f in select({"formats": formats})] == ["249-0"]
+
+
+async def test_download_audio_falls_back_to_the_configured_yt_dlp_selector(
+    tmp_path, fake_ydl, monkeypatch
+):
+    asked: list[str] = []
+
+    def build_format_selector(self, spec):
+        asked.append(spec)
+        return lambda ctx: iter([{"format_id": f"by-{spec}"}])
+
+    monkeypatch.setattr(FakeYDL, "build_format_selector", build_format_selector, raising=False)
+    await download_audio(
+        VID,
+        tmp_path,
+        lambda: None,
+        fmt="worstaudio",
+        max_duration_s=MAX_DURATION_S,
+        max_bytes=1 << 20,
+    )
+    select = fake_ydl.created[0]["format"]
+    assert asked == ["worstaudio"]
+    assert [f["format_id"] for f in select({"formats": []})] == ["by-worstaudio"]
+
+
+async def test_download_audio_passes_the_js_runtime_options_to_yt_dlp(tmp_path, fake_ydl):
+    cfg = YoutubeConfig(js_runtime="deno", js_runtime_path="/opt/deno/bin/deno")
+    await download_audio(
+        VID,
+        tmp_path,
+        lambda: None,
+        fmt="bestaudio/best",
+        max_duration_s=MAX_DURATION_S,
+        max_bytes=1,
+        extra_opts=ytdlp_runtime_options(cfg),
+    )
+    assert fake_ydl.created[0]["js_runtimes"] == {"deno": {"path": "/opt/deno/bin/deno"}}
+
+
+async def test_a_429_while_downloading_audio_is_attributed_to_the_media_class(
+    tmp_path, fake_ydl, monkeypatch
+):
+    def refuse(self, url, download=True):
+        raise pipeline_mod.yt_dlp.utils.DownloadError("ERROR: HTTP Error 429: Too Many Requests")
+
+    monkeypatch.setattr(FakeYDL, "extract_info", refuse)
+    with pytest.raises(YoutubeBlocked) as exc:
+        await download_audio(
+            VID,
+            tmp_path,
+            lambda: None,
+            fmt="bestaudio/best",
+            max_duration_s=MAX_DURATION_S,
+            max_bytes=1,
+        )
+    assert exc.value.klass == CLASS_MEDIA
+
+
+def test_runtime_options_are_empty_unless_configured():
+    assert ytdlp_runtime_options(YoutubeConfig()) == {}
+    cfg = YoutubeConfig(
+        js_runtime="node", js_runtime_path="/usr/bin/node", remote_components=["ejs:github"]
+    )
+    assert ytdlp_runtime_options(cfg) == {
+        "js_runtimes": {"node": {"path": "/usr/bin/node"}},
+        "remote_components": ["ejs:github"],
+    }
+    assert ytdlp_runtime_options(YoutubeConfig(js_runtime="bun")) == {}
+
+
+def test_the_default_downloader_and_the_metadata_fetch_use_the_configured_runtime(
+    tmp_path, monkeypatch
+):
+    from utubot.transcripts import YoutubeFetcher
+
+    cfg = Config()
+    cfg.server.data_dir = str(tmp_path / "data")
+    cfg.youtube.js_runtime_path = "/opt/deno/bin/deno"
+    seen: list[dict] = []
+
+    class Capture(FakeYDL):
+        def __init__(self, opts):
+            seen.append(opts)
+            super().__init__(opts)
+
+        def extract_info(self, url, download=True):
+            return {"id": "x", "title": "t", "formats": [{}]}
+
+    monkeypatch.setattr(pipeline_mod.yt_dlp, "YoutubeDL", Capture)
+    YoutubeFetcher(cfg)._extract(VID)
+    assert seen[0]["js_runtimes"] == {"deno": {"path": "/opt/deno/bin/deno"}}
+    assert seen[0]["skip_download"] is True
 
 
 @pytest.mark.parametrize(

@@ -12,10 +12,13 @@ import math
 import time
 from typing import Any
 
+from .captions.asr import normalize_language
+from .captions.engines import AsrRouter
 from .captions.jobs import ACTIVE, KIND_TRANSCRIPT, JobQueue
-from .config import Config
+from .config import Config, UserPolicy
 from .errors import MSG_NO_CAPTIONS, MSG_NO_CAPTIONS_UNAVAILABLE, MSG_TRANSCRIBE, delayed_message
-from .transcripts import HOLD_DELAYED, NoCaptions, TranscriptService
+from .llm import BACKGROUND, INTERACTIVE
+from .transcripts import HOLD_DELAYED, SOURCE_ASR, NoCaptions, TranscriptService
 from .youtube import YoutubeDelayed, YoutubeVideoError
 
 OK = "ok"
@@ -33,6 +36,9 @@ STATUS_FOR = {
 }
 PROGRESS_DIGITS = 3
 MIN_SPEED_FACTOR = 0.01
+SECONDS_PER_MINUTE = 60
+AUTO_OFF = "off"
+AUTO_ON_DWELL = "on_dwell"
 
 
 class TranscribeRefused(Exception):
@@ -45,22 +51,37 @@ class TranscribeRefused(Exception):
 class Transcription:
     def __init__(self, cfg: Config, transcripts: TranscriptService, jobs: JobQueue):
         self.cfg, self.transcripts, self.jobs = cfg, transcripts, jobs
+        asr = jobs.pipeline.asr
+        self.engines = asr if isinstance(asr, AsrRouter) else AsrRouter(cfg.captions)
 
     def _meta(self, video_id: str, hint: dict[str, Any] | None) -> dict[str, Any]:
         return {**(hint or {}), **(self.transcripts.cached_meta(video_id) or {})}
 
-    def estimate_s(self, duration_s: float | None) -> int | None:
-        """Rough wall-clock seconds to transcribe: fixed overhead plus audio length over ASR speed."""
+    def estimate_s(
+        self,
+        duration_s: float | None,
+        language: str | None = None,
+        priority: int = INTERACTIVE,
+    ) -> int | None:
+        """Rough wall-clock seconds: the audio download plus the chosen engine's chunked ASR."""
         if not duration_s:
             return None
         c = self.cfg.captions
-        return round(c.asr_overhead_s + duration_s / max(c.asr_speed_factor, MIN_SPEED_FACTOR))
+        asr = self.engines.estimate_s(duration_s, normalize_language(language), priority)
+        if asr is None:
+            return None
+        download = c.download_overhead_s + duration_s / max(
+            c.download_speed_factor, MIN_SPEED_FACTOR
+        )
+        return round(download + asr)
 
     def can_transcribe(self, meta: dict[str, Any]) -> bool:
         duration = meta.get("duration_s")
         if meta.get("is_live"):
             return False
-        return not (duration and duration > self.cfg.captions.max_duration_s)
+        if duration and duration > self.cfg.captions.max_duration_s:
+            return False
+        return self.engines.available(normalize_language(meta.get("language")))
 
     def none_fields(self, video_id: str, hint: dict[str, Any] | None = None) -> dict[str, Any]:
         meta = self._meta(video_id, hint)
@@ -69,7 +90,56 @@ class Transcription:
             "transcript_status": NONE,
             "can_transcribe": can,
             "message": MSG_NO_CAPTIONS if can else MSG_NO_CAPTIONS_UNAVAILABLE,
-            "estimate_s": self.estimate_s(meta.get("duration_s")) if can else None,
+            "estimate_s": self.estimate_s(meta.get("duration_s"), meta.get("language"))
+            if can
+            else None,
+        }
+
+    def auto_allowed(self, policy: UserPolicy, meta: dict[str, Any], *, passive: bool) -> bool:
+        """May a video without captions be transcribed without asking this user?
+
+        `on_open` transcribes when the user asks for a summary, insight or answer; `on_dwell` also
+        when they merely linger on the video (`passive`: the side panel). Only videos up to
+        `auto_transcribe_max_minutes` (length must be known) qualify.
+        """
+        mode = policy.auto_transcribe
+        if mode == AUTO_OFF or (passive and mode != AUTO_ON_DWELL):
+            return False
+        duration = meta.get("duration_s")
+        if not duration or duration > policy.auto_transcribe_max_minutes * SECONDS_PER_MINUTE:
+            return False
+        return self.can_transcribe(meta)
+
+    def auto(
+        self,
+        fields: dict[str, Any],
+        *,
+        user: str | None,
+        policy: UserPolicy,
+        video_id: str,
+        hint: dict[str, Any] | None,
+        passive: bool = False,
+    ) -> dict[str, Any]:
+        """Turn a `needs_transcript` answer into a started transcription when the policy allows.
+
+        Anything else (and a refused or disallowed start) comes back unchanged. The answer then
+        is `pending` + `transcribing` with `progress` and `estimate_s`, like any running job.
+        """
+        if user is None or fields.get("transcript_status") != NONE:
+            return fields
+        if not self.auto_allowed(policy, self._meta(video_id, hint), passive=passive):
+            return fields
+        try:
+            queued = self.request(
+                user, video_id, hint, priority=BACKGROUND if passive else INTERACTIVE
+            )
+        except TranscribeRefused:
+            return fields
+        return {
+            "status": STATUS_FOR[TRANSCRIBING],
+            "transcript_status": TRANSCRIBING,
+            "progress": queued["progress"],
+            "estimate_s": queued["estimate_s"],
         }
 
     def _held(self, video_id: str, meta: dict[str, Any]) -> dict[str, Any] | None:
@@ -98,14 +168,19 @@ class Transcription:
         """
         cached = self.transcripts.cached(video_id)
         if cached:
-            return {"transcript_status": OK, "source": cached.source, "lang": cached.lang}
+            ok = {"transcript_status": OK, "source": cached.source, "lang": cached.lang}
+            if cached.source == SOURCE_ASR:
+                ok.update(engine=cached.engine, model=cached.model)
+            return ok
         meta = self._meta(video_id, hint)
         job = self.jobs.transcript_job(video_id)
         if job and job["status"] in ACTIVE:
             return {
                 "transcript_status": TRANSCRIBING,
                 "progress": round(job["progress"], PROGRESS_DIGITS),
-                "estimate_s": self.estimate_s(meta.get("duration_s")),
+                "estimate_s": self.estimate_s(
+                    meta.get("duration_s"), meta.get("language"), job["priority"]
+                ),
             }
         held = self._held(video_id, meta)
         if held:
@@ -125,11 +200,18 @@ class Transcription:
             return self.none_fields(video_id, hint)
         return None
 
-    def blocked(self, video_id: str, hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
-        """Response fields when the transcript is not usable right now; None when it is."""
+    def blocked(
+        self, video_id: str, hint: dict[str, Any] | None = None, *, promote: bool = False
+    ) -> dict[str, Any] | None:
+        """Response fields when the transcript is not usable right now; None when it is.
+
+        `promote`: the caller is waiting on a running or queued transcription, so it goes first.
+        """
         state = self.state(video_id, hint)
         if state is None or state["transcript_status"] == OK:
             return None
+        if promote and state["transcript_status"] == TRANSCRIBING:
+            self.jobs.promote_transcript(video_id)
         return {"status": STATUS_FOR[state["transcript_status"]], **state}
 
     def problem(
@@ -157,9 +239,17 @@ class Transcription:
         return None
 
     def request(
-        self, user: str, video_id: str, hint: dict[str, Any] | None = None
+        self,
+        user: str,
+        video_id: str,
+        hint: dict[str, Any] | None = None,
+        priority: int = INTERACTIVE,
     ) -> dict[str, Any]:
-        """Queue (or rejoin) the user's background ASR transcript job for a video."""
+        """Queue (or rejoin) the user's ASR transcript job for a video.
+
+        The user asked for it, so it is interactive unless the caller says otherwise (`BACKGROUND`:
+        started on the user's behalf by a passive trigger).
+        """
         base = {"video_id": video_id}
         state = self.state(video_id, hint)
         if state and state["transcript_status"] == OK:
@@ -176,14 +266,16 @@ class Transcription:
                 raise TranscribeRefused(
                     429, "too many transcriptions queued, wait for one to finish"
                 )
-            job = self.jobs.enqueue_transcript(user, video_id, meta.get("title"))
+            job = self.jobs.enqueue_transcript(user, video_id, meta.get("title"), priority)
+        elif priority == INTERACTIVE:
+            self.jobs.promote_transcript(video_id)
         return {
             **base,
             "status": job["status"],
             "job_id": job["id"],
             "transcript_status": TRANSCRIBING,
             "progress": round(job["progress"], PROGRESS_DIGITS),
-            "estimate_s": self.estimate_s(meta.get("duration_s")),
+            "estimate_s": self.estimate_s(meta.get("duration_s"), meta.get("language"), priority),
         }
 
     def status(

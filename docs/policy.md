@@ -37,8 +37,8 @@ override, then `[users.policy]`, then `[default_policy]`, then the built-in defa
 | `auto_long` | unset | `true`/`false` overrides `[summary] auto_long` (generate the long summary in the background after a side-panel summary); unset follows the config |
 | `mark_only` | unset | `true`: the TV shows cards that would be hidden with a mark instead; unset follows `[setup.defaults] mark_only` |
 | `models` | `{}` | per-task model (`glance`, `summary`, `answer`, `triage`, `analysis`); a task without an entry follows `[llm.<task>]` |
-| `auto_transcribe` | `"on_open"` | `off`, `on_dwell` or `on_open`: when a video without captions is transcribed by itself (acted on by the TV in a later release) |
-| `auto_transcribe_max_minutes` | `30` | videos longer than this are not transcribed automatically |
+| `auto_transcribe` | `"on_open"` | `off`, `on_open` or `on_dwell`: when a video without captions is transcribed without asking. `on_open`: when you open the video (Summary view, insight, answer); `on_dwell`: also while you merely linger on it (the side panel). `off`: always ask first. See [captions.md](captions.md#transcripts-for-videos-without-captions) |
+| `auto_transcribe_max_minutes` | `30` | videos longer than this (or of unknown length) are not transcribed automatically: they answer `needs_transcript` and the TV asks |
 | `summary_delay_ms` | `700` | TV: how long a card stays focused before its summary is requested |
 | `summary_panel` | unset | TV: side panel on by default; unset follows `[setup.defaults] summary_panel` |
 | `auto_captions` | unset | TV: offer u·tubot captions automatically; unset follows `[setup.defaults] auto_captions` |

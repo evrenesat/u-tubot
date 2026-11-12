@@ -164,8 +164,11 @@ description_max_chars = 300
 
 # Everything that reaches YouTube (metadata, caption text, audio) goes through one gate: at most
 # `max_concurrent` requests, spaced `min_interval_s` + random(0, jitter_s) apart, interactive before
-# background. A 429, 403 or "confirm you're not a bot" opens a circuit breaker: interactive requests
-# answer "delayed" at once, background work (tier-2, caption and transcript jobs) waits and resumes.
+# background. The pacing is shared by every kind of request. A 429, 403 or "confirm you're not a bot"
+# opens a circuit breaker, one per endpoint class: `captions` (the timedtext API), `metadata`
+# (watch/player pages through yt-dlp) and `media` (audio downloads). A limit on one class does not stop the
+# others (a caption 429 leaves audio downloads running). Interactive requests for a cooling class answer
+# "delayed" at once, background work (tier-2, caption and transcript jobs) waits and resumes.
 [youtube]
 max_concurrent = 1
 min_interval_s = 3.0
@@ -174,6 +177,12 @@ cooldown_base_s = 300.0            # first cooldown without a Retry-After header
 cooldown_max_s = 3600.0            # ceiling for any cooldown, Retry-After included (60 min)
 network_retry_s = 60.0             # retry hint to clients after a network error (does not open the breaker)
 max_background_queue = 5           # tier-2 is not scheduled while this many background fetches wait
+# yt-dlp needs a JavaScript runtime to unscramble some YouTube stream URLs (the "n challenge"). A service started
+# by systemd often has no `deno` on its PATH, so name it. The solver script is not part of yt-dlp itself:
+# allow its download once (it is cached) or install the `yt-dlp-ejs` package that matches your yt-dlp.
+js_runtime = "deno"                # deno (default), node, bun or quickjs
+# js_runtime_path = "/usr/local/bin/deno"     # example; unset: yt-dlp looks the runtime up on PATH
+# remote_components = ["ejs:github"]          # example; lets yt-dlp fetch its challenge solver script
 
 [transcripts]
 cache_ttl_s = 2592000
@@ -203,11 +212,15 @@ auto_long = false                  # true: after a panel summary, also generate 
 auto_long_max_concurrent = 2       # background long summaries in flight (transcript fetch included); more are skipped until one ends
 
 [captions]
+# Speech-to-text engine chain. Either list engines in `[[captions.asr_engines]]` (below) or use the single
+# backend keys that follow, which become one engine called "default".
 asr_backend = "faster_whisper"     # "faster_whisper" (local CPU) or "openai" (remote /v1/audio/transcriptions)
 asr_url = "http://127.0.0.1:8000/v1/audio/transcriptions"
 asr_api_key_env = "UTUBOT_ASR_API_KEY"
 asr_model = "whisper-1"
-asr_chunk_s = 600                  # long audio is split into chunks of this length for the remote API
+asr_chunk_s = 600                  # long audio is split into chunks of this length
+asr_unhealthy_s = 300.0            # an engine that failed is skipped this long while another engine can take the work
+asr_chunk_overlap_s = 2.0          # neighbouring chunks overlap this much; stitching removes the repeated words
 whisper_model = "small"            # faster_whisper model size (CPU, int8)
 whisper_compute_type = "int8"
 whisper_threads = 4
@@ -220,12 +233,55 @@ max_lines = 2
 min_cue_s = 1.0
 max_cue_s = 7.0
 job_concurrency = 1
-asr_speed_factor = 1.5             # audio seconds transcribed per second; only used for the "estimate_s" shown to the user
-asr_overhead_s = 30                # download + model load, added to the estimate
+asr_speed_factor = 1.5             # single-backend keys: audio seconds transcribed per second (one stream), for the shown "estimate_s"
+asr_overhead_s = 30                # single-backend keys: fixed seconds per transcription (request, model load), added to the estimate
+download_overhead_s = 5.0          # estimate: fixed seconds for the audio download (yt-dlp start, pacing)
+download_speed_factor = 300.0      # estimate: audio seconds fetched per second (about 50 kbit/s opus over a fast link)
 transcribe_max_active_per_user = 5 # queued or running "transcribe in background" jobs per user
 job_max_attempts = 3               # a job that YouTube keeps refusing (429, network) is retried this many times, then fails
 media_orphan_age_s = 3600          # on start, scratch directories under data_dir/media older than this are removed (unless keep_media)
 max_download_bytes = 419430400     # yt-dlp skips audio larger than this (400 MiB); the duration limit is max_duration_s
+audio_format = "bestaudio/best"    # yt-dlp selector used only when no usable format was recognised: the audio is normally the
+                                   # lowest-bitrate stream of the ORIGINAL-language track (never an AI-dubbed one; docs/captions.md)
+
+# An engine chain: each engine is used when its key variable is set (none needed when api_key_env is omitted).
+# Per audio file the router picks, among healthy engines that serve the video's language, the lowest `priority`
+# number; a failing engine is skipped for `asr_unhealthy_s` and the work falls through to the next one.
+# Audio is cut into overlapping chunks of at most `max_chunk_s` (0 = no cutting), `max_parallel` at a time per engine
+# (shared by all jobs), then stitched. `languages` is an optional allow-list (checked only when the video's language is
+# known); `background_only` keeps an engine away from jobs somebody is waiting for. `speed_factor` (audio seconds per
+# second for one stream) and `overhead_s` feed the "estimate_s" shown to users.
+# [[captions.asr_engines]]          # a GPU box: everything, three 10 minute chunks at once
+# name = "gpu"
+# kind = "openai"
+# url = "http://gpu.example:8901/v1/audio/transcriptions"
+# model = "whisper-large-v3-turbo"
+# api_key_env = "UTUBOT_ASR_API_KEY"
+# max_chunk_s = 600
+# max_parallel = 3
+# timeout_s = 300
+# priority = 10
+# speed_factor = 35.0
+#
+# [[captions.asr_engines]]          # a small CPU box on the LAN: English and Turkish only, one chunk at a time, never for interactive jobs
+# name = "lan-cpu"
+# url = "http://stt.example:8788/v1/audio/transcriptions"
+# model = "nemotron"
+# api_key_env = "UTUBOT_LAN_STT_KEY"
+# languages = ["en", "tr"]
+# max_chunk_s = 540
+# max_parallel = 1
+# background_only = true
+# priority = 20
+# speed_factor = 4.0
+#
+# [[captions.asr_engines]]          # always available: local faster-whisper on this machine
+# name = "local"
+# kind = "faster_whisper"
+# model = "small"
+# max_chunk_s = 600
+# priority = 30
+# speed_factor = 1.5
 
 # ---- Setup import and public download page ------------------------------------------------
 # GET /setup.json (no auth) lets the TV app configure itself from a short address.
