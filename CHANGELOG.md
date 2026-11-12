@@ -15,7 +15,8 @@ Backend (`ai-backend/`) only; no app build changes yet.
   (still `builtin/tldr`). Change it with `PUT /v1/prompts/panel-default` or in the web UI. `GET /v1/videos/{id}/summary?prompt=panel`
   uses it. The app keeps showing `default` in the panel until it adopts `panel_default`.
 - `[summary] auto_long = false`: when true (or the policy field `auto_long`), a panel summary also queues the user's default
-  long summary in the background.
+  long summary in the background (at most `auto_long_max_concurrent = 2` at a time). Opening the long summary yourself takes over
+  from the background job, and a background failure never fails your request.
 - `builtin/answer-title` answers the title's question or curiosity gap first; the transcript condense step keeps the passage that
   answers it. Prompts accept an optional `task` (`summary` or `glance`); existing prompt-set files are unchanged.
 

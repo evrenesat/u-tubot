@@ -75,7 +75,8 @@ blocks the host), `skip_if_longer_than_s`.
 `default_wait_ms`, `wait_ms_cap`, `adhoc_ttl_s`, `max_summary_chars`, `max_import_bytes`, `import_timeout_s`,
 `import_allow_hosts`, `import_max_redirects`, `panel_prompt` (prompt for the side panel's automatic summaries, default
 `"builtin/glance"`; each user can choose their own), `auto_long` (default `false`: also generate the user's default long summary in
-the background after a panel summary; a user's `auto_long` policy field overrides it). See [prompt-sets.md](prompt-sets.md).
+the background after a panel summary; a user's `auto_long` policy field overrides it), `auto_long_max_concurrent` (default `2`,
+background long summaries in flight including the transcript fetch; further ones are skipped until one ends, `0` disables them). See [prompt-sets.md](prompt-sets.md).
 
 **`[captions]`**: ASR and diarization, see [captions.md](captions.md).
 

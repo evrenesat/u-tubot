@@ -111,6 +111,7 @@ class SummaryConfig(BaseModel):
     import_max_redirects: int = 5
     panel_prompt: str = "builtin/glance"
     auto_long: bool = False
+    auto_long_max_concurrent: int = 2
 
 
 class CaptionsConfig(BaseModel):

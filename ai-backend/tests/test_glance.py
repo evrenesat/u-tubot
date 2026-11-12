@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
 from tests.test_prompts_summary import pset
-from utubot.config import GLANCE_MAX_TOKENS, GlanceTask
-from utubot.llm import BACKGROUND, INTERACTIVE
+from utubot.config import GLANCE_MAX_TOKENS, GlanceTask, UserPolicy
+from utubot.content import summary_task_key
+from utubot.llm import BACKGROUND, INTERACTIVE, LLMError
 from utubot.prompts import (
     BUILTIN_SET,
     DEFAULT_PANEL_KEY,
@@ -34,6 +36,22 @@ async def panel(env, vid: str = VID, **params):
     return await env.client.get(
         f"/v1/videos/{vid}/summary", params={"prompt": "panel", "wait_ms": 5000, **params}
     )
+
+
+def tldr_hash() -> str:
+    return next(p for p in BUILTIN_SET.prompts if p.id == "tldr").content_hash()
+
+
+def intercept_background(env, behaviour):
+    """Run `behaviour(task, messages, kwargs)` instead of the model for background-priority calls."""
+    original = env.svc.llm.chat_result
+
+    async def wrapper(task, messages, **kwargs):
+        if kwargs["priority"] == BACKGROUND:
+            return await behaviour(task, messages, kwargs)
+        return await original(task, messages, **kwargs)
+
+    env.svc.llm.chat_result = wrapper
 
 
 def spy_priorities(env) -> list[tuple[str, int]]:
@@ -288,3 +306,74 @@ def test_example_config_has_glance_defaults():
     assert cfg.llm.glance is None
     task = cfg.llm.glance_task()
     assert task.model == cfg.llm.summary.model and task.reasoning_effort == "none"
+
+
+async def test_background_failure_never_fails_an_interactive_request(env):
+    env.cfg.summary.auto_long = True
+
+    async def boom(task, messages, kwargs):
+        raise LLMError("boom")
+
+    intercept_background(env, boom)
+    await panel(env)
+    await env.svc.content.registry.drain()
+    registry = env.svc.content.registry
+    bg_key = summary_task_key(VID, "builtin/tldr", tldr_hash(), "en", BACKGROUND)
+    assert registry.recent_failure(bg_key)
+
+    seen = spy_priorities(env)
+    r = await env.client.get(f"/v1/videos/{VID}/summary", params={"wait_ms": 5000})
+    assert r.json()["status"] == "ready" and r.json()["prompt"] == "builtin/tldr"
+    assert [p for _, p in seen if TLDR_MARK in _] == [INTERACTIVE]
+    before = len(env.llm.calls)
+    await panel(env)
+    await env.svc.content.registry.drain()
+    assert len(env.llm.calls) == before
+
+
+async def test_interactive_request_takes_over_a_running_background_job(env):
+    env.cfg.summary.auto_long = True
+    started = asyncio.Event()
+
+    async def hang(task, messages, kwargs):
+        started.set()
+        await asyncio.sleep(60)
+
+    intercept_background(env, hang)
+    await panel(env)
+    await asyncio.wait_for(started.wait(), 2)
+    registry = env.svc.content.registry
+    bg_key = summary_task_key(VID, "builtin/tldr", tldr_hash(), "en", BACKGROUND)
+    assert registry.running(bg_key)
+
+    seen = spy_priorities(env)
+    r = await env.client.get(f"/v1/videos/{VID}/summary", params={"wait_ms": 5000})
+    assert r.json()["status"] == "ready"
+    assert [p for u, p in seen if TLDR_MARK in u] == [INTERACTIVE]
+    await asyncio.sleep(0.05)
+    assert not registry.running(bg_key) and registry.recent_failure(bg_key) is None
+    assert env.svc.content._auto_long_active == 0
+    rows = env.svc.db.all(
+        "SELECT prompt_key FROM summaries WHERE video_id=? AND prompt_key=?", [VID, "builtin/tldr"]
+    )
+    assert len(rows) == 1
+
+
+async def test_auto_long_concurrency_is_capped(env):
+    env.cfg.summary.auto_long = True
+    content = env.svc.content
+    assert env.cfg.summary.auto_long_max_concurrent == 2
+    policy = UserPolicy()
+    videos = ["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"]
+    queued = [content.schedule_long("owner", policy, v, {}, "builtin/glance") for v in videos]
+    assert queued == [True, True, False]
+    assert content._auto_long_active == 2
+    await content.registry.drain()
+    assert content._auto_long_active == 0
+    assert content.schedule_long("owner", policy, videos[2], {}, "builtin/glance") is True
+    await content.registry.drain()
+    rows = env.svc.db.all("SELECT video_id FROM summaries WHERE prompt_key='builtin/tldr'")
+    assert {r["video_id"] for r in rows} == set(videos)
+
+    env.cfg.summary.auto_long_max_concurrent = 0
+    assert content.schedule_long("owner", policy, VID, {}, "builtin/glance") is False

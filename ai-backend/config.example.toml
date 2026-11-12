@@ -150,6 +150,7 @@ import_allow_hosts = []            # exact hostnames exempt from the private-add
 import_max_redirects = 5
 panel_prompt = "builtin/glance"    # prompt for auto/side-panel summaries (users can pick their own in the web UI)
 auto_long = false                  # true: after a panel summary, also generate the user's default (long) summary in the background
+auto_long_max_concurrent = 2       # background long summaries in flight (transcript fetch included); more are skipped until one ends
 
 [captions]
 asr_backend = "faster_whisper"     # "faster_whisper" (local CPU) or "openai" (remote /v1/audio/transcriptions)

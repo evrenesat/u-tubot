@@ -37,6 +37,16 @@ TRUNCATION_MARK = "\n[... middle omitted ...]\n"
 HEAD_FRACTION = 0.6
 ADHOC_KEY = "adhoc"
 ASK_CACHE_MAX = 500
+SUMMARY_TASK = "summary"
+SUMMARY_BG_TASK = "summary-bg"
+
+
+def summary_task_key(
+    video_id: str, store_key: str, chash: str, language: str, priority: int
+) -> tuple[str, str, str, str, str]:
+    """Interactive and background runs of one summary are separate tasks with separate failures."""
+    kind = SUMMARY_TASK if priority == INTERACTIVE else SUMMARY_BG_TASK
+    return (kind, video_id, store_key, chash, language)
 
 
 def tokens_of(text: str, chars_per_token: int) -> int:
@@ -86,6 +96,7 @@ class ContentService:
         self.transcripts, self.prompts = transcripts, prompts
         self.registry = TaskRegistry(cfg.summary.failure_cooldown_s)
         self._ask_results: dict[Any, tuple[str, float | None]] = {}
+        self._auto_long_active = 0
 
     def wait_cap(self, wait_ms: int | None) -> int:
         s = self.cfg.summary
@@ -230,7 +241,7 @@ class ContentService:
         qmeta: dict[str, Any],
         priority: int,
     ) -> asyncio.Task:
-        task_key = ("summary", video_id, store_key, chash, policy.language)
+        task_key = summary_task_key(video_id, store_key, chash, policy.language, priority)
 
         async def job() -> tuple[str, str]:
             transcript = await self.source(video_id, qmeta)
@@ -244,7 +255,11 @@ class ContentService:
             )
             return text, transcript.source
 
-        return self.registry.start(task_key, job)
+        task = self.registry.start(task_key, job)
+        if priority == INTERACTIVE:
+            bg_key = summary_task_key(video_id, store_key, chash, policy.language, BACKGROUND)
+            self.registry.cancel(bg_key)
+        return task
 
     async def summary(
         self,
@@ -262,7 +277,7 @@ class ContentService:
         hit = self._find_summary(policy, video_id, store_key, chash, adhoc)
         if hit:
             return {**base, "status": "ready", "text": hit["text"], "source": hit["source"]}
-        task_key = ("summary", video_id, store_key, chash, policy.language)
+        task_key = summary_task_key(video_id, store_key, chash, policy.language, INTERACTIVE)
         failure = self.registry.recent_failure(task_key)
         if failure:
             return {**base, "status": "failed", "error": failure}
@@ -301,11 +316,19 @@ class ContentService:
         chash = prompt.content_hash()
         if self._find_summary(policy, video_id, key, chash, adhoc=False):
             return False
-        task_key = ("summary", video_id, key, chash, policy.language)
-        if self.registry.running(task_key) or self.registry.recent_failure(task_key):
+        if self._auto_long_active >= self.cfg.summary.auto_long_max_concurrent:
             return False
-        self._start_summary(policy, video_id, prompt, key, chash, qmeta, BACKGROUND)
+        for priority in (INTERACTIVE, BACKGROUND):
+            task_key = summary_task_key(video_id, key, chash, policy.language, priority)
+            if self.registry.running(task_key) or self.registry.recent_failure(task_key):
+                return False
+        task = self._start_summary(policy, video_id, prompt, key, chash, qmeta, BACKGROUND)
+        self._auto_long_active += 1
+        task.add_done_callback(self._auto_long_done)
         return True
+
+    def _auto_long_done(self, _task: asyncio.Task) -> None:
+        self._auto_long_active -= 1
 
     async def insight(
         self, policy: UserPolicy, video_id: str, qmeta: dict[str, Any], wait_ms: int | None

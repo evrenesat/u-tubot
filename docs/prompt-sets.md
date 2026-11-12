@@ -105,10 +105,12 @@ without it) the config value applies, then `builtin/glance`. Deleting a set that
 `[summary] auto_long = false` by default. When it is `true` (or `auto_long` is `true` in a user's policy, which overrides the
 config for that user), each panel request that finishes with a ready summary also queues the user's `default` prompt for the
 same video at background priority, through the same per-provider limiter as other background work (interactive requests go
-first, `reserved_interactive` slots stay free). Nothing is queued when the long prompt is already cached, running or recently
-failed, when it is the same prompt as the panel one, or for requests that name a prompt explicitly. When you then open the
-Summary view the long summary is usually ready. Long summaries cost model time for every video you focus, so this is off unless
-you want it.
+first, `reserved_interactive` slots stay free). At most `[summary] auto_long_max_concurrent` (2) such jobs run at once, counting
+the transcript fetch; a panel request that finds them all busy skips queuing, and the next panel request for that video tries
+again. Nothing is queued when the long prompt is already cached, running or recently failed, when it is the same prompt as the
+panel one, or for requests that name a prompt explicitly. When you then open the Summary view the long summary is usually
+ready. If it is not, your request starts its own interactive run (the background one is cancelled), and a failed background job
+never makes your request fail. Long summaries cost model time for every video you focus, so this is off unless you want it.
 
 ## Hosting at a short URL
 

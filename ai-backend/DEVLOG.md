@@ -23,11 +23,15 @@
 - Condense (map) step: system prompt asks for the passage that answers the title's question or reveals its tease first, on
   an `ANSWER:` line; the map user message now carries the video title and the triage question. Caveat: `condensed` rows made
   before this change are reused as they are (key is video + budget); `DELETE FROM condensed` rebuilds them.
+- Review fix: background and interactive runs of one summary are separate registry tasks (`summary_task_key`: `summary` vs
+  `summary-bg`), so a background failure never makes an interactive request `failed`, and an interactive request never
+  joins a background task (it starts its own and cancels the background one; same result row, last write wins).
+  `[summary] auto_long_max_concurrent` (2) caps background long jobs from task start (transcript fetch included); over the
+  cap `schedule_long` skips and a later panel request retries.
 - Known follow-ups: the Android panel still preselects `default` from `GET /v1/prompts` (needs `panel_default` or
-  `prompt=panel`); a user opening the long summary while its background job is still queued joins that job at background
-  priority; no thumbnail text exists in the metadata the app sends, so only the title is used today.
+  `prompt=panel`); no thumbnail text exists in the metadata the app sends, so only the title is used today.
 - Tests: `tests/test_glance.py` (panel alias, `{question}` from triage, condense focus, `[llm.glance]` and its fallback,
-  auto_long off/on/policy override/background priority, panel-default PUT and fallbacks, old prompt files and hashes).
+  auto_long off/on/policy override/background priority/failure isolation/interactive takeover/concurrency cap, panel-default PUT and fallbacks, old prompt files and hashes).
 
 ## 2026-11-12 (review fixes, backpressure PR)
 
