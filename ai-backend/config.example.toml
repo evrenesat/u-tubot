@@ -89,6 +89,16 @@ max_tokens = 900
 temperature = 0.2
 # fallback = ["openrouter:anthropic/claude-sonnet-5.5"]
 
+# The glance summary (side panel shown while browsing) is a few lines, so a small fast model is
+# enough and it keeps the panel quick. Without this table it uses [llm.summary] with
+# reasoning_effort "none". A reasoning model here should stay on "none" or the lowest your endpoint accepts.
+# [llm.glance]
+# model = "llama3.2:3b"           # example; any model your provider serves
+# provider = "local"              # optional
+# fallback = ["openrouter:openai/gpt-4o-mini"]
+# reasoning_effort = "none"       # default for this table
+# max_tokens = 160                # default; the built-in glance prompt sets its own answer budget
+
 [llm.answer]                # POST /ask
 model = "llama3.1:8b"
 # fallback = ["openrouter:anthropic/claude-sonnet-5.5"]
@@ -138,6 +148,8 @@ max_import_bytes = 262144          # prompt-set import size cap
 import_timeout_s = 15.0
 import_allow_hosts = []            # exact hostnames exempt from the private-address/port guard
 import_max_redirects = 5
+panel_prompt = "builtin/glance"    # prompt for auto/side-panel summaries (users can pick their own in the web UI)
+auto_long = false                  # true: after a panel summary, also generate the user's default (long) summary in the background
 
 [captions]
 asr_backend = "faster_whisper"     # "faster_whisper" (local CPU) or "openai" (remote /v1/audio/transcriptions)

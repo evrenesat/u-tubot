@@ -10,14 +10,17 @@ from .bg import TaskRegistry, wait_task
 from .config import Config, UserPolicy
 from .db import Database
 from .errors import public_error
-from .llm import CUT_MARK, INTERACTIVE, ChatResult, LLMClient
-from .prompts import DEFAULT_SYSTEM, Prompt, PromptStore, render
+from .llm import BACKGROUND, CUT_MARK, INTERACTIVE, ChatResult, LLMClient
+from .prompts import DEFAULT_SYSTEM, TASK_GLANCE, Prompt, PromptStore, render
 from .transcripts import Transcript, TranscriptService, fmt_ts
 
 NO_TRANSCRIPT = "(No transcript is available; rely on the title, channel and description only.)"
 MAP_SYSTEM = (
     "You condense one part of a long video transcript into terse factual notes. Keep concrete "
-    "claims, numbers, names and [mm:ss] markers. No commentary."
+    "claims, numbers, names and [mm:ss] markers. No commentary. If the video's title poses or "
+    "implies a question, or teases a reveal or curiosity gap, put any passage of this part that "
+    "answers or reveals it first, on a line starting 'ANSWER:' with the exact names, numbers and "
+    "[mm:ss]. Write nothing about it when this part does not."
 )
 INSIGHT_SYSTEM = (
     "You analyse a YouTube video for a TV viewer. Return ONLY JSON: "
@@ -99,7 +102,7 @@ class ContentService:
             transcript.meta.setdefault(key, value)
         return transcript
 
-    async def condensed(self, transcript: Transcript) -> str:
+    async def condensed(self, transcript: Transcript, priority: int = INTERACTIVE) -> str:
         s = self.cfg.summary
         budget_chars = s.token_budget * s.chars_per_token
         text = transcript.text
@@ -114,16 +117,20 @@ class ContentService:
         if row:
             return row["text"]
         chunks = split_chunks(text, s.chunk_tokens * s.chars_per_token)
+        focus = self._focus(transcript)
         notes = await asyncio.gather(
             *(
                 self.llm.chat_result(
                     self.cfg.llm.analysis,
                     [
                         {"role": "system", "content": MAP_SYSTEM},
-                        {"role": "user", "content": f"Part {i + 1}/{len(chunks)}:\n{chunk}"},
+                        {
+                            "role": "user",
+                            "content": f"{focus}Part {i + 1}/{len(chunks)}:\n{chunk}",
+                        },
                     ],
                     max_tokens=s.condensed_max_tokens,
-                    priority=INTERACTIVE,
+                    priority=priority,
                 )
                 for i, chunk in enumerate(chunks)
             )
@@ -137,6 +144,14 @@ class ContentService:
                 [transcript.video_id, s.token_budget, merged, time.time()],
             )
         return merged
+
+    def _focus(self, transcript: Transcript) -> str:
+        title = str(transcript.meta.get("title") or "")
+        question = self._title_question(transcript.video_id)
+        lines = [f"Video title: {title}\n"] if title else []
+        if question:
+            lines.append(f"Question the title poses: {question}\n")
+        return "".join(lines) + ("\n" if lines else "")
 
     def _values(
         self, transcript: Transcript, body: str, policy: UserPolicy, question: str = ""
@@ -158,20 +173,27 @@ class ContentService:
         return (json.loads(row["json"]).get("title_question") or "") if row else ""
 
     async def _generate(
-        self, prompt: Prompt, transcript: Transcript, policy: UserPolicy, question: str = ""
+        self,
+        prompt: Prompt,
+        transcript: Transcript,
+        policy: UserPolicy,
+        question: str = "",
+        priority: int = INTERACTIVE,
     ) -> ChatResult:
-        body = await self.condensed(transcript) if transcript.text else ""
+        body = await self.condensed(transcript, priority) if transcript.text else ""
         values = self._values(
             transcript, body, policy, question or self._title_question(transcript.video_id)
         )
         system = render(prompt.system or DEFAULT_SYSTEM, values)
         user = render(prompt.template, values)
+        llm = self.cfg.llm
+        task = llm.glance_task() if prompt.task == TASK_GLANCE else llm.summary
         result = await self.llm.chat_result(
-            self.cfg.llm.summary,
+            task,
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             model=prompt.model,
             max_tokens=prompt.max_tokens,
-            priority=INTERACTIVE,
+            priority=priority,
         )
         return ChatResult(clean_text(result.text), result.truncated)
 
@@ -187,6 +209,43 @@ class ContentService:
             return row
         return None
 
+    def _find_summary(
+        self, policy: UserPolicy, video_id: str, store_key: str, chash: str, adhoc: bool
+    ):
+        ttl = self.cfg.summary.adhoc_ttl_s if adhoc else None
+        hit = self._cached_summary(video_id, store_key, chash, policy.language, ttl)
+        if hit is None and not adhoc:
+            hit = self._cached_summary(
+                video_id, ADHOC_KEY, chash, policy.language, self.cfg.summary.adhoc_ttl_s
+            )
+        return hit
+
+    def _start_summary(
+        self,
+        policy: UserPolicy,
+        video_id: str,
+        prompt: Prompt,
+        store_key: str,
+        chash: str,
+        qmeta: dict[str, Any],
+        priority: int,
+    ) -> asyncio.Task:
+        task_key = ("summary", video_id, store_key, chash, policy.language)
+
+        async def job() -> tuple[str, str]:
+            transcript = await self.source(video_id, qmeta)
+            generated = await self._generate(prompt, transcript, policy, priority=priority)
+            text = generated.text + CUT_MARK if generated.truncated else generated.text
+            used_key = ADHOC_KEY if generated.truncated else store_key
+            self.db.execute(
+                "INSERT OR REPLACE INTO summaries(video_id,prompt_key,content_hash,language,text,"
+                "source,created_at) VALUES(?,?,?,?,?,?,?)",
+                [video_id, used_key, chash, policy.language, text, transcript.source, time.time()],
+            )
+            return text, transcript.source
+
+        return self.registry.start(task_key, job)
+
     async def summary(
         self,
         policy: UserPolicy,
@@ -199,33 +258,15 @@ class ContentService:
     ) -> dict[str, Any]:
         chash = prompt.content_hash()
         store_key = ADHOC_KEY if adhoc else key
-        ttl = self.cfg.summary.adhoc_ttl_s if adhoc else None
         base = {"video_id": video_id, "prompt": key, "text": None, "source": None, "error": None}
-        hit = self._cached_summary(video_id, store_key, chash, policy.language, ttl)
-        if hit is None and not adhoc:
-            hit = self._cached_summary(
-                video_id, ADHOC_KEY, chash, policy.language, self.cfg.summary.adhoc_ttl_s
-            )
+        hit = self._find_summary(policy, video_id, store_key, chash, adhoc)
         if hit:
             return {**base, "status": "ready", "text": hit["text"], "source": hit["source"]}
         task_key = ("summary", video_id, store_key, chash, policy.language)
         failure = self.registry.recent_failure(task_key)
         if failure:
             return {**base, "status": "failed", "error": failure}
-
-        async def job() -> tuple[str, str]:
-            transcript = await self.source(video_id, qmeta)
-            generated = await self._generate(prompt, transcript, policy)
-            text = generated.text + CUT_MARK if generated.truncated else generated.text
-            used_key = ADHOC_KEY if generated.truncated else store_key
-            self.db.execute(
-                "INSERT OR REPLACE INTO summaries(video_id,prompt_key,content_hash,language,text,"
-                "source,created_at) VALUES(?,?,?,?,?,?,?)",
-                [video_id, used_key, chash, policy.language, text, transcript.source, time.time()],
-            )
-            return text, transcript.source
-
-        task = self.registry.start(task_key, job)
+        task = self._start_summary(policy, video_id, prompt, store_key, chash, qmeta, INTERACTIVE)
         if not await wait_task(task, self.wait_cap(wait_ms)):
             return {**base, "status": "pending"}
         if task.exception() is not None:
@@ -236,6 +277,35 @@ class ContentService:
             }
         text, source = task.result()
         return {**base, "status": "ready", "text": text, "source": source}
+
+    def auto_long_enabled(self, policy: UserPolicy) -> bool:
+        if policy.auto_long is None:
+            return self.cfg.summary.auto_long
+        return policy.auto_long
+
+    def schedule_long(
+        self,
+        user: str,
+        policy: UserPolicy,
+        video_id: str,
+        qmeta: dict[str, Any],
+        panel_key: str,
+    ) -> bool:
+        """Queue the user's default (long) summary at background priority after a panel summary."""
+        if not self.auto_long_enabled(policy):
+            return False
+        key = self.prompts.default_key(user)
+        prompt = self.prompts.resolve(user, key)
+        if prompt is None or key == panel_key:
+            return False
+        chash = prompt.content_hash()
+        if self._find_summary(policy, video_id, key, chash, adhoc=False):
+            return False
+        task_key = ("summary", video_id, key, chash, policy.language)
+        if self.registry.running(task_key) or self.registry.recent_failure(task_key):
+            return False
+        self._start_summary(policy, video_id, prompt, key, chash, qmeta, BACKGROUND)
+        return True
 
     async def insight(
         self, policy: UserPolicy, video_id: str, qmeta: dict[str, Any], wait_ms: int | None

@@ -56,6 +56,7 @@ table { width:100%; border-collapse:collapse; } td, th { text-align:left; paddin
   <section>
     <h2>Prompt sets</h2>
     <div id="sets"></div>
+    <div class="row"><select id="panelPick"></select><button class="sec" id="setPanel">Use for the side panel</button></div>
     <div class="row">
       <input id="importUrl" type="text" placeholder="https://... prompt set URL (short links ok)">
       <button id="importBtn">Import</button><button class="sec" id="refreshBtn">Refresh all</button>
@@ -149,8 +150,10 @@ async function loadPrompts() {
   const rows = promptState.sets.map(s => "<div><b>" + esc(s.name) + "</b> <span class='mut'>" + esc(s.id) + " v" + esc(s.version) +
     (s.source_url ? " - " + esc(s.source_url) : "") + "</span>" +
     (s.id !== "builtin" ? " <button class='del' data-del='" + esc(s.id) + "'>delete</button>" : "") +
-    "<div class='row'>" + s.prompts.map(p => "<button class='sec' data-def='" + esc(p.key) + "'>" + esc(p.label) + (p.default ? " (default)" : "") + "</button>").join("") + "</div></div>").join("");
-  $("sets").innerHTML = rows + "<div class='mut'>Click a prompt to make it the default.</div>";
+    "<div class='row'>" + s.prompts.map(p => "<button class='sec' data-def='" + esc(p.key) + "'>" + esc(p.label) + (p.default ? " (default)" : "") + (p.panel_default ? " (panel)" : "") + "</button>").join("") + "</div></div>").join("");
+  $("sets").innerHTML = rows + "<div class='mut'>Click a prompt to make it the default for the Summary view. The side panel (auto summaries) uses its own choice below.</div>";
+  $("panelPick").innerHTML = promptState.sets.flatMap(s => s.prompts).map(p =>
+    "<option value='" + esc(p.key) + "'" + (p.key === promptState.panel_default ? " selected" : "") + ">" + esc(p.key) + " - " + esc(p.label) + "</option>").join("");
   $("setPick").innerHTML = promptState.sets.map(s => "<option value='" + esc(s.id) + "'>" + esc(s.id) + "</option>").join("");
   $("promptPick").innerHTML = promptState.sets.flatMap(s => s.prompts).map(p =>
     "<option value='" + esc(p.key) + "'" + (p.key === promptState.default ? " selected" : "") + ">" + esc(p.key) + " - " + esc(p.label) + "</option>").join("");
@@ -163,6 +166,10 @@ $("sets").addEventListener("click", async e => {
     if (t.dataset.del && confirm("Delete set " + t.dataset.del + "?")) { await api("/v1/prompts/sets/" + encodeURIComponent(t.dataset.del), { method: "DELETE" }); await loadPrompts(); }
   } catch (err) { $("setMsg").textContent = err.message; $("setMsg").className = "bad"; }
 });
+$("setPanel").onclick = async () => {
+  try { await api("/v1/prompts/panel-default", { method: "PUT", body: JSON.stringify({ key: $("panelPick").value }) }); await loadPrompts(); msg("setMsg", "side panel prompt saved"); }
+  catch (err) { msg("setMsg", err.message, true); }
+};
 const msg = (el, text, bad) => { $(el).textContent = text; $(el).className = bad ? "bad" : "ok"; };
 
 $("saveToken").onclick = () => { store.set("utubot_token", $("token").value.trim()); $("token").value = ""; $("download").hidden = true; loadMe(); };

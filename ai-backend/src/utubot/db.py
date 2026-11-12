@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS prompt_sets(
   user TEXT NOT NULL, set_id TEXT NOT NULL, json TEXT NOT NULL, source_url TEXT,
   updated_at REAL NOT NULL, PRIMARY KEY(user, set_id));
 CREATE TABLE IF NOT EXISTS user_default(user TEXT PRIMARY KEY, prompt_key TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS user_panel_default(user TEXT PRIMARY KEY, prompt_key TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS summaries(
   video_id TEXT NOT NULL, prompt_key TEXT NOT NULL, content_hash TEXT NOT NULL,
   language TEXT NOT NULL, text TEXT NOT NULL, source TEXT NOT NULL, created_at REAL NOT NULL,
