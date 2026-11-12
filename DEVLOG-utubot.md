@@ -1,5 +1,12 @@
 # u·tubot devlog
 
+## 2026-11-12 (R4: phone web UI)
+
+- Backend only (no app change, so no automatic release): the web UI at `/` was rebuilt as a phone-first control page with
+  password sign-in, per-user settings (`/v1/me/settings`), a live model list, status, jobs control and user admin. Details in
+  `ai-backend/DEVLOG.md`, usage in `docs/server.md` (Web UI, Per-user settings), wire in `ai/CONTRACT.md`. Screenshots under
+  `docs/screenshots/webui/`. The TV will read the pushed settings in a later release; R5 adds the enrollment link and QR.
+
 ## 2026-11-12 (app round 1: passive panel, Summary view, transcripts, auto-update)
 
 - Real-TV report (0.2.0, Modern skin): the screen dimmed, no grid, the panel over the top bar. Reproduced on an Android TV 14 emulator

@@ -154,6 +154,103 @@ def test_client_ip_rules():
     assert client_ip("127.0.0.1", "1.1.1.1", []) == "127.0.0.1"
 
 
+def test_client_ip_header_needs_the_proxy_secret():
+    trusted = ["127.0.0.1"]
+    xff = "100.64.0.7"  # what a second proxy hop leaves in X-Forwarded-For
+    named = {"header_value": "198.51.100.9", "expected_secret": "s3cret"}
+    assert (
+        client_ip("127.0.0.1", xff, trusted, **named, presented_secret="s3cret") == "198.51.100.9"
+    )
+    assert client_ip("127.0.0.1", xff, trusted, **named, presented_secret="nope") == "100.64.0.7"
+    assert client_ip("127.0.0.1", xff, trusted, **named) == "100.64.0.7"
+    assert client_ip("127.0.0.1", xff, trusted, header_value="198.51.100.9") == "100.64.0.7"
+    unset = {"header_value": "198.51.100.9", "presented_secret": "s3cret"}
+    assert client_ip("127.0.0.1", xff, trusted, **unset, expected_secret=None) == "100.64.0.7"
+    assert client_ip("127.0.0.1", xff, trusted, **unset, expected_secret="") == "100.64.0.7"
+    assert (
+        client_ip("203.0.113.5", xff, trusted, **named, presented_secret="s3cret") == "203.0.113.5"
+    )
+    for junk in ("not-an-ip", "1.2.3.4, 5.6.7.8", "", "1.2.3.4:80"):
+        got = client_ip(
+            "127.0.0.1",
+            xff,
+            trusted,
+            header_value=junk,
+            expected_secret="s3cret",
+            presented_secret="s3cret",
+        )
+        assert got == "100.64.0.7", junk
+    v6 = client_ip(
+        "127.0.0.1",
+        None,
+        trusted,
+        header_value=" 2001:db8::1 ",
+        expected_secret="k",
+        presented_secret="k",
+    )
+    assert v6 == "2001:db8::1"
+
+
+async def test_client_ip_header_end_to_end(env, monkeypatch):
+    env.cfg.security.trusted_proxies = ["127.0.0.1"]
+    env.cfg.security.rate_per_ip_per_min = 2
+    a = anon(env)
+    via = {"X-Forwarded-For": "100.64.0.7"}
+    named = {**via, "X-Utubot-Client-IP": "198.51.100.1", "X-Utubot-Proxy-Secret": "s3cret"}
+
+    async def codes(headers, n=3):
+        env.svc.limiter._hits.clear()
+        return [(await a.get("/v1/health", headers=headers)).status_code for _ in range(n)]
+
+    # not configured: both headers are ignored, every client looks like the last hop
+    assert await codes(named) == [200, 200, 429]
+    env.cfg.security.client_ip_header = "X-Utubot-Client-IP"
+    # configured but no secret in the environment: still ignored
+    assert await codes(named) == [200, 200, 429]
+    monkeypatch.setenv("UTUBOT_PROXY_SECRET", "s3cret")
+    env.svc.limiter._hits.clear()
+    for _ in range(2):
+        assert (await a.get("/v1/health", headers=named)).status_code == 200
+    assert (await a.get("/v1/health", headers=named)).status_code == 429
+    other = {**named, "X-Utubot-Client-IP": "198.51.100.2"}
+    assert (await a.get("/v1/health", headers=other)).status_code == 200
+    # a spoofed header without the secret (or with a wrong one) is ignored: one shared bucket
+    spoofed = [{**via, "X-Utubot-Client-IP": f"203.0.113.{i}"} for i in range(1, 4)]
+    wrong = [{**s, "X-Utubot-Proxy-Secret": "guess"} for s in spoofed]
+    env.svc.limiter._hits.clear()
+    got = [(await a.get("/v1/health", headers=h)).status_code for h in spoofed]
+    assert got == [200, 200, 429]
+    env.svc.limiter._hits.clear()
+    got = [(await a.get("/v1/health", headers=h)).status_code for h in wrong]
+    assert got == [200, 200, 429]
+
+
+async def test_login_lockout_follows_the_named_client(env, monkeypatch):
+    from tests.conftest import PASSWORD
+
+    env.cfg.security.trusted_proxies = ["127.0.0.1"]
+    env.cfg.security.client_ip_header = "X-Utubot-Client-IP"
+    monkeypatch.setenv("UTUBOT_PROXY_SECRET", "s3cret")
+    env.svc.webauth.set_password("partner", PASSWORD)
+    a = anon(env)
+
+    def login(ip, password):
+        return a.post(
+            "/v1/auth/login",
+            json={"username": "partner", "password": password},
+            headers={
+                "X-Forwarded-For": "100.64.0.7",
+                "X-Utubot-Client-IP": ip,
+                "X-Utubot-Proxy-Secret": "s3cret",
+            },
+        )
+
+    for _ in range(env.cfg.security.login_lockout_failures):
+        await login("198.51.100.1", "wrong-password-1")
+    assert (await login("198.51.100.1", PASSWORD)).status_code == 429
+    assert (await login("198.51.100.2", PASSWORD)).status_code == 200
+
+
 async def test_body_size_cap(env):
     env.cfg.security.max_body_bytes = 1000
     big = {"videos": [{"video_id": VID, "title": "x" * 5000}]}

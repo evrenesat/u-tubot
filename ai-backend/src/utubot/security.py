@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
+from urllib.parse import urlsplit
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -55,16 +57,76 @@ def _in(nets, host: str) -> bool:
     return any(addr in net for net in nets)
 
 
-def client_ip(peer: str | None, forwarded_for: str | None, trusted_proxies: list[str]) -> str:
+PROXY_SECRET_HEADER = "X-Utubot-Proxy-Secret"
+
+
+def _single_ip(value: str | None) -> str | None:
+    """`value` when it is exactly one IP address, else None."""
+    try:
+        return str(ipaddress.ip_address((value or "").strip()))
+    except ValueError:
+        return None
+
+
+def client_ip(
+    peer: str | None,
+    forwarded_for: str | None,
+    trusted_proxies: list[str],
+    *,
+    header_value: str | None = None,
+    presented_secret: str | None = None,
+    expected_secret: str | None = None,
+) -> str:
+    """The real client address.
+
+    A trusted proxy that proves itself with the shared secret may name the client in a dedicated
+    header (`[security] client_ip_header`); that survives a second hop that rewrites
+    `X-Forwarded-For`. Without a matching secret the header is ignored, and the right-most
+    `X-Forwarded-For` entry that is not a trusted proxy is used.
+    """
     peer = peer or "unknown"
     nets = _parse_networks(trusted_proxies)
-    if not nets or not _in(nets, peer) or not forwarded_for:
+    if not nets or not _in(nets, peer):
+        return peer
+    if (
+        header_value
+        and expected_secret
+        and presented_secret
+        and hmac.compare_digest(presented_secret.encode(), expected_secret.encode())
+    ):
+        named = _single_ip(header_value)
+        if named:
+            return named
+    if not forwarded_for:
         return peer
     chain = [p.strip() for p in forwarded_for.split(",") if p.strip()]
     for hop in reversed(chain):
         if not _in(nets, hop):
             return hop
     return peer
+
+
+def is_https(
+    scheme: str, peer: str | None, forwarded_proto: str | None, trusted_proxies: list[str]
+) -> bool:
+    """True when the browser reached us over HTTPS: directly, or through a trusted proxy that says so."""
+    if scheme == "https":
+        return True
+    nets = _parse_networks(trusted_proxies)
+    if not forwarded_proto or not peer or not _in(nets, peer):
+        return False
+    return forwarded_proto.split(",")[0].strip().lower() == "https"
+
+
+def origin_allowed(origin: str, allowed_hosts: list[str]) -> bool:
+    """Same-origin check for a browser `Origin` header against the hosts this server answers as."""
+    try:
+        parts = urlsplit(origin)
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and parts.netloc.lower() in {
+        h.lower() for h in allowed_hosts if h
+    }
 
 
 class BodyLimitMiddleware:

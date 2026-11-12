@@ -130,10 +130,11 @@ async def test_app_info_is_public_and_hides_empty_codes(env, tmp_path):
     assert info["downloader_codes"] == {"arm64-v8a": "123456"}
 
 
-async def test_landing_page_has_download_section_and_no_secrets(env):
+async def test_landing_page_is_a_static_shell_that_loads_the_public_download_info(env):
     page = (await anon(env).get("/")).text
-    assert 'id="download"' in page
-    assert "http://" not in page
+    assert "http://" not in page and "app/info.json" not in page
+    login = (await anon(env).get("/ui/js/pages/login.js")).text
+    assert "/app/info.json" in login and "Get the TV app" in login
 
 
 async def _publish_arm(env, tmp_path):

@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shutil
+import time
 from pathlib import Path
 
 from .config import Config
@@ -16,6 +17,7 @@ ABI_FROM_NAME_RE = re.compile(r"(?:^|[_-])(arm64-v8a|armeabi-v7a|x86_64|x86|univ
 APK_NAME_PREFIX = "u-tubot"
 UPDATE_FILE = "update.json"
 LATEST_FILE = "latest.json"
+SYNC_FILE = "sync.json"
 HASH_CHUNK_BYTES = 1 << 20
 
 
@@ -157,4 +159,53 @@ def public_info(cfg: Config) -> dict:
         "files": files,
         "downloader_codes": codes,
         "update_url": f"{cfg.server.public_base_url.rstrip('/')}/app/{UPDATE_FILE}",
+    }
+
+
+def record_sync(
+    cfg: Config, status: str, version_name: str | None = None, error: str | None = None
+) -> None:
+    """Remember the last real `sync-github` run (when, outcome) for the web UI."""
+    try:
+        cfg.app_dir.mkdir(parents=True, exist_ok=True)
+        (cfg.app_dir / SYNC_FILE).write_text(
+            json.dumps(
+                {
+                    "checked_at": time.time(),
+                    "status": status,
+                    "version_name": version_name,
+                    "error": error,
+                }
+            )
+            + "\n"
+        )
+    except OSError:
+        return
+
+
+def load_sync(cfg: Config) -> dict | None:
+    path = cfg.app_dir / SYNC_FILE
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def channel_info(cfg: Config) -> dict:
+    """The published channel for the web UI: version, files and when it was last written."""
+    latest = load_latest(cfg)
+    if not latest:
+        return {"published": False}
+    path = cfg.app_dir / LATEST_FILE
+    return {
+        "published": True,
+        "version_name": latest.get("version_name"),
+        "version_code": latest.get("version_code"),
+        "changelog": latest.get("changelog", []),
+        "files": {
+            abi: {"file": meta.get("file"), "size": meta.get("size")}
+            for abi, meta in latest.get("files", {}).items()
+        },
+        "published_at": path.stat().st_mtime,
     }

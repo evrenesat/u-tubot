@@ -349,6 +349,23 @@ class PromptStore:
             "INSERT OR REPLACE INTO user_panel_default(user,prompt_key) VALUES(?,?)", [user, key]
         )
 
+    def clear_default(self, user: str) -> None:
+        self.db.execute("DELETE FROM user_default WHERE user=?", [user])
+
+    def clear_panel_default(self, user: str) -> None:
+        self.db.execute("DELETE FROM user_panel_default WHERE user=?", [user])
+
+    def server_panel_key(self) -> str:
+        """The panel prompt when the user chose none: `[summary] panel_prompt`, else the built-in glance."""
+        return self.cfg.summary.panel_prompt or DEFAULT_PANEL_KEY
+
+    def has_override(self, user: str) -> dict[str, bool]:
+        return {
+            "default": self.db.one("SELECT 1 FROM user_default WHERE user=?", [user]) is not None,
+            "panel_default": self.db.one("SELECT 1 FROM user_panel_default WHERE user=?", [user])
+            is not None,
+        }
+
     async def fetch(self, url: str) -> PromptSet:
         limit = self.cfg.summary.max_import_bytes
         body = bytearray()

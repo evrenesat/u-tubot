@@ -95,3 +95,32 @@ class QueryMeta(BaseModel):
 
     def as_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.model_dump().items() if v is not None}
+
+
+class LoginRequest(BaseModel):
+    username: str | None = Field(default=None, max_length=64)
+    password: str | None = Field(default=None, max_length=512)
+    token: str | None = Field(default=None, max_length=512)
+
+
+class PasswordChange(BaseModel):
+    current_password: str | None = Field(default=None, max_length=512)
+    new_password: str = Field(max_length=512)
+
+
+class PasswordSet(BaseModel):
+    password: str = Field(max_length=512)
+
+
+class NewUser(BaseModel):
+    name: str = Field(max_length=64)
+    admin: bool = False
+    password: str | None = Field(default=None, max_length=512)
+
+
+class UserPatch(BaseModel):
+    admin: bool
+
+
+class ResolveRequest(BaseModel):
+    text: str = Field(max_length=1024)

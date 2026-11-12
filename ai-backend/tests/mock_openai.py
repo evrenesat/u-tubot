@@ -25,6 +25,9 @@ class MockOpenAI:
         self.length_first = 0
         self.active = 0
         self.max_active = 0
+        self.models = ["fast", "worker", "smart", "llama3.1:8b"]
+        self.models_status = 200
+        self.model_requests: list[dict[str, Any]] = []
         self.app = self._build()
 
     def _build(self) -> FastAPI:
@@ -66,6 +69,18 @@ class MockOpenAI:
                 self.length_first -= 1
                 finish = "length"
             return {"choices": [{"index": 0, "message": message, "finish_reason": finish}]}
+
+        @app.get("/v1/models")
+        async def models(request: Request):
+            from fastapi.responses import JSONResponse
+
+            self.model_requests.append({"auth": request.headers.get("authorization")})
+            if self.models_status != 200:
+                return JSONResponse({"error": "nope"}, status_code=self.models_status)
+            return {
+                "object": "list",
+                "data": [{"id": m, "object": "model", "owned_by": "mock"} for m in self.models],
+            }
 
         @app.post("/v1/audio/transcriptions")
         async def transcriptions(request: Request):

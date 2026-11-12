@@ -10,7 +10,8 @@ All paths below are under `/v1`. JSON, UTF-8. Times are seconds.
 
 ## Auth
 
-`Authorization: Bearer <user token>` on every call except `GET /v1/health`.
+`Authorization: Bearer <user token>` on every call except `GET /v1/health` (browsers may use a session cookie instead, see
+[Web UI endpoints](#web-ui-endpoints)).
 One token per person (owner, partner, ...). Unknown token: `401
 {"error":"unauthorized"}`. Per-user policy (topics to hide, thresholds,
 language) lives on the backend, so two TVs with different tokens behave
@@ -76,7 +77,8 @@ longer than `[captions] max_duration_s`. The summary of a video whose transcript
 `{"ok":true,"version":"0.1.0"}`
 
 ### `GET /v1/me`
-`{"user":"owner","policy":{...},"features":{"assess":true,"insight":true,"captions":true}}`
+`{"user":"owner","policy":{...},"settings_version":3,"features":{"assess":true,"insight":true,"captions":true}}`
+`settings_version` is the version of the [settings document](#per-user-settings), a cheap way to notice a change.
 
 ### `POST /v1/assess`
 Batch triage for one row/emission (≤ 50 videos).
@@ -218,7 +220,10 @@ The caller's background jobs of every kind, newest first (groundwork for a "chec
           "created_at":1700000000.0,"finished_at":null,"retry_after_s":null}]}
 ```
 `waiting` = queued (including while YouTube has the server in a cooldown; then `retry_after_s` says roughly how long),
-`processing` = running. `error` is a short generic message for `failed`.
+`processing` = running, `cancelled` = the user cancelled it while it waited. `error` is a short generic message for `failed`.
+A waiting job can be cancelled and a failed or cancelled one retried: `POST /v1/jobs/{id}/cancel`, `POST /v1/jobs/{id}/retry`
+(`{"ok":true}`; `404` for another user's or an unknown job, `409` when the state does not allow it, `429` when a retry would exceed
+`[captions] transcribe_max_active_per_user`).
 
 ### `POST /v1/videos/{id}/captions`
 Queue high-quality captions. Body: `{"lang":"auto","translate_to":null}`.
@@ -274,7 +279,8 @@ Stored for later threshold tuning.
 ## Addendum (backend implementation, 2026-11-12)
 
 - Public endpoints (no token): `GET /setup.json`, `GET /v1/health`, `POST /v1/pair`,
-  `GET /app/update.json`, `GET /app/info.json`, `GET /app/<file>.apk`, `GET /app/latest/<abi>.apk`. Everything else needs a bearer token. Rate limits return `429
+  `GET /app/update.json`, `GET /app/info.json`, `GET /app/<file>.apk`, `GET /app/latest/<abi>.apk`, and for the web UI `GET /`, `GET /ui/*`
+  (static files, no data), `POST /v1/auth/login`, `POST /v1/auth/logout`. Everything else needs a bearer token or a session cookie. Rate limits return `429
   {"error":"rate limited"}` with `Retry-After`. Bodies over 256 KiB return 413.
 - Video ids must match `^[A-Za-z0-9_-]{11}$`, else `400`.
 - `POST /v1/pair` `{"code":"123456","device":"Living room TV"}` -> `{"token":"utb_...","user":"owner"}`.
@@ -324,3 +330,104 @@ but a short address.
 The app builds the address to fetch from what the user types: a bare host
 (`utubot.example.com`, `host:port`) becomes `https://<host>/setup.json` (`http` for a bare private
 address, which cannot hold a certificate); a full URL is fetched as typed.
+
+## Web UI endpoints
+
+The phone web UI (`GET /`, static files under `/ui/`) uses the same API as the app. Its additions:
+
+### Sign-in for browsers
+
+- `POST /v1/auth/login` `{"username":"owner","password":"..."}` or `{"token":"utb_..."}` ->
+  `{"user":"owner","admin":true,"csrf":"<64 hex>","expires_in_s":2592000}` and `Set-Cookie: utubot_session=...; HttpOnly; SameSite=Lax;
+  Path=/; Max-Age=2592000` (`Secure` when the browser reached the server over HTTPS, directly or through a trusted proxy that sends
+  `X-Forwarded-Proto: https`). `401 {"error":"invalid username or password"}` (an unknown user and a wrong password are identical),
+  `429` with `Retry-After` once the address, the account or the server is locked out after repeated failures, `403` for a
+  cross-origin `Origin`.
+- `GET /v1/auth/session` -> `{"user","admin","via":"cookie|token","csrf":"..."|null,"has_password":true}`.
+- `POST /v1/auth/logout` -> `{"ok":true}`, ends the session and clears the cookie.
+- `PUT /v1/me/password` `{"current_password":"...","new_password":"..."}` -> `{"ok":true,"csrf":"..."|null}`. `current_password` is
+  required when a password exists. At least 10 characters. Ends the user's other sessions.
+- A session lasts 30 days from the last use. `POST`, `PUT` and `DELETE` authenticated by the cookie must send `X-CSRF-Token` with the
+  value from login or `GET /v1/auth/session` (else `403 {"error":"csrf token missing or wrong"}`), and an `Origin` header, when present,
+  must name this server. Bearer-token calls need neither.
+
+### Per-user settings
+
+`GET /v1/me/settings` (admins: `GET /v1/users/{name}/settings`):
+
+```json
+{"user":"owner","version":3,"updated_at":1700000000.0,
+ "settings":{
+   "models":{"glance":"llama3.2:3b","summary":"llama3.1:8b","answer":"llama3.1:8b","triage":"llama3.2:3b","analysis":"llama3.1:8b"},
+   "prompts":{"default":"builtin/tldr","panel_default":"builtin/glance"},
+   "filtering":{"hide_topics":[],"mark_topics":[],"hide_clickbait_above":0.9,"mark_clickbait_above":0.6,
+                "hide_low_quality_above":0.9,"mark_low_quality_above":0.65,"mark_inflated_ratio_below":0.35,
+                "inflated_min_duration_s":300,"answer_in_label":false,"mark_only":false},
+   "summaries":{"language":"en","auto_long":false},
+   "transcripts":{"auto_transcribe":"on_open","auto_transcribe_max_minutes":30},
+   "tv":{"summary_delay_ms":700,"summary_panel":false,"auto_captions":true,"update_checks":true}},
+ "overrides":{"models":{"glance":"llama3.2:3b"}},
+ "defaults":{ "...": "the same shape: what applies with no override" },
+ "choices":{"tasks":["glance","summary","answer","triage","analysis"],"auto_transcribe":["off","on_dwell","on_open"]}}
+```
+
+`settings` is what applies (a TV reads this); `overrides` only what the user changed; `defaults` what a reset returns to. The
+precedence (override, `[users.policy]`, `[default_policy]`, built-in, then the server setting an unset field follows) is in
+[docs/server.md](../docs/server.md#per-user-settings). `version` rises by one on every change, also through `PUT /v1/me/policy` and
+the prompt-default calls. `auto_transcribe` is `off`, `on_dwell` or `on_open`; the TV settings are `summary_delay_ms` (0-10000),
+`summary_panel`, `auto_captions`, `update_checks`; thresholds are 0-1.01; at most 50 topics of at most 80 characters.
+
+`PUT /v1/me/settings` (admins: `PUT /v1/users/{name}/settings`) takes a partial document and returns the new one:
+
+```json
+{"version":3,"allow_unlisted_models":false,
+ "settings":{"models":{"summary":"qwen3:14b","glance":null},"filtering":{"hide_topics":["asmr"]},"tv":{"summary_delay_ms":1000}}}
+```
+
+`null` removes the user's override of that setting. `version` is required from a browser session (`428
+{"error":"send the settings version you loaded with the change","version":3}` without it) and optional for bearer-token callers;
+when given and stale the answer is `409 {"error":"settings changed since you loaded them; reload","version":4}` (the write is a
+compare-and-set, so of two writers from the same version only one succeeds). Errors are `400 {"error":"..."}` naming the field
+(`unknown setting filtering.nope`, `invalid settings: auto_transcribe: Input should be 'off', 'on_dwell' or 'on_open'`). A task model
+must appear in `GET /v1/models` unless an admin sends `allow_unlisted_models: true` (`400` with `"unlisted":"<model>"` otherwise; `403`
+when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-admin that sets `models`.
+
+### Models
+
+- `GET /v1/models` -> `{"fetched_at":1700000000.0,"cache_ttl_s":300,"refreshed":false,"providers":[{"name":"local","default":true,
+  "key":"configured|missing|not needed","ok":true,"error":null,"stale":false,"fetched_at":1700000000.0,"added":["qwen3:14b"],
+  "models":[{"id":"qwen3:14b","value":"qwen3:14b","new":true}]}]}`. Each provider's `/models` is cached for 5 minutes. `value` is
+  what a task takes (`provider:id` for a provider other than the default). `new` marks models that appeared since the previous list
+  (for 3 days); `added` those found by the latest fetch. A provider that fails is `ok:false` with a short `error` (and `stale:true`
+  while an older list is kept). Admins also get `base_url` (no credentials). API keys are never returned.
+- `POST /v1/models/refresh` fetches again now (at most every 10 s; `refreshed:false` when it was too soon).
+
+### Status and updates
+
+- `GET /v1/status` -> `{"version","uptime_s","youtube":{"state":"closed|half_open|open","healthy":true,"cooldown_remaining_s":0,
+  "background_waiting":0},"usage":{"day":"2026-11-12","llm":{"calls","errors","prompt_tokens","completion_tokens"},
+  "transcripts":{"youtube_captions","asr"},"analyses":{"used","cap"}},"jobs":{"waiting","processing","failed"}}` (counts of the caller's jobs; usage
+  is for the current UTC day).
+- `GET /v1/updates` -> `{"channel":{"published":true,"version_name","version_code","changelog","files":{"arm64-v8a":{"file","size"}},
+  "published_at"},"github":{"configured":true,"repo","checked_at","latest":{"tag","version","published_at","url"}|"error":"..."},
+  "behind":true,"last_sync":{"checked_at","status","version_name","error"}|null,"update_url"}`. `last_sync` is the last real
+  `utubot app sync-github` run. `POST /v1/updates/refresh` asks GitHub again (cached otherwise for 10 minutes).
+
+### Devices, prompts, videos
+
+- `GET /v1/me/devices` -> `{"devices":[{"id","user","device","created_at","last_used"}]}`, `DELETE /v1/me/devices/{id}` (own devices
+  only), `POST /v1/me/pair` -> `{"user","code","expires_in_s"}` (a one-time pairing code for the caller).
+- `POST /v1/prompts/validate` with a prompt set -> `{"ok":true,"id","name","prompts":2}` or `400` with the validator's messages.
+- `POST /v1/videos/resolve` `{"text":"https://youtu.be/..."}` -> `{"video_id":"..."}` (an id, or a watch, shorts, live, embed or
+  youtu.be link; `400` otherwise; nothing is fetched).
+
+### User administration (admin only)
+
+`GET /v1/users` -> `{"users":[{"name","admin","has_password","has_token","devices","sessions","admin_editable"}]}`;
+`POST /v1/users` `{"name","admin":false,"password":null}` (a user without a token; `409` if it exists, `400` for a bad name or a short
+password); `PUT /v1/users/{name}` `{"admin":true}` (`409` for a user declared in `config.toml` or for your own flag);
+`PUT /v1/users/{name}/password` `{"password"}`; `GET/PUT /v1/users/{name}/settings` as above. The older `GET /v1/admin/users`,
+`POST /v1/admin/pair`, `DELETE /v1/admin/devices/{id}` and `PUT /v1/admin/users/{name}/policy` stay.
+
+Every response carries `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and
+`Referrer-Policy: no-referrer`; `/v1/*` answers are `Cache-Control: no-store`.

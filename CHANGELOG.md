@@ -38,6 +38,26 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 Backend (`ai-backend/`) changes in this release:
 
+- New phone-first web UI at `/` to steer u·tubot from a phone instead of the TV remote: Home (version, health, the YouTube gate with its
+  cooldown, today's model and transcript counters), Models (a model per task from the live provider list, new models marked), Prompts
+  (defaults, import, JSON editor with validation messages, try a prompt on a video link), Filters (topic chips, threshold sliders,
+  mark-only), Captions (automatic-transcription policy, jobs with cancel and retry, transcribe from a link), TVs (link a TV with a big
+  one-time code, revoke, TV settings), Updates (channel, newest GitHub release, last sync) and Admin (users, passwords, per-user settings).
+  Plain HTML/CSS/JS, no build step; a strict Content-Security-Policy, no inline script, no markup built from text.
+- Web sign-in with a username and password (`utubot user passwd NAME`, scrypt N=2^17, older hashes upgraded at sign-in) next to the old token sign-in. Browsers get an HttpOnly
+  `SameSite=Lax` session cookie (30 days, sliding, `Secure` behind HTTPS), writes need a CSRF header, failed sign-ins lock out per
+  address, account and server. Bearer tokens and TV device tokens work as before. Behind two proxies in a row, `[security] client_ip_header`
+  with a shared secret names the real client so the per-IP limits do not collapse into one bucket.
+- Per-user settings document: `GET/PUT /v1/me/settings` (admins: `/v1/users/{name}/settings`), versioned, with models per task, prompt
+  defaults, hide/mark policy, `auto_long`, transcript policy (`auto_transcribe` off, on_dwell or on_open, default on_open;
+  `auto_transcribe_max_minutes`, default 30) and the TV settings (summary delay, panel default, auto captions, update checks) the TV will
+  read in a later release. Defaults come from `[default_policy]`, `[users.policy]`, `[summary]` and `[setup.defaults]`; a user's own
+  choices override them (`docs/server.md`, Per-user settings). A per-task model now really applies to summaries, answers, insights,
+  triage and deep analysis.
+- `GET /v1/models` lists every configured provider's models (cached 5 minutes, refresh button, newcomers marked new; keys never
+  returned); `GET /v1/status`, `GET /v1/updates`, `POST /v1/jobs/{id}/cancel|retry` (jobs gain the state `cancelled`),
+  `POST /v1/videos/resolve`, `POST /v1/prompts/validate`, `/v1/me/devices`, `/v1/me/pair` and `/v1/users` for admins.
+
 - YouTube rate limits (HTTP 429) after a burst of caption downloads no longer leave junk behind. Every request that reaches
   YouTube (metadata, caption text, audio) goes through one gate: one at a time, at least 3 s plus jitter apart, interactive before
   background (`[youtube] max_concurrent`, `min_interval_s`, `jitter_s`). A 429, 403 or bot check opens a circuit breaker that

@@ -1,5 +1,47 @@
 # DEVLOG
 
+## 2026-11-12 (R4: phone web UI, per-user settings, web sign-in; issue #9)
+
+- UI: `web/index.html` is now a static shell; `web/ui/app.css` and `web/ui/js/**` (ES modules, no build, no npm, no external requests)
+  render Home, Models, Prompts, Filters, Captions, TVs, Updates, Account and Admin. DOM only through `h()`/`textContent` (a test greps
+  for `innerHTML` and friends), CSP `default-src 'none'; script-src 'self'; style-src 'self'` on every response, no inline code. Phone
+  first (bottom bar at 360 px, left sidebar from 900 px), dark and light (system, with a switch), no sideways scroll at 360 px
+  (`docs/screenshots/webui/capture.cjs` checks it). `tests/webui_demo.py` serves canned data for screenshots.
+- Sign-in (`webauth.py`, `passwords.py`): scrypt passwords (`utubot user passwd`, web UI), token sign-in kept but exchanged for a
+  session, HttpOnly `SameSite=Lax` cookie (Secure through `security.is_https`: direct HTTPS or `X-Forwarded-Proto` from a trusted
+  proxy), 30-day sliding sessions stored as SHA-256, CSRF = per-session `X-CSRF-Token` (derived from the session id) plus an `Origin`
+  check, lockout per IP, per account and global in `login_failures` (a wrong password and an unknown user look the same, dummy
+  verify). Bearer tokens (TVs, scripts) are untouched and need no CSRF.
+- Settings: `UserPolicy` grew `models`, `mark_only`, `auto_transcribe`, `auto_transcribe_max_minutes`, `summary_delay_ms`,
+  `summary_panel`, `auto_captions`, `update_checks` (validated ranges; thresholds <= 1.01, topics trimmed and deduplicated). They ride
+  the existing override row (`policy_overrides`, now with `version` and `updated_at`), so `[default_policy]` -> `[users.policy]` ->
+  override is the precedence and `None` fields follow `[summary]`/`[setup.defaults]`; `settings.py` is a view with PUT
+  (partial, `null` resets, optional `version` -> 409) over that row and the prompt-default tables. `resolve_users` replaced the reload
+  in `Auth._refresh` (users.toml edits no longer reload config.toml, `declared_users` keeps the file's users).
+- Models in use: summaries use `with_user_model` (user model when the prompt has none; part of the content hash, so cached apart),
+  insight/analysis/ask pass `model=`, title triage batches are keyed by (topics hash, model). The shared triage, insight and deep caches
+  stay keyed without the model (documented). `modelcatalog.py` caches each provider's `/models` (5 min, error ttl, forced refresh
+  rate-limited), remembers `model_seen` so a restart does not mark everything new, never returns keys.
+- Status: `/v1/status` (gate, LLM and transcript counters from `usage_daily`, which `LLMClient` fills per call), `/v1/updates` (channel,
+  cached GitHub release lookup, `sync.json` written by `utubot app sync-github`). Jobs: `cancel` (waiting only) and `retry`
+  (failed/cancelled), state `cancelled`. Small additions: `/v1/me/devices|pair`, `/v1/videos/resolve`, `/v1/prompts/validate`,
+  `/v1/users*` (create with password and no token, admin flag only for users.toml users).
+- Tests: `test_websession.py` (login, cookie flags, CSRF, Origin, sliding expiry, lockout, password change, CLI), `test_settings.py`
+  (document, validation, versions, precedence incl. config files, models applied to calls, admin routes, migration),
+  `test_modelcatalog.py` (cache, refresh, new marks, errors, no secrets), `test_webui.py` (static assets and CSP, module graph, every
+  route needs auth, admin-only routes, users, devices, jobs, status, updates, resolve).
+- Review fixes: (1) a password change used to sign the browser out: the edge middleware re-issued the old, revoked session cookie after
+  the handler had set the new one; the handler now owns the cookie (`fresh_session`, also for an admin setting their own password) and
+  the middleware skips a response that already sets it. (2) Client IP behind two proxies: `[security] client_ip_header` (+
+  `client_ip_header_secret_env`, `X-Utubot-Proxy-Secret`) names the client for a trusted peer that proves the secret (constant-time),
+  ignored otherwise, XFF logic as before. (3) `SettingsService.update` re-reads the version after the model check and writes with a
+  compare-and-set (`Auth.write_override(expected=)`); browser sessions must send `version` (428), bearer callers may omit it.
+  (4) `allow_unlisted_models` is admin-only, and `PUT /v1/me/policy` refuses `models` from non-admins (it skipped the list check).
+  (5) scrypt N=2^17 (`scrypt_max_concurrent` bounds the memory), old hashes verify (parameters are bounded when read) and are
+  re-hashed on the next successful sign-in with a compare-and-set on the old hash.
+- Left for R5: the enrollment link and QR for "Link a TV" (placeholder in the TVs page), first-run admin creation and the
+  provider/key wizard in the UI, the TV reading `GET /v1/me/settings`, acting on `auto_transcribe` (server or TV).
+
 ## 2026-11-12 (review fixes for the YouTube gate)
 
 - Breaker scope: only a 429, the bot check or a 403 on the watch/player/metadata request open it. A 403/410 on a caption or media
