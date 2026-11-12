@@ -19,7 +19,21 @@ ACTIVE = ("queued", "running")
 KIND_CAPTIONS = "captions"
 KIND_TRANSCRIPT = "transcript"
 LANG_AUTO = "auto"
-JOB_STATES = {"queued": "waiting", "running": "processing", "ready": "ready", "failed": "failed"}
+JOB_STATES = {
+    "queued": "waiting",
+    "running": "processing",
+    "ready": "ready",
+    "failed": "failed",
+    "cancelled": "cancelled",
+}
+CANCELLED_MESSAGE = "Cancelled"
+
+
+class JobRefused(Exception):
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+        self.message = message
 
 
 class JobQueue:
@@ -197,6 +211,46 @@ class JobQueue:
                 }
             )
         return out
+
+    def cancel(self, user: str, job_id: str) -> dict[str, Any]:
+        """Cancel the caller's queued job. A running job cannot be stopped from here."""
+        job = self.get(job_id)
+        if job is None or job["user"] != user:
+            raise JobRefused(404, "unknown job")
+        if job["status"] != "queued":
+            raise JobRefused(409, "only a waiting job can be cancelled")
+        now = time.time()
+        rc = self.db.execute_rc(
+            "UPDATE jobs SET status='cancelled', error=?, updated_at=?, finished_at=?"
+            " WHERE id=? AND status='queued'",
+            [CANCELLED_MESSAGE, now, now, job_id],
+        )
+        if rc != 1:
+            raise JobRefused(409, "only a waiting job can be cancelled")
+        return self.get(job_id) or job
+
+    def retry(self, user: str, job_id: str) -> dict[str, Any]:
+        """Queue a failed or cancelled job of the caller again."""
+        job = self.get(job_id)
+        if job is None or job["user"] != user:
+            raise JobRefused(404, "unknown job")
+        if job["status"] not in ("failed", "cancelled"):
+            raise JobRefused(409, "only a failed or cancelled job can be retried")
+        if job["kind"] == KIND_TRANSCRIPT:
+            if self.find_active_transcript(user, job["video_id"]):
+                raise JobRefused(409, "this video is already being transcribed")
+            if (
+                self.active_count(user, KIND_TRANSCRIPT)
+                >= self.cfg.captions.transcribe_max_active_per_user
+            ):
+                raise JobRefused(429, "too many transcriptions are already queued")
+        self.db.execute(
+            "UPDATE jobs SET status='queued', progress=0, error=NULL, attempts=0, not_before=NULL,"
+            " finished_at=NULL, updated_at=? WHERE id=?",
+            [time.time(), job_id],
+        )
+        self._wake.set()
+        return self.get(job_id) or job
 
     def _claim(self) -> dict[str, Any] | None:
         """Next queued job; none while the YouTube breaker is open (queued work waits, not fails)."""

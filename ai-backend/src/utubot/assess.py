@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .bg import TaskRegistry
-from .config import Config, UserPolicy
+from .config import TASK_ANALYSIS, TASK_TRIAGE, Config, UserPolicy
 from .db import Database
 from .llm import BACKGROUND, LLMClient, LLMError
 from .models import Flag, Verdict, VideoMeta
@@ -175,41 +175,45 @@ class Assessor:
         self._bg = asyncio.Semaphore(cfg.assess.background_concurrency)
         self.tier2 = TaskRegistry()
         self._tasks: set[asyncio.Task] = set()
-        self._pending: dict[str, list[VideoMeta]] = {}
-        self._pending_topics: dict[str, list[str]] = {}
+        self._pending: dict[tuple[str, str | None], list[VideoMeta]] = {}
+        self._pending_topics: dict[tuple[str, str | None], list[str]] = {}
 
     def _spawn(self, coro: Any) -> None:
         task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    def _enqueue(self, videos: list[VideoMeta], topics: list[str], thash: str) -> None:
+    def _enqueue(
+        self, videos: list[VideoMeta], topics: list[str], thash: str, model: str | None
+    ) -> None:
+        """Batches are shared between users with the same topics and the same triage model."""
         cfg = self.cfg.assess
-        queue = self._pending.setdefault(thash, [])
-        self._pending_topics[thash] = topics
+        qkey = (thash, model)
+        queue = self._pending.setdefault(qkey, [])
+        self._pending_topics[qkey] = topics
         first = not queue
         queue.extend(videos)
         while len(queue) >= cfg.batch_size:
             batch, queue[:] = queue[: cfg.batch_size], queue[cfg.batch_size :]
-            self._spawn(self._run_batch(batch, topics, thash))
+            self._spawn(self._run_batch(batch, topics, thash, model))
         if not queue:
             return
         if cfg.coalesce_ms <= 0:
-            self._flush(thash)
+            self._flush(qkey)
         elif first:
-            self._spawn(self._flush_later(thash))
+            self._spawn(self._flush_later(qkey))
 
-    async def _flush_later(self, thash: str) -> None:
+    async def _flush_later(self, qkey: tuple[str, str | None]) -> None:
         await asyncio.sleep(self.cfg.assess.coalesce_ms / 1000.0)
-        self._flush(thash)
+        self._flush(qkey)
 
-    def _flush(self, thash: str) -> None:
-        queue = self._pending.get(thash)
+    def _flush(self, qkey: tuple[str, str | None]) -> None:
+        queue = self._pending.get(qkey)
         if not queue:
             return
         batch = list(queue)
         queue.clear()
-        self._spawn(self._run_batch(batch, self._pending_topics[thash], thash))
+        self._spawn(self._run_batch(batch, self._pending_topics[qkey], qkey[0], qkey[1]))
 
     def _cached_triage(self, video_id: str, thash: str) -> dict[str, Any] | None:
         return self.db.get_json(
@@ -280,7 +284,7 @@ class Assessor:
                 todo.append(video)
             waiting.append(fut)
         if todo:
-            self._enqueue(todo, topics, thash)
+            self._enqueue(todo, topics, thash, policy.models.get(TASK_TRIAGE))
         if waiting and wait_ms:
             await asyncio.wait(waiting, timeout=wait_ms / 1000.0)
         results = []
@@ -295,11 +299,13 @@ class Assessor:
         if len(data) > 1:
             self.transcripts.store_meta(video.video_id, data)
 
-    async def _run_batch(self, batch: list[VideoMeta], topics: list[str], thash: str) -> None:
+    async def _run_batch(
+        self, batch: list[VideoMeta], topics: list[str], thash: str, model: str | None = None
+    ) -> None:
         keys = [(v.video_id, thash) for v in batch]
         try:
             async with self._bg:
-                results = await self._triage_call(batch, topics)
+                results = await self._triage_call(batch, topics, model)
             for idx, video in enumerate(batch):
                 item = results.get(idx)
                 if item is None:
@@ -318,7 +324,7 @@ class Assessor:
                     fut.set_result(None)
 
     async def _triage_call(
-        self, batch: list[VideoMeta], topics: list[str]
+        self, batch: list[VideoMeta], topics: list[str], model: str | None = None
     ) -> dict[int, dict[str, Any]]:
         cfg = self.cfg.assess
         payload = []
@@ -341,6 +347,7 @@ class Assessor:
         data = await self.llm.chat_json(
             self.cfg.llm.triage,
             [{"role": "system", "content": TRIAGE_SYSTEM}, {"role": "user", "content": user_msg}],
+            model=model,
         )
         items = data.get("results") if isinstance(data, dict) else data
         if not isinstance(items, list):
@@ -388,7 +395,10 @@ class Assessor:
         if day is None:
             return
         task = self.tier2.start(
-            video.video_id, lambda: self._tier2_job(user, day, video.video_id, triage, duration)
+            video.video_id,
+            lambda: self._tier2_job(
+                user, day, video.video_id, triage, duration, policy.models.get(TASK_ANALYSIS)
+            ),
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -423,17 +433,23 @@ class Assessor:
         )
 
     async def _tier2_job(
-        self, user: str, day: str, video_id: str, triage: dict[str, Any], duration: int | None
+        self,
+        user: str,
+        day: str,
+        video_id: str,
+        triage: dict[str, Any],
+        duration: int | None,
+        model: str | None = None,
     ) -> None:
         """A delayed fetch (429, cooldown, network) never reached YouTube's data: give the slot back."""
         try:
-            await self._deep_analysis(video_id, triage, duration)
+            await self._deep_analysis(video_id, triage, duration, model)
         except YoutubeDelayed:
             self._refund_tier2_slot(user, day)
             raise
 
     async def _deep_analysis(
-        self, video_id: str, triage: dict[str, Any], duration: int | None
+        self, video_id: str, triage: dict[str, Any], duration: int | None, model: str | None = None
     ) -> None:
         try:
             transcript = await self.transcripts.get(video_id, BACKGROUND)
@@ -455,6 +471,7 @@ class Assessor:
             data = await self.llm.chat_json(
                 self.cfg.llm.analysis,
                 [{"role": "system", "content": DEEP_SYSTEM}, {"role": "user", "content": user_msg}],
+                model=model,
             )
         if not isinstance(data, dict):
             raise ValueError("deep analysis is not an object")

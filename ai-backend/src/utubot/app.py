@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -16,11 +17,12 @@ from fastapi.responses import (
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
+    Response,
 )
 
 from . import __version__, appchannel
 from .assess import Assessor
-from .auth import Auth, Forbidden, PairError, Unauthorized
+from .auth import Auth, Forbidden, PairError, Principal, Unauthorized
 from .captions.asr import ASRBackend, make_asr
 from .captions.jobs import JobQueue
 from .captions.pipeline import CaptionPipeline, Downloader
@@ -28,6 +30,7 @@ from .config import Config, UserConfig, load_config
 from .content import ContentService
 from .db import Database
 from .llm import LLMClient
+from .modelcatalog import ModelCatalog
 from .models import (
     AskRequest,
     AssessRequest,
@@ -42,16 +45,49 @@ from .models import (
     SummaryAdhoc,
 )
 from .prompts import PANEL_ALIAS, Prompt, PromptError, PromptStore, validate_prompt_set
-from .security import BodyLimitMiddleware, RateLimited, RateLimiter, client_ip
+from .security import (
+    PROXY_SECRET_HEADER,
+    BodyLimitMiddleware,
+    RateLimited,
+    RateLimiter,
+    client_ip,
+    is_https,
+    origin_allowed,
+)
+from .settings import SettingsError, SettingsService
+from .status import StatusService, UpdatesStatus
 from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
+from .videoref import VIDEO_ID_RE
+from .webauth import SESSION_TOKEN_ID, WebAuth, csrf_valid
+from .webroutes import Deps, install_web_routes
 from .youtube import Clock, YoutubeGate
 
-VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 APK_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\.apk$")
 APK_MIME = "application/vnd.android.package-archive"
 LANG_RE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
 WEB_DIR = Path(__file__).parent / "web"
+UI_DIR = WEB_DIR / "ui"
+UI_TYPES = {
+    ".js": "text/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+    ".json": "application/json",
+}
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+CSRF_HEADER = "x-csrf-token"
+CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+SECURITY_HEADERS = {
+    "Content-Security-Policy": CSP,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
 RECENT_JOBS_LIMIT = 20
 JOBS_LIMIT_DEFAULT = 50
 JOBS_LIMIT_MAX = 200
@@ -71,6 +107,11 @@ class Services:
     gate: YoutubeGate
     transcription: Transcription
     limiter: RateLimiter
+    webauth: WebAuth
+    catalog: ModelCatalog
+    settings: SettingsService
+    status: StatusService
+    updates: UpdatesStatus
 
 
 def build_services(
@@ -82,9 +123,10 @@ def build_services(
     downloader: Downloader | None = None,
     prompt_transport: httpx.AsyncBaseTransport | None = None,
     clock: Clock | None = None,
+    github_transport: httpx.AsyncBaseTransport | None = None,
 ) -> Services:
     db = Database(cfg.db_path)
-    llm = LLMClient(cfg, transport=llm_transport)
+    llm = LLMClient(cfg, transport=llm_transport, db=db)
     gate = YoutubeGate(cfg.youtube, db, clock)
     transcripts = TranscriptService(cfg, db, fetcher, gate)
     prompts = PromptStore(cfg, db, prompt_transport)
@@ -93,10 +135,12 @@ def build_services(
     )
     jobs = JobQueue(cfg, db, pipeline, transcripts)
     transcription = Transcription(cfg, transcripts, jobs)
+    auth = Auth(cfg, db)
+    catalog = ModelCatalog(cfg, db, llm)
     return Services(
         cfg=cfg,
         db=db,
-        auth=Auth(cfg, db),
+        auth=auth,
         llm=llm,
         transcripts=transcripts,
         assessor=Assessor(cfg, db, llm, transcripts),
@@ -106,6 +150,11 @@ def build_services(
         gate=gate,
         transcription=transcription,
         limiter=RateLimiter(cfg.security.rate_window_s),
+        webauth=WebAuth(cfg, db, auth),
+        catalog=catalog,
+        settings=SettingsService(cfg, auth, prompts, catalog),
+        status=StatusService(cfg, db, gate, llm.usage),
+        updates=UpdatesStatus(cfg, github_transport),
     )
 
 
@@ -158,6 +207,10 @@ def create_app(
         resp.headers["Retry-After"] = str(exc.retry_after)
         return resp
 
+    @app.exception_handler(SettingsError)
+    async def _settings(_r: Request, exc: SettingsError):
+        return JSONResponse({"error": exc.message, **exc.extra}, status_code=exc.status)
+
     @app.exception_handler(HTTPException)
     async def _http(_r: Request, exc: HTTPException):
         return error(exc.status_code, str(exc.detail))
@@ -177,19 +230,88 @@ def create_app(
         return None
 
     def ip_of(request: Request) -> str:
+        header = cfg.security.client_ip_header
         return client_ip(
             request.client.host if request.client else None,
             request.headers.get("x-forwarded-for"),
             cfg.security.trusted_proxies,
+            header_value=request.headers.get(header) if header else None,
+            presented_secret=request.headers.get(PROXY_SECRET_HEADER),
+            expected_secret=cfg.client_ip_secret() if header else None,
         )
 
-    def authenticate(request: Request, token: str | None) -> UserConfig:
-        principal = svc.auth.resolve(token)
-        svc.limiter.check(
-            f"tok:{principal.user.name}:{principal.token_id}", cfg.security.rate_per_token_per_min
+    def session_cookie(request: Request) -> str | None:
+        return request.cookies.get(cfg.security.session_cookie) or None
+
+    def request_https(request: Request) -> bool:
+        return is_https(
+            request.url.scheme,
+            request.client.host if request.client else None,
+            request.headers.get("x-forwarded-proto"),
+            cfg.security.trusted_proxies,
         )
-        request.state.principal = principal
-        return principal.user
+
+    def set_session_cookie(response: Response, request: Request, token: str) -> None:
+        response.set_cookie(
+            cfg.security.session_cookie,
+            token,
+            max_age=cfg.security.session_ttl_s,
+            path="/",
+            httponly=True,
+            secure=request_https(request),
+            samesite="lax",
+        )
+
+    def clear_session_cookie(response: Response, request: Request) -> None:
+        response.delete_cookie(
+            cfg.security.session_cookie,
+            path="/",
+            httponly=True,
+            secure=request_https(request),
+            samesite="lax",
+        )
+
+    def sets_session_cookie(response: Response) -> bool:
+        """A handler that already issued or cleared the session cookie owns it (see password change)."""
+        prefix = cfg.security.session_cookie + "="
+        return any(v.startswith(prefix) for v in response.headers.getlist("set-cookie"))
+
+    def check_same_origin(request: Request) -> None:
+        """A browser `Origin` header, when sent, must name this server."""
+        origin = request.headers.get("origin")
+        if origin is None:
+            return
+        hosts = [request.headers.get("host", ""), urlsplit(cfg.server.public_base_url).netloc]
+        if not origin_allowed(origin, hosts):
+            raise HTTPException(403, "cross-origin request refused")
+
+    def check_csrf(request: Request, cookie: str) -> None:
+        if not csrf_valid(cookie, request.headers.get(CSRF_HEADER)):
+            raise HTTPException(403, "csrf token missing or wrong")
+        check_same_origin(request)
+
+    def authenticate(request: Request, token: str | None) -> UserConfig:
+        if token:
+            principal = svc.auth.resolve(token)
+            svc.limiter.check(
+                f"tok:{principal.user.name}:{principal.token_id}",
+                cfg.security.rate_per_token_per_min,
+            )
+            request.state.principal = principal
+            return principal.user
+        cookie = session_cookie(request)
+        session = svc.webauth.resolve_session(cookie)
+        if session is None or cookie is None:
+            raise Unauthorized
+        if request.method not in SAFE_METHODS:
+            check_csrf(request, cookie)
+        svc.limiter.check(
+            f"ses:{session.user.name}:{session.id_hash[:12]}", cfg.security.rate_per_token_per_min
+        )
+        request.state.principal = Principal(session.user, SESSION_TOKEN_ID)
+        if session.refreshed:
+            request.state.session_refresh = cookie
+        return session.user
 
     def current_user(request: Request) -> UserConfig:
         return authenticate(request, bearer(request))
@@ -204,14 +326,20 @@ def create_app(
         return user
 
     @app.middleware("http")
-    async def ip_rate_limit(request: Request, call_next):
+    async def edge(request: Request, call_next):
         try:
             svc.limiter.check(f"ip:{ip_of(request)}", cfg.security.rate_per_ip_per_min)
+            response = await call_next(request)
         except RateLimited as exc:
-            resp = error(429, "rate limited")
-            resp.headers["Retry-After"] = str(exc.retry_after)
-            return resp
-        return await call_next(request)
+            response = error(429, "rate limited")
+            response.headers["Retry-After"] = str(exc.retry_after)
+        response.headers.update(SECURITY_HEADERS)
+        if request.url.path.startswith("/v1/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        refresh = getattr(request.state, "session_refresh", None)
+        if refresh and not sets_session_cookie(response):
+            set_session_cookie(response, request, refresh)
+        return response
 
     app.add_middleware(BodyLimitMiddleware, get_max_bytes=lambda: cfg.security.max_body_bytes)
 
@@ -222,7 +350,22 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
-        return HTMLResponse((WEB_DIR / "index.html").read_text())
+        return HTMLResponse(
+            (WEB_DIR / "index.html").read_text(), headers={"Cache-Control": "no-cache"}
+        )
+
+    @app.get("/ui/{path:path}")
+    async def ui_file(path: str):
+        root = UI_DIR.resolve()
+        try:
+            target = (UI_DIR / path).resolve()
+            found = root in target.parents and target.is_file()
+        except (ValueError, OSError):
+            found = False
+        media = UI_TYPES.get(target.suffix) if found else None
+        if media is None:
+            raise HTTPException(404, "not found")
+        return FileResponse(target, media_type=media, headers={"Cache-Control": "no-cache"})
 
     @app.get("/v1/health")
     async def health():
@@ -249,6 +392,7 @@ def create_app(
             "user": user.name,
             "policy": user.policy.model_dump(),
             "admin": user.admin,
+            "settings_version": svc.auth.settings_version(user.name)[0],
             "features": {
                 "assess": True,
                 "insight": True,
@@ -259,6 +403,10 @@ def create_app(
 
     @app.put("/v1/me/policy")
     async def me_policy(body: PolicyPatch, user: UserConfig = Depends(current_user)):
+        if "models" in body.root and not user.admin:
+            raise HTTPException(
+                403, "models are set with PUT /v1/me/settings, which checks them against the list"
+            )
         try:
             return svc.auth.set_policy(user.name, body.root).model_dump()
         except PairError as exc:
@@ -378,6 +526,14 @@ def create_app(
             raise HTTPException(400, str(exc)) from exc
         return {**pset.model_dump(), "source_url": body.url}
 
+    @app.post("/v1/prompts/validate")
+    async def prompts_validate(body: dict[str, Any], user: UserConfig = Depends(current_user)):
+        try:
+            pset = validate_prompt_set(body)
+        except PromptError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "id": pset.id, "name": pset.name, "prompts": len(pset.prompts)}
+
     @app.post("/v1/prompts/refresh")
     async def prompts_refresh(user: UserConfig = Depends(current_user)):
         return {"refreshed": await svc.prompts.refresh_all(user.name)}
@@ -410,6 +566,7 @@ def create_app(
             svc.prompts.set_default(user.name, body.key)
         except PromptError as exc:
             raise HTTPException(404, str(exc)) from exc
+        svc.auth.touch_settings(user.name)
         return {"default": body.key}
 
     @app.put("/v1/prompts/panel-default")
@@ -418,6 +575,7 @@ def create_app(
             svc.prompts.set_panel_default(user.name, body.key)
         except PromptError as exc:
             raise HTTPException(404, str(exc)) from exc
+        svc.auth.touch_settings(user.name)
         return {"panel_default": body.key}
 
     @app.get("/v1/videos/{video_id}/summary")
@@ -437,6 +595,7 @@ def create_app(
         resolved = svc.prompts.resolve(user.name, key)
         if resolved is None:
             raise HTTPException(404, f"unknown prompt {key}")
+        resolved = svc.content.with_user_model(resolved, user.policy)
         result = await svc.content.summary(
             user.policy, video_id, resolved, key, meta.as_dict(), wait_ms
         )
@@ -462,6 +621,7 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        adhoc = svc.content.with_user_model(adhoc, user.policy)
         return await svc.content.summary(
             user.policy, video_id, adhoc, "adhoc", meta.as_dict(), body.wait_ms, adhoc=True
         )
@@ -545,6 +705,20 @@ def create_app(
         )
         return {"ok": True}
 
+    install_web_routes(
+        app,
+        Deps(
+            svc=svc,
+            current_user=current_user,
+            admin_user=admin_user,
+            ip_of=ip_of,
+            session_cookie=session_cookie,
+            set_session_cookie=set_session_cookie,
+            clear_session_cookie=clear_session_cookie,
+            check_same_origin=check_same_origin,
+            check_csrf=check_csrf,
+        ),
+    )
     return app
 
 

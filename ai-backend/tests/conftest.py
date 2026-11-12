@@ -68,6 +68,8 @@ def cfg(tmp_path) -> Config:
     c.youtube.min_interval_s = 0.0
     c.youtube.jitter_s = 0.0
     c.captions.asr_url = "http://mock/v1/audio/transcriptions"
+    c.security.scrypt_n = 2**10
+    c.models.refresh_min_interval_s = 0
     c.users = [
         UserConfig(
             name="owner",
@@ -78,6 +80,19 @@ def cfg(tmp_path) -> Config:
         UserConfig(name="partner", token_sha256=hash_token(OTHER_TOKEN), policy=UserPolicy()),
     ]
     return c
+
+
+PASSWORD = "correct horse battery staple"
+
+
+def anon_client(
+    env, *, base_url: str = "http://utubot", peer: str | None = None
+) -> httpx.AsyncClient:
+    """A client without the bearer header, with its own cookie jar; `peer` sets the socket address."""
+    transport = (
+        httpx.ASGITransport(app=env.app, client=(peer, 50000)) if peer else env.client._transport
+    )
+    return httpx.AsyncClient(transport=transport, base_url=base_url)
 
 
 @pytest_asyncio.fixture

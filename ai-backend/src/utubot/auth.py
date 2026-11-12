@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 import uuid
@@ -11,7 +12,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from .config import Config, UserConfig, UserPolicy, load_config
+from .config import Config, UserConfig, UserPolicy, resolve_users
 from .db import Database
 
 TOKEN_BYTES = 32
@@ -26,6 +27,12 @@ class Unauthorized(Exception):
 
 class Forbidden(Exception):
     pass
+
+
+class VersionConflict(Exception):
+    def __init__(self, version: int):
+        super().__init__("settings changed")
+        self.version = version
 
 
 class PairError(Exception):
@@ -52,19 +59,93 @@ def new_token() -> str:
     return TOKEN_PREFIX + secrets.token_urlsafe(TOKEN_BYTES)
 
 
+USER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
+USER_BLOCK = "[[users]]"
+
+
+def check_user_name(name: str) -> str:
+    if not isinstance(name, str) or not USER_NAME_RE.match(name):
+        raise PairError(
+            "user name: 1-32 characters from A-Z a-z 0-9 . _ -, starting with a letter or digit"
+        )
+    return name
+
+
 def append_user(users_path: Path, name: str, token_hash: str, admin: bool = False) -> None:
+    """Write (or replace) a user block in users.toml; an empty hash makes a password-only user."""
+    check_user_name(name)
     users_path.parent.mkdir(parents=True, exist_ok=True)
     existing = users_path.read_text() if users_path.exists() else ""
-    blocks = [b for b in existing.split("[[users]]") if b.strip() and f'name = "{name}"' not in b]
+    blocks = [b for b in existing.split(USER_BLOCK)[1:] if b.strip() and not _block_is(b, name)]
     extra = "admin = true\n" if admin else ""
     blocks.append(f'\nname = "{name}"\ntoken_sha256 = "{token_hash}"\n{extra}')
-    users_path.write_text("".join(f"[[users]]{b}" for b in blocks))
+    users_path.write_text("".join(f"{USER_BLOCK}{b}" for b in blocks))
     users_path.chmod(0o600)
+
+
+def _block_is(block: str, name: str) -> bool:
+    return re.search(rf'^name\s*=\s*"{re.escape(name)}"\s*$', block, re.MULTILINE) is not None
+
+
+def users_file_names(users_path: Path) -> set[str]:
+    if not users_path.exists():
+        return set()
+    return set(re.findall(r'^name\s*=\s*"([^"]*)"\s*$', users_path.read_text(), re.MULTILINE))
+
+
+def set_user_admin(users_path: Path, name: str, admin: bool) -> bool:
+    """Flip `admin` on a user block of users.toml; False when the file has no such user."""
+    if not users_path.exists():
+        return False
+    parts = users_path.read_text().split(USER_BLOCK)
+    for idx in range(1, len(parts)):
+        if not _block_is(parts[idx], name):
+            continue
+        block = re.sub(r"^admin\s*=.*\n?", "", parts[idx], flags=re.MULTILINE)
+        if admin:
+            block = re.sub(
+                r'^(name\s*=\s*".*"\s*\n)', r"\1admin = true\n", block, count=1, flags=re.MULTILINE
+            )
+        parts[idx] = block
+        users_path.write_text(USER_BLOCK.join(parts))
+        users_path.chmod(0o600)
+        return True
+    return False
+
+
+def describe_validation(exc: ValidationError) -> str:
+    return "invalid policy: " + "; ".join(
+        f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" if e["loc"] else e["msg"]
+        for e in exc.errors()
+    )
+
+
+def build_policy(base: UserPolicy, override: dict) -> UserPolicy:
+    """`base` with the user's override on top; the per-task `models` merge instead of replacing."""
+    merged = {**base.model_dump(), **override}
+    if "models" in override:
+        merged["models"] = {**base.models, **(override["models"] or {})}
+    return UserPolicy(**merged)
+
+
+def merge_policy(base: UserPolicy, override: dict) -> UserPolicy:
+    """Base policy with the user's runtime override; a stored value that no longer validates is skipped."""
+    try:
+        return build_policy(base, override)
+    except ValidationError:
+        policy = base
+        for key, value in override.items():
+            try:
+                policy = build_policy(policy, {key: value})
+            except ValidationError:
+                continue
+        return policy
 
 
 class Auth:
     def __init__(self, cfg: Config, db: Database):
         self.cfg, self.db = cfg, db
+        self._snapshot = list(cfg.users)
         self._mtime = self._stat()
 
     def _stat(self) -> float:
@@ -75,18 +156,58 @@ class Auth:
         mtime = self._stat()
         if mtime != self._mtime:
             self._mtime = mtime
-            self.cfg.users = load_config(self.cfg.config_path or None).users
+            declared = self.cfg.declared_users
+            self.cfg.users = resolve_users(
+                self.cfg, self._snapshot if declared is None else declared
+            )
 
     def user_config(self, name: str) -> UserConfig | None:
         self._refresh()
         base = next((u for u in self.cfg.users if u.name == name), None)
         if base is None:
             return None
-        row = self.db.one("SELECT json FROM policy_overrides WHERE user=?", [name])
-        if not row:
+        override = self.policy_override(name)
+        if not override:
             return base
-        merged = {**base.policy.model_dump(), **json.loads(row["json"])}
-        return base.model_copy(update={"policy": UserPolicy(**merged)})
+        return base.model_copy(update={"policy": merge_policy(base.policy, override)})
+
+    def policy_override(self, name: str) -> dict:
+        row = self.db.one("SELECT json FROM policy_overrides WHERE user=?", [name])
+        return json.loads(row["json"]) if row else {}
+
+    def settings_version(self, name: str) -> tuple[int, float]:
+        row = self.db.one("SELECT version, updated_at FROM policy_overrides WHERE user=?", [name])
+        return (int(row["version"]), float(row["updated_at"])) if row else (0, 0.0)
+
+    def write_override(self, name: str, override: dict, expected: int | None = None) -> int:
+        """Store the user's sparse override and bump the version (one statement); returns the new version.
+
+        With `expected`, the write happens only if the stored version still equals it
+        (0 = no row yet); otherwise `VersionConflict` carries the current one.
+        """
+        payload, now = json.dumps(override), time.time()
+        where, extra = (" AND version=?", [expected]) if expected is not None else ("", [])
+        changed = self.db.execute_rc(
+            "UPDATE policy_overrides SET json=?, version=version+1, updated_at=? WHERE user=?"
+            + where,
+            [payload, now, name, *extra],
+        )
+        if changed == 0 and expected in (None, 0):
+            changed = self.db.execute_rc(
+                "INSERT OR IGNORE INTO policy_overrides(user,json,version,updated_at)"
+                " VALUES(?,?,1,?)",
+                [name, payload, now],
+            )
+            if changed == 0 and expected is None:
+                return self.write_override(name, override)
+        if changed == 0:
+            raise VersionConflict(self.settings_version(name)[0])
+        return self.settings_version(name)[0]
+
+    def touch_settings(self, name: str) -> None:
+        """A setting kept outside the override row (prompt defaults) changed: bump the version."""
+        if self.user_config(name) is not None:
+            self.write_override(name, self.policy_override(name))
 
     def user_names(self) -> list[str]:
         self._refresh()
@@ -122,21 +243,23 @@ class Auth:
         user = self.user_config(name)
         if user is None:
             raise PairError("unknown user", 404)
-        row = self.db.one("SELECT json FROM policy_overrides WHERE user=?", [name])
-        current = json.loads(row["json"]) if row else {}
-        merged_override = {**current, **patch}
         unknown = set(patch) - set(UserPolicy.model_fields)
         if unknown:
             raise PairError(f"unknown policy fields: {sorted(unknown)}")
+        override = {**self.policy_override(name), **patch}
+        base = self.base_policy(name)
         try:
-            policy = UserPolicy(**{**user.policy.model_dump(), **patch})
+            policy = build_policy(base, override)
         except ValidationError as exc:
-            raise PairError(f"invalid policy: {exc.errors()[0]['msg']}") from exc
-        self.db.execute(
-            "INSERT OR REPLACE INTO policy_overrides(user,json) VALUES(?,?)",
-            [name, json.dumps(merged_override)],
-        )
+            raise PairError(describe_validation(exc)) from exc
+        self.write_override(name, override)
         return policy
+
+    def base_policy(self, name: str) -> UserPolicy:
+        """The user's policy before runtime overrides: defaults, `[default_policy]`, `[users.policy]`."""
+        self._refresh()
+        base = next((u for u in self.cfg.users if u.name == name), None)
+        return base.policy if base else UserPolicy()
 
     def create_pair_code(self, name: str) -> tuple[str, int]:
         sec = self.cfg.security
@@ -208,5 +331,11 @@ class Auth:
         )
         return [dict(r) for r in rows]
 
-    def revoke(self, device_id: str) -> bool:
-        return self.db.execute_rc("DELETE FROM device_tokens WHERE id=?", [device_id]) > 0
+    def revoke(self, device_id: str, user: str | None = None) -> bool:
+        """Delete a device token; with `user`, only one that user owns."""
+        if user is None:
+            return self.db.execute_rc("DELETE FROM device_tokens WHERE id=?", [device_id]) > 0
+        rc = self.db.execute_rc(
+            "DELETE FROM device_tokens WHERE id=? AND user=?", [device_id, user]
+        )
+        return rc > 0

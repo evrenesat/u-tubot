@@ -7,11 +7,11 @@ import time
 from typing import Any
 
 from .bg import TaskRegistry, wait_task
-from .config import Config, UserPolicy
+from .config import TASK_ANALYSIS, TASK_ANSWER, Config, UserPolicy
 from .db import Database
 from .errors import public_error
 from .llm import BACKGROUND, CUT_MARK, INTERACTIVE, ChatResult, LLMClient
-from .prompts import DEFAULT_SYSTEM, TASK_GLANCE, Prompt, PromptStore, render
+from .prompts import DEFAULT_SYSTEM, TASK_GLANCE, TASK_SUMMARY, Prompt, PromptStore, render
 from .transcribe import OK, Transcription
 from .transcripts import Transcript, TranscriptService, fmt_ts
 
@@ -308,6 +308,19 @@ class ContentService:
         text, source = task.result()
         return {**base, "status": "ready", "text": text, "source": source, "transcript_status": OK}
 
+    @staticmethod
+    def with_user_model(prompt: Prompt, policy: UserPolicy) -> Prompt:
+        """The prompt as this user runs it: its own `model`, else the user's choice for its task.
+
+        The model is part of the prompt's content hash, so summaries made with different models are
+        cached apart.
+        """
+        task = TASK_GLANCE if prompt.task == TASK_GLANCE else TASK_SUMMARY
+        chosen = policy.models.get(task)
+        if prompt.model is None and chosen:
+            return prompt.model_copy(update={"model": chosen})
+        return prompt
+
     def auto_long_enabled(self, policy: UserPolicy) -> bool:
         if policy.auto_long is None:
             return self.cfg.summary.auto_long
@@ -328,6 +341,7 @@ class ContentService:
         prompt = self.prompts.resolve(user, key)
         if prompt is None or key == panel_key:
             return False
+        prompt = self.with_user_model(prompt, policy)
         chash = prompt.content_hash()
         if self._find_summary(policy, video_id, key, chash, adhoc=False):
             return False
@@ -388,6 +402,7 @@ class ContentService:
                     {"role": "system", "content": render(INSIGHT_SYSTEM, values)},
                     {"role": "user", "content": user},
                 ],
+                model=policy.models.get(TASK_ANALYSIS),
                 priority=INTERACTIVE,
             )
             if not isinstance(data, dict):
@@ -443,7 +458,7 @@ class ContentService:
         wait_ms: int | None,
     ) -> dict[str, Any]:
         qhash = hashlib.sha256(question.encode()).hexdigest()[:16]
-        task_key = ("ask", video_id, qhash, policy.language)
+        task_key = ("ask", video_id, qhash, policy.language, policy.models.get(TASK_ANSWER))
         results = self._ask_results
 
         async def job() -> str:
@@ -462,6 +477,7 @@ class ContentService:
                     {"role": "system", "content": render(ASK_SYSTEM, values)},
                     {"role": "user", "content": user},
                 ],
+                model=policy.models.get(TASK_ANSWER),
                 priority=INTERACTIVE,
             )
             if answer.truncated:

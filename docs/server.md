@@ -26,8 +26,9 @@ uv run utubot user add owner --admin   # prints the token once; only its hash is
 uv run utubot serve              # 127.0.0.1:8790
 ```
 
-Open `http://127.0.0.1:8790/`: paste the token to reach the web UI (health, policy, prompt sets, trying summaries, caption jobs,
-and for admins pairing codes, devices and policies). Without a token the page shows the public Download section only.
+Open `http://127.0.0.1:8790/`: sign in with a username and password (`uv run utubot user passwd owner` sets one) or paste the
+token. The phone-first [web UI](#web-ui) steers everything: models, prompts, filtering, transcripts, TVs, updates, users. Without a
+session the page shows the sign-in form and the public Download section only.
 
 The config file is `$UTUBOT_CONFIG` or `./config.toml`; `utubot --config PATH SUBCOMMAND` overrides it. Config changes need a
 restart; `users.toml` changes are picked up live.
@@ -37,6 +38,7 @@ restart; `users.toml` changes are picked up live.
 ```
 utubot [--config PATH] serve [--host H] [--port P]
 utubot user add NAME [--admin]      create a user, print a token once
+utubot user passwd NAME [--stdin]   set the web sign-in password (prompts twice; --stdin reads one line)
 utubot user pair NAME               one-time 6-digit code (15 minutes) for a TV
 utubot user devices [NAME]          list paired devices (id, user, name)
 utubot user revoke DEVICE_ID        revoke one device token
@@ -54,10 +56,17 @@ utubot prompts validate FILE        check a prompt set file
 media scratch), `app_dir` (APKs and `update.json`, served without auth under `/app/`), `public_base_url` (the URL TVs use;
 published in `/setup.json` and in APK download links), `users_file` (default `data_dir/users.toml`).
 
-**`[security]`**: `trusted_proxies` (peers whose `X-Forwarded-For` is believed; default `["127.0.0.1", "::1"]`),
+**`[security]`**: `trusted_proxies` (peers whose `X-Forwarded-For` is believed; default `["127.0.0.1", "::1"]`), `client_ip_header` and
+`client_ip_header_secret_env` (name the real client through a second proxy hop, see [Reverse proxy and TLS](#reverse-proxy-and-tls)),
 `rate_per_token_per_min`, `rate_per_ip_per_min`, `rate_window_s`, pairing limits (`pair_code_digits`, `pair_code_ttl_s`,
 `pair_attempts_per_ip_per_min`, `pair_lockout_failures`, `pair_lockout_s`, `pair_global_failures`, `pair_global_window_s`),
-`max_body_bytes`, `max_device_name_chars`, `max_devices_per_user`.
+`max_body_bytes`, `max_device_name_chars`, `max_devices_per_user`; web sign-in: `session_cookie`, `session_ttl_s` (30 days),
+`session_refresh_s`, `max_sessions_per_user`, `password_min_chars` (10), `password_max_chars`, `scrypt_n` (2^17)/`scrypt_r`/`scrypt_p`/`scrypt_max_concurrent`,
+`login_attempts_per_ip_per_min`, `login_lockout_failures` (5), `login_lockout_s` (15 min), `login_user_lockout_failures` (10),
+`login_global_failures`, `login_global_window_s` (see [Web UI](#web-ui)).
+
+**`[models]`**: the live model list behind the web UI: `cache_ttl_s` (300), `error_ttl_s` (30), `refresh_min_interval_s` (10),
+`timeout_s`, `new_for_s` (3 days), `max_models_per_provider`.
 
 **`[llm]`**: `default_provider`, `timeout_s`, `retries_on_bad_json`, `json_retry_max_tokens`, `reasoning_headroom_tokens`, `retry_max_attempts`, `retry_base_s`, `retry_max_s`,
 `deadline_interactive_s`, `deadline_background_s`; `[llm.providers.NAME]` with `base_url`, `api_key_env`, `max_concurrent`,
@@ -93,9 +102,12 @@ the app applies on import (`assess`, `mark_only`, `answer_in_menu`, `summary_pan
 
 **`[app]`**: `downloader_codes = { arm64-v8a = "12345", armeabi-v7a = "67890" }` shown on the landing page when non-empty.
 Updates from GitHub ([Updates](#updates)): `github_repo`, `signing_cert_sha256`, `apksigner_path`, `github_token_env`,
-`keep_versions`, `apksigner_timeout_s`, `sync_timeout_s`, `sync_releases_per_page`, `sync_max_apk_bytes`.
+`keep_versions`, `apksigner_timeout_s`, `sync_timeout_s`, `sync_releases_per_page`, `sync_max_apk_bytes`; for the web UI's update
+page `release_check_ttl_s` (600), `release_check_error_ttl_s` (60), `release_check_min_interval_s` (30).
 
-**`[default_policy]`** and **`[[users]]`**: see [policy.md](policy.md).
+**`[default_policy]`** and **`[[users]]`**: see [policy.md](policy.md). They also carry the defaults of the [per-user
+settings](#per-user-settings): `models`, `auto_transcribe`, `auto_transcribe_max_minutes`, `summary_delay_ms`, `update_checks`,
+`mark_only`, `summary_panel`, `auto_captions`, `auto_long`.
 
 Environment: `UTUBOT_CONFIG`, the provider key variables you named, `UTUBOT_ASR_API_KEY`, `UTUBOT_HF_TOKEN`. Keys never go
 in the config file.
@@ -165,8 +177,11 @@ tier2_daily_cap_per_user = 30
 
 ## Users, pairing, devices
 
-A *user* is a person (own policy, own prompt sets). Create users with `utubot user add NAME` (token printed once, hash stored in
-`users.toml`) or declare them in `[[users]]` with `admin = true` for admins. The user's own token is for the web UI.
+A *user* is a person (own settings, own prompt sets). Create users with `utubot user add NAME` (token printed once, hash stored in
+`users.toml`), with *Admin, Add a user* in the web UI (a user without a token that signs in with a password; `users.toml` gets a
+block with an empty `token_sha256`), or declare them in `[[users]]` with `admin = true` for admins. A person signs in to the web UI
+with a password (`utubot user passwd NAME`, or the web UI) or with their token. Users declared in `config.toml` keep their admin flag
+there; the web UI changes it only for users that live in `users.toml`.
 
 TVs do not use that token. `utubot user pair NAME` (or *New pairing code* in the admin UI) prints a single-use 6-digit code,
 valid 15 minutes. The TV posts it to `POST /v1/pair` and receives a separate per-device token, so each TV is revocable:
@@ -176,7 +191,106 @@ uv run utubot user devices          # ids
 uv run utubot user revoke DEVICE_ID
 ```
 
-Pairing is rate limited and locks an IP out after repeated wrong codes. At most `max_devices_per_user` devices per user.
+Pairing is rate limited and locks an IP out after repeated wrong codes. At most `max_devices_per_user` devices per user. Each user
+makes their own codes and revokes their own TVs under *TVs* in the web UI.
+
+## Web UI
+
+`GET /` serves a static, phone-first control page (plain HTML, CSS and ES modules under `ai-backend/src/utubot/web/`, no build step,
+no external requests). Everything it shows comes from authenticated JSON endpoints; the shell itself carries no data.
+
+| Section | What it does |
+|---|---|
+| Home | version, health, the YouTube gate (healthy, cooling down with the time left, probing), today's model calls and tokens, transcripts, deep-analysis quota, your jobs |
+| Models | the model for each task (glance, summary, answer, triage, analysis), picked from the live model list; "Other model name" for anything unlisted |
+| Prompts | defaults (side panel, long summary, language, background long summary), prompt sets (import from URL, refresh, edit JSON with validation messages), try a prompt on a video link or id |
+| Filters | hide and mark topics as chips, thresholds as sliders, mark-only |
+| Captions | the automatic-transcription policy, "transcribe this video" from a link, the job list with cancel and retry |
+| TVs | *Link a TV* (a big one-time code and the steps), linked devices with revoke, the TV settings kept on the server |
+| Updates | the app version this server publishes, the newest GitHub release, the last `sync-github` run |
+| Admin | users (add, set a password, admin flag, pairing code), each user's settings and TVs |
+
+Screenshots (390 x 844 at 2x): [home](screenshots/webui/02-home.png), [models](screenshots/webui/04-models.png),
+[prompts](screenshots/webui/06-prompts.png), [try a prompt](screenshots/webui/09-prompts-try.png),
+[filters](screenshots/webui/11-filters-thresholds.png), [captions](screenshots/webui/13-captions-jobs.png),
+[link a TV](screenshots/webui/14-tv-link.png), [updates](screenshots/webui/16-updates.png), [admin](screenshots/webui/17-admin.png),
+[light theme](screenshots/webui/20-home-light.png). `ai-backend/tests/webui_demo.py` serves the same canned data locally (mock LLM,
+no network) and `docs/screenshots/webui/capture.cjs` takes them with Playwright.
+
+### Sign-in and sessions
+
+- **Password.** `utubot user passwd NAME` (or *Admin* / *Account* in the page) stores a scrypt hash (`[security] scrypt_n` 2^17, r 8, p 1: about 128 MiB and a few tenths of a second per
+  hash, at most `scrypt_max_concurrent` at once). The parameters are part of each hash, so old hashes keep verifying and are hashed again with the
+  current cost at the user's next successful sign-in. At least `password_min_chars` (10) characters.
+- **Token.** The old way still works: paste the user token on the sign-in form. It is exchanged for a session; the page never keeps
+  the token. Device tokens (TVs) and `Authorization: Bearer` keep working for every endpoint, unchanged.
+- **Session cookie.** `utubot_session`, `HttpOnly`, `SameSite=Lax`, `Secure` whenever the browser reached the service over HTTPS: the
+  request itself is HTTPS, or the peer is in `[security] trusted_proxies` and sent `X-Forwarded-Proto: https`. The server stores only the
+  SHA-256 of the session id. A session lasts 30 days from the last use (the cookie is re-issued at most hourly) and at most
+  `max_sessions_per_user` (20) exist per user. Changing a password signs the user out everywhere else.
+- **CSRF.** A write (`POST`, `PUT`, `DELETE`) authenticated by the cookie must carry the `X-CSRF-Token` header (a per-session value the
+  page gets from sign-in or `GET /v1/auth/session`) and, when the browser sends `Origin`, the origin must be this server (the `Host`
+  header or `server.public_base_url`). Requests with a bearer token need neither, since a browser never adds that header by itself.
+- **Lockout.** Failed sign-ins are counted per IP address (`login_lockout_failures`, 5 in `login_lockout_s`, 15 minutes), per account
+  (`login_user_lockout_failures`, 10) and globally (`login_global_failures`); a locked address, account or server answers `429` with
+  `Retry-After`, even for the right password. An unknown user and a wrong password look the same (same message, same timing).
+- **Behind a proxy** pass `Host` and `X-Forwarded-Proto` (the nginx example below does) and list the proxy in `trusted_proxies`, or the
+  cookie is not marked `Secure` and every client shares one IP for rate limits and lockout.
+
+### What the page can and cannot do
+
+Every response carries a strict `Content-Security-Policy` (`default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'`,
+no inline script or style), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`; `/v1/*`
+answers are `Cache-Control: no-store`. The page builds its DOM with `textContent` only, so titles, prompt text and server messages
+are never interpreted as markup. Provider API keys never leave the server: `GET /v1/models` reports `key: configured | missing |
+not needed` and nothing else about them (admins also see the provider's base URL, without credentials).
+
+## Per-user settings
+
+`GET /v1/me/settings` returns one versioned document with the user's effective settings, only the values they changed (`overrides`)
+and what applies when nothing is set (`defaults`). `PUT /v1/me/settings` changes some of them; admins use
+`GET/PUT /v1/users/NAME/settings`. A write from a browser session must say which `version` it was made from (`428` otherwise) so two
+open pages cannot overwrite each other; scripts using a bearer token may leave it out and merge their partial change. The wire format is in the [contract](../ai/CONTRACT.md#per-user-settings). The sections:
+
+| Section | Settings |
+|---|---|
+| `models` | `glance`, `summary`, `answer`, `triage`, `analysis`: a model name or `provider:model` |
+| `prompts` | `default` (Summary view), `panel_default` (side panel) |
+| `filtering` | `hide_topics`, `mark_topics`, the five thresholds, `inflated_min_duration_s`, `answer_in_label`, `mark_only` |
+| `summaries` | `language`, `auto_long` |
+| `transcripts` | `auto_transcribe` (`off`, `on_dwell`, `on_open`, default `on_open`), `auto_transcribe_max_minutes` (default 30) |
+| `tv` | `summary_delay_ms`, `summary_panel`, `auto_captions`, `update_checks` |
+
+**Precedence**, for each setting, highest first:
+
+1. the user's own choice (web UI or `PUT /v1/me/settings`, also `PUT /v1/me/policy` and the prompt-default calls), kept as a sparse
+   override of only what they changed; `null` removes it again;
+2. the user's `[users.policy]` entry (`config.toml` or `users.toml`);
+3. `[default_policy]`;
+4. the built-in default.
+
+A setting still unset at that point follows the server setting it mirrors, so there is one place to change it for everyone:
+`auto_long` follows `[summary] auto_long`; `mark_only`, `summary_panel` and `auto_captions` follow `[setup.defaults]` (the values a
+TV applies when it imports `/setup.json`); a task without a model follows its `[llm.<task>]` table (`glance` follows `[llm.glance]`,
+else `[llm.summary]`); the prompt defaults follow `builtin/tldr` and `[summary] panel_prompt`. When a model is actually used a prompt's
+own `model` (in the prompt set) wins over the user's model for that task, which wins over `[llm.<task>]`.
+
+**One source of truth.** The policy fields (everything except the prompt defaults) live in the user's single override row of
+`policy_overrides`, which `PUT /v1/me/policy`, the admin policy route and the settings route all write; the prompt defaults live
+in `user_default` and `user_panel_default`, which `PUT /v1/prompts/default` and `panel-default` write. The settings document is a
+view over them. Any change through any of these routes bumps `version`; a `PUT` that sends the `version` it read gets `409` when
+someone changed the settings meanwhile.
+
+**Models** are checked against the live list (`GET /v1/models`: every provider's `/models`, cached for 5 minutes, refreshable by
+hand, models that appeared since the last list marked `new` for 3 days). A model that is not listed is refused unless an admin sends `"allow_unlisted_models": true` (the page offers "Use it anyway" to admins
+only; anyone else gets `403`); the same goes for a provider whose list cannot be fetched. `PUT /v1/me/policy` refuses a `models` field
+from a non-admin for the same reason.
+Summaries made with a user's model are cached apart from other models (the model is part of the prompt's content hash); the shared
+triage, insight and analysis caches are keyed without the model, so the first user to compute a video decides which model made it.
+Batches of the title triage are shared only between users with the same topics and the same triage model.
+
+**Transcript policy and TV settings** are stored and served now; the server does not act on `auto_transcribe` itself, and the TV
+reads these settings (and `settings_version` from `GET /v1/me`) in a later app release.
 
 ## Reverse proxy and TLS
 
@@ -185,6 +299,31 @@ Keep the service on `127.0.0.1:8790` and terminate TLS in front of it. Set `serv
 `security.trusted_proxies` must list the address your proxy connects from when it is not loopback; the client IP is then the
 right-most `X-Forwarded-For` entry that is not itself trusted. Wrong values either let clients spoof their IP (too wide) or make
 all clients look like the proxy and share rate limits (too narrow).
+
+### Two proxies in a row
+
+When a second hop sits between your edge proxy and the service (a tunnel, Tailscale Serve, another reverse proxy), it may replace
+`X-Forwarded-For` with its own address. Every client then looks like that hop and shares one bucket of the per-IP rate limit and of the
+sign-in lockout. Have the **edge** proxy name the client in a header of its own and prove it with a shared secret, which the inner hop
+passes through untouched:
+
+```nginx
+proxy_set_header X-Utubot-Client-IP    $remote_addr;
+proxy_set_header X-Utubot-Proxy-Secret "<a long random string>";
+```
+
+```toml
+[security]
+trusted_proxies = ["127.0.0.1", "::1"]          # the peer the service sees: the inner hop
+client_ip_header = "X-Utubot-Client-IP"
+client_ip_header_secret_env = "UTUBOT_PROXY_SECRET"   # the same random string goes in this environment variable
+```
+
+The header is believed only when the peer is a trusted proxy **and** `X-Utubot-Proxy-Secret` equals the configured secret
+(constant-time comparison) **and** the header holds exactly one IP address; otherwise the `X-Forwarded-For` rules above apply, so a
+client that sends the header itself changes nothing. With no secret in the environment the feature is off. Keep the secret out of
+the config file (it goes into the service's environment file like the provider keys) and make the edge proxy overwrite both headers,
+never forward the client's own.
 
 ### Caddy (same host)
 
@@ -210,6 +349,7 @@ server {
         proxy_pass http://127.0.0.1:8790;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;   # lets the web UI's session cookie be marked Secure
         proxy_read_timeout 90s;     # summaries can long-poll up to the wait_ms caps
     }
 }
@@ -332,5 +472,5 @@ Publish APKs signed with the same key as the installed app. TVs only learn about
 
 ## Backups
 
-Back up `data_dir`: `utubot.sqlite` (caches, jobs, prompt sets, device token hashes, policy overrides) and `users.toml`; plus
+Back up `data_dir`: `utubot.sqlite` (caches, jobs, prompt sets, device token hashes, password hashes, web sessions, per-user settings) and `users.toml`; plus
 `config.toml`, the env file and `app_dir`. Caches can be rebuilt; losing `users.toml` or the database means re-pairing.

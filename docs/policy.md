@@ -16,8 +16,11 @@ on the card) or **hide** (the card is removed). The verdict is computed from sha
 
 ## Policy fields
 
-Set them in `[default_policy]` (everyone), per user in `[users.policy]`, or at runtime in the web UI (admin) or the API
-(`PUT /v1/me/policy`, `PUT /v1/admin/users/{name}/policy`); runtime changes are stored as per-user overrides.
+Set them in `[default_policy]` (everyone), per user in `[users.policy]`, or at runtime by the user in the web UI (*Filters*, *Prompts*,
+*Models*, *Captions*, *TVs*) or the API (`PUT /v1/me/settings`, `PUT /v1/me/policy`; admins: `PUT /v1/users/{name}/settings`,
+`PUT /v1/admin/users/{name}/policy`); runtime changes are stored as per-user overrides, one row per user, and the highest layer wins:
+override, then `[users.policy]`, then `[default_policy]`, then the built-in default. See
+[Per-user settings](server.md#per-user-settings) for the whole settings document and what an unset field follows.
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -32,8 +35,17 @@ Set them in `[default_policy]` (everyone), per user in `[users.policy]`, or at r
 | `inflated_min_duration_s` | `300` | videos shorter than this are never marked inflated |
 | `answer_in_label` | `false` | append the short answer to the mark text |
 | `auto_long` | unset | `true`/`false` overrides `[summary] auto_long` (generate the long summary in the background after a side-panel summary); unset follows the config |
+| `mark_only` | unset | `true`: the TV shows cards that would be hidden with a mark instead; unset follows `[setup.defaults] mark_only` |
+| `models` | `{}` | per-task model (`glance`, `summary`, `answer`, `triage`, `analysis`); a task without an entry follows `[llm.<task>]` |
+| `auto_transcribe` | `"on_open"` | `off`, `on_dwell` or `on_open`: when a video without captions is transcribed by itself (acted on by the TV in a later release) |
+| `auto_transcribe_max_minutes` | `30` | videos longer than this are not transcribed automatically |
+| `summary_delay_ms` | `700` | TV: how long a card stays focused before its summary is requested |
+| `summary_panel` | unset | TV: side panel on by default; unset follows `[setup.defaults] summary_panel` |
+| `auto_captions` | unset | TV: offer u·tubot captions automatically; unset follows `[setup.defaults] auto_captions` |
+| `update_checks` | `true` | TV: ask the server for newer app versions |
 
-Hiding wins over marking. Raise a threshold to see fewer marks; set a hide threshold to `1.01` to never hide on that score.
+Thresholds accept 0 to 1.01 (at most 50 topics of at most 80 characters each; blanks and duplicates are dropped). Hiding wins over
+marking. Raise a threshold to see fewer marks; set a hide threshold to `1.01` to never hide on that score.
 Topics work best as short, concrete phrases (`"reaction videos"`, `"celebrity gossip"`), because the model must pick them from your
 list verbatim.
 
@@ -54,7 +66,8 @@ Changing topics re-evaluates videos for that user; the shared title analysis is 
 ## Mark only
 
 In the app, *Settings, u·tubot, Mark only, never hide* keeps videos that policy would hide and shows them with a mark instead. The
-server's setup can ship the default (`[setup.defaults] mark_only = true`). When the backend is unreachable or too slow, the app shows
+server's setup can ship the default (`[setup.defaults] mark_only = true`), and the web UI keeps a per-user choice (`mark_only` above;
+the TV reads it in a later release). When the backend is unreachable or too slow, the app shows
 videos unfiltered: a verdict never blocks a row longer than the wait cap (`assess.wait_ms_cap`, 3 s) plus a little network slack.
 
 ## Feedback

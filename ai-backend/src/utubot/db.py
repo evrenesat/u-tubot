@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS video_meta(
 CREATE TABLE IF NOT EXISTS transcripts(
   video_id TEXT PRIMARY KEY, lang TEXT, source TEXT NOT NULL, text TEXT NOT NULL,
   fetched_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS transcripts_fetched ON transcripts(fetched_at);
 CREATE TABLE IF NOT EXISTS no_captions(
   video_id TEXT PRIMARY KEY, checked_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS video_holds(
@@ -61,7 +62,22 @@ CREATE TABLE IF NOT EXISTS pair_codes(
   used INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS pair_failures(ip TEXT NOT NULL, ts REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS pair_failures_ip ON pair_failures(ip, ts);
-CREATE TABLE IF NOT EXISTS policy_overrides(user TEXT PRIMARY KEY, json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS policy_overrides(
+  user TEXT PRIMARY KEY, json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0,
+  updated_at REAL NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS user_passwords(
+  user TEXT PRIMARY KEY, hash TEXT NOT NULL, updated_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions(
+  id_sha256 TEXT PRIMARY KEY, user TEXT NOT NULL, created_at REAL NOT NULL, last_seen REAL NOT NULL,
+  expires_at REAL NOT NULL, ip TEXT, agent TEXT, via TEXT NOT NULL DEFAULT 'password');
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user);
+CREATE TABLE IF NOT EXISTS login_failures(scope TEXT NOT NULL, ts REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS login_failures_scope ON login_failures(scope, ts);
+CREATE TABLE IF NOT EXISTS model_seen(
+  provider TEXT NOT NULL, model TEXT NOT NULL, first_seen REAL NOT NULL,
+  PRIMARY KEY(provider, model));
+CREATE TABLE IF NOT EXISTS usage_daily(
+  day TEXT NOT NULL, metric TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY(day, metric));
 CREATE TABLE IF NOT EXISTS feedback(
   id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT NOT NULL, video_id TEXT NOT NULL,
   kind TEXT NOT NULL, correct INTEGER NOT NULL, note TEXT, created_at REAL NOT NULL);
@@ -74,6 +90,7 @@ JOB_COLUMNS = {
     "attempts": "INTEGER NOT NULL DEFAULT 0",
     "not_before": "REAL",
 }
+POLICY_COLUMNS = {"version": "INTEGER NOT NULL DEFAULT 0", "updated_at": "REAL NOT NULL DEFAULT 0"}
 METADATA_ONLY = "metadata_only"
 
 
@@ -95,6 +112,10 @@ class Database:
         for column, ddl in JOB_COLUMNS.items():
             if column not in have:
                 self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {ddl}")
+        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(policy_overrides)")}
+        for column, ddl in POLICY_COLUMNS.items():
+            if column not in have:
+                self._conn.execute(f"ALTER TABLE policy_overrides ADD COLUMN {column} {ddl}")
         # Rows written when a transcript could not be fetched: nothing may be built on a title alone.
         self._conn.execute("DELETE FROM transcripts WHERE source=?", [METADATA_ONLY])
         self._conn.execute("DELETE FROM summaries WHERE source=?", [METADATA_ONLY])

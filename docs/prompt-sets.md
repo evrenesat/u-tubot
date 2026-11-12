@@ -37,7 +37,7 @@ Two prompts are chosen per user: the **default** (what the Summary view shows, `
 - `system`, `template`: up to 20 000 characters each; `template` is required.
 - `max_tokens`: 16 to 8000 (default 700). This is the budget for the visible answer; the backend adds `[llm] reasoning_headroom_tokens`
   (default 2048) on top for reasoning models. A cut-off answer is retried once with double the budget.
-- `model`: optional, overrides the summary model: a model name or `provider:model` naming a provider from your config.
+- `model`: optional, overrides the summary model: a model name or `provider:model` naming a provider from your config. It wins over the user's own model for the task (web UI, *Models*), which wins over `[llm.<task>]`.
 - `task`: optional, `"summary"` (default) or `"glance"`. It picks which `[llm.*]` table runs the prompt: `[llm.summary]`, or
   `[llm.glance]` (the fast model for short panel summaries, falling back to `[llm.summary]` with reasoning off; see
   [llm-providers.md](llm-providers.md)). Files without it keep working unchanged.
@@ -94,7 +94,7 @@ same curiosity-first logic with a longer answer (2 to 3 sentences, 400 tokens).
 | | Used for | Default | Change it with |
 |---|---|---|---|
 | `default` | the Summary view and any request without `prompt` | `builtin/tldr` | `PUT /v1/prompts/default {"key": ...}`, the TV prompt list, the web UI |
-| `panel_default` | the side panel's automatic summaries: `GET /v1/videos/{id}/summary?prompt=panel` | `builtin/glance` (`[summary] panel_prompt`) | `PUT /v1/prompts/panel-default {"key": ...}`, the web UI (*Use for the side panel*) |
+| `panel_default` | the side panel's automatic summaries: `GET /v1/videos/{id}/summary?prompt=panel` | `builtin/glance` (`[summary] panel_prompt`) | `PUT /v1/prompts/panel-default {"key": ...}`, the web UI (*Prompts, Defaults*) |
 
 `GET /v1/prompts` returns both (`default`, `panel_default`) and marks each prompt with `default` and `panel_default`. A user's
 own panel choice wins over `[summary] panel_prompt`; if the chosen prompt no longer exists (its set was deleted or refreshed
@@ -123,16 +123,16 @@ LAN. The size cap is `summary.max_import_bytes` (256 KiB).
 
 - **TV**: *Settings, u·tubot, Prompts, Import from URL*, *Refresh all*, and the *Default prompt* choice. A setup can list
   `prompt_set_urls` ([server.md](server.md)); the app imports them right after pairing.
-- **Web UI** (`/`, with your token): import by URL, edit JSON in place (*Save set*), start *New from template*, delete.
+- **Web UI** (`/`, signed in): *Prompts* imports by URL, refreshes, edits JSON in place (*Validate* shows the problems, *Save set*), starts *New from template*, deletes, picks the two defaults and tries a prompt on a video.
 - **API**: `POST /v1/prompts/import {"url": "..."}` (replaces the set with the same id and remembers `source_url`),
   `POST /v1/prompts/refresh` (re-fetches every set that has a source URL), `PUT /v1/prompts/sets/{id}` (upload),
   `PUT /v1/prompts/default {"key": "set/prompt"}`, `PUT /v1/prompts/panel-default {"key": "set/prompt"}`.
 
 ## Iterating without rebuilding anything
 
-1. In the web UI load a set into the editor, change a prompt, *Save set*.
-2. Under *Try a summary* enter a video id, pick the prompt (or type ad-hoc prompt text, which overrides the selected one and is
-   not cached long), press *Summarize*.
+1. In the web UI tap *Edit JSON* on a set, change a prompt, *Validate*, *Save set*.
+2. Under *Try a prompt* paste a video link or id, pick the prompt (or choose *Ad-hoc text* and type one, which is not cached
+   long), press *Run*. A video without captions offers *Transcribe in background*.
 3. Repeat. Summaries are cached by (video, prompt key, hash of prompt content, language), so editing a prompt invalidates only that
    prompt's results and unchanged prompts stay instant.
 
@@ -197,7 +197,7 @@ The `model` of the quiz prompt refers to a provider named `openrouter` in the se
 
 ## Example 3: your own panel prompt
 
-A short prompt that runs on the fast glance model. Import the set, then choose it with *Use for the side panel* in the web UI or
+A short prompt that runs on the fast glance model. Import the set, then choose it as the side panel prompt under *Prompts, Defaults* in the web UI or
 `PUT /v1/prompts/panel-default {"key": "quick/one-line"}`.
 
 ```json

@@ -26,6 +26,12 @@ Tests use an in-process mock OpenAI-compatible server (`tests/mock_openai.py`) a
 tests call `ffmpeg`. Rules for contributors are in `ai-backend/AGENTS.md` (tunables in `config.py` and `config.example.toml`,
 contract changes together with `ai/CONTRACT.md`).
 
+The web UI (`ai-backend/src/utubot/web/`) is plain HTML, CSS and ES modules served as they are: edit, reload, no build. To look at it
+without a real LLM or YouTube, run `uv run python tests/webui_demo.py temp/webui-demo` (mock LLM, canned data, owner password in
+its first output line) and, for the screenshots in `docs/screenshots/webui/`,
+`NODE_PATH=<dir with playwright> node docs/screenshots/webui/capture.cjs http://127.0.0.1:8791 docs/screenshots/webui`
+(Playwright with Chromium; the script also fails on console errors and sideways scrolling at 360 px).
+
 ## Android app
 
 Needs JDK 25, the Android SDK (platform 37, build-tools 30.0.3, NDK 30.0.16248370) and two sibling checkouts next to this repository:

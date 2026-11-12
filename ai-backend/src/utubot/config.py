@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 import tomllib
 from pathlib import Path
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 CONFIG_ENV = "UTUBOT_CONFIG"
 DEFAULT_CONFIG_PATH = "./config.toml"
@@ -161,18 +162,80 @@ class CaptionsConfig(BaseModel):
     translate_batch: int = 40
 
 
+TASK_ANSWER = "answer"
+TASK_TRIAGE = "triage"
+TASK_ANALYSIS = "analysis"
+MODEL_TASKS = ("glance", "summary", TASK_ANSWER, TASK_TRIAGE, TASK_ANALYSIS)
+MAX_TOPICS = 50
+MAX_TOPIC_CHARS = 80
+MAX_MODEL_CHARS = 200
+MAX_LANGUAGE_CHARS = 40
+MAX_THRESHOLD = 1.01
+MAX_TRANSCRIBE_MINUTES = 24 * 60
+MAX_SUMMARY_DELAY_MS = 10_000
+MAX_INFLATED_MIN_S = 24 * 3600
+Threshold = Annotated[float, Field(ge=0.0, le=MAX_THRESHOLD)]
+
+
 class UserPolicy(BaseModel):
-    language: str = "en"
+    """Everything the server keeps per user: filtering rules, models, transcript and TV settings.
+
+    Resolution, lowest to highest: these defaults, `[default_policy]`, the user's `[users.policy]`,
+    then the runtime override row (`PUT /v1/me/settings`, `PUT /v1/me/policy`). A field left `None`
+    follows its server-wide setting (`auto_long` -> `[summary]`, `mark_only`, `summary_panel`,
+    `auto_captions` -> `[setup.defaults]`); a task without a `models` entry follows `[llm.<task>]`.
+    """
+
+    language: str = Field("en", min_length=1, max_length=MAX_LANGUAGE_CHARS)
     hide_topics: list[str] = Field(default_factory=list)
     mark_topics: list[str] = Field(default_factory=list)
-    hide_clickbait_above: float = 0.9
-    mark_clickbait_above: float = 0.6
-    hide_low_quality_above: float = 0.9
-    mark_low_quality_above: float = 0.65
-    mark_inflated_ratio_below: float = 0.35
-    inflated_min_duration_s: int = 300
+    hide_clickbait_above: Threshold = 0.9
+    mark_clickbait_above: Threshold = 0.6
+    hide_low_quality_above: Threshold = 0.9
+    mark_low_quality_above: Threshold = 0.65
+    mark_inflated_ratio_below: Threshold = 0.35
+    inflated_min_duration_s: int = Field(300, ge=0, le=MAX_INFLATED_MIN_S)
     answer_in_label: bool = False
     auto_long: bool | None = None
+    mark_only: bool | None = None
+    models: dict[str, str] = Field(default_factory=dict)
+    auto_transcribe: Literal["off", "on_dwell", "on_open"] = "on_open"
+    auto_transcribe_max_minutes: int = Field(30, ge=1, le=MAX_TRANSCRIBE_MINUTES)
+    summary_delay_ms: int = Field(700, ge=0, le=MAX_SUMMARY_DELAY_MS)
+    summary_panel: bool | None = None
+    auto_captions: bool | None = None
+    update_checks: bool = True
+
+    @field_validator("hide_topics", "mark_topics")
+    @classmethod
+    def _topics(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for topic in v:
+            clean = " ".join(str(topic).split())
+            if not clean:
+                continue
+            if len(clean) > MAX_TOPIC_CHARS:
+                raise ValueError(f"a topic is longer than {MAX_TOPIC_CHARS} characters")
+            if clean not in out:
+                out.append(clean)
+        if len(out) > MAX_TOPICS:
+            raise ValueError(f"at most {MAX_TOPICS} topics")
+        return out
+
+    @field_validator("models")
+    @classmethod
+    def _models(cls, v: dict[str, str]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for task, name in v.items():
+            if task not in MODEL_TASKS:
+                raise ValueError(f"unknown task {task!r}; use one of {', '.join(MODEL_TASKS)}")
+            clean = str(name).strip()
+            if not clean:
+                continue
+            if len(clean) > MAX_MODEL_CHARS or any(ch.isspace() or ord(ch) < 32 for ch in clean):
+                raise ValueError(f"invalid model name for {task}")
+            out[task] = clean
+        return out
 
 
 class UserConfig(BaseModel):
@@ -202,6 +265,8 @@ class ServerConfig(BaseModel):
 
 class SecurityConfig(BaseModel):
     trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1", "::1"])
+    client_ip_header: str = ""
+    client_ip_header_secret_env: str = "UTUBOT_PROXY_SECRET"
     rate_per_token_per_min: int = 240
     rate_per_ip_per_min: int = 600
     rate_window_s: int = 60
@@ -215,6 +280,33 @@ class SecurityConfig(BaseModel):
     max_body_bytes: int = 262144
     max_device_name_chars: int = 64
     max_devices_per_user: int = 20
+    session_cookie: str = "utubot_session"
+    session_ttl_s: int = 30 * 86400
+    session_refresh_s: int = 3600
+    max_sessions_per_user: int = 20
+    password_min_chars: int = 10
+    password_max_chars: int = 256
+    scrypt_n: int = 2**17
+    scrypt_max_concurrent: int = 2
+    scrypt_r: int = 8
+    scrypt_p: int = 1
+    login_attempts_per_ip_per_min: int = 10
+    login_lockout_failures: int = 5
+    login_lockout_s: int = 900
+    login_user_lockout_failures: int = 10
+    login_global_failures: int = 200
+    login_global_window_s: int = 3600
+
+
+class ModelsConfig(BaseModel):
+    """The live model list the web UI offers (`GET /v1/models`)."""
+
+    cache_ttl_s: int = 300
+    error_ttl_s: int = 30
+    refresh_min_interval_s: int = 10
+    timeout_s: float = 10.0
+    new_for_s: int = 3 * 86400
+    max_models_per_provider: int = 2000
 
 
 class SetupDefaults(BaseModel):
@@ -247,6 +339,9 @@ class AppConfig(BaseModel):
     sync_releases_per_page: int = 20
     sync_max_apk_bytes: int = 200 * 1024 * 1024
     keep_versions: int = 0
+    release_check_ttl_s: int = 600
+    release_check_error_ttl_s: int = 60
+    release_check_min_interval_s: int = 30
 
 
 class Config(BaseModel):
@@ -259,10 +354,13 @@ class Config(BaseModel):
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     captions: CaptionsConfig = Field(default_factory=CaptionsConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
     app: AppConfig = Field(default_factory=AppConfig)
     default_policy: UserPolicy = Field(default_factory=UserPolicy)
     users: list[UserConfig] = Field(default_factory=list)
     config_path: str = ""
+    config_user_names: list[str] = Field(default_factory=list)
+    declared_users: list[UserConfig] | None = None
 
     @property
     def data_dir(self) -> Path:
@@ -286,6 +384,11 @@ class Config(BaseModel):
     def app_dir(self) -> Path:
         return Path(self.server.app_dir)
 
+    def client_ip_secret(self) -> str | None:
+        """The shared secret a trusted proxy sends with `client_ip_header`; unset disables the header."""
+        env = self.security.client_ip_header_secret_env
+        return (os.environ.get(env) or None) if env else None
+
     def api_key(self, provider: str) -> str | None:
         env = self.llm.providers[provider].api_key_env
         if not env:
@@ -297,14 +400,9 @@ def _merge_policy(default: UserPolicy, override: dict) -> UserPolicy:
     return UserPolicy(**{**default.model_dump(), **override})
 
 
-def load_config(path: str | os.PathLike | None = None) -> Config:
-    cfg_path = Path(path or os.environ.get(CONFIG_ENV, DEFAULT_CONFIG_PATH))
-    raw: dict = {}
-    if cfg_path.exists():
-        raw = tomllib.loads(cfg_path.read_text())
-    cfg = Config(**raw)
-    cfg.config_path = str(cfg_path)
-    users = {u.name: u for u in cfg.users}
+def resolve_users(cfg: Config, declared: list[UserConfig]) -> list[UserConfig]:
+    """Declared users plus users.toml entries, each policy resolved over `[default_policy]`."""
+    users = {u.name: u for u in declared}
     users_path = cfg.users_path
     if users_path.exists():
         extra = tomllib.loads(users_path.read_text())
@@ -312,7 +410,7 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
             existing = users.get(entry["name"])
             if existing:
                 users[entry["name"]] = existing.model_copy(
-                    update={"token_sha256": entry["token_sha256"]}
+                    update={"token_sha256": entry.get("token_sha256") or existing.token_sha256}
                 )
             else:
                 users[entry["name"]] = UserConfig(**entry)
@@ -322,5 +420,17 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         resolved.append(
             user.model_copy(update={"policy": _merge_policy(cfg.default_policy, policy_raw)})
         )
-    cfg.users = resolved
+    return resolved
+
+
+def load_config(path: str | os.PathLike | None = None) -> Config:
+    cfg_path = Path(path or os.environ.get(CONFIG_ENV, DEFAULT_CONFIG_PATH))
+    raw: dict = {}
+    if cfg_path.exists():
+        raw = tomllib.loads(cfg_path.read_text())
+    cfg = Config(**raw)
+    cfg.config_path = str(cfg_path)
+    cfg.config_user_names = [u.name for u in cfg.users]
+    cfg.declared_users = list(cfg.users)
+    cfg.users = resolve_users(cfg, cfg.declared_users)
     return cfg

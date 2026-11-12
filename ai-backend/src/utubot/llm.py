@@ -15,6 +15,14 @@ from typing import Any
 import httpx
 
 from .config import Config, LLMTask
+from .db import Database
+from .usage import (
+    METRIC_LLM_CALLS,
+    METRIC_LLM_COMPLETION_TOKENS,
+    METRIC_LLM_ERRORS,
+    METRIC_LLM_PROMPT_TOKENS,
+    Usage,
+)
 
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 THINK_OPEN_RE = re.compile(r"^.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -158,8 +166,14 @@ def extract_json(text: str) -> Any:
 
 
 class LLMClient:
-    def __init__(self, cfg: Config, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self,
+        cfg: Config,
+        transport: httpx.AsyncBaseTransport | None = None,
+        db: Database | None = None,
+    ):
         self.cfg = cfg
+        self.usage = Usage(db)
         self._limiters: dict[str, PriorityLimiter] = {}
         self._http = httpx.AsyncClient(timeout=cfg.llm.timeout_s, transport=transport)
 
@@ -297,13 +311,41 @@ class LLMClient:
             try:
                 resp = await self._call(provider, body, priority, loop.time() + share)
             except LLMError as exc:
+                self.usage.add(METRIC_LLM_ERRORS)
                 last = exc
                 if not exc.failover or idx == len(chain) - 1:
                     raise
                 log.warning("llm %s:%s failed (%s), trying fallback", provider, name, exc)
                 continue
+            self._count(resp)
             return self._parse(resp)
         raise last or LLMError("no llm model configured")
+
+    def _count(self, resp: httpx.Response) -> None:
+        self.usage.add(METRIC_LLM_CALLS)
+        try:
+            usage = resp.json().get("usage") or {}
+            self.usage.add(METRIC_LLM_PROMPT_TOKENS, int(usage.get("prompt_tokens") or 0))
+            self.usage.add(METRIC_LLM_COMPLETION_TOKENS, int(usage.get("completion_tokens") or 0))
+        except (ValueError, TypeError, AttributeError):
+            return
+
+    async def list_models(self, provider: str, timeout_s: float) -> list[str]:
+        """Model ids a provider's `GET <base_url>/models` lists; errors carry no URL or key."""
+        url = self.cfg.llm.providers[provider].base_url.rstrip("/") + "/models"
+        try:
+            resp = await self._http.get(url, headers=self._headers(provider), timeout=timeout_s)
+        except httpx.HTTPError as exc:
+            raise LLMError(f"unreachable ({type(exc).__name__})") from None
+        if resp.status_code >= HTTP_ERROR_FLOOR:
+            raise LLMError(f"http {resp.status_code}")
+        try:
+            data = resp.json()
+            items = data["data"] if isinstance(data, dict) and "data" in data else data
+            ids = [i["id"] if isinstance(i, dict) else i for i in items]
+        except (ValueError, KeyError, TypeError):
+            raise LLMError("unreadable model list") from None
+        return [i for i in ids if isinstance(i, str) and i]
 
     @staticmethod
     def _parse(resp: httpx.Response) -> Completion:

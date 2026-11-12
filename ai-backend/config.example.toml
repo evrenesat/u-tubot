@@ -14,6 +14,13 @@ public_base_url = "https://utubot.example.com"   # example; default http://127.0
 # itself a trusted proxy. Loopback only by default; when a reverse proxy runs on another
 # address, add that address (see docs/server.md).
 trusted_proxies = ["127.0.0.1", "::1"]
+# A second proxy hop (for example a tunnel in front of this service) can replace X-Forwarded-For with its
+# own address, so every client looks like that hop and shares one rate-limit and lockout bucket. To name the
+# real client instead: the outer proxy sends this header plus a shared secret in X-Utubot-Proxy-Secret, and
+# the secret is in the environment variable below. Honoured only from a trusted proxy and only with the
+# right secret; empty header name = off (docs/server.md, Reverse proxy and TLS).
+client_ip_header = ""             # example: "X-Utubot-Client-IP"
+client_ip_header_secret_env = "UTUBOT_PROXY_SECRET"
 rate_per_token_per_min = 240
 rate_per_ip_per_min = 600
 rate_window_s = 60
@@ -27,6 +34,34 @@ pair_global_window_s = 3600
 max_body_bytes = 262144
 max_device_name_chars = 64
 max_devices_per_user = 20
+# Web UI sign-in (username + password, or a pasted token): an HttpOnly session cookie, Secure when
+# the browser reached the service over HTTPS (directly or through a trusted proxy that sends
+# X-Forwarded-Proto), SameSite=Lax. Cookie-authenticated writes also need the X-CSRF-Token header.
+session_cookie = "utubot_session"
+session_ttl_s = 2592000           # 30 days, renewed while the session is used
+session_refresh_s = 3600          # the cookie is re-issued at most this often
+max_sessions_per_user = 20        # oldest sessions are dropped beyond this
+password_min_chars = 10
+password_max_chars = 256
+scrypt_n = 131072                 # scrypt cost (N = 2^17, r, p; about 128 MiB per hash) for new hashes; older hashes still verify and are upgraded at the next sign-in
+scrypt_r = 8
+scrypt_p = 1
+scrypt_max_concurrent = 2         # password hashes computed at the same time (each needs the memory above)
+login_attempts_per_ip_per_min = 10
+login_lockout_failures = 5        # failed sign-ins from one IP before it is locked out
+login_lockout_s = 900
+login_user_lockout_failures = 10  # failed sign-ins against one account (from anywhere) before it is locked
+login_global_failures = 200       # failed sign-ins from all IPs per window before sign-in locks globally
+login_global_window_s = 3600
+
+# The model list the web UI offers (GET /v1/models: each provider's /models, cached).
+[models]
+cache_ttl_s = 300                 # 5 minutes
+error_ttl_s = 30                  # a failing provider is not asked again for this long
+refresh_min_interval_s = 10       # the "refresh" button is honoured at most this often
+timeout_s = 10.0
+new_for_s = 259200                # a model that appeared since the last list is marked "new" for 3 days
+max_models_per_provider = 2000
 
 # ---- LLM providers (all OpenAI-compatible chat completions) -----------------------------
 [llm]
@@ -221,11 +256,16 @@ downloader_codes = { arm64-v8a = "", armeabi-v7a = "" }
 # apksigner_timeout_s = 120.0
 # sync_timeout_s = 60.0                     # per HTTP request
 # sync_releases_per_page = 20
+# release_check_ttl_s = 600                 # the web UI's "latest GitHub release" is cached this long
+# release_check_error_ttl_s = 60
+# release_check_min_interval_s = 30         # the "check now" button is honoured at most this often
 # sync_max_apk_bytes = 209715200            # download cap per APK
 
 # ---- Users --------------------------------------------------------------------------------
 # Tokens are not stored here. `utubot user add NAME [--admin]` writes a sha256 hash to
 # users.toml; `utubot user pair NAME` makes a one-time code for per-device tokens.
+# Defaults for every user's settings (docs/server.md, "Per-user settings"). Users change their own
+# in the web UI (GET/PUT /v1/me/settings); their choices are stored as overrides on top of these.
 [default_policy]
 language = "en"
 hide_topics = []
@@ -237,6 +277,16 @@ mark_low_quality_above = 0.65
 mark_inflated_ratio_below = 0.35
 inflated_min_duration_s = 300
 answer_in_label = false
+# auto_long = false               # unset: follows [summary] auto_long
+# mark_only = false               # unset: follows [setup.defaults] mark_only (the TV's "mark only, never hide")
+auto_transcribe = "on_open"       # off | on_dwell | on_open: transcribe videos without captions by itself
+auto_transcribe_max_minutes = 30  # ... but only videos up to this long
+summary_delay_ms = 700            # TV: how long a card stays focused before its summary is requested
+# summary_panel = false           # unset: follows [setup.defaults] summary_panel
+# auto_captions = true            # unset: follows [setup.defaults] auto_captions
+update_checks = true              # TV: ask this server for newer app versions
+# [default_policy.models]         # per-task model for everyone; unset tasks follow [llm.<task>]
+# glance = "llama3.2:3b"          # tasks: glance, summary, answer, triage, analysis
 
 [[users]]
 name = "owner"

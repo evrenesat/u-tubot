@@ -19,9 +19,11 @@ uv run utubot user add owner --admin   # prints the token once
 uv run utubot serve            # 127.0.0.1:8790
 ```
 
-Open `http://127.0.0.1:8790/`, paste the token. The UI covers health, policy, prompt set
-import/edit/default, trying summaries (saved or ad-hoc prompt text), caption jobs, and (admins)
-pairing codes, devices and policy edits.
+Open `http://127.0.0.1:8790/` on any device and sign in with a username and password
+(`uv run utubot user passwd owner`) or paste the token. The phone-first UI covers health and the YouTube gate, per-task
+models from the live model list, prompts (sets, import, edit with validation, trying a prompt on a video), hide/mark
+filtering, transcript policy and jobs, TV linking and devices, app updates, and (admins) users and their settings.
+Plain HTML, CSS and ES modules under `src/utubot/web/`, no build step. See `../docs/server.md` (Web UI, Per-user settings).
 
 ## Configuration
 
@@ -33,8 +35,10 @@ option. Highlights:
   `alias` or `provider:model`.
 - `[summary]` token budget and strategy, `panel_prompt` (side-panel prompt, `builtin/glance`), `auto_long` (also build the long
   summary in the background, off by default).
-- `[security]` rate limits, pairing limits, request size cap, `trusted_proxies` for
-  `X-Forwarded-For` (loopback only by default).
+- `[security]` rate limits, pairing limits, request size cap, web sign-in (sessions, password hashing, lockout), `trusted_proxies` for
+  `X-Forwarded-For` and `X-Forwarded-Proto` (loopback only by default); `[models]` the cached model list.
+- `[default_policy]` and `[[users]] policy` hold the defaults of every per-user setting (filtering, models per task, transcript
+  policy, TV settings); users override them in the web UI.
 - `[assess]` batch size, wait cap, tier-2 daily cap per user (30).
 - `[youtube]` pacing and circuit breaker for every request to YouTube (`max_concurrent`, `min_interval_s`, `jitter_s`,
   `cooldown_base_s`, `cooldown_max_s`); `[transcripts] no_captions_ttl_s`.
@@ -45,15 +49,17 @@ option. Highlights:
 
 ## Auth and pairing
 
-Everything except `GET /setup.json`, `GET /v1/health`, `POST /v1/pair`, the landing page and `/app/*` (update.json, info.json, APKs)
-needs `Authorization: Bearer <token>` (caption `.vtt` accepts the same header, and `?token=` only for players that cannot set headers; URL tokens end up in logs and history, so avoid them).
-`utubot user add NAME [--admin]` creates a user token; `utubot user pair NAME` prints a one-time
+Everything except `GET /setup.json`, `GET /v1/health`, `POST /v1/pair`, the landing page and its static files (`/`, `/ui/*`), the
+browser sign-in (`/v1/auth/login`, `/v1/auth/logout`) and `/app/*` (update.json, info.json, APKs)
+needs `Authorization: Bearer <token>` or, for the web UI, the HttpOnly session cookie (writes then also need the `X-CSRF-Token`
+header; caption `.vtt` accepts the bearer header, and `?token=` only for players that cannot set headers; URL tokens end up in logs and history, so avoid them).
+`utubot user add NAME [--admin]` creates a user token; `utubot user passwd NAME` sets the web sign-in password; `utubot user pair NAME` prints a one-time
 6-digit code that a device exchanges at `POST /v1/pair` for its own revocable token.
 
 ## CLI
 
 ```
-utubot serve | user add|pair|devices|revoke | app publish APK... --version-name X --version-code N
+utubot serve | user add|passwd|pair|devices|revoke | app publish APK... --version-name X --version-code N
 utubot app sync-github [--repo OWNER/NAME] [--prerelease] [--dry-run]
 utubot prompts validate FILE
 ```

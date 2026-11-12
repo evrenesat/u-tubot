@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ from .auth import Auth, PairError, append_user, hash_token, new_token
 from .config import load_config
 from .db import Database
 from .prompts import PromptError, validate_prompt_set
+from .webauth import WebAuth
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -28,7 +30,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def cmd_user_add(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     token = new_token()
-    append_user(cfg.users_path, args.name, hash_token(token), admin=args.admin)
+    try:
+        append_user(cfg.users_path, args.name, hash_token(token), admin=args.admin)
+    except PairError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     print(f"user: {args.name}")
     print(f"token: {token}")
     print(f"hash stored in {cfg.users_path}; the token is not stored and cannot be shown again")
@@ -38,6 +44,26 @@ def cmd_user_add(args: argparse.Namespace) -> int:
 def _auth(args: argparse.Namespace) -> Auth:
     cfg = load_config(args.config)
     return Auth(cfg, Database(cfg.db_path))
+
+
+def cmd_user_passwd(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    db = Database(cfg.db_path)
+    web = WebAuth(cfg, db, Auth(cfg, db))
+    if args.stdin:
+        password = sys.stdin.readline().rstrip("\n")
+    else:
+        password = getpass.getpass(f"New password for {args.name}: ")
+        if getpass.getpass("Repeat it: ") != password:
+            print("error: the two entries differ", file=sys.stderr)
+            return 1
+    try:
+        web.set_password(args.name, password)
+    except PairError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"password set for {args.name}; their web sessions were signed out")
+    return 0
 
 
 def cmd_user_pair(args: argparse.Namespace) -> int:
@@ -96,10 +122,16 @@ def cmd_app_sync_github(args: argparse.Namespace) -> int:
         )
     except appsync.TransientError as exc:
         print(f"warning: {exc}; will retry on the next run", file=sys.stderr)
+        if not args.dry_run:
+            appchannel.record_sync(cfg, "unreachable", error=str(exc))
         return appsync.EXIT_TEMPFAIL
     except appsync.SyncError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        if not args.dry_run:
+            appchannel.record_sync(cfg, "error", error=str(exc))
         return 1
+    if not args.dry_run:
+        appchannel.record_sync(cfg, result.status, result.version_name)
     prefix = "dry run: " if args.dry_run else ""
     for line in result.lines:
         print(f"{prefix}{line}")
@@ -133,6 +165,12 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("name")
     add.add_argument("--admin", action="store_true", help="mark the user as admin")
     add.set_defaults(func=cmd_user_add)
+    passwd = user.add_parser("passwd", help="set a user's web sign-in password")
+    passwd.add_argument("name")
+    passwd.add_argument(
+        "--stdin", action="store_true", help="read the password from stdin (one line), no prompt"
+    )
+    passwd.set_defaults(func=cmd_user_passwd)
     pair = user.add_parser("pair", help="create a one-time pairing code for a user")
     pair.add_argument("name")
     pair.set_defaults(func=cmd_user_pair)
