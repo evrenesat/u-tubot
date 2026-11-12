@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.Set;
 
 import io.reactivex.Observable;
+import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.schedulers.Schedulers;
 
 /**
@@ -117,7 +118,11 @@ public class UtubotManager {
             }
         }
 
-        return Observable.merge(calls).toList().toObservable().map(results -> true).onErrorReturnItem(true);
+        // The rows are built and shown from whatever this emits (see BrowsePresenter): the main thread, as the other managers of the
+        // resolver do. On the io thread of the last call the adapters of the grids were changed off the UI thread, which raced with the
+        // layout (IllegalStateException: Cannot call this method while RecyclerView is computing a layout) and left the section empty.
+        return Observable.merge(calls).toList().toObservable().map(results -> true).onErrorReturnItem(true)
+                .observeOn(AndroidSchedulers.mainThread());
     }
 
     private boolean assess(List<VideoMeta> metas, String section, int waitMs, int hardTimeoutMs) throws IOException {

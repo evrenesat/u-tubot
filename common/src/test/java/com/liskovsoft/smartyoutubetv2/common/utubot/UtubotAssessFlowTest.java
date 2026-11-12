@@ -1,6 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import android.content.Context;
+import android.os.Looper;
 
 import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItem;
@@ -21,15 +22,18 @@ import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.reactivex.Observable;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -90,6 +94,26 @@ public class UtubotAssessFlowTest {
         }
 
         return shown;
+    }
+
+    /**
+     * The rows are shown from what the resolver emits (see BrowsePresenter): it has to be the main thread, not the io thread the answer
+     * of the backend came on (adapters of the grids changed off the UI thread raced with the layout and left the section empty)
+     */
+    @Test
+    public void theVerdictsComeOutOnTheMainThreadNotOnTheThreadOfTheAnswer() throws Exception {
+        Observable<Boolean> resolved = UtubotManager.instance(mContext).resolve(Collections.singletonList(createRow(video("bad"), video("good"))), createSection());
+        AtomicReference<Thread> emittedOn = new AtomicReference<>();
+        CountDownLatch finished = new CountDownLatch(1);
+        resolved.subscribe(done -> emittedOn.set(Thread.currentThread()), error -> finished.countDown(), finished::countDown);
+        long deadline = System.currentTimeMillis() + WAIT_FOR_ASSESS_MS;
+
+        while (!finished.await(MAIN_LOOPER_POLL_MS, TimeUnit.MILLISECONDS)) {
+            ShadowLooper.idleMainLooper();
+            assertTrue("The resolver did not finish", System.currentTimeMillis() < deadline);
+        }
+
+        assertSame(Looper.getMainLooper().getThread(), emittedOn.get());
     }
 
     @Test
