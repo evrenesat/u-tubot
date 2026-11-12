@@ -14,17 +14,22 @@ import android.widget.TextView;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBusyTracker;
 import com.liskovsoft.smartyoutubetv2.tv.R;
 
+import java.lang.ref.WeakReference;
+
 /**
  * The tiny badge at the top right of a screen: the working dots (and the number of requests when there are several) while
  * any u-tubot request is in flight. It shows only after the work lasted a moment and stays a moment, so quick requests don't flicker.
+ * <p>
+ * It is the value of a WeakHashMap keyed by its activity (see UtubotAppHooks), so it must not hold the activity, or a view of it (a view
+ * holds its context), strongly: the entry would keep its own key alive. The activity's view tree holds the badge.
  */
 class UtubotBadgeController {
-    private final Activity mActivity;
+    private final WeakReference<Activity> mActivity;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final UtubotBusyTracker mTracker = UtubotBusyTracker.instance();
     private final long mShowDelayMs;
     private final long mMinVisibleMs;
-    private final UtubotBadgeView mBadge;
+    private WeakReference<UtubotBadgeView> mBadge = new WeakReference<>(null);
     private final Runnable mShow = this::show;
     private final Runnable mHide = this::hide;
     private final UtubotBusyTracker.Listener mListener = count -> mHandler.post(this::onCountChanged);
@@ -32,29 +37,36 @@ class UtubotBadgeController {
     private boolean mIsAttached;
 
     UtubotBadgeController(Activity activity) {
-        mActivity = activity;
+        mActivity = new WeakReference<>(activity);
         mShowDelayMs = activity.getResources().getInteger(R.integer.utubot_busy_show_delay_ms);
         mMinVisibleMs = activity.getResources().getInteger(R.integer.utubot_busy_min_visible_ms);
-        mBadge = new UtubotBadgeView(activity);
     }
 
     void onResume() {
-        ViewGroup content = mActivity.findViewById(android.R.id.content);
+        Activity activity = mActivity.get();
+        ViewGroup content = activity != null ? activity.findViewById(android.R.id.content) : null;
 
         if (content == null) {
             return;
         }
 
-        if (mBadge.getParent() != content) {
-            if (mBadge.getParent() instanceof ViewGroup) {
-                ((ViewGroup) mBadge.getParent()).removeView(mBadge);
+        UtubotBadgeView badge = mBadge.get();
+
+        if (badge == null) {
+            badge = new UtubotBadgeView(activity);
+            mBadge = new WeakReference<>(badge);
+        }
+
+        if (badge.getParent() != content) {
+            if (badge.getParent() instanceof ViewGroup) {
+                ((ViewGroup) badge.getParent()).removeView(badge);
             }
 
-            int margin = mActivity.getResources().getDimensionPixelSize(R.dimen.utubot_badge_margin);
+            int margin = activity.getResources().getDimensionPixelSize(R.dimen.utubot_badge_margin);
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                     Gravity.TOP | Gravity.END);
             params.setMargins(margin, margin, margin, margin);
-            content.addView(mBadge, params);
+            content.addView(badge, params);
         }
 
         mIsAttached = true;
@@ -66,14 +78,15 @@ class UtubotBadgeController {
         mIsAttached = false;
         mTracker.removeListener(mListener);
         mHandler.removeCallbacksAndMessages(null);
-        mBadge.setCount(0);
+        hide();
     }
 
     void onDestroy() {
         onPause();
+        UtubotBadgeView badge = mBadge.get();
 
-        if (mBadge.getParent() instanceof ViewGroup) {
-            ((ViewGroup) mBadge.getParent()).removeView(mBadge);
+        if (badge != null && badge.getParent() instanceof ViewGroup) {
+            ((ViewGroup) badge.getParent()).removeView(badge);
         }
     }
 
@@ -82,20 +95,26 @@ class UtubotBadgeController {
             return;
         }
 
+        UtubotBadgeView badge = mBadge.get();
+
+        if (badge == null) {
+            return;
+        }
+
         int count = mTracker.getCount();
 
         if (count > 0) {
             mHandler.removeCallbacks(mHide);
-            mBadge.setCountText(count);
+            badge.setCountText(count);
 
-            if (mBadge.getVisibility() != View.VISIBLE) {
+            if (badge.getVisibility() != View.VISIBLE) {
                 mHandler.removeCallbacks(mShow);
                 mHandler.postDelayed(mShow, mShowDelayMs);
             }
         } else {
             mHandler.removeCallbacks(mShow);
 
-            if (mBadge.getVisibility() == View.VISIBLE) {
+            if (badge.getVisibility() == View.VISIBLE) {
                 long visibleMs = SystemClock.uptimeMillis() - mShownAtMs;
                 mHandler.removeCallbacks(mHide);
                 mHandler.postDelayed(mHide, Math.max(0, mMinVisibleMs - visibleMs));
@@ -104,14 +123,20 @@ class UtubotBadgeController {
     }
 
     private void show() {
-        if (mIsAttached && mTracker.isBusy()) {
+        UtubotBadgeView badge = mBadge.get();
+
+        if (badge != null && mIsAttached && mTracker.isBusy()) {
             mShownAtMs = SystemClock.uptimeMillis();
-            mBadge.setCount(mTracker.getCount());
+            badge.setCount(mTracker.getCount());
         }
     }
 
     private void hide() {
-        mBadge.setCount(0);
+        UtubotBadgeView badge = mBadge.get();
+
+        if (badge != null) {
+            badge.setCount(0);
+        }
     }
 
     /**
