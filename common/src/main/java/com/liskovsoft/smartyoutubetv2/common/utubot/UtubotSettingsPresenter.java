@@ -5,6 +5,7 @@ import android.content.Context;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.R;
+import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCategory;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
@@ -43,31 +44,46 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
         Context context = getContext();
         AppDialogPresenter dialog = AppDialogPresenter.instance(context);
 
-        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_import_setup), context.getString(R.string.utubot_import_setup_desc),
-                option -> {
+        for (OptionCategory category : buildCategories()) {
+            dialog.appendCategory(category);
+        }
+
+        dialog.showDialog(context.getString(R.string.utubot_title));
+    }
+
+    /**
+     * The main page, always in this order: Import setup, Pair with code, the switches, Prompts, Test connection, Advanced
+     */
+    List<OptionCategory> buildCategories() {
+        Context context = getContext();
+        List<OptionCategory> categories = new ArrayList<>();
+
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_import_setup),
+                context.getString(R.string.utubot_import_setup_desc), option -> {
                     AppDialogPresenter.instance(context).closeDialog();
                     UtubotSetupFlow.showImportDialog(context);
-                }));
-        dialog.appendSingleSwitch(UiOptionItem.from(context.getString(R.string.utubot_assess), context.getString(R.string.utubot_assess_desc),
-                option -> mSettings.setAssessEnabled(option.isSelected()), mSettings.isAssessEnabled()));
-        dialog.appendSingleSwitch(UiOptionItem.from(context.getString(R.string.utubot_mark_only), context.getString(R.string.utubot_mark_only_desc),
-                option -> mSettings.setMarkOnly(option.isSelected()), mSettings.isMarkOnly()));
-        dialog.appendSingleSwitch(UiOptionItem.from(context.getString(R.string.utubot_answer_in_menu), context.getString(R.string.utubot_answer_in_menu_desc),
-                option -> mSettings.setAnswerInMenuEnabled(option.isSelected()), mSettings.isAnswerInMenuEnabled()));
-        dialog.appendSingleSwitch(UiOptionItem.from(context.getString(R.string.utubot_summary_panel), context.getString(R.string.utubot_summary_panel_desc),
-                option -> mSettings.setSummaryPanelEnabled(option.isSelected()), mSettings.isSummaryPanelEnabled()));
-        dialog.appendSingleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_captions), context.getString(R.string.utubot_auto_captions_desc),
-                option -> mSettings.setAutoCaptionsEnabled(option.isSelected()), mSettings.isAutoCaptionsEnabled()));
-        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_pair), context.getString(R.string.utubot_pair_desc),
+                })));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_pair), context.getString(R.string.utubot_pair_desc),
                 option -> {
                     AppDialogPresenter.instance(context).closeDialog();
                     UtubotPairing.showDialog(context);
-                }));
-        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_test_connection), option -> testConnection()));
-        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_prompts), option -> showPrompts()));
-        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_advanced), context.getString(R.string.utubot_advanced_desc),
-                option -> showAdvanced()));
-        dialog.showDialog(context.getString(R.string.utubot_title));
+                })));
+        categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_assess), context.getString(R.string.utubot_assess_desc),
+                option -> mSettings.setAssessEnabled(option.isSelected()), mSettings.isAssessEnabled())));
+        categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_mark_only), context.getString(R.string.utubot_mark_only_desc),
+                option -> mSettings.setMarkOnly(option.isSelected()), mSettings.isMarkOnly())));
+        categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_answer_in_menu), context.getString(R.string.utubot_answer_in_menu_desc),
+                option -> mSettings.setAnswerInMenuEnabled(option.isSelected()), mSettings.isAnswerInMenuEnabled())));
+        categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_summary_panel), context.getString(R.string.utubot_summary_panel_desc),
+                option -> mSettings.setSummaryPanelEnabled(option.isSelected()), mSettings.isSummaryPanelEnabled())));
+        categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_captions), context.getString(R.string.utubot_auto_captions_desc),
+                option -> mSettings.setAutoCaptionsEnabled(option.isSelected()), mSettings.isAutoCaptionsEnabled())));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_prompts), option -> showPrompts())));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_test_connection), option -> testConnection())));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_advanced), context.getString(R.string.utubot_advanced_desc),
+                option -> showAdvanced())));
+
+        return categories;
     }
 
     private void showAdvanced() {
@@ -87,7 +103,7 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
         AppDialogPresenter.instance(context).closeDialog();
         SimpleEditDialog.showUrl(context, context.getString(R.string.utubot_backend_url), context.getString(R.string.utubot_backend_url_hint),
                 mSettings.getUrl(), newValue -> {
-                    mSettings.setUrl(newValue);
+                    mSettings.setUrlManually(newValue);
                     return true;
                 });
     }

@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
 public final class UtubotSetup {
     public static final int FORMAT_VERSION = 1;
     public static final String SETUP_PATH = "/setup.json";
+    public static final String UPDATE_PATH = "/app/update.json";
     private static final Pattern IPV4 = Pattern.compile("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$");
     private static final String[] LOCAL_SUFFIXES = {".local", ".lan", ".internal", ".home.arpa", ".ts.net"};
     private static final int CGNAT_SECOND_OCTET_FIRST = 64;
@@ -85,6 +86,13 @@ public final class UtubotSetup {
         String query = uri.getRawQuery() != null ? "?" + uri.getRawQuery() : "";
 
         return scheme + "://" + hostPart + port + path + query;
+    }
+
+    /**
+     * The update file of a backend: its /app/update.json
+     */
+    public static String deriveUpdateUrl(String backendUrl) {
+        return stripTrailingSlash(backendUrl.trim()) + UPDATE_PATH;
     }
 
     /**

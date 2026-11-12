@@ -65,6 +65,20 @@ public class UtubotSettings {
     }
 
     /**
+     * A backend address typed in Advanced: without an update address of an imported setup, the backend's own is used
+     */
+    public void setUrlManually(String url) {
+        String previous = getUrl();
+        String update = getUpdateUrl();
+        boolean derivedBefore = !previous.isEmpty() && update.equals(UtubotSetup.deriveUpdateUrl(previous));
+        setUrl(url);
+
+        if (!getUrl().isEmpty() && (update.isEmpty() || derivedBefore)) {
+            setUpdateUrl(UtubotSetup.deriveUpdateUrl(getUrl()));
+        }
+    }
+
+    /**
      * Where the update checker looks for new versions: the update_url of the imported setup. Empty means no update checks.
      */
     public String getUpdateUrl() {
