@@ -20,6 +20,7 @@ from .auth import (
     Unauthorized,
     append_user,
     check_user_name,
+    normalize_user_name,
     set_user_admin,
     users_file_names,
 )
@@ -130,6 +131,10 @@ class WebAuth:
 
     # ---- lockout --------------------------------------------------------------------------
 
+    @staticmethod
+    def _user_scope(name: str) -> str:
+        return f"user:{normalize_user_name(name)[:SCOPE_NAME_MAX_CHARS]}"
+
     def _retry_after(self, scope: str, limit: int, window_s: int, now: float) -> int:
         rows = self.db.all(
             "SELECT ts FROM login_failures WHERE scope=? AND ts>? ORDER BY ts DESC LIMIT ?",
@@ -148,7 +153,7 @@ class WebAuth:
             self._retry_after("all", sec.login_global_failures, sec.login_global_window_s, now),
         ]
         if name is not None:
-            scope = f"user:{name[:SCOPE_NAME_MAX_CHARS]}"
+            scope = self._user_scope(name)
             waits.append(
                 self._retry_after(scope, sec.login_user_lockout_failures, sec.login_lockout_s, now)
             )
@@ -162,7 +167,7 @@ class WebAuth:
         )
         scopes = [f"ip:{ip}", "all"]
         if name is not None:
-            scopes.append(f"user:{name[:SCOPE_NAME_MAX_CHARS]}")
+            scopes.append(self._user_scope(name))
         for scope in scopes:
             self.db.execute("INSERT INTO login_failures(scope,ts) VALUES(?,?)", [scope, now])
 
@@ -183,13 +188,11 @@ class WebAuth:
         wait = self.locked_for(ip, name)
         if wait:
             raise LoginError(LOCKED_MESSAGE, 429, wait)
-        user = self.auth.user_config(name) if isinstance(name, str) else None
+        user = self.auth.find_user(name) if isinstance(name, str) else None
         ok = self.check_password(user.name if user else "", password)
         if not (user and ok):
             raise self._fail(ip, name if isinstance(name, str) else None, GENERIC_LOGIN_ERROR)
-        self.db.execute(
-            "DELETE FROM login_failures WHERE scope=?", [f"user:{name[:SCOPE_NAME_MAX_CHARS]}"]
-        )
+        self.db.execute("DELETE FROM login_failures WHERE scope=?", [self._user_scope(name)])
         return self.create_session(user.name, ip, agent, VIA_PASSWORD), user
 
     def login_token(self, token: str, ip: str, agent: str) -> tuple[str, UserConfig]:
@@ -293,7 +296,8 @@ class WebAuth:
 
     def create_user(self, name: str, admin: bool, password: str | None) -> None:
         check_user_name(name)
-        if self.auth.user_config(name) is not None:
+        folded = normalize_user_name(name)
+        if any(normalize_user_name(n) == folded for n in self.auth.user_names()):
             raise PairError("user already exists", 409)
         if password is not None:
             self._check_strength(password)

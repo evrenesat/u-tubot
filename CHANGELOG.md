@@ -7,6 +7,7 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 ## Unreleased
 
+- Fixed: signing in to the web UI from a phone failed with "invalid username or password" when the keyboard capitalised the user name. User names now match regardless of case and surrounding spaces, failed attempts count under one name whatever the case, new users cannot differ from an existing one only by case, and the input fields turn off auto-capitalisation and auto-correction.
 - App releases are numbered and published automatically (0.3.x onwards).
 - Fixed: the Modern skin could show an empty screen (no grid, the sidebar and the top bar only) after the app started or a section
   loaded. The checks of the rows ran on a background thread, so the rows were put on the screen from there, which collided with the

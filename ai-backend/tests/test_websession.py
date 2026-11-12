@@ -397,3 +397,29 @@ async def test_upgrade_does_not_overwrite_a_password_changed_meanwhile(env, monk
     assert env.svc.webauth.check_password("owner", PASSWORD) is True
     row = env.svc.db.one("SELECT hash FROM user_passwords WHERE user='owner'")
     assert row["hash"] == "scrypt$changed"
+
+
+async def test_username_is_matched_ignoring_case_and_padding(env):
+    env.svc.webauth.set_password("owner", PASSWORD)
+    for typed in ("Owner", " owner ", "OWNER"):
+        resp = await anon_client(env).post(LOGIN, json={"username": typed, "password": PASSWORD})
+        assert resp.status_code == 200 and resp.json()["user"] == "owner"
+
+
+async def test_lockout_counts_across_case_variants(env):
+    env.cfg.security.trusted_proxies = ["127.0.0.1"]
+    env.svc.webauth.set_password("partner", PASSWORD)
+    proxy = anon_client(env, peer="127.0.0.1")
+    variants = ["partner", "Partner", " PARTNER "]
+    for i in range(env.cfg.security.login_user_lockout_failures):
+        await proxy.post(
+            LOGIN,
+            json={"username": variants[i % 3], "password": "wrong-password-1"},
+            headers={"X-Forwarded-For": f"192.0.2.{i + 1}"},
+        )
+    r = await proxy.post(
+        LOGIN,
+        json={"username": "pArtner", "password": PASSWORD},
+        headers={"X-Forwarded-For": "192.0.2.200"},
+    )
+    assert r.status_code == 429

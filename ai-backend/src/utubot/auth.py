@@ -63,6 +63,11 @@ USER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 USER_BLOCK = "[[users]]"
 
 
+def normalize_user_name(name: str) -> str:
+    """Sign-in form of a name: surrounding whitespace dropped, case folded."""
+    return name.strip().casefold()
+
+
 def check_user_name(name: str) -> str:
     if not isinstance(name, str) or not USER_NAME_RE.match(name):
         raise PairError(
@@ -170,6 +175,15 @@ class Auth:
         if not override:
             return base
         return base.model_copy(update={"policy": merge_policy(base.policy, override)})
+
+    def find_user(self, name: str) -> UserConfig | None:
+        """Look a typed name up: exact match first, else case-insensitive when unambiguous."""
+        exact = self.user_config(name)
+        if exact is not None or not isinstance(name, str):
+            return exact
+        folded = normalize_user_name(name)
+        matches = [u.name for u in self.cfg.users if normalize_user_name(u.name) == folded]
+        return self.user_config(matches[0]) if len(matches) == 1 else None
 
     def policy_override(self, name: str) -> dict:
         row = self.db.one("SELECT json FROM policy_overrides WHERE user=?", [name])
