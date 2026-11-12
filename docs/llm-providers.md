@@ -41,7 +41,8 @@ placeholders: set the models for your provider.
 | Table | Used for | Output |
 |---|---|---|
 | `[llm.triage]` | batched title classification for every card (clickbait, low quality, topics, title question) | JSON, many titles per call; runs constantly, so make it small and fast |
-| `[llm.summary]` | prompt-set summaries and the summary panel | prose |
+| `[llm.summary]` | prompt-set summaries (the Summary view) | prose |
+| `[llm.glance]` | the short side-panel summary (`builtin/glance` and prompts with `"task": "glance"`); optional | 3 short lines |
 | `[llm.answer]` | `ask` and the answer to a title's question | prose |
 | `[llm.analysis]` | insight and the transcript-based second tier (short answer, inflation) | JSON |
 | `[llm.captions]` | optional caption translation | JSON array |
@@ -49,6 +50,21 @@ placeholders: set the models for your provider.
 Each takes `model`, optional `provider`, `fallback`, `reasoning_effort`, `max_tokens`, `temperature`. A model may be written
 `provider:model` (`model = "openrouter:anthropic/claude-sonnet-5.5"`). A prompt in a prompt set can set its own `model` the same way;
 see [prompt-sets.md](prompt-sets.md).
+
+### The glance task
+
+The side panel shows a summary of at most about 280 characters and refreshes as you move across cards, so latency matters more
+than depth. `[llm.glance]` lets that prompt use its own, faster model:
+
+```toml
+[llm.glance]
+model = "llama3.2:3b"          # or "provider:model"; a small non-reasoning model is ideal
+# reasoning_headroom_tokens = 0   # hard-cap the call at the 160 token answer budget on endpoints that do not reason
+```
+
+Without the table the glance runs on `[llm.summary]` (model, provider, fallback, temperature) with `reasoning_effort = "none"`.
+With the table, `reasoning_effort` defaults to `"none"` and `max_tokens` to 160 (a prompt's own `max_tokens` wins). The glance
+reads the same transcript (condensed for long videos), so give it a model with enough context; the answer itself is tiny.
 
 Rules of thumb: triage reads only titles and short descriptions, so a 3B to 8B model is enough. Summaries read transcripts of
 up to `summary.token_budget` tokens (24 000 by default; longer transcripts are map-reduced in `chunk_tokens` pieces or truncated),
@@ -66,7 +82,10 @@ so give the summary task a model with that much context and decent instruction f
 - When the endpoint reports `finish_reason: length` the call is retried once with the answer budget doubled. If the text is
   still cut, it is returned with a trailing " …", logged as `kind=truncated`, and not cached long-term (summaries use the ad-hoc
   TTL), so a later request tries again.
-- Prefer a non-reasoning or low-effort model for triage and the app's interactive summary panel; the TV waits for results.
+- Prefer a non-reasoning or low-effort model for triage and the app's interactive summary panel (`[llm.glance]`); the TV waits
+  for results.
+- `summary.auto_long = true` adds one background long summary per video the panel summarises; leave it off unless the extra
+  model time is acceptable.
 
 ## Cost and speed notes
 

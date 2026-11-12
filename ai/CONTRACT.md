@@ -97,28 +97,50 @@ imported by URL. Format:
    {"id": "tldr", "label": "TL;DR", "default": true,
     "system": "You summarize YouTube videos for a TV viewer...",
     "template": "Title: {title}\nChannel: {channel}\nDuration: {duration}\n\nTranscript:\n{transcript}\n\nGive a 5-bullet TL;DR.",
-    "max_tokens": 700, "model": null}
+    "max_tokens": 700, "model": null, "task": "summary"}
  ]}
 ```
 
 Template variables: `{title} {channel} {duration} {description} {transcript}
-{language} {question}`. `model` is an optional alias override (null = the
-backend's summary model). Prompt ids are unique within a set; the effective
+{language} {question}` (`{question}` = the question the title poses as the
+title triage detected it, empty when none). `model` is an optional alias
+override (null = the backend's summary model). `task` is optional,
+`"summary"` (default) or `"glance"`: which `[llm.*]` table runs the prompt
+(`[llm.glance]` falls back to `[llm.summary]` with reasoning off). Files
+without `task` stay valid. Prompt ids are unique within a set; the effective
 key is `<set_id>/<prompt_id>`.
 
-- `GET /v1/prompts` → `{"default":"my-prompts/tldr","sets":[{"id","name","version","source_url","prompts":[{"id","key","label","default"}]}]}`
+- `GET /v1/prompts` → `{"default":"builtin/tldr","panel_default":"builtin/glance","sets":[{"id","name","version","source_url","prompts":[{"id","key","label","default","panel_default"}]}]}`.
+  `default` is the Summary view's prompt, `panel_default` the one for automatic side-panel summaries.
 - `POST /v1/prompts/import` `{"url":"https://..."}` → the imported set (replaces a set with the same id; `source_url` remembered).
 - `POST /v1/prompts/refresh` → re-fetches every set that has a `source_url`.
 - `PUT /v1/prompts/sets/{set_id}` body = prompt-set JSON (direct upload/edit).
 - `DELETE /v1/prompts/sets/{set_id}`
-- `PUT /v1/prompts/default` `{"key":"set/prompt"}`
+- `PUT /v1/prompts/default` `{"key":"set/prompt"}` → `{"default":"set/prompt"}`
+- `PUT /v1/prompts/panel-default` `{"key":"set/prompt"}` → `{"panel_default":"set/prompt"}`; `404` for an unknown prompt.
+  Unset, it follows the server's `[summary] panel_prompt` (default `builtin/glance`).
 
-Prompt sets are per user. Built-in set `builtin` always exists.
+Prompt sets are per user. Built-in set `builtin` always exists: `glance`, `tldr`,
+`answer-title`, `takeaways`, `worth-it`, `eli-new`.
+
+`builtin/glance` is the panel summary: at most ~280 characters in at most 3 short lines,
+plain text, in the user's language. When the title poses or implies a question or is a
+curiosity gap, line 1 is `→ ` plus the direct answer from the transcript (or `→ ` plus a
+few words saying the video does not answer it), then 1-2 lines with the gist. It runs on
+`[llm.glance]` with a 160 token answer budget and reasoning off by default.
 
 ### `GET /v1/videos/{id}/summary?prompt=<set/prompt>&wait_ms=20000`
 Also accepts the metadata query fields of `insight`. Omitted `prompt` = the
-user's default. Cached per (video, prompt key, prompt content hash), so
-editing a prompt invalidates only that prompt's summaries.
+user's default. `prompt=panel` = the user's panel default (`panel_default`);
+the response's `prompt` carries the resolved key. Cached per (video, prompt
+key, prompt content hash), so editing a prompt invalidates only that prompt's
+summaries.
+
+With `[summary] auto_long = true` (or the user's policy field `auto_long`), a
+`prompt=panel` request that ends `ready` also queues the user's `default`
+prompt for the same video at background priority, so the Summary view is
+usually already cached. Off by default; explicit `prompt=<key>` requests never
+queue anything.
 
 ```json
 {"video_id":"...","prompt":"my-prompts/tldr","status":"ready|pending|failed",
@@ -158,8 +180,10 @@ Stored for later threshold tuning.
 - Summary panel mode: a toggle (quick toggle + settings + context menu
   item). While on, focusing a card for ~700 ms opens/updates a side overlay
   panel (right side, ~35% width, browse stays usable) with the summary for
-  that video, a prompt select box (default preselected; D-pad reachable) and a
-  status line. Changing the prompt reloads the panel. Back closes the panel
+  that video, a prompt select box (the panel default preselected; D-pad
+  reachable) and a status line. The panel requests `prompt=panel` (or the
+  `panel_default` key from `GET /v1/prompts`), not `default`. Changing the
+  prompt reloads the panel. Back closes the panel
   focus, toggle turns the mode off.
 - Context menu: "AI answer" (shows `answer_short` in the item label when
   known), "Summary panel on/off", "Prepare HQ captions".
@@ -184,6 +208,7 @@ Stored for later threshold tuning.
 - Admin only (user with `admin = true`, else `403 {"error":"forbidden"}`):
   `POST /v1/admin/pair {"user"}` -> `{"code","expires_in_s"}`, `GET /v1/admin/users`,
   `DELETE /v1/admin/devices/{id}`, `PUT /v1/admin/users/{name}/policy`.
+- `GET /v1/me` policy also carries `auto_long` (`null` = follow the config).
 - Extra read endpoints: `GET /v1/prompts/sets/{set_id}` (raw set JSON), `GET /v1/captions/jobs`.
 - A prompt's `model` is an alias or `provider:model` naming a configured provider.
 - Prompt-set format key stays `tubeai_prompt_set` for compatibility.
