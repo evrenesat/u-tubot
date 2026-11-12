@@ -47,7 +47,7 @@ include the video's known language; put engines that failed in the last `asr_unh
 `priority`; with an unknown language, engines without a `languages` list go before restricted ones. A failed request moves that chunk to the
 next engine, which re-cuts it to its own `max_chunk_s` if that is smaller. Whether the engine is also marked unhealthy depends on what
 failed: a connect or timeout failure, a 429 or a 401/403/404 mark it at once; a single 5xx, or an answer that is not a transcript, may be the
-file's fault and only counts once a second, *different* file has failed on that engine with no success in between; a request rejected for its
+file's fault and only counts once a second, *different* file has failed on that engine within `asr_failure_window_s` (600 s) with no success in between; a request rejected for its
 input (400, 413, 415, 422) never counts. A chunk that waited for an engine's `max_parallel` slot, or the next piece of a re-cut chunk, checks the engine
 again: if it became unhealthy meanwhile and a healthy engine remains later in the chain, the work moves on at once instead of waiting
 out another timeout. When every engine is unhealthy they are all tried again, so a single-engine setup recovers

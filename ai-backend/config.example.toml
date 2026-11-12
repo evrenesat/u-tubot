@@ -225,6 +225,7 @@ asr_api_key_env = "UTUBOT_ASR_API_KEY"
 asr_model = "whisper-1"
 asr_chunk_s = 600                  # long audio is split into chunks of this length
 asr_unhealthy_s = 300.0            # an engine that failed is skipped this long while another engine can take the work
+asr_failure_window_s = 600.0       # two failures tied to different files mark an engine only when they are at most this far apart
 asr_chunk_overlap_s = 2.0          # neighbouring chunks overlap this much; stitching removes the repeated words
 whisper_model = "small"            # faster_whisper model size (CPU, int8)
 whisper_compute_type = "int8"
@@ -252,8 +253,8 @@ audio_format = "bestaudio/best"    # yt-dlp selector used only when no usable fo
 # An engine chain: each engine is used when its key variable is set (none needed when api_key_env is omitted).
 # Per audio file the router picks, among healthy engines that serve the video's language, the lowest `priority`
 # number; a failing engine is skipped for `asr_unhealthy_s` and the work falls through to the next one. One 5xx or
-# unreadable answer tied to a single file does not count: the engine is marked after two different files failed in a row,
-# or at once for a connect/timeout failure, 429 or an authentication error.
+# unreadable answer tied to a single file does not count: the engine is marked after two different files failed in a row
+# within `asr_failure_window_s`, or at once for a connect/timeout failure, 429 or an authentication error.
 # Audio is cut into overlapping chunks of at most `max_chunk_s` (0 = no cutting), `max_parallel` at a time per engine
 # (shared by all jobs), then stitched. `languages` is an optional allow-list: checked when the video's language is
 # known; when it is not, engines without a list go first and a chunk an allow-listed engine took is redone by the next

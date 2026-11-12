@@ -96,7 +96,7 @@ the background after a panel summary; a user's `auto_long` policy field override
 background long summaries in flight including the transcript fetch; further ones are skipped until one ends, `0` disables them). See [prompt-sets.md](prompt-sets.md).
 
 **`[captions]`**: the ASR engine chain (`[[captions.asr_engines]]`, or the single `asr_*` keys), chunking, diarization and the estimate
-inputs, see [captions.md](captions.md). Also `asr_unhealthy_s` (`300`), `asr_chunk_overlap_s` (`2`), `download_overhead_s` and
+inputs, see [captions.md](captions.md). Also `asr_unhealthy_s` (`300`), `asr_failure_window_s` (`600`), `asr_chunk_overlap_s` (`2`), `download_overhead_s` and
 `download_speed_factor` (the estimate shown before a transcription), `transcribe_max_active_per_user` (default `5`), `job_max_attempts`
 (`3`), `media_orphan_age_s` (`3600`), `max_download_bytes` (400 MiB), `audio_format` (yt-dlp's fallback selector).
 
@@ -141,8 +141,8 @@ still worked, now it only pauses caption fetches.
   over, exactly one *background* request goes out (the first background fetch in the queue, or one the backend starts itself for the
   video somebody just asked about) while the other background fetches wait behind it, and interactive requests keep being answered
   without touching YouTube (`captions_probe_retry_s` is the retry hint if nothing else can answer) until that probe has been answered. A
-  probe that finds no captions for its video (only the metadata answered) leaves the class half-open and the next background fetch
-  probes again. The state of each class survives restarts (a state saved by the older single breaker is
+  probe that finds a video with no caption track at all (a complete yt-dlp answer) counts as an answer for the caption class too and
+  closes it, so back-to-back probes do not follow. The state of each class survives restarts (a state saved by the older single breaker is
   adopted by all three once). The log records each transition (`youtube gate open: class=... reason=... cooldown_s=...`,
   `half-open`, `closed`); URLs never appear in it. `GET /v1/status` shows each class (`youtube.classes`: `state`,
   `cooldown_remaining_s`, `strikes`) next to the combined `youtube.state`, and the engine chain (`asr.engines`: health, no URLs).
@@ -155,7 +155,9 @@ still worked, now it only pauses caption fetches.
   "no captions" entry). "Delayed" stays for the cases where the audio cannot help: no engine serves the video, the video is live or too
   long, the `media` class cools too (a bot check blocks metadata and media together) or the problem is a network error rather than a
   limit. A transcript stored from the audio is kept: captions fetched later, even by a probe that was already in flight, never replace it,
-  and a video with an `asr` transcript is not asked for captions again.
+  and a video with an `asr` transcript is not asked for captions again. In the other direction, stored captions that are still fresh
+  (`transcripts.cache_ttl_s`) are kept and an expired captions row is replaced by the audio transcript; a transcription job whose
+  result could not be stored fails (recorded, `failed`) instead of ending silently.
 - **Problems of one video stay with that video.** A 403 or 410 on a caption or media URL and members-only, age-gated, private or
   unavailable videos are failures of that video (`transcript_status: "failed"` with a `reason`), remembered for
   `transcripts.video_failure_ttl_s` (1 h) so they are not re-fetched; they never touch the breaker.

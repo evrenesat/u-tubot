@@ -638,6 +638,26 @@ async def test_the_same_file_failing_twice_is_still_one_file(tmp_path):
     assert r.healthy("mac")
 
 
+async def test_two_failures_days_apart_do_not_mark_the_engine(tmp_path):
+    files = [make_wav(tmp_path / f"{n}.wav", 60) for n in "abc"]
+    clock = Clock()
+    mac = FakeEngine("mac", fail=EngineError("asr http 500", isolated=True))
+    r = router(
+        [engine_cfg("mac", priority=1), engine_cfg("local", priority=2)],
+        {"mac": mac, "local": FakeEngine("local")},
+        clock=clock,
+    )
+    window = r.cfg.asr_failure_window_s
+    assert window == 600.0
+    await run(r, files[0])
+    clock.t += window + 1
+    await run(r, files[1])
+    assert r.healthy("mac")
+    clock.t += window / 2
+    await run(r, files[2])
+    assert not r.healthy("mac")
+
+
 async def test_a_success_between_two_failures_breaks_the_streak(tmp_path):
     files = [make_wav(tmp_path / f"{n}.wav", 60) for n in "abc"]
     mac = FakeEngine("mac", fail=EngineError("asr http 500", isolated=True))

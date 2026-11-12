@@ -178,6 +178,7 @@ class AsrEngineConfig(BaseModel):
 class CaptionsConfig(BaseModel):
     asr_engines: list[AsrEngineConfig] = Field(default_factory=list)
     asr_unhealthy_s: float = 300.0
+    asr_failure_window_s: float = 600.0
     asr_chunk_overlap_s: float = 2.0
     asr_backend: Literal["openai", "faster_whisper"] = ASR_KIND_OPENAI
     asr_url: str = "http://127.0.0.1:8000/v1/audio/transcriptions"

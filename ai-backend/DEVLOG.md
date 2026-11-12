@@ -17,7 +17,8 @@
   (`YoutubeCooldown`, hint `captions_probe_retry_s`), lets exactly one background request through (`_Breaker.probing`, released in
   `_release`) and holds the other background waiters behind it; `promote` skips probe-bound waiters. `TranscriptService.probe_captions`
   starts that background fetch for the video of the first content request that finds the class half-open (never from `GET /transcript`,
-  skipped for cached, held and no-captions videos). A probe that only answers the metadata class leaves the class half-open. An
+  skipped for cached, held and no-captions videos). A complete yt-dlp answer without a caption track (`ANSWERED_NO_CAPTIONS`)
+  counts as answered for the caption class too, so a probe on such a video closes it instead of leaving it half-open. An
   interactive transcript job skips its caption recheck while the probe is out; a background job may be the probe.
 - Caps: `[youtube] captions_cooldown_max_s` (1800) is the ceiling of the caption class, `Retry-After` included, never above
   `cooldown_max_s`. Old tests that probed with an interactive request now probe with `BACKGROUND`.
@@ -33,6 +34,10 @@
 - yt-dlp: `ytdlp_runtime_options` always passes `js_runtimes={js_runtime: {path}|{}}` (yt-dlp looks the runtime up on PATH without a path);
   `pyproject.toml` requires `yt-dlp>=2025.11.12`, the first release with `remote_components` (checked in the 2025.10.22 and 2025.11.12
   wheels; the lock holds 2026.10.26 and its specifier is updated).
+- Review fixes (PR #24): `store_asr` replaces captions older than `cache_ttl_s` (they are unusable: `cached()` ignores them), so an
+  expired captions row no longer makes state() offer the fallback, run ASR and store nothing in a loop; a transcript job that ends with
+  no usable transcript (`cached()` is None after `store_asr`) now fails with the recorded message instead of finishing silently.
+  `[captions] asr_failure_window_s` (600): two isolated engine failures only count together when at most that far apart.
 - Tests: `test_gate_probe.py`, `test_audio_fallback.py` (policy, panel, 429 now, probe flow, escalation cap, late captions, jobs), engine
   and media additions.
 

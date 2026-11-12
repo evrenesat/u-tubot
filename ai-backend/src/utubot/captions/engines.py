@@ -275,7 +275,7 @@ class AsrRouter:
         self._clock = clock
         self._enabled = enabled
         self._unhealthy_until: dict[str, float] = {}
-        self._failed_files: dict[str, set[str]] = {}
+        self._failed_files: dict[str, dict[str, float]] = {}
         self._limiters: dict[str, PriorityLimiter] = {}
         self._engines: dict[str, tuple[str, AsrEngine]] = {}
 
@@ -310,14 +310,18 @@ class AsrRouter:
         """Count a failure against the engine's health.
 
         One that may be the file's fault (`exc.isolated`: a 5xx, an answer that does not parse) only
-        counts once a second, different file has failed on the engine with no success in between;
-        a connect or timeout failure, a 429 or an auth error marks it at once.
+        counts once a second, different file has failed on the engine within `asr_failure_window_s`
+        with no success in between; a connect or timeout failure, a 429 or an auth error marks it
+        at once.
         """
         if not exc.penalize:
             return
         if exc.isolated:
-            files = self._failed_files.setdefault(engine.name, set())
-            files.add(source)
+            now = self._clock()
+            files = self._failed_files.setdefault(engine.name, {})
+            files[source] = now
+            for old in [f for f, at in files.items() if now - at > self.cfg.asr_failure_window_s]:
+                del files[old]
             if len(files) < ISOLATED_FAILURES_TO_PENALIZE:
                 return
         self._failed_files.pop(engine.name, None)

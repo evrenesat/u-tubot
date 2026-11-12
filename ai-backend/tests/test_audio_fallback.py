@@ -477,6 +477,75 @@ async def test_caption_text_still_refreshes_older_caption_text_and_clears_engine
     assert row["text"] == "[00:00] New text" and row["engine"] is None and row["segments"] is None
 
 
+def put_captions_row(env, vid: str, age_s: float) -> None:
+    env.svc.db.execute(
+        "INSERT INTO transcripts(video_id,lang,source,text,fetched_at) VALUES(?,?,?,?,?)",
+        [vid, "en", "youtube_captions", "[00:00] old captions", time.time() - age_s],
+    )
+
+
+async def test_asr_replaces_expired_captions_but_never_fresh_ones(env):
+    transcripts = env.svc.transcripts
+    ttl = env.cfg.transcripts.cache_ttl_s
+    put_captions_row(env, VID, ttl + 60)
+    assert transcripts.cached(VID) is None
+    assert transcripts.store_asr(VID, ASR_TEXT, "en", engine="mac") is True
+    kept = transcripts.cached(VID)
+    assert kept.source == "asr" and kept.text == ASR_TEXT
+
+    put_captions_row(env, OTHER, ttl - 60)
+    assert transcripts.store_asr(OTHER, ASR_TEXT, "en") is False
+    assert transcripts.cached(OTHER).source == "youtube_captions"
+
+
+async def test_expired_captions_with_captions_limited_do_not_loop_through_empty_jobs(env):
+    await policy(env, auto_transcribe="on_dwell")
+    put_captions_row(env, VID, env.cfg.transcripts.cache_ttl_s + 60)
+    cool_captions(env)
+
+    async def transcribe(video_id, progress, *, priority, language):
+        return AsrTranscript(ASR_TEXT, "en", [], "mac", "m")
+
+    env.svc.jobs.pipeline.transcribe = transcribe
+    first = await summary(env, prompt="panel")
+    assert first["status"] == "pending" and first["transcript_status"] == "transcribing"
+    assert await env.svc.jobs.run_one() is True
+    assert jobs(env)[0]["status"] == "ready"
+    assert env.svc.transcripts.cached(VID).source == "asr"
+
+    again = await summary(env, prompt="panel")
+    assert again["status"] == "ready" and again["source"] == "asr"
+    assert len(jobs(env)) == 1
+
+
+async def test_a_job_whose_transcript_was_not_stored_is_failed_and_recorded(env):
+    async def transcribe(video_id, progress, *, priority, language):
+        return AsrTranscript(ASR_TEXT, "en", [], "mac", "m")
+
+    env.svc.jobs.pipeline.transcribe = transcribe
+    env.fetcher.text = None
+    env.svc.transcripts.store_asr = lambda *args, **kwargs: False
+    queue = env.svc.jobs
+    queue.enqueue_transcript("owner", VID, "t", INTERACTIVE)
+    assert await queue.run_one() is True
+    (job,) = jobs(env)
+    assert job["status"] == "failed" and job["error"] == "transcription failed"
+    state = (await env.client.get(f"/v1/videos/{VID}/transcript")).json()
+    assert state["transcript_status"] == "failed"
+
+
+async def test_a_job_that_finds_fresh_captions_stored_is_done(env):
+    async def transcribe(video_id, progress, *, priority, language):
+        return AsrTranscript(ASR_TEXT, "en", [], "mac", "m")
+
+    env.svc.jobs.pipeline.transcribe = transcribe
+    put_captions_row(env, VID, 60)
+    env.svc.jobs.enqueue_transcript("owner", VID, "t", INTERACTIVE)
+    assert await env.svc.jobs.run_one() is True
+    assert jobs(env)[0]["status"] == "ready"
+    assert env.svc.transcripts.cached(VID).source == "youtube_captions"
+
+
 @NEEDS_FFMPEG
 async def test_the_audio_job_finishes_while_the_probe_is_out_and_the_late_captions_do_not_replace_it(
     env,

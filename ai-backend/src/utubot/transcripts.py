@@ -67,6 +67,11 @@ class FetchResult:
     answered: tuple[str, ...] | None = None
 
 
+# A complete yt-dlp answer that lists no caption track says the video has none: the caption class
+# has nothing left to refuse, so it counts as answered too (else a probe on such a video would leave
+# the class half-open and the next probe would follow at once).
+ANSWERED_NO_CAPTIONS = (CLASS_METADATA, CLASS_CAPTIONS)
+
 Fetcher = Callable[[str], Awaitable[FetchResult]]
 Extractor = Callable[[str], dict[str, Any]]
 
@@ -275,11 +280,11 @@ class YoutubeFetcher:
         if not track:
             if degraded_tracks(info):
                 raise YoutubeDelayed(REASON_INCOMPLETE, retry_s)
-            return FetchResult(meta, None, None, answered=(CLASS_METADATA,))
+            return FetchResult(meta, None, None, answered=ANSWERED_NO_CAPTIONS)
         formats, lang = track
         fmt = pick_format(formats)
         if not fmt:
-            return FetchResult(meta, None, lang, answered=(CLASS_METADATA,))
+            return FetchResult(meta, None, lang, answered=ANSWERED_NO_CAPTIONS)
         raw = await self._download_track(fmt["url"])
         segments = parse_json3(raw) if fmt["ext"] == "json3" else parse_vtt(raw)
         text = segments_to_text(segments)
@@ -379,29 +384,33 @@ class TranscriptService:
         model: str | None = None,
         segments: list[tuple[float, float, str]] | None = None,
     ) -> bool:
-        """Keep an ASR transcript unless the video already has stored YouTube captions.
+        """Keep an ASR transcript unless the video has fresh stored YouTube captions.
 
-        A transcript stored first stays: ASR does not replace captions, and captions fetched later
-        do not replace ASR (`_fetch`). `segments` are `(start_s, end_s, text)` rows kept next to the text with the engine and model
-        that produced them.
+        A transcript stored first stays: ASR does not replace usable captions, and captions fetched
+        later do not replace ASR (`_fetch`). Captions older than `cache_ttl_s` are no longer used
+        (`cached`), so the ASR transcript replaces them. Returns False when nothing was stored.
+        `segments` are `(start_s, end_s, text)` rows kept next to the text with the engine and
+        model that produced them.
         """
+        now = time.time()
         stored = self.db.execute_rc(
             "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,engine,model,segments)"
             " VALUES(?,?,?,?,?,?,?,?)"
             " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
             " text=excluded.text, fetched_at=excluded.fetched_at, engine=excluded.engine,"
             " model=excluded.model, segments=excluded.segments"
-            " WHERE transcripts.source != ?",
+            " WHERE transcripts.source != ? OR transcripts.fetched_at < ?",
             [
                 video_id,
                 lang,
                 SOURCE_ASR,
                 text,
-                time.time(),
+                now,
                 engine,
                 model,
                 json.dumps(segments) if segments else None,
                 SOURCE_CAPTIONS,
+                now - self.cfg.transcripts.cache_ttl_s,
             ],
         )
         if stored:

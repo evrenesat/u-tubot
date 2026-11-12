@@ -13,7 +13,7 @@ from ..llm import BACKGROUND, INTERACTIVE
 from ..transcripts import NoCaptions, TranscriptService
 from ..youtube import CLASS_MEDIA, FETCH_CLASSES, YoutubeDelayed, YoutubeVideoError
 from .asr import normalize_language
-from .pipeline import CaptionPipeline, sweep_media
+from .pipeline import CaptionPipeline, PipelineError, sweep_media
 
 log = logging.getLogger("utubot.jobs")
 ACTIVE = ("queued", "running")
@@ -335,6 +335,8 @@ class JobQueue:
             model=out.model,
             segments=out.segment_rows(),
         )
+        if self.transcripts.cached(video_id) is None:
+            raise PipelineError("the transcript could not be stored")
 
     def _fail(self, job: dict[str, Any], message: str) -> None:
         now = time.time()

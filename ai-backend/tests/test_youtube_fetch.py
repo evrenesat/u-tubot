@@ -15,6 +15,9 @@ from utubot.db import Database
 from utubot.llm import BACKGROUND, INTERACTIVE
 from utubot.transcripts import NoCaptions, TranscriptService, YoutubeFetcher
 from utubot.youtube import (
+    CLASS_CAPTIONS,
+    CLASS_METADATA,
+    FETCH_CLASSES,
     REASON_BOT_CHECK,
     REASON_EMPTY,
     REASON_EMPTY_TRACK,
@@ -26,6 +29,7 @@ from utubot.youtube import (
     REASON_RATE_LIMITED,
     REASON_UNAVAILABLE,
     STATE_CLOSED,
+    STATE_HALF_OPEN,
     YoutubeBlocked,
     YoutubeCooldown,
     YoutubeDelayed,
@@ -397,3 +401,33 @@ async def test_recheck_ignores_the_no_captions_memory_but_not_other_holds(tmp_pa
         await rig.svc.get(OTHER, recheck=True)
     rig.svc.record_failure(OTHER, REASON_FORBIDDEN_MEDIA)
     assert (await rig.svc.get(OTHER, recheck=True)).source == "youtube_captions"
+
+
+@pytest.mark.parametrize("track", [False, True], ids=["no track listed", "no usable format"])
+async def test_a_probe_on_a_video_without_captions_closes_the_caption_class(tmp_path, track):
+    rig = Rig(tmp_path)
+    if track:
+        rig.extract_result = lambda: {
+            **info(captions=False),
+            "automatic_captions": {"en": [{"ext": "ttml", "url": TRACK_URL}]},
+        }
+    else:
+        rig.extract_result = lambda: info(captions=False)
+    rig.gate.report_block(REASON_RATE_LIMITED, 300, FETCH_CLASSES)
+    await rig.clock.advance(301)
+    assert rig.gate.state(CLASS_CAPTIONS) == STATE_HALF_OPEN and rig.gate.probe_pending()
+    with pytest.raises(NoCaptions):
+        await rig.svc.get(VID, BACKGROUND)
+    assert rig.gate.state(CLASS_CAPTIONS) == STATE_CLOSED and not rig.gate.probe_pending()
+    assert rig.gate.state(CLASS_METADATA) == STATE_CLOSED
+    assert rig.http == [] and rig.svc.probe_captions(OTHER) is False
+
+
+async def test_a_partial_answer_does_not_count_as_no_captions_for_the_caption_class(tmp_path):
+    rig = Rig(tmp_path)
+    rig.extract_result = lambda: {**info(captions=False), "automatic_captions": {"en": []}}
+    rig.gate.report_block(REASON_RATE_LIMITED, 300, FETCH_CLASSES)
+    await rig.clock.advance(301)
+    with pytest.raises(YoutubeDelayed):
+        await rig.svc.get(VID, BACKGROUND)
+    assert rig.gate.state(CLASS_CAPTIONS) == STATE_HALF_OPEN
