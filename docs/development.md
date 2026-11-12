@@ -91,7 +91,7 @@ The `stutubot` flavor in `smarttubetv/build.gradle` reads `UTUBOT_VERSION_NAME` 
 `.github/workflows/utubot-ci.yml` runs on every pull request and every push to `main` and always ends with a conclusion (a
 deployment can wait for the green commit). A first job lists the changed files through the GitHub API:
 
-- the **backend** job (`uv sync --frozen`, `ruff check`, `ruff format --check`, `pytest -q`) runs when `ai-backend/`, `ai/`, `docs/`
+- the **backend** job (installs `ffmpeg`, then `uv sync --frozen`, `ruff check`, `ruff format --check`, `pytest -q`) runs when `ai-backend/`, `ai/`, `docs/`
   or `scripts/utubot_release.py` changed;
 - the **app** job (`:common:testStutubotDebugUnitTest` and a compile of the TV module, with the pinned sibling checkouts, JDK 25
   and the Gradle cache) runs when anything outside the documentation, backend, scripts and `.github/` changed;

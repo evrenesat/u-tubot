@@ -113,6 +113,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: ai-backend/uv.lock
 
+      - name: Install ffmpeg
+        # The caption tests cut audio with it, as the backend does in production.
+        working-directory: .
+        run: sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Install the dependencies
         run: uv sync --frozen
 
