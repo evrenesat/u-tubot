@@ -6,7 +6,9 @@ import android.content.Context;
 import com.liskovsoft.appupdatechecker2.AppUpdateChecker;
 import com.liskovsoft.appupdatechecker2.AppUpdateCheckerListener;
 import com.liskovsoft.smartyoutubetv2.common.utubot.StoredSettings;
+import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUpdateChecker;
 
 import org.junit.After;
 import org.junit.Assume;
@@ -18,6 +20,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 import org.robolectric.shadows.ShadowToast;
+import org.robolectric.util.ReflectionHelpers;
 
 import java.io.File;
 import java.net.UnknownHostException;
@@ -25,7 +28,9 @@ import java.time.Duration;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
@@ -187,6 +192,42 @@ public class AppUpdatePresenterTest {
         assertNull(ShadowToast.getTextOfLatestToast());
     }
 
+    /**
+     * An update that was found while the player was open (or the app in the background) is not dropped: the built-in flavor is told to
+     * offer it again soon. Nothing is shown meanwhile.
+     */
+    @Test
+    public void anUpdateFoundWhilePlaying_isDeferredNotShown() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        mPresenter.mCanShowDialog = false;
+
+        mPresenter.onUpdateFound("0.9.0", java.util.Collections.singletonList("Fixes"), "/cache/update.apk");
+
+        assertEquals(1, mPresenter.mDeferred);
+        assertFalse(AppDialogPresenter.instance(mActivity).isDialogShown());
+    }
+
+    @Test
+    public void anUpdateFoundWhilePlaying_isDeferredAlsoForAForcedCheck() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        mPresenter.mCanShowDialog = false;
+        mPresenter.start(true);
+
+        mPresenter.onUpdateFound("0.9.0", java.util.Collections.singletonList("Fixes"), "/cache/update.apk");
+
+        assertEquals(1, mPresenter.mDeferred);
+    }
+
+    /**
+     * The built-in flavor downloads only from https (or private) addresses
+     */
+    @Test
+    public void theBuiltInFlavorChecksWithTheGuardedChecker() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+
+        assertTrue(ReflectionHelpers.getField(new AppUpdatePresenter(mActivity), "mUpdateChecker") instanceof UtubotUpdateChecker);
+    }
+
     private void fail() {
         mPresenter.onUpdateError(new UnknownHostException("github.com"));
     }
@@ -197,9 +238,21 @@ public class AppUpdatePresenterTest {
 
     private static class CountingPresenter extends AppUpdatePresenter {
         private int mChecks;
+        private int mDeferred;
+        private boolean mCanShowDialog = true;
 
         CountingPresenter(Context context) {
             super(context);
+        }
+
+        @Override
+        boolean canShowUpdateDialog() {
+            return mCanShowDialog;
+        }
+
+        @Override
+        void deferUpdate() {
+            mDeferred++;
         }
 
         @Override

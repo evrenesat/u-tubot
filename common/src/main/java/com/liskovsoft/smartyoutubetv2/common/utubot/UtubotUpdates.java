@@ -39,6 +39,33 @@ public final class UtubotUpdates {
         sSchedule.start();
     }
 
+    /**
+     * Replaces the schedule (null: none), for tests
+     */
+    static synchronized void useSchedule(UtubotUpdateSchedule schedule) {
+        sSchedule = schedule;
+    }
+
+    /**
+     * An update was found and could not be shown (the player is open, the app is in the background): it is offered again soon,
+     * not at the next 6 hour check.
+     */
+    public static synchronized void onUpdateDeferred() {
+        if (sSchedule != null) {
+            Log.d(TAG, "An update is waiting for a screen to show it");
+            sSchedule.onUpdateDeferred();
+        }
+    }
+
+    /**
+     * A screen that can show the update dialog is up (the player closed, the app came back to the front)
+     */
+    public static synchronized void onScreenAvailable() {
+        if (sSchedule != null) {
+            sSchedule.onScreenAvailable();
+        }
+    }
+
     private static boolean check(Context appContext) {
         if (UtubotSettings.instance(appContext).getUpdateUrl().isEmpty()) {
             return false;

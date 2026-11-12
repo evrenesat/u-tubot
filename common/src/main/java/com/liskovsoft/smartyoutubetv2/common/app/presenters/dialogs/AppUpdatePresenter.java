@@ -16,6 +16,8 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.BrowsePresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.base.BasePresenter;
 import com.liskovsoft.smartyoutubetv2.common.prefs.GeneralData;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUpdateChecker;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUpdates;
 import com.liskovsoft.smartyoutubetv2.common.utils.LoadingManager;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 
@@ -37,7 +39,8 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
 
     public AppUpdatePresenter(Context context) {
         super(context);
-        mUpdateChecker = new AppUpdateChecker(context, this);
+        // The built-in flavor only downloads from https (or private) addresses
+        mUpdateChecker = UtubotSettings.isBuiltIn() ? new UtubotUpdateChecker(context, this) : new AppUpdateChecker(context, this);
         mSettingsPresenter = AppDialogPresenter.instance(context);
     }
 
@@ -156,8 +159,13 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
     }
 
     private void showUpdateDialog(String versionName, List<String> changelog, String apkPath) {
+        if (getContext() == null) {
+            return;
+        }
+
         // Don't show update dialog if the player opened or the app is collapsed
-        if (getContext() == null || getViewManager().isPlayerInForeground() || !Utils.isAppInForegroundFixed()) {
+        if (!canShowUpdateDialog()) {
+            deferUpdate();
             return;
         }
 
@@ -173,6 +181,19 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
 
         //mSettingsPresenter.setOnFinish(getOnFinish());
         mSettingsPresenter.showDialog(String.format("%s %s", getContext().getString(R.string.app_name), versionName), AppUpdatePresenter::unhold);
+    }
+
+    boolean canShowUpdateDialog() {
+        return !getViewManager().isPlayerInForeground() && Utils.isAppInForegroundFixed();
+    }
+
+    /**
+     * The built-in flavor offers the update again soon instead of at the next check in hours: when the player closes, or in a few minutes
+     */
+    void deferUpdate() {
+        if (UtubotSettings.isBuiltIn()) {
+            UtubotUpdates.onUpdateDeferred();
+        }
     }
 
     private void pinUpdateSection(String versionName, List<String> changelog, String apkPath) {
