@@ -41,6 +41,8 @@ utubot user pair NAME               one-time 6-digit code (15 minutes) for a TV
 utubot user devices [NAME]          list paired devices (id, user, name)
 utubot user revoke DEVICE_ID        revoke one device token
 utubot app publish APK... --version-name V --version-code N [--changelog TEXT] [--abi ABI]
+utubot app sync-github [--repo OWNER/NAME] [--prerelease] [--dry-run]
+                                    publish the newest GitHub Release of the app (see Updates)
 utubot prompts validate FILE        check a prompt set file
 ```
 
@@ -84,6 +86,8 @@ background long summaries in flight including the transcript fetch; further ones
 the app applies on import (`assess`, `mark_only`, `answer_in_menu`, `summary_panel`, `auto_captions`).
 
 **`[app]`**: `downloader_codes = { arm64-v8a = "12345", armeabi-v7a = "67890" }` shown on the landing page when non-empty.
+Updates from GitHub ([Updates](#updates)): `github_repo`, `signing_cert_sha256`, `apksigner_path`, `github_token_env`,
+`keep_versions`, `apksigner_timeout_s`, `sync_timeout_s`, `sync_releases_per_page`, `sync_max_apk_bytes`.
 
 **`[default_policy]`** and **`[[users]]`**: see [policy.md](policy.md).
 
@@ -181,7 +185,65 @@ UTUBOT_CONFIG=/etc/utubot/config.toml .venv/bin/utubot user add owner --admin
 The unit runs the venv binary (nothing downloads at start), keeps model caches under `/var/lib/utubot/cache`, and needs
 `ffmpeg` in `/usr/bin`. Logs: `journalctl -u utubot`. After updating the checkout run `uv sync --frozen --extra asr` and restart.
 
-## Publishing APKs
+## Updates
+
+TVs poll `/app/update.json` on your server, so the update channel is whatever is published in `app_dir`. Two ways to fill it.
+
+### From GitHub Releases (automatic)
+
+The project's release workflow publishes a GitHub Release for every app change merged to `main` (tag `utubot-v<major>.<minor>.<patch>`):
+signed APKs per ABI, `SHA256SUMS` and `release.json` (version, versionCode, ABIs, SHA-256 per file). One command pulls the newest
+release into your channel:
+
+```sh
+utubot app sync-github --repo OWNER/NAME          # or set [app] github_repo and omit --repo
+utubot app sync-github --dry-run                  # say what would happen; no APK is downloaded, nothing is written
+```
+
+```toml
+[app]
+github_repo = "owner/u-tubot"
+signing_cert_sha256 = "<64 hex digits>"           # SHA-256 of your release signing certificate
+# apksigner_path = "/path/to/android-sdk/build-tools/<version>/apksigner"   # optional; unset uses the built-in verifier
+# keep_versions = 3                               # keep the APK files of the newest 3 versions; the default 0 keeps all
+```
+
+What a run does:
+
+1. Lists the repository's releases through the GitHub API (no login needed for a public repository; set `UTUBOT_GITHUB_TOKEN`,
+   or the variable named by `github_token_env`, only to raise the rate limit) and takes the highest `utubot-vX.Y.Z` that is not a
+   draft (prereleases only with `--prerelease`).
+2. Reads its `release.json` and compares `version_code` with the channel's (`latest.json`). Equal or older: nothing to do, so the
+   command is safe to run every few minutes.
+3. Downloads each APK, checks its SHA-256 against `release.json`, then verifies its signature and requires every signer
+   certificate to equal `signing_cert_sha256`. Nothing is published unless all APKs pass. The signature is checked by `apksigner`
+   when `apksigner_path` is set (Android build-tools, needs a JRE), otherwise by a built-in pure-Python reader of the APK Signing
+   Block (schemes v2, v3 and v3.1): it verifies each signature, recomputes the APK's content digest and compares it with the
+   signed one, so an APK changed after signing is refused. It supports RSA keys (PKCS#1 v1.5 and PSS); for an ECDSA key set
+   `apksigner_path`.
+4. Publishes them like `utubot app publish` (APKs first, `update.json` last) and, with `keep_versions`, deletes the APK files of
+   older versions (only files named `u-tubot_<version>_<abi>.apk`).
+
+Get the digest with `apksigner verify --print-certs u-tubot_<version>_<abi>.apk` (`Signer #1 certificate SHA-256 digest`); each
+release's notes carry it too. Without `signing_cert_sha256`, or when `apksigner_path` is set but is not an executable file (the
+check is never silently weakened), a real run refuses to publish and says so; `--dry-run` only warns and names the check it would use.
+
+A release made before `release.json` existed is read from its file names and `SHA256SUMS`; its versionCode is derived from the
+version (`major * 1000000 + minor * 1000 + patch`) and the channel compares version names instead.
+
+Exit codes: `0` published or nothing to do, `1` a check failed or the configuration is wrong, `75` GitHub could not be reached or is
+rate limiting (retry later). Run it from cron or a systemd timer, for example every five minutes:
+
+```ini
+# /etc/systemd/system/utubot-sync.service
+[Service]
+Type=oneshot
+Environment=UTUBOT_CONFIG=/etc/utubot/config.toml
+ExecStart=/opt/utubot/ai-backend/.venv/bin/utubot app sync-github
+SuccessExitStatus=75
+```
+
+### By hand
 
 Build or download the release APKs (`u-tubot_<version>_<abi>.apk`), then:
 

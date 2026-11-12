@@ -69,15 +69,62 @@ keytool -genkeypair -keystore utubot-release.jks -storetype PKCS12 -alias utubot
 
 Verify: `apksigner verify --print-certs u-tubot_0.2.0_arm64-v8a.apk` (compare the SHA-256 digest with the one in the release notes).
 
+### Versions
+
+`versionName` is `<major>.<minor>.<patch>`. `major.minor` (the series) is the only line in `utubot.version` at the repository root;
+change it by hand to start a new series. `patch` is a counter: the release workflow takes the highest patch of the series among the
+existing `utubot-v<series>.*` tags plus one (the first release of a series is `.0`) and refuses a series that would not be newer
+than every existing release.
+
+`versionCode` is derived from the name, so it grows with it and never depends on a run counter or on which path made the release:
+
+```
+versionCode = major * 1000000 + minor * 1000 + patch        (0.3.7 -> 3007; 0.2.2 shipped as 4, every later series is above it)
+```
+
+The `stutubot` flavor in `smarttubetv/build.gradle` reads `UTUBOT_VERSION_NAME` (or `-PutubotVersionName`) and derives the code;
+`UTUBOT_VERSION_CODE` / `-PutubotVersionCode` override it. A local build without a name is `<series>.0-dev`. Patch stays below
+1000 and minor below 1000 so the order holds.
+
+### CI
+
+`.github/workflows/utubot-ci.yml` runs on every pull request and every push to `main` and always ends with a conclusion (a
+deployment can wait for the green commit). A first job lists the changed files through the GitHub API:
+
+- the **backend** job (installs `ffmpeg`, then `uv sync --frozen`, `ruff check`, `ruff format --check`, `pytest -q`) runs when `ai-backend/`, `ai/`, `docs/`
+  or `scripts/utubot_release.py` changed;
+- the **app** job (`:common:testStutubotDebugUnitTest` and a compile of the TV module, with the pinned sibling checkouts, JDK 25
+  and the Gradle cache) runs when anything outside the documentation, backend, scripts and `.github/` changed;
+- skipped jobs count as passed.
+
+The sibling commits are pinned in `.github/actions/android-env/action.yml`, shared by CI and the release workflow.
+
 ### Releasing
 
-1. Bump `versionName`/`versionCode` of the `stutubot` flavor in `smarttubetv/build.gradle` and add a `CHANGELOG.md` section.
-2. Tag and push: `git tag utubot-v0.2.2 && git push origin utubot-v0.2.1`. The workflow `.github/workflows/utubot-release.yml` builds the
-   per-ABI APKs and creates the GitHub Release with `SHA256SUMS`. Secrets needed: `UTUBOT_KEYSTORE_B64` (`base64 -w0` of the keystore),
-   `UTUBOT_KEYSTORE_PASSWORD`, `UTUBOT_KEY_ALIAS`, `UTUBOT_KEY_PASSWORD`. For a private repository change `runs-on` to your own runner label.
-3. Publish to your server: `utubot app publish ...` ([server.md](server.md)).
+Merging a change that touches the app to `main` releases it automatically: after the app tests pass, CI starts
+`.github/workflows/utubot-release.yml` for that commit. "Touches the app" is decided against the newest `utubot-v*` tag, so an
+earlier push whose release failed or was cancelled is picked up by the next push. Documentation, backend, `scripts/` and
+`.github/` changes alone never release.
 
-The workflow checks out `SharedModules` and `MediaServiceCore` at the commits in its `env:`; update them when you merge the base app.
+The release workflow resolves the next version, builds the signed per-ABI APKs, writes `release.json` and `SHA256SUMS`,
+creates the tag `utubot-v<version>` on the commit and the GitHub Release. Only one release runs at a time.
+
+- **Notes**: the lines of the `## Unreleased` section of `CHANGELOG.md` that the previous release's notes do not already contain;
+  without any, the commit subjects since the previous tag (merge commits left out). Write user-facing bullets under `## Unreleased`
+  in your pull request; rename the section to the version when you start a new series. Notes can never fail a release.
+- **`release.json`**: `version_name`, `version_code`, `abis`, `files` (name, SHA-256, size per ABI), `changelog`,
+  `signing_cert_sha256`. A backend reads it with `utubot app sync-github` ([server.md](server.md#updates)).
+- **By hand**: push a tag `utubot-vX.Y.Z` (or run the workflow with the input `tag`) to build and publish exactly that version; the
+  Gradle build gets the name from the tag, the unit tests run first, and the numbers must agree with the APKs or the release stops.
+- Secrets needed: `UTUBOT_KEYSTORE_B64` (`base64 -w0` of the keystore), `UTUBOT_KEYSTORE_PASSWORD`, `UTUBOT_KEY_ALIAS`,
+  `UTUBOT_KEY_PASSWORD`. The automatic path is guarded to this repository (`github.repository` in the CI workflow); for a fork or a
+  private repository change that guard and the `runs-on` label.
+- Publish to your server with `utubot app sync-github` or by hand with `utubot app publish` ([server.md](server.md#updates)).
+
+Everything in `main` that CI accepts is shipped, so protect `main` (pull requests, required `u-tubot CI` checks).
+
+The workflows check out `SharedModules` and `MediaServiceCore` at the commits pinned in `.github/actions/android-env/action.yml`;
+update them when you merge the base app.
 
 ## Merging upstream
 
@@ -91,5 +138,5 @@ git checkout feat/ai-layer && git merge master
 
 Conflicts can only be in the files listed in [../ai/APP_INTEGRATION.md](../ai/APP_INTEGRATION.md): re-apply the small hooks (grep
 `Utubot`). Inherited workflows are guarded with `if: github.repository == 'cygnusx-1-org/electriceel'` so they stay inert here.
-After a merge, update the sibling checkouts and the pinned SHAs in the release workflow, run the unit tests, build both the
+After a merge, update the sibling checkouts and the pinned SHAs in `.github/actions/android-env/action.yml`, run the unit tests, build both the
 `stutubot` and an Electric Eel flavor, and note the change in `DEVLOG-utubot.md`.

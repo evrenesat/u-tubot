@@ -68,8 +68,8 @@ The flavor has no update URL of its own: `AppUpdatePresenter` uses the `update_u
 `downloadUrlList_<abi>` (the device's primary ABI from `DeviceHelpers.getPrimaryAbi`) wins over `downloadUrlList`. The newest
 key by version-name comparison is the latest; the app compares it with its own version name. The downloaded APK must carry the
 package `dev.utubot.tv` and the same signing key, otherwise Android refuses it. The backend writes the file with
-`utubot app publish APK... --version-name V --version-code N --changelog TEXT`. Bump `versionName`/`versionCode` in
-`smarttubetv/build.gradle` before releasing.
+`utubot app publish APK... --version-name V --version-code N --changelog TEXT`, or pulls the newest GitHub Release with
+`utubot app sync-github`. Versions are automatic (`utubot.version`, `docs/development.md`, "Versions").
 
 ## Merging upstream
 

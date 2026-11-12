@@ -70,6 +70,10 @@ copied into `app_dir`, `update.json` (Electric Eel format, with `downloadUrlList
 All are served without auth: `/app/update.json`, `/app/<file>.apk`, the stable `/app/latest/<abi>.apk` redirect and
 `/app/info.json` for the landing page.
 
+To follow the project's GitHub Releases instead of publishing by hand, set `[app] github_repo` and `signing_cert_sha256` in the
+config and run `utubot app sync-github` (idempotent; every APK is checked against its SHA-256 and the pinned signing certificate
+with `apksigner` or the built-in v2/v3 verifier). Run it from a timer; see `../../docs/server.md`, Updates.
+
 ## Ops
 
 - logs: `journalctl -u utubot`

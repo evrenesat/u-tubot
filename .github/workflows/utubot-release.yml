@@ -1,7 +1,15 @@
 name: u-tubot release
 
-# Push a tag like utubot-v0.2.0 to build the per-ABI release APKs, sign them and attach them to a GitHub Release.
-# The tag must match versionName in smarttubetv/build.gradle (stutubot flavor).
+# Builds the signed per-ABI release APKs and publishes them as a GitHub Release: the APKs, SHA256SUMS and release.json
+# (version, versionCode, ABIs, SHA-256 per file), which a backend reads with `utubot app sync-github`.
+#
+# Two ways in:
+#   - Automatic: the CI workflow starts this one (input `sha`) for a commit on main that changes the app, after the app tests
+#     passed. The version is <series in utubot.version>.<next patch> and the tag utubot-v<version> is created on that commit.
+#   - By hand: push a tag like utubot-v0.3.7, or run this workflow with the input `tag`, to build and publish that tag.
+# versionName comes from the tag and versionCode is derived from it (docs/development.md, "Releasing").
+# An automatic run whose commit is already contained in the newest release does nothing, so runs that reach the queue out of
+# order never publish an older build under a newer version.
 #
 # Secrets (Settings, Secrets and variables, Actions):
 #   UTUBOT_KEYSTORE_B64    base64 of the release keystore (base64 -w0 utubot-release.jks)
@@ -12,73 +20,126 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to build, for example utubot-v0.2.0'
-        required: true
+        description: 'Existing tag to build and publish, for example utubot-v0.3.7'
+        required: false
+      sha:
+        description: 'Commit on main to release as the next version (the CI workflow sets this)'
+        required: false
+
+# One release at a time, over the whole run: the next patch number is read from the existing tags.
+concurrency:
+  group: utubot-release
+  cancel-in-progress: false
 
 permissions:
-  contents: write
-
-env:
-  # The Android build needs these two repositories checked out next to this one. Pinned for reproducible releases:
-  # bump the SHAs on purpose when the base app is synced.
-  SHARED_MODULES_SHA: 18ba193b83b65da775d5861e1cd4d179c62360a6
-  MEDIA_SERVICE_CORE_SHA: 173b3c3059288d87526e52c0dacdb48f06bbb013
+  contents: read
 
 jobs:
-  release:
-    # Public repositories use the free hosted runner. For a private repository use the label of your own
-    # self-hosted runner instead, for example: runs-on: [self-hosted, my-runner-label]
+  plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 10
+    outputs:
+      auto: ${{ steps.source.outputs.auto }}
+      ref: ${{ steps.source.outputs.ref }}
+      sha: ${{ steps.source.outputs.sha }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      skip: ${{ steps.version.outputs.skip }}
     steps:
-      - name: Resolve the tag
+      - name: Resolve what to build
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PUSHED_TAG: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_SHA: ${{ inputs.sha }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          case "$TAG" in utubot-v*) ;; *) echo "tag must look like utubot-vX.Y.Z" >&2; exit 1 ;; esac
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-          echo "VERSION=${TAG#utubot-v}" >> "$GITHUB_ENV"
+          set -euo pipefail
+          if [ "$EVENT_NAME" = push ]; then
+            tag="$PUSHED_TAG"; sha=""
+          else
+            tag="$INPUT_TAG"; sha="$INPUT_SHA"
+          fi
+          if [ -n "$tag" ] && [ -n "$sha" ]; then echo "give a tag or a sha, not both" >&2; exit 1; fi
+          if [ -n "$tag" ]; then
+            [[ $tag =~ ^utubot-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag must look like utubot-vX.Y.Z, got $tag" >&2; exit 1; }
+            { echo "auto=false"; echo "ref=refs/tags/$tag"; echo "tag=$tag"; } >> "$GITHUB_OUTPUT"
+          elif [ -n "$sha" ]; then
+            [[ $sha =~ ^[0-9a-f]{40}$ ]] || { echo "sha must be a full commit hash" >&2; exit 1; }
+            status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$sha" --jq .status)
+            case "$status" in
+              identical|behind) ;;
+              *) echo "commit $sha is not on main (compare status: $status)" >&2; exit 1 ;;
+            esac
+            { echo "auto=true"; echo "ref=$sha"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          else
+            echo "give the input tag or sha" >&2; exit 1
+          fi
 
       - name: Checkout u-tubot
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           path: u-tubot
-          ref: ${{ env.TAG }}
+          ref: ${{ steps.source.outputs.ref }}
+          persist-credentials: false
 
-      - name: Checkout SharedModules
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          repository: cygnusx-1-org/SharedModules
-          ref: ${{ env.SHARED_MODULES_SHA }}
-          path: SharedModules
-
-      - name: Checkout MediaServiceCore
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          repository: cygnusx-1-org/MediaServiceCore
-          ref: ${{ env.MEDIA_SERVICE_CORE_SHA }}
-          path: MediaServiceCore
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-          cache: 'gradle'
-
-      - name: Set up the Android SDK
+      - name: Resolve the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTO: ${{ steps.source.outputs.auto }}
+          SHA: ${{ steps.source.outputs.sha }}
+          TAG: ${{ steps.source.outputs.tag }}
         run: |
-          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-          "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;30.0.3" "ndk;30.0.16248370" >/dev/null
-
-      - name: Check the version
-        working-directory: u-tubot
-        run: |
-          GRADLE_VERSION=$(awk '/stutubot \{/{f=1} f && /versionName/{gsub(/"/,"",$2); print $2; exit}' smarttubetv/build.gradle)
-          if [ "$GRADLE_VERSION" != "$VERSION" ]; then
-            echo "tag says $VERSION but smarttubetv/build.gradle says $GRADLE_VERSION" >&2
-            exit 1
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/utubot-v" --jq '.[].ref' \
+            | sed -n 's#^refs/tags/utubot-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' > "$RUNNER_TEMP/versions.txt"
+          skip=false
+          if [ "$AUTO" = true ]; then
+            newest=$(sort -V "$RUNNER_TEMP/versions.txt" | tail -1)
+            if [ -n "$newest" ]; then
+              status=$(gh api "repos/$GITHUB_REPOSITORY/compare/utubot-v$newest...$SHA" --jq .status)
+              case "$status" in
+                identical|behind) skip=true; echo "::notice::utubot-v$newest already contains $SHA; nothing to release" ;;
+              esac
+            fi
+            if [ "$skip" = true ]; then
+              VERSION=""; TAG=""
+            else
+              VERSION=$(python3 u-tubot/scripts/utubot_release.py next-version --series "$(cat u-tubot/utubot.version)" \
+                --tags "$RUNNER_TEMP/versions.txt")
+              TAG="utubot-v$VERSION"
+            fi
+          else
+            VERSION="${TAG#utubot-v}"
           fi
+          echo "releasing $TAG (skip: $skip)"
+          { echo "tag=$TAG"; echo "version=$VERSION"; echo "skip=$skip"; } >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    # Public repositories use the free hosted runner. For a private repository use the label of your own
+    # self-hosted runner instead, for example: runs-on: [self-hosted, my-runner-label]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      AUTO: ${{ needs.plan.outputs.auto }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - name: Checkout u-tubot
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          path: u-tubot
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
+
+      - name: Set up the Android build
+        uses: ./u-tubot/.github/actions/android-env
 
       - name: Decode the signing key
         env:
@@ -91,27 +152,55 @@ jobs:
       - name: Build the release APKs
         working-directory: u-tubot
         env:
+          UTUBOT_VERSION_NAME: ${{ env.VERSION }}
           UTUBOT_KEYSTORE_PASSWORD: ${{ secrets.UTUBOT_KEYSTORE_PASSWORD }}
           UTUBOT_KEY_ALIAS: ${{ secrets.UTUBOT_KEY_ALIAS }}
           UTUBOT_KEY_PASSWORD: ${{ secrets.UTUBOT_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew :common:testStutubotDebugUnitTest :smarttubetv:assembleStutubotRelease
+          # A commit released automatically already passed the app tests in CI.
+          tasks=":smarttubetv:assembleStutubotRelease"
+          if [ "$AUTO" != true ]; then tasks=":common:testStutubotDebugUnitTest $tasks"; fi
+          # shellcheck disable=SC2086 # the task list is meant to split on spaces
+          ./gradlew $tasks
 
-      - name: Collect the APKs and checksums
+      - name: Collect the APKs
         run: |
+          rm -f "$RUNNER_TEMP/utubot-release.jks"
           mkdir release
           cp u-tubot/smarttubetv/build/outputs/apk/stutubot/release/u-tubot_*.apk release/
-          cd release
-          sha256sum u-tubot_*.apk > SHA256SUMS
-          cat SHA256SUMS
-          rm -f "$RUNNER_TEMP/utubot-release.jks"
+          ls -l release
+
+      - name: Read the signing certificate
+        run: |
+          apks=(release/u-tubot_*.apk)
+          cert=$(python3 u-tubot/scripts/utubot_release.py cert --apksigner "$ANDROID_BUILD_TOOLS_DIR/apksigner" "${apks[0]}")
+          echo "signing certificate SHA-256: ${cert:-unknown}"
+          echo "CERT=$cert" >> "$GITHUB_ENV"
+
+      - name: Write the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.plan.outputs.sha || env.TAG }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/utubot-v" --jq '.[].ref' \
+            | sed -n 's#^refs/tags/utubot-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' > "$RUNNER_TEMP/versions.txt"
+          python3 u-tubot/scripts/utubot_release.py notes --repo "$GITHUB_REPOSITORY" --version "$VERSION" --sha "$SHA" \
+            --changelog u-tubot/CHANGELOG.md --tags "$RUNNER_TEMP/versions.txt" --cert "$CERT" --out notes.md
+          cat notes.md
+
+      - name: Write release.json and the checksums
+        run: |
+          python3 u-tubot/scripts/utubot_release.py manifest --dir release --tag "$TAG" --version "$VERSION" \
+            --aapt2 "$ANDROID_BUILD_TOOLS_DIR/aapt2" --cert "$CERT" --notes notes.md
+          cat release/release.json
+          (cd release && sha256sum --check SHA256SUMS)
 
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ needs.plan.outputs.sha }}
         run: |
-          awk -v v="$VERSION" '/^## /{f=($2==v); next} f' u-tubot/CHANGELOG.md > notes.md
-          test -s notes.md || echo "See CHANGELOG.md." > notes.md
-          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+          if [ "$AUTO" = true ]; then target=(--target "$TARGET_SHA"); else target=(--verify-tag); fi
+          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" "${target[@]}" \
             --title "u·tubot $VERSION" --notes-file notes.md

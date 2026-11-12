@@ -1,5 +1,17 @@
 # u·tubot devlog
 
+## 2026-11-12 (continuous delivery)
+
+- CI: `utubot-ci.yml` (named apart from the inherited `CI.yml`, which differs only by case) tests the backend (ruff, pytest) and the
+  app (`:common:testStutubotDebugUnitTest`, TV module compile) only when their files changed; one run with a conclusion per commit.
+- Releases: a merge to `main` that touches the app (compared with the newest `utubot-v*` tag) starts `utubot-release.yml` after the
+  app tests pass. Version `<utubot.version>.<next patch>`, `versionCode = major * 1000000 + minor * 1000 + patch` derived in
+  `smarttubetv/build.gradle` (a run counter would differ between the automatic and the tag path). The release carries APKs,
+  `SHA256SUMS`, `release.json` and notes from `## Unreleased` (new lines only) or the commit log. Manual `utubot-vX.Y.Z` tags still work.
+- Backend: `utubot app sync-github` publishes the newest release into the update channel after SHA-256 and signing-certificate
+  checks (`apksigner`, or a built-in v2/v3 reader when `apksigner_path` is unset) against `[app] signing_cert_sha256`; idempotent; optional `keep_versions`. Releases without `release.json` (0.2.x) are read
+  from file names and `SHA256SUMS`. Scripts: `scripts/utubot_release.py`, tests in `ai-backend/tests`.
+
 ## 2026-11-12 (0.2.2: review fixes)
 
 - Manual backend URLs go through `UtubotSetup.requireUrl`; the update URL is derived by URI resolution (origin + path + `/app/update.json`).
