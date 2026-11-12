@@ -91,8 +91,9 @@ so give the summary task a model with that much context and decent instruction f
 
 - Triage is the volume: one call per `assess.batch_size` (25) titles, cached per video for `triage_cache_ttl_s` (7 days) and shared
   between users. Rows of already seen videos cost nothing.
-- Transcript-based work (second tier, summaries) is capped: `assess.tier2_daily_cap_per_user` deep analyses per user per UTC day,
-  and summaries only run for videos someone opens or focuses. Summaries are cached per (video, prompt content, language).
+- Transcript-based work (second tier, summaries) is capped: `assess.tier2_daily_cap_per_user` (30) deep analyses per user per UTC day,
+  only for videos with a title question or high clickbait score, and summaries only run for videos someone opens or focuses.
+  Summaries are cached per (video, prompt content, language). No model call is made for a video without a transcript.
 - Set `max_concurrent` on each provider to what its endpoint can take (default 2); see the next section.
 - To watch spending on a paid API, put a cheap model on triage, a better one on summaries, and check the provider's dashboard
   after a day of normal use before raising the caps.

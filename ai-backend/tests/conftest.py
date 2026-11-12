@@ -4,6 +4,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
+from tests.fakes import FakeClock
 from tests.mock_openai import MockOpenAI
 from utubot.app import create_app
 from utubot.auth import hash_token
@@ -21,9 +22,13 @@ class FakeFetcher:
         self.calls: list[str] = []
         self.text: str | None = TRANSCRIPT
         self.fail = False
+        self.error: Exception | None = None
+        self.meta_extra: dict = {}
 
     async def __call__(self, video_id: str) -> FetchResult:
         self.calls.append(video_id)
+        if self.error is not None:
+            raise self.error
         if self.fail:
             raise RuntimeError("youtube blocked")
         meta = {
@@ -31,8 +36,14 @@ class FakeFetcher:
             "title": f"Title {video_id}",
             "channel": "Chan",
             "duration_s": 900,
+            **self.meta_extra,
         }
         return FetchResult(meta, self.text, "en")
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    return FakeClock()
 
 
 @pytest.fixture
@@ -54,6 +65,8 @@ def cfg(tmp_path) -> Config:
     c.summary.default_wait_ms = 5000
     c.security.trusted_proxies = []
     c.captions.job_poll_s = 0.05
+    c.youtube.min_interval_s = 0.0
+    c.youtube.jitter_s = 0.0
     c.captions.asr_url = "http://mock/v1/audio/transcriptions"
     c.users = [
         UserConfig(
@@ -68,7 +81,7 @@ def cfg(tmp_path) -> Config:
 
 
 @pytest_asyncio.fixture
-async def env(cfg, mock_llm, fetcher, tmp_path):
+async def env(cfg, mock_llm, fetcher, clock, tmp_path):
     asr = OpenAIASR(cfg.captions, transport=httpx.ASGITransport(app=mock_llm.app))
 
     async def fake_download(video_id, out_dir):
@@ -95,6 +108,7 @@ async def env(cfg, mock_llm, fetcher, tmp_path):
         cfg,
         llm_transport=httpx.ASGITransport(app=mock_llm.app),
         fetcher=fetcher,
+        clock=clock,
         asr=asr,
         downloader=fake_download,
         prompt_transport=None,
@@ -114,6 +128,7 @@ async def env(cfg, mock_llm, fetcher, tmp_path):
                 "svc": app.state.svc,
                 "llm": mock_llm,
                 "fetcher": fetcher,
+                "clock": clock,
                 "cfg": cfg,
             },
         )

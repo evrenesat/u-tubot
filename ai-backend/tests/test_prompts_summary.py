@@ -167,14 +167,15 @@ async def test_summary_pending_then_ready(env):
     assert r.json()["status"] == "ready"
 
 
-async def test_summary_failure_and_metadata_fallback(env):
+async def test_summary_failure_is_generic_and_never_uses_the_title(env):
     env.fetcher.fail = True
     r = await env.client.get(f"/v1/videos/{VID}/summary", params={"wait_ms": 5000})
     assert r.json()["status"] == "failed" and "blocked" not in r.json()["error"]
-    ok = await env.client.get(
+    titled = await env.client.get(
         "/v1/videos/zzzzzzzzzzz/summary", params={"wait_ms": 5000, "title": "Known title"}
     )
-    assert ok.json()["status"] == "ready" and ok.json()["source"] == "metadata_only"
+    assert titled.json()["status"] == "failed" and titled.json()["text"] is None
+    assert env.llm.calls == []
 
 
 async def test_long_transcript_map_reduce(env):
@@ -196,7 +197,11 @@ async def test_adhoc_summary_and_ask_and_insight(env):
     )
     assert r.json()["status"] == "ready" and r.json()["prompt"] == "adhoc"
     a = await env.client.post(f"/v1/videos/{VID}/ask", json={"question": "Why?", "wait_ms": 5000})
-    assert a.json() == {"answer": "ANSWER: forty-two", "status": "ready"}
+    assert a.json() == {
+        "answer": "ANSWER: forty-two",
+        "status": "ready",
+        "transcript_status": "ok",
+    }
     i = await env.client.get(f"/v1/videos/{VID}/insight", params={"wait_ms": 5000})
     body = i.json()
     assert body["status"] == "ready" and body["key_points"] == ["a", "b"]
@@ -321,6 +326,6 @@ def test_example_config_loads_with_prod_defaults():
 
     cfg = load_config(Path(__file__).parent.parent / "config.example.toml")
     assert cfg.captions.asr_backend == "faster_whisper" and cfg.captions.whisper_threads == 4
-    assert cfg.assess.tier2_daily_cap_per_user == 100
+    assert cfg.assess.tier2_daily_cap_per_user == 30
     assert cfg.llm.summary.model == "llama3.1:8b" and cfg.llm.triage.model == "llama3.2:3b"
     assert cfg.server.data_dir == "/var/lib/utubot"

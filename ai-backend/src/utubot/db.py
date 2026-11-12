@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS video_meta(
 CREATE TABLE IF NOT EXISTS transcripts(
   video_id TEXT PRIMARY KEY, lang TEXT, source TEXT NOT NULL, text TEXT NOT NULL,
   fetched_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS no_captions(
+  video_id TEXT PRIMARY KEY, checked_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS youtube_gate(
+  id INTEGER PRIMARY KEY CHECK(id=1), cooldown_until REAL NOT NULL, strikes INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS triage(
   video_id TEXT NOT NULL, topics_hash TEXT NOT NULL, json TEXT NOT NULL, created_at REAL NOT NULL,
   PRIMARY KEY(video_id, topics_hash));
@@ -42,7 +46,8 @@ CREATE TABLE IF NOT EXISTS verdicts(
 CREATE TABLE IF NOT EXISTS jobs(
   id TEXT PRIMARY KEY, user TEXT NOT NULL, video_id TEXT NOT NULL, lang TEXT NOT NULL,
   translate_to TEXT, status TEXT NOT NULL, progress REAL NOT NULL DEFAULT 0, error TEXT,
-  created_at REAL NOT NULL, updated_at REAL NOT NULL);
+  created_at REAL NOT NULL, updated_at REAL NOT NULL, kind TEXT NOT NULL DEFAULT 'captions',
+  title TEXT, finished_at REAL);
 CREATE TABLE IF NOT EXISTS captions(
   video_id TEXT NOT NULL, lang TEXT NOT NULL, label TEXT NOT NULL, speakers INTEGER NOT NULL,
   vtt TEXT NOT NULL, created_at REAL NOT NULL, PRIMARY KEY(video_id, lang));
@@ -60,6 +65,13 @@ CREATE TABLE IF NOT EXISTS feedback(
   kind TEXT NOT NULL, correct INTEGER NOT NULL, note TEXT, created_at REAL NOT NULL);
 """
 
+JOB_COLUMNS = {
+    "kind": "TEXT NOT NULL DEFAULT 'captions'",
+    "title": "TEXT",
+    "finished_at": "REAL",
+}
+METADATA_ONLY = "metadata_only"
+
 
 class Database:
     def __init__(self, path: Path | str):
@@ -71,7 +83,20 @@ class Database:
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(SCHEMA)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(jobs)")}
+        for column, ddl in JOB_COLUMNS.items():
+            if column not in have:
+                self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {ddl}")
+        # Rows written when a transcript could not be fetched: nothing may be built on a title alone.
+        self._conn.execute("DELETE FROM transcripts WHERE source=?", [METADATA_ONLY])
+        self._conn.execute("DELETE FROM summaries WHERE source=?", [METADATA_ONLY])
+        self._conn.execute(
+            "DELETE FROM insights WHERE json LIKE ?", [f'%"source": "{METADATA_ONLY}"%']
+        )
 
     def execute(self, sql: str, params: Iterable[Any] = ()) -> None:
         with self._lock:

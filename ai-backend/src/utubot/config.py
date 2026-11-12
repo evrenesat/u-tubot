@@ -77,16 +77,28 @@ class AssessConfig(BaseModel):
     default_wait_ms: int = 1200
     background_concurrency: int = 2
     coalesce_ms: int = 300
-    tier2_daily_cap_per_user: int = 40
+    tier2_daily_cap_per_user: int = 30
     tier2_clickbait_threshold: float = 0.6
     triage_cache_ttl_s: int = 7 * 86400
     title_max_chars: int = 200
     description_max_chars: int = 300
 
 
+class YoutubeConfig(BaseModel):
+    """Pacing and circuit breaker for every request that reaches YouTube."""
+
+    max_concurrent: int = 1
+    min_interval_s: float = 3.0
+    jitter_s: float = 1.5
+    cooldown_base_s: float = 300.0
+    cooldown_max_s: float = 3600.0
+    network_retry_s: float = 60.0
+    max_background_queue: int = 5
+
+
 class TranscriptConfig(BaseModel):
     cache_ttl_s: int = 30 * 86400
-    max_concurrency: int = 2
+    no_captions_ttl_s: int = 3 * 86400
     fetch_timeout_s: float = 60.0
     prefer_manual: bool = True
     default_language: str = "en"
@@ -136,6 +148,9 @@ class CaptionsConfig(BaseModel):
     sentence_gap_s: float = 0.6
     job_concurrency: int = 1
     job_poll_s: float = 2.0
+    asr_speed_factor: float = 1.5
+    asr_overhead_s: int = 30
+    transcribe_max_active_per_user: int = 5
     audio_format: str = "bestaudio/best"
     asr_chunk_s: int = 600
     translate_batch: int = 40
@@ -234,6 +249,7 @@ class Config(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     assess: AssessConfig = Field(default_factory=AssessConfig)
+    youtube: YoutubeConfig = Field(default_factory=YoutubeConfig)
     transcripts: TranscriptConfig = Field(default_factory=TranscriptConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     captions: CaptionsConfig = Field(default_factory=CaptionsConfig)

@@ -12,9 +12,9 @@ from .db import Database
 from .errors import public_error
 from .llm import BACKGROUND, CUT_MARK, INTERACTIVE, ChatResult, LLMClient
 from .prompts import DEFAULT_SYSTEM, TASK_GLANCE, Prompt, PromptStore, render
+from .transcribe import OK, Transcription
 from .transcripts import Transcript, TranscriptService, fmt_ts
 
-NO_TRANSCRIPT = "(No transcript is available; rely on the title, channel and description only.)"
 MAP_SYSTEM = (
     "You condense one part of a long video transcript into terse factual notes. Keep concrete "
     "claims, numbers, names and [mm:ss] markers. No commentary. If the video's title poses or "
@@ -91,9 +91,10 @@ class ContentService:
         llm: LLMClient,
         transcripts: TranscriptService,
         prompts: PromptStore,
+        transcription: Transcription,
     ):
         self.cfg, self.db, self.llm = cfg, db, llm
-        self.transcripts, self.prompts = transcripts, prompts
+        self.transcripts, self.prompts, self.transcription = transcripts, prompts, transcription
         self.registry = TaskRegistry(cfg.summary.failure_cooldown_s)
         self._ask_results: dict[Any, tuple[str, float | None]] = {}
         self._auto_long_active = 0
@@ -102,13 +103,11 @@ class ContentService:
         s = self.cfg.summary
         return max(0, min(wait_ms if wait_ms is not None else s.default_wait_ms, s.wait_ms_cap))
 
-    async def source(self, video_id: str, qmeta: dict[str, Any]) -> Transcript:
-        try:
-            transcript = await self.transcripts.get(video_id)
-        except Exception:
-            if not qmeta.get("title"):
-                raise
-            return Transcript(video_id, "", None, "metadata_only", dict(qmeta))
+    async def source(
+        self, video_id: str, qmeta: dict[str, Any], priority: int = INTERACTIVE
+    ) -> Transcript:
+        """The video's real transcript. Never a stand-in built from the title."""
+        transcript = await self.transcripts.get(video_id, priority)
         for key, value in qmeta.items():
             transcript.meta.setdefault(key, value)
         return transcript
@@ -174,7 +173,7 @@ class ContentService:
             "channel": str(meta.get("channel") or ""),
             "duration": fmt_ts(duration) if duration else "",
             "description": str(meta.get("description") or "")[:1500],
-            "transcript": body or NO_TRANSCRIPT,
+            "transcript": body,
             "language": policy.language,
             "question": question,
         }
@@ -191,7 +190,7 @@ class ContentService:
         question: str = "",
         priority: int = INTERACTIVE,
     ) -> ChatResult:
-        body = await self.condensed(transcript, priority) if transcript.text else ""
+        body = await self.condensed(transcript, priority)
         values = self._values(
             transcript, body, policy, question or self._title_question(transcript.video_id)
         )
@@ -244,7 +243,7 @@ class ContentService:
         task_key = summary_task_key(video_id, store_key, chash, policy.language, priority)
 
         async def job() -> tuple[str, str]:
-            transcript = await self.source(video_id, qmeta)
+            transcript = await self.source(video_id, qmeta, priority)
             generated = await self._generate(prompt, transcript, policy, priority=priority)
             text = generated.text + CUT_MARK if generated.truncated else generated.text
             used_key = ADHOC_KEY if generated.truncated else store_key
@@ -273,25 +272,41 @@ class ContentService:
     ) -> dict[str, Any]:
         chash = prompt.content_hash()
         store_key = ADHOC_KEY if adhoc else key
-        base = {"video_id": video_id, "prompt": key, "text": None, "source": None, "error": None}
+        base = {
+            "video_id": video_id,
+            "prompt": key,
+            "text": None,
+            "source": None,
+            "error": None,
+            "transcript_status": None,
+        }
         hit = self._find_summary(policy, video_id, store_key, chash, adhoc)
         if hit:
-            return {**base, "status": "ready", "text": hit["text"], "source": hit["source"]}
+            return {
+                **base,
+                "status": "ready",
+                "text": hit["text"],
+                "source": hit["source"],
+                "transcript_status": OK,
+            }
         task_key = summary_task_key(video_id, store_key, chash, policy.language, INTERACTIVE)
         failure = self.registry.recent_failure(task_key)
         if failure:
             return {**base, "status": "failed", "error": failure}
+        blocked = self.transcription.blocked(video_id, qmeta)
+        if blocked:
+            return {**base, **blocked}
         task = self._start_summary(policy, video_id, prompt, store_key, chash, qmeta, INTERACTIVE)
         if not await wait_task(task, self.wait_cap(wait_ms)):
             return {**base, "status": "pending"}
-        if task.exception() is not None:
-            return {
-                **base,
-                "status": "failed",
-                "error": public_error(task.exception(), "content task"),
-            }
+        exc = task.exception()
+        if exc is not None:
+            problem = self.transcription.problem(video_id, exc, qmeta)
+            if problem:
+                return {**base, **problem}
+            return {**base, "status": "failed", "error": public_error(exc, "content task")}
         text, source = task.result()
-        return {**base, "status": "ready", "text": text, "source": source}
+        return {**base, "status": "ready", "text": text, "source": source, "transcript_status": OK}
 
     def auto_long_enabled(self, policy: UserPolicy) -> bool:
         if policy.auto_long is None:
@@ -343,20 +358,24 @@ class ContentService:
             "key_points": [],
             "inflation": None,
             "source": None,
+            "transcript_status": None,
         }
         cached = self.db.get_json(
             "insights", "video_id=? AND language=?", [video_id, policy.language]
         )
         if cached:
-            return {**base, **cached, "status": "ready"}
+            return {**base, **cached, "status": "ready", "transcript_status": OK}
         task_key = ("insight", video_id, policy.language)
         failure = self.registry.recent_failure(task_key)
         if failure:
             return {**base, "status": "failed", "error": failure}
+        blocked = self.transcription.blocked(video_id, qmeta)
+        if blocked:
+            return {**base, **blocked}
 
         async def job() -> None:
             transcript = await self.source(video_id, qmeta)
-            body = await self.condensed(transcript) if transcript.text else ""
+            body = await self.condensed(transcript)
             values = self._values(transcript, body, policy)
             user = (
                 f"Title: {values['title']}\nChannel: {values['channel']}\n"
@@ -404,16 +423,16 @@ class ContentService:
         task = self.registry.start(task_key, job)
         if not await wait_task(task, self.wait_cap(wait_ms)):
             return {**base, "status": "pending"}
-        if task.exception() is not None:
-            return {
-                **base,
-                "status": "failed",
-                "error": public_error(task.exception(), "content task"),
-            }
+        exc = task.exception()
+        if exc is not None:
+            problem = self.transcription.problem(video_id, exc, qmeta)
+            if problem:
+                return {**base, **problem}
+            return {**base, "status": "failed", "error": public_error(exc, "content task")}
         cached = self.db.get_json(
             "insights", "video_id=? AND language=?", [video_id, policy.language]
         )
-        return {**base, **(cached or {}), "status": "ready"}
+        return {**base, **(cached or {}), "status": "ready", "transcript_status": OK}
 
     async def ask(
         self,
@@ -429,7 +448,7 @@ class ContentService:
 
         async def job() -> str:
             transcript = await self.source(video_id, qmeta)
-            body = await self.condensed(transcript) if transcript.text else ""
+            body = await self.condensed(transcript)
             values = self._values(transcript, body, policy, question)
             user = (
                 f"Title: {values['title']}\nChannel: {values['channel']}\n\n"
@@ -452,16 +471,20 @@ class ContentService:
                 results[task_key] = (answer.text, None)
             return results[task_key][0]
 
+        base: dict[str, Any] = {"answer": None, "transcript_status": None}
         cached = results.get(task_key)
         if cached and (cached[1] is None or cached[1] > time.time()):
-            return {"answer": cached[0], "status": "ready"}
+            return {**base, "answer": cached[0], "status": "ready", "transcript_status": OK}
+        blocked = self.transcription.blocked(video_id, qmeta)
+        if blocked:
+            return {**base, **blocked}
         task = self.registry.start(task_key, job)
         if not await wait_task(task, self.wait_cap(wait_ms)):
-            return {"answer": None, "status": "pending"}
-        if task.exception() is not None:
-            return {
-                "answer": None,
-                "status": "failed",
-                "error": public_error(task.exception(), "content task"),
-            }
-        return {"answer": task.result(), "status": "ready"}
+            return {**base, "status": "pending"}
+        exc = task.exception()
+        if exc is not None:
+            problem = self.transcription.problem(video_id, exc, qmeta)
+            if problem:
+                return {**base, **problem}
+            return {**base, "status": "failed", "error": public_error(exc, "content task")}
+        return {**base, "answer": task.result(), "status": "ready", "transcript_status": OK}

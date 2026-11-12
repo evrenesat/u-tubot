@@ -13,11 +13,14 @@ import yt_dlp
 
 from ..config import Config
 from ..db import Database
-from ..llm import LLMClient
+from ..llm import BACKGROUND, LLMClient
+from ..transcripts import segments_to_text
+from ..youtube import YoutubeGate, classify_failure
 from .asr import (
     LANGUAGE_NAMES,
     ASRBackend,
     ASRError,
+    ASRResult,
     normalize_language,
     run_ffmpeg,
 )
@@ -41,7 +44,9 @@ class PipelineError(RuntimeError):
     pass
 
 
-async def download_audio(video_id: str, out_dir: Path, fmt: str) -> Path:
+async def download_audio(
+    video_id: str, out_dir: Path, fmt: str, network_retry_s: float = 60.0
+) -> Path:
     def _run() -> Path:
         opts: dict[str, Any] = {
             "quiet": True,
@@ -51,9 +56,12 @@ async def download_audio(video_id: str, out_dir: Path, fmt: str) -> Path:
             "format": fmt,
             "outtmpl": str(out_dir / "audio.%(ext)s"),
         }
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(VIDEO_URL.format(video_id), download=True)
-            return Path(ydl.prepare_filename(info))
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(VIDEO_URL.format(video_id), download=True)
+                return Path(ydl.prepare_filename(info))
+        except yt_dlp.utils.YoutubeDLError as exc:
+            raise classify_failure(exc, network_retry_s) from None
 
     return await asyncio.to_thread(_run)
 
@@ -73,12 +81,61 @@ class CaptionPipeline:
         llm: LLMClient | None = None,
         diarizer: Diarizer | None = None,
         downloader: Downloader | None = None,
+        gate: YoutubeGate | None = None,
     ):
         self.cfg, self.db, self.asr, self.llm = cfg, db, asr, llm
+        self.gate = gate or YoutubeGate(cfg.youtube, db)
         self.diarizer = diarizer or make_diarizer(cfg.captions)
         self.downloader = downloader or (
-            lambda vid, out: download_audio(vid, out, cfg.captions.audio_format)
+            lambda vid, out: download_audio(
+                vid, out, cfg.captions.audio_format, cfg.youtube.network_retry_s
+            )
         )
+
+    async def _recognise(
+        self, video_id: str, requested: str | None, work: Path, progress: Progress
+    ) -> tuple[ASRResult, Path]:
+        """Audio download (through the YouTube gate), 16 kHz mono WAV, ASR. Shared by both jobs."""
+        c = self.cfg.captions
+        progress(0.02)
+        src = await self.gate.run(
+            lambda: self.downloader(video_id, work), BACKGROUND, key=f"audio:{video_id}"
+        )
+        progress(0.2)
+        wav = work / "audio16k.wav"
+        await run_ffmpeg(
+            "-i",
+            str(src),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            str(c.sample_rate),
+            "-c:a",
+            "pcm_s16le",
+            str(wav),
+        )
+        progress(0.25)
+        result = await self.asr.transcribe(wav, requested, lambda f: progress(0.25 + 0.6 * f))
+        if not result.words:
+            raise PipelineError("ASR returned no words")
+        return result, wav
+
+    async def transcribe(self, video_id: str, progress: Progress) -> tuple[str, str | None]:
+        """Plain-text transcript from the audio (language auto-detected): `(text, language)`."""
+        work = self.cfg.media_dir / video_id
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            result, _wav = await self._recognise(video_id, None, work, progress)
+            cues = build_cues(result.words, self.cfg.captions)
+            text = segments_to_text([(cue.start, " ".join(cue.lines)) for cue in cues])
+            if not text:
+                raise PipelineError("ASR returned no text")
+            progress(1.0)
+            return text, result.language
+        finally:
+            if not self.cfg.captions.keep_media:
+                shutil.rmtree(work, ignore_errors=True)
 
     async def run(
         self, video_id: str, lang: str, translate_to: str | None, progress: Progress
@@ -87,27 +144,8 @@ class CaptionPipeline:
         work = self.cfg.media_dir / video_id
         work.mkdir(parents=True, exist_ok=True)
         try:
-            progress(0.02)
-            src = await self.downloader(video_id, work)
-            progress(0.2)
-            wav = work / "audio16k.wav"
-            await run_ffmpeg(
-                "-i",
-                str(src),
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                str(c.sample_rate),
-                "-c:a",
-                "pcm_s16le",
-                str(wav),
-            )
-            progress(0.25)
             requested = None if lang == "auto" else lang
-            result = await self.asr.transcribe(wav, requested, lambda f: progress(0.25 + 0.6 * f))
-            if not result.words:
-                raise PipelineError("ASR returned no words")
+            result, wav = await self._recognise(video_id, requested, work, progress)
             turns = await self.diarizer.diarize(wav)
             progress(0.9)
             assign_speakers(result.words, turns)

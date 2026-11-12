@@ -11,5 +11,10 @@
 - Client IP only via `security.client_ip` (trusted proxies). Do not read X-Forwarded-For elsewhere.
 - Prompt cache key = (video, prompt key, sha256 of prompt content, language); keep it that way.
 - Verdicts are derived from shared per-video caches (triage, deep) plus the user's policy.
+- Anything that reaches YouTube (yt-dlp, timedtext, audio) runs through `YoutubeGate.run` (`youtube.py`); never call YouTube
+  directly. Never put a URL (they carry signed tokens) into a log line or exception message: classify failures with
+  `classify_failure` / `classify_status` and raise `... from None`.
+- No summary, insight or answer is ever generated from the title/channel/description alone. Without a transcript return
+  `pending` + `transcript_status` (`delayed`) or `needs_transcript`; never cache those.
 - Commit messages: `<type>/<scope>: <summary>` plus bullets; no AI attribution trailers.
 - Update `DEVLOG.md` for each session.

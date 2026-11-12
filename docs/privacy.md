@@ -28,7 +28,8 @@ In `data_dir` (SQLite and `users.toml`):
   last-use times;
 - per-video caches shared between users: title analysis, transcripts (text), deep analysis, captions (VTT);
 - per-user: policy overrides, prompt sets, summaries, feedback you submitted, caption jobs;
-- no audio after a caption job finishes (unless `keep_media = true`), no YouTube credentials.
+- no audio after a caption or transcription job finishes (unless `keep_media = true`), no YouTube credentials;
+- whether YouTube has captions for a video (3 days), and the state of the YouTube request gate (a cooldown end time).
 
 Logs may contain client IPs, video ids and errors. Tokens are never logged. Client IPs are used in memory for rate limits.
 
@@ -38,7 +39,7 @@ Whatever provider you configure receives: titles, channel names and short descri
 (summaries, analysis, answers), caption text (translation). Your topic lists are part of the triage request. Use a local model if this
 matters; a cloud provider's own retention and training policy applies otherwise. API keys stay in the server's environment.
 
-The ASR backend `openai` receives the audio of videos you prepare captions for; `faster_whisper` keeps it local. Diarization downloads
+The ASR backend `openai` receives the audio of videos you prepare captions for or transcribe in the background; `faster_whisper` keeps it local. Diarization downloads
 a model from Hugging Face with your token; audio stays local.
 
 The server also fetches from YouTube (yt-dlp: metadata, captions, audio) from its own IP, and fetches prompt-set URLs you import

@@ -10,9 +10,9 @@ from typing import Any
 from .bg import TaskRegistry
 from .config import Config, UserPolicy
 from .db import Database
-from .llm import LLMClient, LLMError
+from .llm import BACKGROUND, LLMClient, LLMError
 from .models import Flag, Verdict, VideoMeta
-from .transcripts import TranscriptService
+from .transcripts import NoCaptions, TranscriptService
 
 TRIAGE_SYSTEM = (
     "You triage YouTube videos for a TV viewer using only the title, channel and metadata. "
@@ -373,6 +373,8 @@ class Assessor:
             return
         if self.tier2.running(video.video_id) or self.tier2.recent_failure(video.video_id):
             return
+        if not self._tier2_gate_ok(video.video_id):
+            return
         meta = self.transcripts.cached_meta(video.video_id) or {}
         duration = video.duration_s or meta.get("duration_s")
         if (
@@ -389,6 +391,17 @@ class Assessor:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    def _tier2_gate_ok(self, video_id: str) -> bool:
+        """Background transcript work only while YouTube is happy and nothing useless would run."""
+        gate = self.transcripts.gate
+        if not gate.healthy():
+            return False
+        if self.transcripts.cached(video_id) is not None:
+            return True
+        if self.transcripts.no_captions(video_id):
+            return False
+        return gate.background_waiting() < self.cfg.youtube.max_background_queue
+
     def _take_tier2_slot(self, user: str) -> bool:
         day = datetime.now(UTC).strftime("%Y-%m-%d")
         row = self.db.one("SELECT count FROM tier2_usage WHERE user=? AND day=?", [user, day])
@@ -404,10 +417,11 @@ class Assessor:
     async def _deep_analysis(
         self, video_id: str, triage: dict[str, Any], duration: int | None
     ) -> None:
+        try:
+            transcript = await self.transcripts.get(video_id, BACKGROUND)
+        except NoCaptions:
+            return
         async with self._bg:
-            transcript = await self.transcripts.get(video_id)
-            if not transcript.text:
-                return
             meta = transcript.meta
             duration = duration or meta.get("duration_s")
             budget_chars = self.cfg.summary.token_budget * self.cfg.summary.chars_per_token

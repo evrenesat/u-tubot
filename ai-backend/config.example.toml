@@ -121,15 +121,28 @@ wait_ms_cap = 3000
 default_wait_ms = 1200
 background_concurrency = 2
 coalesce_ms = 300                  # merge /v1/assess calls arriving within this window into shared batches
-tier2_daily_cap_per_user = 100     # transcript-based deep analyses per user per UTC day
+tier2_daily_cap_per_user = 30      # transcript-based deep analyses per user per UTC day (only title-question or clickbait videos, only while YouTube is healthy)
 tier2_clickbait_threshold = 0.6
 triage_cache_ttl_s = 604800
 title_max_chars = 200
 description_max_chars = 300
 
+# Everything that reaches YouTube (metadata, caption text, audio) goes through one gate: at most
+# `max_concurrent` requests, spaced `min_interval_s` + random(0, jitter_s) apart, interactive before
+# background. A 429, 403 or "confirm you're not a bot" opens a circuit breaker: interactive requests
+# answer "delayed" at once, background work (tier-2, caption and transcript jobs) waits and resumes.
+[youtube]
+max_concurrent = 1
+min_interval_s = 3.0
+jitter_s = 1.5
+cooldown_base_s = 300.0            # first cooldown without a Retry-After header (5 min), doubles per consecutive block
+cooldown_max_s = 3600.0            # ceiling for any cooldown, Retry-After included (60 min)
+network_retry_s = 60.0             # retry hint to clients after a network error (does not open the breaker)
+max_background_queue = 5           # tier-2 is not scheduled while this many background fetches wait
+
 [transcripts]
 cache_ttl_s = 2592000
-max_concurrency = 2
+no_captions_ttl_s = 259200         # a "no captions" answer is remembered this long (3 days), then checked again
 fetch_timeout_s = 60.0
 default_language = "en"
 # cookies_file = "/var/lib/utubot/cookies.txt"   # only if YouTube starts blocking this host
@@ -170,6 +183,9 @@ max_lines = 2
 min_cue_s = 1.0
 max_cue_s = 7.0
 job_concurrency = 1
+asr_speed_factor = 1.5             # audio seconds transcribed per second; only used for the "estimate_s" shown to the user
+asr_overhead_s = 30                # download + model load, added to the estimate
+transcribe_max_active_per_user = 5 # queued or running "transcribe in background" jobs per user
 
 # ---- Setup import and public download page ------------------------------------------------
 # GET /setup.json (no auth) lets the TV app configure itself from a short address.

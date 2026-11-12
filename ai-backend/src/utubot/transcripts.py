@@ -12,10 +12,24 @@ import httpx
 import yt_dlp
 
 from .config import Config
-from .db import Database
+from .db import METADATA_ONLY, Database
+from .llm import INTERACTIVE, parse_retry_after
+from .youtube import (
+    REASON_EMPTY,
+    REASON_NETWORK,
+    YoutubeCooldown,
+    YoutubeDelayed,
+    YoutubeError,
+    YoutubeGate,
+    classify_failure,
+    classify_status,
+)
 
 TIMESTAMP_BLOCK_S = 20
+SOURCE_CAPTIONS = "youtube_captions"
+SOURCE_ASR = "asr"
 VIDEO_URL = "https://www.youtube.com/watch?v={}"
+HTTP_ERROR_FLOOR = 400
 TAG_RE = re.compile(r"<[^>]+>")
 VTT_TIME_RE = re.compile(
     r"(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})\s+-->\s+(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})"
@@ -39,6 +53,17 @@ class FetchResult:
 
 
 Fetcher = Callable[[str], Awaitable[FetchResult]]
+Extractor = Callable[[str], dict[str, Any]]
+
+
+class NoCaptions(RuntimeError):
+    """YouTube lists no usable captions for this video. An expected outcome, not a failure."""
+
+    expected = True
+
+    def __init__(self, video_id: str):
+        super().__init__("no captions")
+        self.video_id = video_id
 
 
 def fmt_ts(seconds: float) -> str:
@@ -149,8 +174,21 @@ def extract_meta(info: dict[str, Any]) -> dict[str, Any]:
 
 
 class YoutubeFetcher:
-    def __init__(self, cfg: Config):
+    """Metadata and caption text through yt-dlp and httpx. Failures are classified, never raw.
+
+    Pacing and the circuit breaker live in `YoutubeGate`, which `TranscriptService` wraps around
+    every call.
+    """
+
+    def __init__(
+        self,
+        cfg: Config,
+        extract: Extractor | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
         self.cfg = cfg
+        self._extract_fn: Extractor = extract or self._extract
+        self._transport = transport
 
     def _extract(self, video_id: str) -> dict[str, Any]:
         opts: dict[str, Any] = {
@@ -165,8 +203,34 @@ class YoutubeFetcher:
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(VIDEO_URL.format(video_id), download=False)
 
+    def _extract_classified(self, video_id: str) -> dict[str, Any]:
+        try:
+            return self._extract_fn(video_id)
+        except yt_dlp.utils.YoutubeDLError as exc:
+            raise classify_failure(exc, self.cfg.youtube.network_retry_s) from None
+
+    async def _download_track(self, url: str) -> str:
+        retry_s = self.cfg.youtube.network_retry_s
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.cfg.transcripts.fetch_timeout_s, transport=self._transport
+            ) as http:
+                resp = await http.get(url, follow_redirects=True)
+        except httpx.HTTPError:
+            raise YoutubeDelayed(REASON_NETWORK, retry_s) from None
+        problem = classify_status(
+            resp.status_code, retry_s, parse_retry_after(resp.headers.get("retry-after"))
+        )
+        if problem is not None:
+            raise problem
+        if resp.status_code >= HTTP_ERROR_FLOOR:
+            raise YoutubeError(f"caption download http {resp.status_code}")
+        if not resp.text.strip():
+            raise YoutubeDelayed(REASON_EMPTY, retry_s)
+        return resp.text
+
     async def __call__(self, video_id: str) -> FetchResult:
-        info = await asyncio.to_thread(self._extract, video_id)
+        info = await asyncio.to_thread(self._extract_classified, video_id)
         meta = extract_meta(info)
         track = pick_track(info, self.cfg.transcripts.default_language)
         if not track:
@@ -175,19 +239,25 @@ class YoutubeFetcher:
         fmt = pick_format(formats)
         if not fmt:
             return FetchResult(meta, None, lang)
-        async with httpx.AsyncClient(timeout=self.cfg.transcripts.fetch_timeout_s) as http:
-            resp = await http.get(fmt["url"], follow_redirects=True)
-            resp.raise_for_status()
-        segments = parse_json3(resp.text) if fmt["ext"] == "json3" else parse_vtt(resp.text)
+        raw = await self._download_track(fmt["url"])
+        segments = parse_json3(raw) if fmt["ext"] == "json3" else parse_vtt(raw)
         return FetchResult(meta, segments_to_text(segments) or None, lang)
 
 
 class TranscriptService:
-    def __init__(self, cfg: Config, db: Database, fetcher: Fetcher | None = None):
+    """Transcript cache in front of YouTube: one fetch per video per TTL, always through the gate."""
+
+    def __init__(
+        self,
+        cfg: Config,
+        db: Database,
+        fetcher: Fetcher | None = None,
+        gate: YoutubeGate | None = None,
+    ):
         self.cfg = cfg
         self.db = db
+        self.gate = gate or YoutubeGate(cfg.youtube, db)
         self.fetcher: Fetcher = fetcher or YoutubeFetcher(cfg)
-        self._sem = asyncio.Semaphore(cfg.transcripts.max_concurrency)
         self._inflight: dict[str, asyncio.Task[Transcript]] = {}
 
     def cached_meta(self, video_id: str) -> dict[str, Any] | None:
@@ -203,33 +273,68 @@ class TranscriptService:
 
     def cached(self, video_id: str) -> Transcript | None:
         row = self.db.one("SELECT * FROM transcripts WHERE video_id=?", [video_id])
-        if not row or time.time() - row["fetched_at"] > self.cfg.transcripts.cache_ttl_s:
+        if not row or not row["text"] or row["source"] == METADATA_ONLY:
+            return None
+        expired = time.time() - row["fetched_at"] > self.cfg.transcripts.cache_ttl_s
+        if expired and row["source"] != SOURCE_ASR:
             return None
         return Transcript(
             video_id, row["text"], row["lang"], row["source"], self.cached_meta(video_id) or {}
         )
 
-    async def get(self, video_id: str) -> Transcript:
-        hit = self.cached(video_id)
-        if hit:
-            return hit
-        task = self._inflight.get(video_id)
-        if task is None:
-            task = asyncio.create_task(self._fetch(video_id))
-            self._inflight[video_id] = task
-            task.add_done_callback(lambda _t: self._inflight.pop(video_id, None))
-        return await asyncio.shield(task)
+    def no_captions(self, video_id: str) -> bool:
+        """True while a recent check found no captions. Expires; never permanent."""
+        row = self.db.one("SELECT checked_at FROM no_captions WHERE video_id=?", [video_id])
+        return (
+            bool(row) and time.time() - row["checked_at"] <= self.cfg.transcripts.no_captions_ttl_s
+        )
 
-    async def _fetch(self, video_id: str) -> Transcript:
-        async with self._sem:
-            result = await self.fetcher(video_id)
-        self.store_meta(video_id, result.meta)
-        meta = self.cached_meta(video_id) or {}
-        source = "youtube_captions" if result.text else "metadata_only"
-        text = result.text or ""
+    def store_asr(self, video_id: str, text: str, lang: str | None) -> None:
         self.db.execute(
             "INSERT OR REPLACE INTO transcripts(video_id,lang,source,text,fetched_at)"
             " VALUES(?,?,?,?,?)",
-            [video_id, result.lang, source, text, time.time()],
+            [video_id, lang, SOURCE_ASR, text, time.time()],
         )
-        return Transcript(video_id, text, result.lang, source, meta)
+        self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])
+
+    async def get(self, video_id: str, priority: int = INTERACTIVE) -> Transcript:
+        """The transcript, fetched at most once per TTL.
+
+        Raises `NoCaptions` (cached for `no_captions_ttl_s`) or `YoutubeDelayed` (transient).
+        Background callers wait while the breaker is open; interactive ones get `YoutubeCooldown`.
+        """
+        hit = self.cached(video_id)
+        if hit:
+            return hit
+        if self.no_captions(video_id):
+            raise NoCaptions(video_id)
+        task = self._inflight.get(video_id)
+        if task is None:
+            task = asyncio.create_task(self._fetch(video_id, priority))
+            self._inflight[video_id] = task
+            task.add_done_callback(lambda _t: self._inflight.pop(video_id, None))
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        elif priority == INTERACTIVE:
+            if not self.gate.healthy():
+                raise YoutubeCooldown(self.gate.cooldown_remaining())
+            self.gate.promote(video_id)
+        return await asyncio.shield(task)
+
+    async def _fetch(self, video_id: str, priority: int) -> Transcript:
+        result = await self.gate.run(lambda: self.fetcher(video_id), priority, key=video_id)
+        self.store_meta(video_id, result.meta)
+        if not result.text:
+            self.db.execute(
+                "INSERT OR REPLACE INTO no_captions(video_id,checked_at) VALUES(?,?)",
+                [video_id, time.time()],
+            )
+            raise NoCaptions(video_id)
+        self.db.execute(
+            "INSERT OR REPLACE INTO transcripts(video_id,lang,source,text,fetched_at)"
+            " VALUES(?,?,?,?,?)",
+            [video_id, result.lang, SOURCE_CAPTIONS, result.text, time.time()],
+        )
+        self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])
+        return Transcript(
+            video_id, result.text, result.lang, SOURCE_CAPTIONS, self.cached_meta(video_id) or {}
+        )
