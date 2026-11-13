@@ -86,7 +86,16 @@ class AssessConfig(BaseModel):
 
 
 class YoutubeConfig(BaseModel):
-    """Pacing and circuit breaker for every request that reaches YouTube."""
+    """Pacing and circuit breaker for every request that reaches YouTube.
+
+    `offline` is the dev-proxy mode for tests, the emulator and E2E runs: no request ever
+    reaches YouTube, and answers come from caches, the media archive and recorded fixtures
+    (`youtube_fixtures`). Recorded cassettes live in `fixtures_dir` (empty: the repository's
+    `fixtures/youtube`).
+    """
+
+    offline: bool = False
+    fixtures_dir: str = ""
 
     max_concurrent: int = 1
     min_interval_s: float = 3.0

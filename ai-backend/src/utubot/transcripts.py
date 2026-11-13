@@ -27,6 +27,7 @@ from .youtube import (
     YoutubeDelayed,
     YoutubeError,
     YoutubeGate,
+    YoutubeOffline,
     YoutubeVideoError,
     classify_failure,
     classify_status,
@@ -272,6 +273,9 @@ class YoutubeFetcher:
 
     async def __call__(self, video_id: str) -> FetchResult:
         retry_s = self.cfg.youtube.network_retry_s
+        if self.cfg.youtube.offline:
+            # The offline dev-proxy mode: never reach YouTube; the fixture fetcher answers instead.
+            raise YoutubeOffline(CLASS_METADATA)
         info = await asyncio.to_thread(self._extract_classified, video_id)
         if not info_complete(info):
             raise YoutubeDelayed(REASON_INCOMPLETE, retry_s)

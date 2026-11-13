@@ -66,6 +66,7 @@ class StatusService:
             "version": __version__,
             "uptime_s": int(time.time() - STARTED_AT),
             "youtube": {
+                "offline": gate.offline,
                 "state": gate.state(),
                 "healthy": gate.healthy(),
                 "cooldown_remaining_s": int(gate.cooldown_remaining()),

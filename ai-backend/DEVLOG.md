@@ -27,6 +27,23 @@
   (downloader called once, `from_archive` in the event), job fails clear when full, admin API auth (401/403) and removal, scratch sweep
   leaves the archive alone. Suite 654 passed, ruff clean.
 
+## 2026-11-13 (tests and dev servers never hit YouTube: fixtures and offline mode, GitHub #35)
+
+- Why: the owner rule says tests, CI and agent verification runs never touch YouTube; the pytest guard (`block_youtube`) covered yt-dlp and
+  httpx, but nothing replayed real YouTube answers and a running backend (emulator, E2E) had no way to work without the network.
+- Fixtures: new `youtube_fixtures.py`. A cassette (`fixtures/youtube/<video id>.json`) keeps one video's recorded yt-dlp info dict and the
+  caption track text, sanitized: every `url`/`fragment_base_url`/`http_headers` key is dropped and remaining strings have URL queries
+  stripped (they carry signed tokens; `sanitize_info`, checked by tests). `utubot_demo.json` is a hand-written demo cassette; the owner
+  records real ones with `utubot youtube-record VIDEO_ID` — the one command that reaches YouTube, guarded to refuse under pytest.
+- Offline dev-proxy mode: `[youtube] offline = true` (`fixtures_dir` moves the cassette dir). `YoutubeFetcher` refuses before yt-dlp, the
+  gate refuses every media-class transfer (`YoutubeOffline`, a video error with reason `offline`, so no audio fallback is offered), and
+  `build_services` wires `OfflineYoutubeFetcher`: cassettes answer through the same parsers as the real fetcher, unknown videos answer
+  `offline` and are remembered as failed. Status (`/v1/... home`, admin status route data) shows `offline: true`. Cached transcripts and
+  metadata keep working, so the emulator and `UtubotBackendE2eTest` can run against the real backend with no route out.
+- Guard: `block_youtube()` also patches `socket.getaddrinfo`/`gethostbyname` — DNS-level refusal for anything the library patches miss
+  (urllib, raw sockets). New `test_network_guard.py`, `test_youtube_fixtures.py`, `test_youtube_offline.py` (the real app serves the demo
+  cassette's summary with the mock LLM, offline).
+
 ## 2026-11-13 (job report: event log, delivery, detail page)
 
 - Why: the jobs list only showed kind/state/progress; a "ready" captions job for a Turkish video did not say what it produced or whether the TV
