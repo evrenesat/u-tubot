@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import socket
+
 import httpx
 import pytest
 import pytest_asyncio
@@ -21,13 +23,17 @@ YOUTUBE_HOST_SUFFIXES = (
     "youtube-nocookie.com",
 )
 YDL_METHODS = ("extract_info", "download", "urlopen", "process_ie_result")
+# Resolver-level chokepoint: catches urllib, raw sockets and every library that resolves DNS,
+# even one the httpx/yt-dlp patches above would miss.
+RESOLVERS = ("getaddrinfo", "gethostbyname")
 NO_YOUTUBE = "tests and demos never reach YouTube: use a fake fetcher, downloader or yt-dlp"
 
 
 def block_youtube():
     """Make any real request to YouTube (yt-dlp, timedtext, googlevideo) fail loudly.
 
-    yt-dlp's extract/download/urlopen raise, and the real httpx transports refuse YouTube hosts.
+    yt-dlp's extract/download/urlopen raise, the real httpx transports refuse YouTube hosts, and
+    the resolver refuses to look a YouTube name up at all (a last line for anything unpatched).
     Tests that stand in for `yt_dlp.YoutubeDL` replace the class itself and are not affected.
     Returns the function that undoes it.
     """
@@ -35,12 +41,14 @@ def block_youtube():
     originals = {name: getattr(real_ydl, name) for name in YDL_METHODS}
     sync_send = httpx.HTTPTransport.handle_request
     async_send = httpx.AsyncHTTPTransport.handle_async_request
+    real_resolvers = {name: getattr(socket, name) for name in RESOLVERS}
 
     def refuse(*_args, **_kwargs):
         raise AssertionError(NO_YOUTUBE)
 
     def guard(host: str) -> None:
-        if host.lower().endswith(YOUTUBE_HOST_SUFFIXES):
+        name = host.lower().rstrip(".")  # a trailing dot is a valid absolute DNS name
+        if name.endswith(YOUTUBE_HOST_SUFFIXES):
             raise AssertionError(f"{NO_YOUTUBE} ({host})")
 
     def sync_guarded(self, request):
@@ -56,11 +64,28 @@ def block_youtube():
     httpx.HTTPTransport.handle_request = sync_guarded
     httpx.AsyncHTTPTransport.handle_async_request = async_guarded
 
+    def resolve_guarded(name):
+        original = real_resolvers[name]
+
+        def guarded(host, *args, **kwargs):
+            if isinstance(host, bytes):
+                guard(host.decode("idna"))
+            elif isinstance(host, str):
+                guard(host)
+            return original(host, *args, **kwargs)
+
+        return guarded
+
+    for name in RESOLVERS:
+        setattr(socket, name, resolve_guarded(name))
+
     def restore() -> None:
         for name, original in originals.items():
             setattr(real_ydl, name, original)
         httpx.HTTPTransport.handle_request = sync_send
         httpx.AsyncHTTPTransport.handle_async_request = async_send
+        for name, original in real_resolvers.items():
+            setattr(socket, name, original)
 
     return restore
 

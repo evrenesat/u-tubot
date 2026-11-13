@@ -1,5 +1,23 @@
 # DEVLOG
 
+## 2026-11-13 (review follow-ups: cassettes carry no URL at all, offline misses are not held)
+
+- Review (EVR-168) found two leaks in the cassette sanitizer and one wrong hold; fixed:
+- The sanitizer now keeps no URL at all: every `http(s)://…` string in a cassette becomes `<url>`
+  (`strip_urls`), because signatures can hide in URL paths — YouTube HLS `manifest_url` carries
+  the signature and the recorder's public IP in its path, which query-stripping left intact.
+  `manifest_url` and `cookies` (yt-dlp can copy session cookies into the info dict) join the
+  dropped keys, `protocol` goes too (replay never reads it), and the caption track text is
+  stripped as well. The URL-free check now globs every committed `fixtures/youtube/*.json` for
+  URL, signature and cookie text — a cassette the owner records later cannot slip through.
+- An offline miss no longer records a failure hold: a missing cassette says nothing about the
+  video, so `record_failure` ignores the `offline` reason and the next attempt (cassette
+  recorded, or offline off) starts clean. The user-facing answer is still the `offline` video
+  error, and no audio fallback is offered.
+- Recorder hardening: `youtube-record` refuses when `CI` is set or `[youtube] offline` is on,
+  and validates the video id before using it as a file name; the test DNS guard also refuses
+  bytes hosts and trailing-dot names (`www.youtube.com.`).
+
 ## 2026-11-13 (media archive: keep every downloaded file, issue 34)
 
 - Why: a job downloaded a video's audio, transcribed it and deleted everything; the next job downloaded the same audio again. Owner rule:
@@ -26,6 +44,23 @@
   dedupe, original-first lookup, missing file pruned, quota stop before a download, warn state, job reuses the archive on the second run
   (downloader called once, `from_archive` in the event), job fails clear when full, admin API auth (401/403) and removal, scratch sweep
   leaves the archive alone. Suite 654 passed, ruff clean.
+
+## 2026-11-13 (tests and dev servers never hit YouTube: fixtures and offline mode, GitHub #35)
+
+- Why: the owner rule says tests, CI and agent verification runs never touch YouTube; the pytest guard (`block_youtube`) covered yt-dlp and
+  httpx, but nothing replayed real YouTube answers and a running backend (emulator, E2E) had no way to work without the network.
+- Fixtures: new `youtube_fixtures.py`. A cassette (`fixtures/youtube/<video id>.json`) keeps one video's recorded yt-dlp info dict and the
+  caption track text, sanitized: every `url`/`fragment_base_url`/`http_headers` key is dropped and remaining strings have URL queries
+  stripped (they carry signed tokens; `sanitize_info`, checked by tests). `utubot_demo.json` is a hand-written demo cassette; the owner
+  records real ones with `utubot youtube-record VIDEO_ID` — the one command that reaches YouTube, guarded to refuse under pytest.
+- Offline dev-proxy mode: `[youtube] offline = true` (`fixtures_dir` moves the cassette dir). `YoutubeFetcher` refuses before yt-dlp, the
+  gate refuses every media-class transfer (`YoutubeOffline`, a video error with reason `offline`, so no audio fallback is offered), and
+  `build_services` wires `OfflineYoutubeFetcher`: cassettes answer through the same parsers as the real fetcher, unknown videos answer
+  `offline` and are remembered as failed. Status (`/v1/... home`, admin status route data) shows `offline: true`. Cached transcripts and
+  metadata keep working, so the emulator and `UtubotBackendE2eTest` can run against the real backend with no route out.
+- Guard: `block_youtube()` also patches `socket.getaddrinfo`/`gethostbyname` — DNS-level refusal for anything the library patches miss
+  (urllib, raw sockets). New `test_network_guard.py`, `test_youtube_fixtures.py`, `test_youtube_offline.py` (the real app serves the demo
+  cassette's summary with the mock LLM, offline).
 
 ## 2026-11-13 (job report: event log, delivery, detail page)
 

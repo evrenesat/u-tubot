@@ -15,3 +15,6 @@ u·tubot = Electric Eel (SmartTube fork) + an AI layer. Stylize the name "u·tub
 - CI and releases: `.github/workflows/utubot-ci.yml` (path-filtered backend and app tests, one conclusion per commit) and `utubot-release.yml` (signed APKs + `release.json`). A merge to `main` that touches the app releases automatically; versions come from `utubot.version` plus a patch counter and `versionCode` is derived from the name (`docs/development.md`, Versions and Releasing). Keep workflow SHAs pinned; sibling pins live in `.github/actions/android-env/action.yml`. Backend deployment is the owner's own pipeline, not part of this repo.
 - Tests and emulator checks never contact YouTube (nor any other real service): use the unit tests, `scripts/emulator_mock_backend.py`, local
   media and the debug-only captions harness (`docs/development.md`, "Checking the HQ captions"), and keep the emulator in a network namespace with no route out.
+  Real YouTube access happens only in production (the deployed backend): never from tests, CI, emulators or an agent's verification runs. To exercise
+  videos end to end without it, run the backend with `[youtube] offline` (it answers from caches and recorded fixtures, `docs/development.md`,
+  "Offline mode") and, to add a video, record a fixture with `uv run utubot youtube-record` — owner only, never an agent.

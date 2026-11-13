@@ -62,6 +62,7 @@ REASON_UNAVAILABLE = "unavailable"
 REASON_FORBIDDEN_MEDIA = "forbidden"
 REASON_TOO_LONG = "too_long"
 REASON_LIVE = "live"
+REASON_OFFLINE = "offline"
 
 VIDEO_FAILURE_MESSAGES = {
     REASON_PRIVATE: "This video is private.",
@@ -71,6 +72,9 @@ VIDEO_FAILURE_MESSAGES = {
     REASON_FORBIDDEN_MEDIA: "YouTube refused the download for this video.",
     REASON_TOO_LONG: "This video is too long to transcribe.",
     REASON_LIVE: "Live streams cannot be transcribed.",
+    REASON_OFFLINE: (
+        "This server has no YouTube access (offline mode); this video is not in its local archive."
+    ),
 }
 # After these the audio is still reachable, so transcribing may work; after the others it is not.
 TRANSCRIBABLE_AFTER = frozenset({REASON_FORBIDDEN_MEDIA})
@@ -174,6 +178,17 @@ class YoutubeCooldown(YoutubeDelayed):
         self.klass = klass
 
 
+class YoutubeOffline(YoutubeVideoError):
+    """Offline mode: no request may leave for YouTube and this video has no local answer.
+
+    Raised instead of any network call when `[youtube] offline` is set: the real fetchers refuse,
+    the gate refuses media transfers, and the fixture fetcher answers only recorded videos.
+    """
+
+    def __init__(self, klass: str | None = None):
+        super().__init__(REASON_OFFLINE, klass)
+
+
 def ytdlp_runtime_options(cfg: YoutubeConfig) -> dict[str, Any]:
     """yt-dlp options for the JavaScript runtime that solves YouTube's "n challenge".
 
@@ -191,6 +206,19 @@ def ytdlp_runtime_options(cfg: YoutubeConfig) -> dict[str, Any]:
 def redact_urls(text: str) -> str:
     """Drop query strings and fragments from every URL in `text` (they carry signed tokens)."""
     return URL_RE.sub(r"\1", text)
+
+
+URL_PLACEHOLDER = "<url>"
+
+
+def strip_urls(text: str) -> str:
+    """Replace every URL in `text` with a placeholder; what cassettes keep carries no URL at all.
+
+    `redact_urls` keeps the scheme and host for log and error text; recorded fixtures get this
+    stricter treatment, because even a URL's path can carry signed tokens and the recorder's IP
+    (HLS manifest URLs do).
+    """
+    return URL_RE.sub(lambda _m: URL_PLACEHOLDER, text)
 
 
 def classify_failure(
@@ -365,6 +393,11 @@ class YoutubeGate:
 
     def now(self) -> float:
         return self._clock.now()
+
+    @property
+    def offline(self) -> bool:
+        """Offline dev-proxy mode: nothing reaches YouTube; answers come from local data."""
+        return self.cfg.offline
 
     def _remaining(self, klass: str) -> float:
         return max(0.0, self._breakers[klass].until - self._clock.now())
@@ -542,10 +575,16 @@ class YoutubeGate:
             if sleeper is not None:
                 sleeper.cancel()
 
+    def _as_offline(self, classes: tuple[str, ...]) -> bool:
+        """Offline mode refuses every real transfer (media classes); local fixture reads pass."""
+        return self.cfg.offline and any(name in MEDIA_CLASSES for name in classes)
+
     async def _acquire(
         self, priority: int, key: str | None, classes: tuple[str, ...]
     ) -> tuple[str, ...]:
         """Wait for a paced slot; returns the probe-only classes this request is the probe of."""
+        if self._as_offline(classes):
+            raise YoutubeOffline()
         waiter = _Waiter(priority, next(self._seq), key, classes)
         self._waiters.append(waiter)
         try:

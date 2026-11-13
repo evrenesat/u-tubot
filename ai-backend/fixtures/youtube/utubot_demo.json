@@ -1,0 +1,59 @@
+{
+  "video_id": "utubot_demo",
+  "recorded_at": "2026-11-13T17:45:00Z",
+  "yt_dlp_version": "synthetic",
+  "note": "Synthetic demo cassette, written by hand: not recorded from YouTube. Replace it with real recordings via `utubot youtube-record` (owner only). It shows the cassette shape and lets tests and the offline dev-proxy mode run end to end without YouTube.",
+  "info": {
+    "id": "utubot_demo",
+    "title": "u·tubot recorded fixture demo",
+    "channel": "u·tubot fixtures",
+    "channel_id": "UCutubotfixturesdemo",
+    "duration": 620,
+    "description": "A hand-written stand-in for a real yt-dlp answer: metadata, format list and caption tables, with every URL stripped (they carry signed tokens).",
+    "language": "en",
+    "is_live": false,
+    "formats": [
+      {
+        "format_id": "140",
+        "ext": "m4a",
+        "acodec": "mp4a.40.2",
+        "abr": 128.0,
+        "vcodec": "none",
+        "format_note": "DASH audio (synthetic)"
+      },
+      {
+        "format_id": "251",
+        "ext": "webm",
+        "acodec": "opus",
+        "abr": 130.0,
+        "vcodec": "none",
+        "format_note": "DASH audio (synthetic)"
+      },
+      {
+        "format_id": "22",
+        "ext": "mp4",
+        "acodec": "mp4a.40.2",
+        "vcodec": "avc1.64001F",
+        "format_note": "720p (synthetic)"
+      }
+    ],
+    "subtitles": {},
+    "automatic_captions": {
+      "en": [
+        {
+          "ext": "json3",
+          "name": "English - Original (synthetic)"
+        },
+        {
+          "ext": "vtt",
+          "name": "English - Original (synthetic)"
+        }
+      ]
+    }
+  },
+  "track": {
+    "lang": "en",
+    "ext": "json3",
+    "text": "{\"events\":[{\"tStartMs\":0,\"segs\":[{\"utf8\":\"Welcome to the u·tubot fixture demo.\"}]},{\"tStartMs\":6000,\"segs\":[{\"utf8\":\"This cassette was written by hand,\"}]},{\"tStartMs\":11500,\"segs\":[{\"utf8\":\"so no video was ever played to record it.\"}]},{\"tStartMs\":18000,\"segs\":[{\"utf8\":\"Every URL a real recording carries is stripped:\"}]},{\"tStartMs\":25000,\"segs\":[{\"utf8\":\"they carry signed tokens and expire anyway.\"}]},{\"tStartMs\":33000,\"segs\":[{\"utf8\":\"Record real cassettes with utubot youtube-record,\"}]},{\"tStartMs\":40000,\"segs\":[{\"utf8\":\"which only the owner may run.\"}]},{\"tStartMs\":47000,\"segs\":[{\"utf8\":\"Tests and dev servers replay this file\"}]},{\"tStartMs\":53000,\"segs\":[{\"utf8\":\"instead of touching YouTube.\"}]}]}"
+  }
+}

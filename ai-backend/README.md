@@ -42,7 +42,8 @@ option. Highlights:
 - `[assess]` batch size, wait cap, tier-2 daily cap per user (30).
 - `[youtube]` pacing and circuit breakers (one per endpoint class: captions, metadata, media) for every request to YouTube
   (`max_concurrent`, `min_interval_s`, `jitter_s`, `cooldown_base_s`, `cooldown_max_s`, `captions_cooldown_max_s`), the JavaScript runtime for yt-dlp
-  (`js_runtime_path`, `remote_components`); `[transcripts] no_captions_ttl_s`.
+(`js_runtime_path`, `remote_components`), the offline dev-proxy mode (`offline`, `fixtures_dir`: no request reaches YouTube, answers come from
+  caches and recorded fixtures — for tests, the emulator and E2E runs, see `../docs/development.md`, "Offline mode"); `[transcripts] no_captions_ttl_s`.
 - `[archive]` the media archive (`path`, `quota_bytes`, `warn_frac`): every downloaded audio or video file is kept
   content-addressed by its sha256 and reused instead of being downloaded again; the quota only warns and stops, it never deletes
   (Admin → Media archive frees space).
@@ -67,6 +68,8 @@ header; caption `.vtt` accepts the bearer header, and `?token=` only for players
 utubot serve | user add|passwd|pair|devices|revoke | app publish APK... --version-name X --version-code N
 utubot app sync-github [--repo OWNER/NAME] [--prerelease] [--dry-run]
 utubot prompts validate FILE
+utubot youtube-record VIDEO_ID [--lang LANG] [--out DIR] [--note TEXT]   # owner only: records a replay fixture
+                                                                          # (the one command that reaches YouTube)
 ```
 
 ## Prompt sets

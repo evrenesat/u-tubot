@@ -38,7 +38,13 @@
   token, cookie or raw exception text in a detail (`events.clean` / `events.technical` filter it, but do not rely on that). Routes that can
   queue a job call `mark_origin`; routes that hand a stored result to a client call the `record_*_delivery` helpers (`JobQueue`). The detail
   page lives in `web/ui/js/pages/job.js` + `jobtext.js`; document stages in `docs/server.md` (Job details) and `ai/CONTRACT.md`.
-- Tests and demos never reach YouTube (owner rule): `tests/conftest.py` `block_youtube()` makes real yt-dlp and httpx requests to YouTube hosts
-  fail. Use the fake fetcher/downloader or a stand-in `yt_dlp.YoutubeDL`; `tests/webui_demo.py` is the same.
+- Tests and demos never reach YouTube (owner rule): `tests/conftest.py` `block_youtube()` makes real yt-dlp, httpx and DNS-resolved
+  requests to YouTube hosts fail (an autouse fixture, so every test is covered). Use the fake fetcher/downloader or a stand-in
+  `yt_dlp.YoutubeDL`; `tests/webui_demo.py` is the same. The offline dev-proxy mode (`[youtube] offline = true`) is the same rule for a
+  running backend: it refuses every YouTube request and answers from caches and recorded fixtures (`youtube_fixtures.py`, cassettes in
+  `fixtures/youtube/`; unknown videos answer `offline`). Recording a cassette (`utubot youtube-record`) is the one command that reaches
+  YouTube and belongs to the owner: never run it from tests, CI or an agent's verification runs — it refuses under pytest, in CI and
+  with an offline config, and committed cassettes must carry no URL at all (signatures can sit in URL paths); the recorder replaces
+  every URL with a `<url>` placeholder.
 - Commit messages: `<type>/<scope>: <summary>` plus bullets; no AI attribution trailers.
 - Update `DEVLOG.md` for each session.

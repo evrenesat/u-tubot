@@ -62,7 +62,7 @@ is no text they say why:
 | `delayed` | `pending` | `error` (user-facing, "YouTube is limiting transcript downloads; retrying in ~N min"), `retry_after_s` | shows `error`, asks again after `retry_after_s` (not before) |
 | `none` | `needs_transcript` | `can_transcribe`, `message` ("No captions. Transcribe the audio in the background?", or while YouTube limits the caption API "Captions are temporarily unavailable from YouTube; transcribe the audio instead (~N s)?"), `estimate_s` (rough seconds, may be null) | shows `message`; when `can_transcribe` offers a "Transcribe in background?" action that calls `POST /v1/videos/{id}/transcribe` |
 | `transcribing` | `pending` | `progress` 0.0-1.0 (finished chunks over all chunks of the speech-recognition step), `estimate_s` | shows progress, asks again later |
-| `failed` | `failed` | `error`, `reason`, `can_transcribe` | shows `error`; `reason` is `private`, `members_only`, `age_restricted`, `unavailable`, `forbidden`, `too_long`, `live` (video problems) or absent (a transcription job failed); offers the transcribe action again only when `can_transcribe` |
+| `failed` | `failed` | `error`, `reason`, `can_transcribe` | shows `error`; `reason` is `private`, `members_only`, `age_restricted`, `unavailable`, `forbidden`, `too_long`, `live` (video problems), `offline` (a server in offline mode has no recorded answer for this video) or absent (a transcription job failed); offers the transcribe action again only when `can_transcribe` |
 | `null` | any | none | the problem is not the transcript (model busy, generic failure) |
 
 `delayed` means YouTube slowed the server down (HTTP 429, bot check, 403 on the watch request, network error, an incomplete answer or an open cooldown) **and the

@@ -138,6 +138,42 @@ def cmd_app_sync_github(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_youtube_record(args: argparse.Namespace) -> int:
+    """Record one video's YouTube answers into a cassette. The owner runs this by hand.
+
+    It is the only u-tubot command that reaches YouTube: never run it from tests, CI or an
+    agent's verification runs. Cassettes replay in tests and in the offline dev-proxy mode.
+    """
+    import asyncio
+
+    from .videoref import VIDEO_ID_RE
+    from .youtube_fixtures import fixture_dir, record_cassette
+
+    if not VIDEO_ID_RE.match(args.video_id):
+        print(
+            f"youtube-record failed: {args.video_id!r} is not an 11-character YouTube video id",
+            file=sys.stderr,
+        )
+        return 1
+    cfg = load_config(args.config)
+    try:
+        target = asyncio.run(
+            record_cassette(
+                cfg,
+                args.video_id,
+                lang=args.lang,
+                out_dir=Path(args.out) if args.out else None,
+                note=args.note,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI boundary
+        print(f"youtube-record failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"recorded {target} ({fixture_dir(cfg)})")
+    print("check it in: no signed URL may appear in the file (the recorder strips them)")
+    return 0
+
+
 def cmd_prompts_validate(args: argparse.Namespace) -> int:
     try:
         with open(args.file, encoding="utf-8") as fh:
@@ -210,6 +246,20 @@ def main(argv: list[str] | None = None) -> int:
     validate = prompts.add_parser("validate", help="validate a prompt set JSON file")
     validate.add_argument("file")
     validate.set_defaults(func=cmd_prompts_validate)
+    record = sub.add_parser(
+        "youtube-record",
+        help=(
+            "record one video's YouTube answers into a replay fixture (owner only: this is the"
+            " one command that reaches YouTube; never run it from tests, CI or agent checks)"
+        ),
+    )
+    record.add_argument("video_id", help="the 11-character YouTube video id")
+    record.add_argument(
+        "--lang", help="prefer this caption language (default: [transcripts] default_language)"
+    )
+    record.add_argument("--out", help="write the cassette here (default: the fixtures directory)")
+    record.add_argument("--note", help="a note stored in the cassette, e.g. why it was recorded")
+    record.set_defaults(func=cmd_youtube_record)
     args = parser.parse_args(argv)
     return args.func(args)
 
