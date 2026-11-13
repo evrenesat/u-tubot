@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -272,6 +273,13 @@ class YoutubeFetcher:
             raise YoutubeDelayed(REASON_EMPTY, retry_s)
         return resp.text
 
+    async def meta(self, video_id: str) -> FetchResult:
+        """The video's metadata alone (one yt-dlp request, no caption download)."""
+        info = await asyncio.to_thread(self._extract_classified, video_id)
+        if not (info.get("id") and info.get("title")):
+            raise YoutubeDelayed(REASON_INCOMPLETE, self.cfg.youtube.network_retry_s)
+        return FetchResult(extract_meta(info), None, None, answered=(CLASS_METADATA,))
+
     async def __call__(self, video_id: str) -> FetchResult:
         retry_s = self.cfg.youtube.network_retry_s
         if self.cfg.youtube.offline:
@@ -312,6 +320,8 @@ class TranscriptService:
         self.db = db
         self.gate = gate or YoutubeGate(cfg.youtube, db)
         self.fetcher: Fetcher = fetcher or YoutubeFetcher(cfg)
+        self.meta_fetcher: Fetcher | None = getattr(self.fetcher, "meta", None)
+        self._meta_tried: dict[str, float] = {}
         self._inflight: dict[str, asyncio.Task[Transcript]] = {}
         self._probe: asyncio.Task[None] | None = None
 
@@ -464,6 +474,40 @@ class TranscriptService:
                 )
             self.gate.promote(video_id)
         return await asyncio.shield(task)
+
+    async def ensure_length(self, video_id: str, priority: int = INTERACTIVE) -> None:
+        """Learn a video's length (and whether it is live) when nothing knows it yet.
+
+        One paced request of the `metadata` class, only while that class is healthy; the answer is
+        stored with the video's metadata. A video with a known length, a live one, or one tried within
+        `transcripts.meta_retry_s` is left alone. Never raises: the caller carries on with what it has.
+        """
+        meta = self.cached_meta(video_id) or {}
+        if meta.get("duration_s") or meta.get("is_live") or self.meta_fetcher is None:
+            return
+        now = time.time()
+        if now - self._meta_tried.get(video_id, -math.inf) < self.cfg.transcripts.meta_retry_s:
+            return
+        if not self.gate.healthy(CLASS_METADATA) or self.hold(video_id):
+            return
+        self._meta_tried = {
+            vid: at
+            for vid, at in self._meta_tried.items()
+            if now - at < self.cfg.transcripts.meta_retry_s
+        }
+        self._meta_tried[video_id] = now
+        fetch = self.meta_fetcher
+        try:
+            result = await self.gate.run(
+                lambda: fetch(video_id), priority, key=video_id, classes=(CLASS_METADATA,)
+            )
+        except YoutubeVideoError as exc:
+            self.record_failure(video_id, exc.reason)
+            return
+        except YoutubeError as exc:
+            log.info("metadata fetch ended: %s", type(exc).__name__)
+            return
+        self.store_meta(video_id, result.meta)
 
     def probe_captions(self, video_id: str) -> bool:
         """After a caption cooldown, send the one background request that decides the next step.

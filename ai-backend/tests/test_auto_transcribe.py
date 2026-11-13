@@ -201,6 +201,16 @@ async def test_a_video_of_unknown_length_asks_first(env):
     assert body["status"] == "needs_transcript" and jobs(env) == []
 
 
+async def test_a_known_no_captions_video_without_a_length_is_measured_then_queued(env):
+    env.svc.db.execute(
+        "INSERT INTO no_captions(video_id,checked_at) VALUES(?,?)", [VID, time.time()]
+    )
+    body = await summary(env)
+    assert body["status"] == "pending" and body["transcript_status"] == "transcribing"
+    assert env.fetcher.meta_calls == [VID] and env.fetcher.calls == []
+    assert len(jobs(env)) == 1
+
+
 @pytest.mark.parametrize("meta", [{"is_live": True}, {"duration_s": 4 * 3600}])
 async def test_live_and_too_long_videos_are_never_transcribed_automatically(env, meta):
     await policy(env, auto_transcribe_max_minutes=24 * 60)

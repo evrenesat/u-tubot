@@ -155,7 +155,7 @@ class Transcription:
             return False
         return self.can_transcribe(meta)
 
-    def auto(
+    async def auto(
         self,
         fields: dict[str, Any],
         *,
@@ -169,11 +169,24 @@ class Transcription:
 
         Anything else (and a refused or disallowed start) comes back unchanged. The answer then
         is `pending` + `transcribing` with `progress` and `estimate_s`, like any running job.
+
+        When the policy would apply but the video's length is unknown (a client that sent no
+        `duration_s`, and no metadata cached because captions were limited), one paced metadata
+        request learns it first (`TranscriptService.ensure_length`, only while that class is healthy).
         """
         if user is None or fields.get("transcript_status") != NONE:
             return fields
-        if not self.auto_allowed(policy, self._meta(video_id, hint), passive=passive):
+        if policy.auto_transcribe == AUTO_OFF or (
+            passive and policy.auto_transcribe != AUTO_ON_DWELL
+        ):
             return fields
+        learned = False
+        if not self._meta(video_id, hint).get("duration_s"):
+            await self.transcripts.ensure_length(video_id, BACKGROUND if passive else INTERACTIVE)
+            known = self._meta(video_id, hint)
+            learned = bool(known.get("duration_s") or known.get("is_live"))
+        if not self.auto_allowed(policy, self._meta(video_id, hint), passive=passive):
+            return self._with_length(fields, video_id, hint) if learned else fields
         try:
             queued = self.request(
                 user,
@@ -194,6 +207,27 @@ class Transcription:
             "transcript_status": TRANSCRIBING,
             "progress": queued["progress"],
             "estimate_s": queued["estimate_s"],
+        }
+
+    def _with_length(
+        self, fields: dict[str, Any], video_id: str, hint: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """The ask-first answer again, now that the length is known (can it be transcribed, how long)."""
+        if not (self.captions_limited() and not self.transcripts.no_captions(video_id)):
+            return {**fields, **self.none_fields(video_id, hint)}
+        fresh = self.audio_fallback(video_id, hint)
+        if fresh:
+            return {**fields, **fresh}
+        # The audio cannot stand in for the captions (live, too long): wait for them like any caller.
+        retry_s = self.transcripts.gate.cooldown_remaining(*FETCH_CLASSES) or (
+            self.cfg.youtube.captions_probe_retry_s
+        )
+        wait = YoutubeDelayed(REASON_COOLDOWN, retry_s)
+        return {
+            "status": STATUS_FOR[DELAYED],
+            "transcript_status": DELAYED,
+            "error": delayed_message(wait),
+            "retry_after_s": max(1, math.ceil(wait.retry_after_s)),
         }
 
     def _held(self, video_id: str, meta: dict[str, Any]) -> dict[str, Any] | None:

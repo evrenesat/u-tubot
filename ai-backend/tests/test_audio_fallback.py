@@ -16,6 +16,7 @@ from utubot.transcripts import FetchResult, NoCaptions
 from utubot.youtube import (
     CLASS_CAPTIONS,
     CLASS_MEDIA,
+    CLASS_METADATA,
     FETCH_CLASSES,
     REASON_BOT_CHECK,
     REASON_NETWORK,
@@ -193,12 +194,86 @@ async def test_a_video_longer_than_the_automatic_limit_is_offered_not_started(en
     assert (await summary(env, duration_s=31 * MINUTE))["status"] == "pending"
 
 
-async def test_an_unknown_length_is_offered_without_an_estimate(env):
+async def test_an_unknown_length_is_learned_with_one_metadata_request_then_the_policy_applies(env):
     cool_captions(env)
+    spy = Spy(env)
+    body = await summary(env, duration_s=None)
+    assert body["status"] == "pending" and body["transcript_status"] == "transcribing"
+    assert env.fetcher.meta_calls == [VID] and env.fetcher.calls == []
+    assert spy.seen == [(INTERACTIVE, (CLASS_METADATA,), VID)]
+    assert env.svc.transcripts.cached_meta(VID)["duration_s"] == 900
+    (job,) = jobs(env)
+    assert job["priority"] == INTERACTIVE
+
+    again = await summary(env, duration_s=None)
+    assert again["transcript_status"] == "transcribing"
+    assert env.fetcher.meta_calls == [VID] and len(jobs(env)) == 1
+
+
+async def test_a_long_video_found_out_by_the_metadata_request_is_offered_with_its_estimate(env):
+    cool_captions(env)
+    env.fetcher.meta_extra = {"duration_s": 31 * MINUTE}
+    body = await summary(env, duration_s=None)
+    estimate = round(5 + 31 * MINUTE / 300 + 30 + 31 * MINUTE / 1.5)
+    assert body["status"] == "needs_transcript" and body["can_transcribe"] is True
+    assert body["estimate_s"] == estimate and str(estimate) in body["message"]
+    assert jobs(env) == []
+    await summary(env, duration_s=None)
+    assert env.fetcher.meta_calls == [VID]
+
+
+@pytest.mark.parametrize("meta", [{"is_live": True, "duration_s": None}, {"duration_s": 4 * 3600}])
+async def test_a_video_found_to_be_live_or_too_long_cannot_be_transcribed(env, meta):
+    cool_captions(env)
+    await policy(env, auto_transcribe_max_minutes=24 * 60)
+    env.fetcher.meta_extra = meta
+    body = await summary(env, duration_s=None)
+    assert body["status"] == "pending" and body["transcript_status"] == "delayed"
+    assert body["retry_after_s"] >= 1 and "estimate_s" not in body and jobs(env) == []
+
+
+async def test_a_cooling_metadata_class_is_never_asked_for_the_length(env):
+    cool_captions(env)
+    env.svc.gate.report_block(REASON_RATE_LIMITED, CAPTION_COOLDOWN_S, CLASS_METADATA)
+    body = await summary(env, duration_s=None)
+    assert body["status"] == "needs_transcript" and body["message"] == OFFER_WITHOUT_ESTIMATE
+    assert env.fetcher.meta_calls == [] and env.fetcher.calls == [] and jobs(env) == []
+
+
+async def test_a_failed_length_request_falls_back_to_the_offer_and_is_not_repeated_at_once(env):
+    cool_captions(env)
+    env.fetcher.meta_error = YoutubeDelayed(REASON_NETWORK, 30)
     body = await summary(env, duration_s=None)
     assert body["status"] == "needs_transcript" and body["can_transcribe"] is True
     assert body["message"] == OFFER_WITHOUT_ESTIMATE and body["estimate_s"] is None
-    assert jobs(env) == []
+    assert jobs(env) == [] and env.fetcher.meta_calls == [VID]
+    await summary(env, duration_s=None)
+    assert env.fetcher.meta_calls == [VID]
+
+    env.cfg.transcripts.meta_retry_s = 0
+    env.fetcher.meta_error = None
+    assert (await summary(env, duration_s=None))["transcript_status"] == "transcribing"
+    assert env.fetcher.meta_calls == [VID, VID]
+
+
+async def test_the_length_is_not_asked_for_when_the_policy_would_not_start_anyway(env):
+    cool_captions(env)
+    await policy(env, auto_transcribe="off")
+    assert (await summary(env, duration_s=None))["status"] == "needs_transcript"
+    await policy(env, auto_transcribe="on_open")
+    assert (await summary(env, duration_s=None, prompt="panel"))["status"] == "needs_transcript"
+    assert env.fetcher.meta_calls == [] and jobs(env) == []
+
+
+async def test_the_side_panel_asks_for_the_length_in_the_background_on_dwell(env):
+    cool_captions(env)
+    await policy(env, auto_transcribe="on_dwell")
+    spy = Spy(env)
+    dwell = await summary(env, duration_s=None, prompt="panel")
+    assert dwell["transcript_status"] == "transcribing"
+    assert spy.seen == [(BACKGROUND, (CLASS_METADATA,), VID)]
+    (job,) = jobs(env)
+    assert job["priority"] == BACKGROUND
 
 
 async def test_the_side_panel_starts_the_audio_only_on_dwell(env):

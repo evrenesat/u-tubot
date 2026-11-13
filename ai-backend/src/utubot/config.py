@@ -131,6 +131,7 @@ class TranscriptConfig(BaseModel):
     no_captions_ttl_s: int = 3 * 86400
     video_failure_ttl_s: int = 3600
     empty_track_retry_s: int = 3600
+    meta_retry_s: int = 600
     fetch_timeout_s: float = 60.0
     prefer_manual: bool = True
     default_language: str = "en"

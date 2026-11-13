@@ -333,6 +333,25 @@ async def test_a_video_failure_expires_and_is_fetched_again(tmp_path):
     assert rig.extracts == 2
 
 
+async def test_the_length_comes_from_one_metadata_request_and_no_caption_download(tmp_path):
+    rig = Rig(tmp_path, extract=lambda: info(captions=False))
+    await rig.svc.ensure_length(VID)
+    assert rig.svc.cached_meta(VID)["duration_s"] == 600
+    assert rig.extracts == 1 and rig.http == []
+    assert not rig.svc.no_captions(VID) and rig.db.one("SELECT 1 FROM transcripts") is None
+    await rig.svc.ensure_length(VID)
+    assert rig.extracts == 1
+
+
+async def test_the_length_request_is_skipped_while_metadata_cools_and_never_raises(tmp_path):
+    rig = Rig(tmp_path, extract=lambda: yt_dlp.utils.DownloadError(BOT_CHECK))
+    await rig.svc.ensure_length(VID)
+    assert rig.extracts == 1 and rig.svc.cached_meta(VID) is None
+    assert not rig.gate.healthy(CLASS_METADATA)
+    await rig.svc.ensure_length(OTHER)
+    assert rig.extracts == 1
+
+
 async def test_an_incomplete_ytdlp_answer_is_delayed_and_never_cached_as_no_captions(tmp_path):
     partial = {"id": VID, "title": "A title", "duration": 600}
     rig = Rig(tmp_path, extract=lambda: partial)
