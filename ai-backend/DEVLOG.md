@@ -56,10 +56,15 @@
   Config keys documented in `config.example.toml`; `docs/captions.md` rewritten around the two cases; `docs/server.md` and
   `ai/CONTRACT.md` list the new stages.
 - Tests (`test_align.py`, `test_proofread.py`, `test_separate.py`, `test_stages.py`, `test_caption_source.py`, plus CPS/retime cases in
-  `test_captions.py`): no YouTube anywhere — fake fetcher (now with timed `segments`), mock ASR and mock LLM. The captions-job flow
-  tests cover improve (ASR words re-time and replace the text, proofread applied), fallbacks (no captions, no timings, other language,
-  broken ASR) and the stage cache (a retried job reports `cached: true` and reads the audio from the archive). Suite 691 passed, ruff
-  clean.
+  `test_captions.py`): no YouTube anywhere — fake fetcher (now with timed `segments` and a configurable `lang`), mock ASR and mock LLM.
+  The captions-job flow tests cover improve (ASR words re-time and replace the text, proofread applied), fallbacks (no captions, no
+  timings, other language, broken ASR, audio without speech) and the stage cache (a retried job reports `cached: true` and reads the
+  audio from the archive). Suite 694 passed, ruff clean.
+- Review fixes: the caption track's language reaches ASR as its base code (an automatic track reports `en-orig`, which
+  faster-whisper rejects hard); the improve path no longer fails when the ASR succeeds but hears nothing (music video with captions:
+  the caption text is proofread and stored, `no_speech` warn); the `align` event's `moved` count compares against a snapshot of the
+  boundaries (`snap_cues` mutates in place); the admin archive removal also clears the video's `stage_cache` rows (was promised by the
+  docstring, never wired).
 
 ## 2026-11-13 (media archive: keep every downloaded file, issue 34)
 

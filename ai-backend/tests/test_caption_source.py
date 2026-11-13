@@ -109,6 +109,38 @@ async def test_a_captions_job_keeps_the_caption_text_when_the_asr_fails(env):
     assert "Hello there, my friend." in stored_captions(env)
 
 
+async def test_an_automatic_caption_track_sends_the_base_language_to_asr(env):
+    env.fetcher.text = "text"
+    env.fetcher.lang = "en-orig"
+    env.fetcher.segments = list(CAPTION_SEGMENTS)
+    doc = await queue_captions(env)
+    asr = event(env, doc["id"], "asr")["detail"]
+    assert asr["language"] == "en"
+    assert env.llm.audio_calls[0]["language"] == "en"
+    track = env.svc.db.one("SELECT lang,label FROM captions WHERE video_id=?", [VID])
+    assert track["lang"] == "en" and track["label"] == "English (u·tubot)"
+
+
+async def test_a_captions_job_keeps_the_caption_text_when_the_audio_has_no_speech(env):
+    from utubot.captions.asr import ASRResult
+
+    env.fetcher.text = "[00:00] hello there my friend"
+    env.fetcher.segments = [(0.0, 4.0, "hello there my friend")]
+    respond_with_cues(env.llm, ["Hello there, my friend."])
+
+    class SilentASR:
+        async def transcribe(self, wav, language, progress, *, priority=1, want_words=True):
+            return ASRResult(words=[], language=None, segments=[], engine="mock", model="mock")
+
+    env.svc.jobs.pipeline.asr = SilentASR()
+    doc = await queue_captions(env)
+    asr = event(env, doc["id"], "asr", "warn")["detail"]
+    assert asr["reason"] == "no_speech"
+    align = event(env, doc["id"], "align")["detail"]
+    assert align["mode"] == "merge" and align["from_asr"] == 0
+    assert "Hello there, my friend." in stored_captions(env)
+
+
 async def test_a_captions_job_says_when_separation_is_not_installed(env):
     env.fetcher.text = None
     env.cfg.captions.separation = "demucs"

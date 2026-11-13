@@ -531,7 +531,13 @@ def create_app(
         removed, freed = svc.archive.remove(check_video_id(video_id))
         if not removed:
             raise HTTPException(404, "no archived media for this video")
-        return {"ok": True, "removed": removed, "bytes_freed": freed}
+        stages_removed = svc.jobs.pipeline.cache.remove(video_id)
+        return {
+            "ok": True,
+            "removed": removed,
+            "bytes_freed": freed,
+            "stage_cache_rows_removed": stages_removed,
+        }
 
     @app.delete("/v1/admin/devices/{device_id}")
     async def admin_revoke(device_id: str, admin: UserConfig = Depends(admin_user)):

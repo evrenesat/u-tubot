@@ -106,6 +106,7 @@ class FakeFetcher:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.text: str | None = TRANSCRIPT
+        self.lang = "en"
         self.fail = False
         self.error: Exception | None = None
         self.meta_extra: dict = {}
@@ -124,7 +125,7 @@ class FakeFetcher:
             "duration_s": 900,
             **self.meta_extra,
         }
-        return FetchResult(meta, self.text, "en", segments=self.segments)
+        return FetchResult(meta, self.text, self.lang, segments=self.segments)
 
 
 @pytest.fixture
