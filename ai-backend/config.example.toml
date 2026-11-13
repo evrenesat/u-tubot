@@ -206,6 +206,7 @@ cache_ttl_s = 2592000
 no_captions_ttl_s = 259200         # a "no captions" answer (from a complete yt-dlp answer) is remembered this long (3 days), then checked again
 video_failure_ttl_s = 3600         # a per-video failure (private, members-only, 403/410 on a caption or media URL) is remembered this long
 empty_track_retry_s = 3600         # a caption file that parses to nothing is "delayed" (not "no captions") and not re-fetched for this long
+meta_retry_s = 600                # a video whose length was asked for (automatic transcription) is not asked again for this long
 fetch_timeout_s = 60.0
 default_language = "en"
 # cookies_file = "/var/lib/utubot/cookies.txt"   # only if YouTube starts blocking this host

@@ -128,6 +128,17 @@
   boundaries (`snap_cues` mutates in place); the admin archive removal also clears the video's `stage_cache` rows (was promised by the
   docstring, never wired).
 
+## 2026-11-13 (auto-transcribe when the length is unknown, issue 26)
+
+- Why: with captions limited no metadata is fetched as a side effect, so a request without `duration_s` (web UI, other clients) got
+  `needs_transcript` instead of an automatic job.
+- `YoutubeFetcher.meta` (one yt-dlp request, `metadata` class, no caption download) and `TranscriptService.ensure_length`: only when
+  the length and live flag are unknown, the `metadata` class is healthy and the video has no hold; paced through the gate at the
+  caller's priority; stored with the video's metadata; never raises; not repeated within `transcripts.meta_retry_s` (in memory).
+- `Transcription.auto` is async: when the policy would apply it asks for the length first, then decides. If the length rules the audio
+  out (live, too long) the answer is refreshed (`can_transcribe`, `estimate_s`, message) or, with captions limited, becomes `delayed`.
+- Tests: `test_audio_fallback.py`, `test_auto_transcribe.py`, `test_youtube_fetch.py`.
+
 ## 2026-11-13 (media archive: keep every downloaded file, issue 34)
 
 - Why: a job downloaded a video's audio, transcribed it and deleted everything; the next job downloaded the same audio again. Owner rule:

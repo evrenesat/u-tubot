@@ -87,7 +87,7 @@ to `"none"` and `max_tokens` to 160. See [llm-providers.md](llm-providers.md).
 **`[archive]`**: the media archive, see [Media archive](#media-archive): `path` (empty: `<data dir>/archive`), `quota_bytes`
 (`0`: no limit) and `warn_frac` (`0.9`).
 
-**`[transcripts]`**: `cache_ttl_s`, `no_captions_ttl_s` (default 3 days), `video_failure_ttl_s` (1 h), `empty_track_retry_s` (1 h), `fetch_timeout_s`, `default_language`, `cookies_file`
+**`[transcripts]`**: `cache_ttl_s`, `no_captions_ttl_s` (default 3 days), `video_failure_ttl_s` (1 h), `empty_track_retry_s` (1 h), `meta_retry_s` (10 min), `fetch_timeout_s`, `default_language`, `cookies_file`
 (only if YouTube blocks the host), `skip_if_longer_than_s`. (`max_concurrency` is gone: `[youtube] max_concurrent` replaces it;
 an old entry is ignored.)
 
@@ -153,7 +153,8 @@ still worked, now it only pauses caption fetches.
   (429, 403), the audio is usually still reachable (`media` is a separate class) and a speech engine can transcribe a 30 minute video in
   well under a minute. The request is then treated like "no captions" instead of "delayed", under the user's policy: with
   `auto_transcribe` allowing it and the video within `auto_transcribe_max_minutes` the transcription starts at once (`pending` +
-  `transcribing`, `progress`, `estimate_s`); otherwise it answers `needs_transcript` with `can_transcribe`, `estimate_s` and a message
+  `transcribing`, `progress`, `estimate_s`; a length the client did not send is learned first with one paced `metadata` request,
+  only while that class is healthy and not again for `transcripts.meta_retry_s`); otherwise it answers `needs_transcript` with `can_transcribe`, `estimate_s` and a message
   such as "Captions are temporarily unavailable from YouTube; transcribe the audio instead (~N s)?". This is never remembered (no
   "no captions" entry). "Delayed" stays for the cases where the audio cannot help: no engine serves the video, the video is live or too
   long, the `media` class cools too (a bot check blocks metadata and media together) or the problem is a network error rather than a

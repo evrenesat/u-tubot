@@ -99,7 +99,7 @@ class ContentService:
         self._ask_results: dict[Any, tuple[str, float | None]] = {}
         self._auto_long_active = 0
 
-    def _auto(
+    async def _auto(
         self,
         fields: dict[str, Any],
         user: str | None,
@@ -109,7 +109,7 @@ class ContentService:
         passive: bool = False,
     ) -> dict[str, Any]:
         """`needs_transcript` becomes a started transcription when the user's policy allows it."""
-        return self.transcription.auto(
+        return await self.transcription.auto(
             fields, user=user, policy=policy, video_id=video_id, hint=qmeta, passive=passive
         )
 
@@ -312,7 +312,7 @@ class ContentService:
             return {**base, "status": "failed", "error": failure}
         blocked = self.transcription.blocked(video_id, qmeta, promote=not passive)
         if blocked:
-            return {**base, **self._auto(blocked, user, policy, video_id, qmeta, passive)}
+            return {**base, **await self._auto(blocked, user, policy, video_id, qmeta, passive)}
         task = self._start_summary(policy, video_id, prompt, store_key, chash, qmeta, INTERACTIVE)
         if not await wait_task(task, self.wait_cap(wait_ms)):
             return {**base, "status": "pending"}
@@ -320,7 +320,7 @@ class ContentService:
         if exc is not None:
             problem = self.transcription.problem(video_id, exc, qmeta)
             if problem:
-                return {**base, **self._auto(problem, user, policy, video_id, qmeta, passive)}
+                return {**base, **await self._auto(problem, user, policy, video_id, qmeta, passive)}
             return {**base, "status": "failed", "error": public_error(exc, "content task")}
         text, source = task.result()
         return {**base, "status": "ready", "text": text, "source": source, "transcript_status": OK}
@@ -408,7 +408,7 @@ class ContentService:
             return {**base, "status": "failed", "error": failure}
         blocked = self.transcription.blocked(video_id, qmeta, promote=True)
         if blocked:
-            return {**base, **self._auto(blocked, user, policy, video_id, qmeta)}
+            return {**base, **await self._auto(blocked, user, policy, video_id, qmeta)}
 
         async def job() -> None:
             transcript = await self.source(video_id, qmeta)
@@ -465,7 +465,7 @@ class ContentService:
         if exc is not None:
             problem = self.transcription.problem(video_id, exc, qmeta)
             if problem:
-                return {**base, **self._auto(problem, user, policy, video_id, qmeta)}
+                return {**base, **await self._auto(problem, user, policy, video_id, qmeta)}
             return {**base, "status": "failed", "error": public_error(exc, "content task")}
         cached = self.db.get_json(
             "insights", "video_id=? AND language=?", [video_id, policy.language]
@@ -518,7 +518,7 @@ class ContentService:
             return {**base, "answer": cached[0], "status": "ready", "transcript_status": OK}
         blocked = self.transcription.blocked(video_id, qmeta, promote=True)
         if blocked:
-            return {**base, **self._auto(blocked, user, policy, video_id, qmeta)}
+            return {**base, **await self._auto(blocked, user, policy, video_id, qmeta)}
         task = self.registry.start(task_key, job)
         if not await wait_task(task, self.wait_cap(wait_ms)):
             return {**base, "status": "pending"}
@@ -526,6 +526,6 @@ class ContentService:
         if exc is not None:
             problem = self.transcription.problem(video_id, exc, qmeta)
             if problem:
-                return {**base, **self._auto(problem, user, policy, video_id, qmeta)}
+                return {**base, **await self._auto(problem, user, policy, video_id, qmeta)}
             return {**base, "status": "failed", "error": public_error(exc, "content task")}
         return {**base, "answer": task.result(), "status": "ready", "transcript_status": OK}
