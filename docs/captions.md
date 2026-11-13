@@ -1,22 +1,55 @@
 # HQ captions
 
-YouTube's automatic captions are often poor. u·tubot can build its own: the backend downloads the audio, transcribes it with
-Whisper, optionally labels speakers, and serves a WebVTT track the TV adds to the subtitle picker.
+YouTube's automatic captions are often poor. u·tubot can build its own: when the video has captions, their timing is kept and the text is
+improved; when it has none, the track is made from the audio. Both paths end in a WebVTT track the TV adds to the subtitle picker.
+Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline only runs it when `[captions] diarization` is not `none`.
 
 ## Pipeline
 
 1. **Queue.** *Video menu, Prepare HQ captions* (or `POST /v1/videos/ID/captions`) queues a persisted job. Jobs survive restarts and
    are processed `captions.job_concurrency` at a time (default 1). One job per video and language; repeated requests share it.
-2. **Download.** yt-dlp fetches the lowest-bitrate audio of the video's original-language track ([below](#which-audio-is-downloaded)),
-   then `ffmpeg` converts it to 16 kHz mono WAV. Videos longer than `max_duration_s` (3 h) are refused.
-3. **ASR.** Speech recognition with word timestamps, chunked and stitched ([below](#asr-engines)).
-4. **Diarization** (optional): speaker turns are matched to words.
-5. **Cues.** Words are grouped into cues of at most `max_lines` (2) lines of `max_chars_per_line` (42) characters, 1 to 7 seconds
-   (`min_cue_s`, `max_cue_s`), breaking at sentence and speaker changes.
-6. **Store.** The track is saved as `<language> (u·tubot)` or `<language> (u·tubot, N speakers)`. Speaker turns are prefixed
-   `[S1] `, `[S2] `. The downloaded media is deleted unless `keep_media = true`.
+2. **Caption recheck.** The job asks once more what YouTube has for the video. When the answer is a caption track with timings and it
+   matches the requested language, the job improves it ([below](#improving-existing-captions)); otherwise (no captions, a limited or
+   unreachable caption endpoint, a track without timings) it builds the track from the audio. The check never holds the audio back.
+3. **Download.** yt-dlp fetches the lowest-bitrate audio of the video's original-language track ([below](#which-audio-is-downloaded)) —
+   from the media archive when it is already there — then `ffmpeg` converts it to 16 kHz mono WAV. Videos longer than `max_duration_s`
+   (3 h) are refused. Every download is kept in the media archive, so no audio is ever fetched twice.
+4. **Vocal separation** (optional): when `separation = "demucs"`, the vocals stem is separated from the music before ASR
+   ([below](#vocal-separation)).
+5. **ASR.** Speech recognition with word timestamps, chunked and stitched ([below](#asr-engines)). The answer is cached per video and
+   audio, so a retried job or a second job for the same video does not transcribe the same audio twice.
+6. **Cues and alignment.** Words are grouped into cues of at most `max_lines` (2) lines of `max_chars_per_line` (42) characters, 1 to 7
+   seconds (`min_cue_s`, `max_cue_s`), breaking at sentence and speaker changes, and never faster than `max_cps` (20) characters per
+   second. Cue boundaries are then nudged to nearby silences (`align_silence`), so a cue does not cut into a word.
+7. **Proofreading.** The LLM (`[llm.captions]`) fixes punctuation, capitalisation, names and terms, using the video's title and
+   description as context ([below](#proofreading)).
+8. **Store.** The track is saved as `<language> (u·tubot)`. Optionally `translate_to` translates the cues. Each stage is written to the
+   job's event log with its time, and the web UI shows it as a timeline with the result and the clients that fetched it (`server.md`,
+   Job details).
 
-Optionally `translate_to` translates the cues with `[llm.captions]`. Captions are shared by everyone on the server. The TV follows the
+## Improving existing captions
+
+When the video already has a caption track, its timing is the skeleton: each caption becomes a cue, rolling repeats of automatic
+captions are dropped and text too long for one cue is re-broken (`max_lines` x `max_chars_per_line`, time shared by length). Then the
+ASR words that fall inside each cue's window (plus `align_window_s`, 0.4 s) replace its text and move its boundaries to the words
+actually spoken — the video's captions keep the timing, the speech recognition provides the better transcription. A cue the ASR heard
+nothing in keeps the caption text. The proofreading pass runs last. When no speech engine is available, the caption text is proofread
+and stored as it is.
+
+## Proofreading
+
+The cue texts go to the LLM in batches of `proofread_batch` (40) with the video's title and description (up to
+`proofread_context_chars` each). The answer must be a JSON array with the same length and order as the batch; a different shape, an
+empty string, or a batch whose text grew beyond `proofread_max_ratio` (1.6 — a sign of invention) falls back to the original texts. A
+failing LLM never fails the job: those batches keep their text and the stage warns. Corrected batches are cached per video, so a
+retried job does not pay twice.
+
+## Vocal separation
+
+With `separation = "demucs"` the pipeline runs `separation_cmd` (default `demucs --two-stems vocals`; install it with
+`uv tool install demucs`) over the converted audio and feeds ASR the vocals stem. A speech-only mix loses almost nothing, so there is no
+music detector. The stage is best-effort: a missing tool, a failure or `separation_timeout_s` (1 h) falls back to the original audio and
+says so in the job log.
 job while the video plays and, when it is ready, adds the track to the video and turns it on (you asked for it) with a short "u·tubot
 captions ready"; at the start of a video the setting *Select HQ captions automatically* decides. The app fetches the VTT once, with
 its `Authorization` header, and keeps the file in its own storage: the subtitle menu offers it for that video from then on, after a
@@ -176,8 +209,9 @@ these options.
 
 ## Diarization (speaker labels)
 
-Off by default (`diarization = "none"`). It uses pyannote.audio and the gated Hugging Face model
-`pyannote/speaker-diarization-community-1`.
+Out of scope for now (owner, 2026-11-13): captions are produced without speaker labels unless this is configured. Off by default
+(`diarization = "none"`); the pipeline only runs the stage when it is set to something else. It uses pyannote.audio and the gated
+Hugging Face model `pyannote/speaker-diarization-community-1`.
 
 1. `uv sync --extra diarization` (pulls PyTorch; several GB).
 2. Create a Hugging Face account, open the model page of `pyannote/speaker-diarization-community-1` and accept its conditions.

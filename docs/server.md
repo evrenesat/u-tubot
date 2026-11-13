@@ -299,9 +299,11 @@ waited), `gate_wait` (the YouTube class and how long the gate held the job), `ca
 `audio_download` (format id, original/dubbed/unmarked track, language, bytes, length, seconds, and `source`: `downloaded` or `from_archive`),
 `media_archive` (bytes and the sha256 prefix of what was kept; skipped when the audio came from the archive), `ffmpeg`, `chunking` (chunks and their sizes), `asr` and `asr_chunk` (engine, model, seconds, characters, detected language per chunk),
 `asr_fallback` (an engine gave up on a chunk, and why: `http_503`, `transport_timeout`, `unhealthy`, `language_mismatch` ...), `stitching`
-(seams, segments cut at overlaps, repeated words dropped), `diarization` (ran, or skipped and why: off, no Hugging Face token, package
-missing), `cues` (count, longest line), `text`, `translate`, `stored` (what was saved and how big), `retry`, `finished`, `failed` (cause
-class, human message, stage) and `delivered`. A `delivered` row is added by the routes clients use (`GET /v1/videos/ID/captions`, the
+(seams, segments cut at overlaps, repeated words dropped), `separation` (the optional vocal separation before ASR, or skipped and why),
+`diarization` (only when `[captions] diarization` is enabled; ran, or skipped and why: no Hugging Face token, package missing), `cues`
+(count, longest line), `align` (cue boundaries moved to silences, or caption cues re-timed from the ASR words), `proofread` (corrected
+cues, or skipped: off, no LLM; per-batch warnings hang under it as `proofread_batch`), `text`, `translate`, `stored` (what was saved and
+how big), `retry`, `finished`, `failed` (cause class, human message, stage) and `delivered`. A `delivered` row is added by the routes clients use (`GET /v1/videos/ID/captions`, the
 `.vtt`, `GET /v1/videos/ID/transcript`, summary, insight and ask built from a transcript the audio made); the same client fetching the
 same way again within `[captions] delivery_coalesce_s` (300) raises the `count` of one row instead of adding rows. At most
 `[captions] job_events_max` (400) stage events are kept per job; queued, finished, failed and retry rows are always kept, and at most
