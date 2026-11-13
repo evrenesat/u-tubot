@@ -158,8 +158,8 @@ The sibling commits are pinned in `.github/actions/android-env/action.yml`, shar
 
 ### Releasing
 
-Merging a change that touches the app to `main` releases it automatically: after the app tests pass, CI starts
-`.github/workflows/utubot-release.yml` for that commit. "Touches the app" is decided against the newest `utubot-v*` tag, so an
+Merging a change that touches the app to `main` releases it automatically: after the app tests pass (and the backend
+tests, when they ran, did not fail), CI starts `.github/workflows/utubot-release.yml` for that commit. "Touches the app" is decided against the newest `utubot-v*` tag, so an
 earlier push whose release failed or was cancelled is picked up by the next push. Documentation, backend, `scripts/` and
 `.github/` changes alone never release.
 
@@ -173,6 +173,12 @@ creates the tag `utubot-v<version>` on the commit and the GitHub Release. Only o
   `signing_cert_sha256`. A backend reads it with `utubot app sync-github` ([server.md](server.md#updates)).
 - **By hand**: push a tag `utubot-vX.Y.Z` (or run the workflow with the input `tag`) to build and publish exactly that version; the
   Gradle build gets the name from the tag, the unit tests run first, and the numbers must agree with the APKs or the release stops.
+  The tag must be the newest `utubot-v*` tag, its release must not exist yet, its commit must be on `main` and CI must have finished green
+  for it, so a hand release can neither go backwards nor skip the tests.
+- **Guards, every path**: the commit is on `main` and its CI run is green (the app tests, and the backend tests when they ran: a red
+  backend blocks the automatic release too, because the app and the backend are one contract and a red commit is never deployed).
+- **Check on the server**: `utubot app sync-github` also reads each APK's own manifest and refuses a package other than `dev.utubot.tv`
+  or a version that differs from `release.json`.
 - Secrets needed: `UTUBOT_KEYSTORE_B64` (`base64 -w0` of the keystore), `UTUBOT_KEYSTORE_PASSWORD`, `UTUBOT_KEY_ALIAS`,
   `UTUBOT_KEY_PASSWORD`. The automatic path is guarded to this repository (`github.repository` in the CI workflow); for a fork or a
   private repository change that guard and the `runs-on` label.

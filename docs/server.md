@@ -491,6 +491,16 @@ UTUBOT_CONFIG=/etc/utubot/config.toml .venv/bin/utubot user add owner --admin
 The unit runs the venv binary (nothing downloads at start), keeps model caches under `/var/lib/utubot/cache`, and needs
 `ffmpeg` in `/usr/bin`. Logs: `journalctl -u utubot`. After updating the checkout run `uv sync --frozen --extra asr` and restart.
 
+### Updating and rolling back
+
+Database changes are additive only: `utubot.sqlite` is created and extended at start (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ...
+ADD COLUMN` with a default or a nullable column), and nothing is dropped or rewritten except the cleanup of rows that must not
+exist. Going back to an older revision therefore needs no database step: the older code ignores the newer tables and columns, and
+the next upgrade finds them already there. A test (`tests/test_db_migrations.py`) keeps new columns that way, and a change that cannot
+be additive (a rename, a type change, a dropped column) must ship as a new column or table plus a copy, with the old one left in place for
+at least one release. A rollback does not undo data that the newer revision wrote, and it does not restore files; to be able to
+undo even that, copy `data_dir` first (`sqlite3 utubot.sqlite ".backup utubot.before-update.sqlite"` is safe while the service runs).
+
 ## Updates
 
 TVs poll `/app/update.json` on your server, so the update channel is whatever is published in `app_dir`. Two ways to fill it.
@@ -527,6 +537,9 @@ What a run does:
    Block (schemes v2, v3 and v3.1): it verifies each signature, recomputes the APK's content digest and compares it with the
    signed one, so an APK changed after signing is refused. It supports RSA keys (PKCS#1 v1.5 and PSS); for an ECDSA key set
    `apksigner_path`.
+   Then it reads the APK's own `AndroidManifest.xml` and requires the package `dev.utubot.tv`, the `versionName` of the release and,
+   when `release.json` gives one, its `versionCode`, so wrong metadata cannot publish an APK under another version (no `aapt2`
+   needed).
 4. Publishes them like `utubot app publish` (APKs first, `update.json` last) and, with `keep_versions`, deletes the APK files of
    older versions (only files named `u-tubot_<version>_<abi>.apk`).
 
