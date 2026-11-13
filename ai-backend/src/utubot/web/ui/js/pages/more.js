@@ -4,7 +4,7 @@ const DESCRIPTIONS = {
   tvs: "Link a TV, revoke devices, TV settings",
   updates: "App version on this server and on GitHub",
   account: "Password, theme, sign out",
-  admin: "Users and their settings",
+  admin: "Users, settings and the media archive",
 };
 
 export async function render(view, { routes }) {

@@ -58,6 +58,11 @@ CREATE TABLE IF NOT EXISTS job_events(
   id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, ts REAL NOT NULL,
   stage TEXT NOT NULL, status TEXT NOT NULL, detail TEXT);
 CREATE INDEX IF NOT EXISTS job_events_job ON job_events(job_id, id);
+CREATE TABLE IF NOT EXISTS media_archive(
+  video_id TEXT NOT NULL, sha256 TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'audio',
+  format_id TEXT, codec TEXT, bitrate_kbps REAL, language TEXT, original INTEGER NOT NULL DEFAULT 1,
+  size INTEGER NOT NULL, ext TEXT NOT NULL, path TEXT NOT NULL, fetched_at REAL NOT NULL,
+  job_id TEXT, PRIMARY KEY(video_id, sha256));
 CREATE TABLE IF NOT EXISTS captions(
   video_id TEXT NOT NULL, lang TEXT NOT NULL, label TEXT NOT NULL, speakers INTEGER NOT NULL,
   vtt TEXT NOT NULL, created_at REAL NOT NULL, job_id TEXT, PRIMARY KEY(video_id, lang));

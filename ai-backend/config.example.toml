@@ -189,6 +189,15 @@ js_runtime = "deno"                # deno (default), node, bun or quickjs
 # js_runtime_path = "/usr/local/bin/deno"     # example; unset: yt-dlp looks the runtime up on PATH
 # remote_components = ["ejs:github"]          # example; lets yt-dlp fetch its challenge solver script
 
+[archive]
+# Every media file a pipeline downloads from YouTube is kept here, content-addressed by its
+# sha256, and reused instead of being downloaded again. Put it on a large disk. Nothing in it is
+# ever deleted automatically: when the quota is reached new downloads are refused until an admin
+# removes entries (web UI: Admin → Media archive).
+# path = "/mnt/media/utubot-archive"   # example; unset: <data dir>/archive
+quota_bytes = 0                       # ceiling in bytes (0: no limit); a full archive refuses new downloads
+warn_frac = 0.9                       # log a warning from this fraction of the quota on
+
 [transcripts]
 cache_ttl_s = 2592000
 no_captions_ttl_s = 259200         # a "no captions" answer (from a complete yt-dlp answer) is remembered this long (3 days), then checked again

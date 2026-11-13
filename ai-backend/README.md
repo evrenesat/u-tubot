@@ -43,6 +43,9 @@ option. Highlights:
 - `[youtube]` pacing and circuit breakers (one per endpoint class: captions, metadata, media) for every request to YouTube
   (`max_concurrent`, `min_interval_s`, `jitter_s`, `cooldown_base_s`, `cooldown_max_s`, `captions_cooldown_max_s`), the JavaScript runtime for yt-dlp
   (`js_runtime_path`, `remote_components`); `[transcripts] no_captions_ttl_s`.
+- `[archive]` the media archive (`path`, `quota_bytes`, `warn_frac`): every downloaded audio or video file is kept
+  content-addressed by its sha256 and reused instead of being downloaded again; the quota only warns and stops, it never deletes
+  (Admin → Media archive frees space).
 - `[setup]`, `[app]` the public `/setup.json` (TVs import it by address), the landing page download codes and the GitHub
   update channel (`github_repo`, `signing_cert_sha256`, `apksigner_path`; `utubot app sync-github`, see `../docs/server.md`, Updates).
 - `[captions]` the ASR engine chain (`[[captions.asr_engines]]`: `openai`-compatible servers and local `faster_whisper`, picked by health,

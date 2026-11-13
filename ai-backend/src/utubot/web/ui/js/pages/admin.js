@@ -1,5 +1,6 @@
 import { api, session } from "../api.js";
 import { h, mount } from "../dom.js";
+import { fmtBytes } from "../jobtext.js";
 import { bigCode, button, card, empty, errorText, field, fmtAgo, note, pill, switchRow, textInput, toast } from "../components.js";
 import { filteringForm } from "./filtering.js";
 import { modelsForm } from "./models.js";
@@ -107,6 +108,11 @@ async function usersPage(view) {
       h("h1", { class: "page-title", text: "Admin" }),
       card("Users", users.length ? users.map((u) => userRow(u, load)) : empty("No users.")),
       newUserCard(load),
+      card(
+        "Media archive",
+        h("div", { class: "row" }, h("a", { class: "btn sec", href: "#/admin/archive", text: "Open the media archive" })),
+        note("Every downloaded audio or video file, kept for reuse. Removing entries is manual."),
+      ),
       note("Users declared in config.toml keep their admin flag there. Tokens are created with `utubot user add`."),
     );
   }
@@ -164,7 +170,83 @@ async function userSettingsPage(view, name) {
   await draw();
 }
 
+function entryDetail(entry) {
+  const parts = [
+    entry.format_id ? "format " + entry.format_id : null,
+    entry.codec && entry.codec !== "none" ? entry.codec : null,
+    entry.bitrate_kbps ? Math.round(entry.bitrate_kbps) + " kbps" : null,
+    entry.language ? "language " + entry.language : null,
+    entry.size ? fmtBytes(entry.size) : null,
+    "sha256 " + String(entry.sha256).slice(0, 12) + "…",
+    "kept " + fmtAgo(entry.fetched_at),
+  ].filter((p) => p !== null);
+  return h("small", { class: "muted", text: parts.join(", ") });
+}
+
+function videoRow(videoId, entries, reload) {
+  const bytes = entries.reduce((sum, e) => sum + (e.size || 0), 0);
+  const kinds = [...new Set(entries.map((e) => e.kind || "audio"))];
+  return h(
+    "div",
+    { class: "job" },
+    h(
+      "div",
+      { class: "row between nowrap" },
+      h("strong", { class: "job-title", text: videoId }),
+      button("Remove", async () => {
+        if (!window.confirm("Remove the archived media of " + videoId + " (" + fmtBytes(bytes) + ")?")) return;
+        try {
+          await api("/v1/admin/archive/" + encodeURIComponent(videoId), { method: "DELETE" });
+          toast("Removed " + fmtBytes(bytes) + " from the media archive");
+        } catch (err) {
+          toast(errorText(err), "bad");
+        }
+        await reload();
+      }, { kind: "danger" }),
+    ),
+    h("div", { class: "row" }, kinds.map((k) => pill(k)), entries.some((e) => e.original) ? pill("original", "ok") : null, pill(fmtBytes(bytes))),
+    entryDetail(entries[0]),
+    entries.length > 1 ? h("small", { class: "muted", text: entries.length + " entries" }) : null,
+  );
+}
+
+async function archivePage(view) {
+  const host = h("div", { class: "stack" });
+  async function load() {
+    const doc = await api("/v1/admin/archive");
+    const byVideo = new Map();
+    for (const entry of doc.entries) {
+      byVideo.set(entry.video_id, [...(byVideo.get(entry.video_id) || []), entry]);
+    }
+    const usage = doc.quota_bytes
+      ? fmtBytes(doc.usage_bytes) + " of " + fmtBytes(doc.quota_bytes)
+      : fmtBytes(doc.usage_bytes) + " (no quota set)";
+    const statePill =
+      doc.state === "full" ? pill("full", "bad")
+      : doc.state === "warn" ? pill("near quota", "warn")
+      : doc.quota_bytes ? pill("ok", "ok")
+      : pill("no quota");
+    mount(
+      host,
+      h("a", { class: "back", href: "#/admin", text: "Back to users" }),
+      h("h1", { class: "page-title", text: "Media archive" }),
+      card(
+        "Storage",
+        h("div", { class: "row" }, statePill, h("strong", { text: usage }), h("span", { class: "muted", text: doc.files + (doc.files === 1 ? " file" : " files") })),
+        note("Every audio or video file downloaded from YouTube is kept here once, content-addressed by its sha256, and reused instead of downloading it again. Nothing is deleted automatically: when the quota is reached new downloads wait until an admin removes entries."),
+      ),
+      card(
+        "Stored videos",
+        byVideo.size ? [...byVideo.entries()].map(([videoId, entries]) => videoRow(videoId, entries, load)) : empty("Nothing has been archived yet."),
+      ),
+    );
+  }
+  mount(view, host);
+  await load();
+}
+
 export async function render(view, { rest }) {
+  if (rest[0] === "archive") return archivePage(view);
   if (rest[0] === "user" && rest[1]) return userSettingsPage(view, rest[1]);
   return usersPage(view);
 }

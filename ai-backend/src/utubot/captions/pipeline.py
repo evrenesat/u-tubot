@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import shutil
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ import yt_dlp
 from ..config import Config
 from ..db import Database
 from ..llm import BACKGROUND, LLMClient
+from ..media_archive import KIND_AUDIO, SHA_PREFIX, MediaArchive, MediaArchiveError
 from ..transcripts import segments_to_text
 from ..youtube import (
     CLASS_MEDIA,
@@ -188,6 +190,16 @@ def track_label(lang: str, speakers: int) -> str:
     return f"{name} (u·tubot{extra})"
 
 
+def _keep_for_archive(work: Path) -> bool:
+    """True while a failed archive store unwinds through a `finally`: the downloaded file stays.
+
+    The archive could not keep the media, so the scratch directory that holds it must survive the
+    cleanup of the job that downloaded it (the owner rule: never throw away downloaded media).
+    """
+    exc = sys.exc_info()[1]
+    return isinstance(exc, MediaArchiveError) and exc.work == work
+
+
 class CaptionPipeline:
     def __init__(
         self,
@@ -198,11 +210,13 @@ class CaptionPipeline:
         diarizer: Diarizer | None = None,
         downloader: Downloader | None = None,
         gate: YoutubeGate | None = None,
+        archive: MediaArchive | None = None,
     ):
         self.cfg, self.db, self.llm = cfg, db, llm
         self.asr = asr or make_asr(cfg.captions)
         self.gate = gate or YoutubeGate(cfg.youtube, db)
         self.diarizer = diarizer or make_diarizer(cfg.captions)
+        self.archive = archive or MediaArchive(cfg, db)
         self.downloader = downloader or (
             lambda vid, out, started: download_audio(
                 vid,
@@ -226,32 +240,63 @@ class CaptionPipeline:
         priority: int = BACKGROUND,
         want_words: bool = True,
     ) -> tuple[ASRResult, Path]:
-        """Audio download (through the YouTube gate), 16 kHz mono WAV, ASR. Shared by both jobs."""
+        """Audio (from the archive, else a download that the archive keeps), 16 kHz WAV, ASR."""
         c = self.cfg.captions
         progress(0.02)
         asked = time.monotonic()
 
-        async def fetch(started: Started) -> Path:
-            events.emit(
-                events.GATE_WAIT,
-                events.OK,
-                klass=CLASS_MEDIA,
-                waited_s=round(time.monotonic() - asked, 2),
-                priority=events.priority_name(priority),
-            )
-            with events.stage(events.AUDIO) as st:
-                path = await self.downloader(video_id, work, started)
-                notes = events.take_notes()
+        entry = self.archive.lookup(video_id, KIND_AUDIO)
+        if entry is not None:
+            with events.stage(events.AUDIO, source=events.AUDIO_FROM_ARCHIVE) as st:
                 st.set(
-                    source=notes.pop("source", events.AUDIO_DOWNLOADED),
-                    bytes=file_size(path),
-                    **notes,
+                    bytes=entry["size"],
+                    format_id=entry["format_id"],
+                    track="original" if entry["original"] else None,
+                    language=entry["language"],
+                    codec=entry["codec"],
+                    bitrate_kbps=entry["bitrate_kbps"],
                 )
-            return path
+            src = self.archive.path_of(entry)
+        else:
+            self.archive.require_room()
 
-        src = await self.gate.run_started(
-            fetch, priority, key=f"audio:{video_id}", classes=MEDIA_CLASSES
-        )
+            async def fetch(started: Started) -> tuple[Path, dict[str, Any]]:
+                events.emit(
+                    events.GATE_WAIT,
+                    events.OK,
+                    klass=CLASS_MEDIA,
+                    waited_s=round(time.monotonic() - asked, 2),
+                    priority=events.priority_name(priority),
+                )
+                with events.stage(events.AUDIO) as st:
+                    path = await self.downloader(video_id, work, started)
+                    notes = events.take_notes()
+                    st.set(
+                        source=notes.pop("source", events.AUDIO_DOWNLOADED),
+                        bytes=file_size(path),
+                        **notes,
+                    )
+                return path, notes
+
+            src, notes = await self.gate.run_started(
+                fetch, priority, key=f"audio:{video_id}", classes=MEDIA_CLASSES
+            )
+            with events.stage(events.ARCHIVE) as st:
+                stored = await asyncio.to_thread(
+                    self.archive.store,
+                    video_id,
+                    src,
+                    kind=KIND_AUDIO,
+                    format_id=notes.get("format_id"),
+                    codec=notes.get("codec"),
+                    bitrate_kbps=notes.get("bitrate_kbps"),
+                    language=notes.get("language"),
+                    original=notes.get("original", 1),
+                    job_id=events.job_id(),
+                    work=work,
+                )
+                src = self.archive.path_of(stored)
+                st.set(bytes=stored["size"], sha256=stored["sha256"][:SHA_PREFIX])
         progress(0.2)
         wav = work / "audio16k.wav"
         with events.stage(events.FFMPEG) as st:
@@ -317,7 +362,7 @@ class CaptionPipeline:
                 text, result.language, result.segments, result.engine, result.model
             )
         finally:
-            if not self.cfg.captions.keep_media:
+            if not self.cfg.captions.keep_media and not _keep_for_archive(work):
                 shutil.rmtree(work, ignore_errors=True)
 
     async def run(
@@ -381,7 +426,7 @@ class CaptionPipeline:
             progress(1.0)
             return track_lang
         finally:
-            if not c.keep_media:
+            if not c.keep_media and not _keep_for_archive(work):
                 shutil.rmtree(work, ignore_errors=True)
 
     async def translate(self, cues: list[Cue], target: str) -> list[Cue]:

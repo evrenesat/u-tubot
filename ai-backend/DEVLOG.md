@@ -1,5 +1,32 @@
 # DEVLOG
 
+## 2026-11-13 (media archive: keep every downloaded file, issue 34)
+
+- Why: a job downloaded a video's audio, transcribed it and deleted everything; the next job downloaded the same audio again. Owner rule:
+  never throw away downloaded media, never fetch the same thing twice. The report hooks were ready (`audio_download.source` =
+  `downloaded|from_archive`, the report says "From the media archive"); now there is a real archive behind them.
+- `utubot/media_archive.py` (new): content-addressed store. `lookup(video_id, kind)` → newest row for the video, original track first,
+  verified on disk (a row whose file vanished is dropped, the video is fetched and stored again). `store(...)` copies the download into
+  `files/<sha256[:2]>/<sha256>.<ext>` under `[archive] path` (empty: `<data dir>/archive`), fsync, `os.replace`, identical bytes stored
+  once, the scratch original unlinked; the row carries format id, codec, bitrate, language, original flag, size, sha256, fetch time and the
+  job id. `require_room` refuses a download at `quota_bytes` (0: no limit) with `MediaArchiveFull` — warn/stop, never silent deletion;
+  `store` warns at `warn_frac` (0.9) and keeps a file that pushes usage over the quota. `remove(video_id)` is the one admin cleanup (a file
+  another row still uses stays); `sweep_scratch` clears crash-left staging files at start, rows never.
+- Pipeline: `_recognise` looks the video up in the archive first — a hit skips the gate and the download entirely (`audio_download` with
+  `source=from_archive`), a miss checks the room, downloads as before and gains a `media_archive` stage (`bytes`, 12-char sha256 prefix)
+  that keeps the file; the job then reads the audio from the archive. On a store failure (`MediaArchiveError`) the job fails and the scratch
+  directory survives (`_keep_for_archive` checks the unwinding exception in the `finally`), so the download is not thrown away. Jobs map
+  both errors to clear messages ("The media archive is full; an admin must free space…"). No magic numbers: `[archive]` in
+  `config.py` + `config.example.toml`.
+- Admin surface: `Services.archive`; `GET /v1/admin/archive?video_id=&limit=` (usage vs quota, state ok/warn/full, entries newest first,
+  full sha256 — admin only), `DELETE /v1/admin/archive/{video_id}` (404 when nothing stored), `archive` in `GET /v1/admin/status`. Web UI:
+  *Admin → Media archive* (`#/admin/archive`, usage card, one row per video with format/size/sha/age, Remove with confirm), linked from the
+  users page; `jobtext.js` names the `media_archive` stage.
+- Tests (`tests/test_media_archive.py`, no YouTube — the fake downloader and the env fixture): store/lookup round trip, content-addressed
+  dedupe, original-first lookup, missing file pruned, quota stop before a download, warn state, job reuses the archive on the second run
+  (downloader called once, `from_archive` in the event), job fails clear when full, admin API auth (401/403) and removal, scratch sweep
+  leaves the archive alone. Suite 654 passed, ruff clean.
+
 ## 2026-11-13 (job report: event log, delivery, detail page)
 
 - Why: the jobs list only showed kind/state/progress; a "ready" captions job for a Turkish video did not say what it produced or whether the TV

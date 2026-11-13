@@ -84,6 +84,9 @@ to `"none"` and `max_tokens` to 160. See [llm-providers.md](llm-providers.md).
 `captions_cooldown_max_s` (`1800`, the lower ceiling of the caption class), `captions_probe_retry_s` (`10`), `network_retry_s` (`60`),
 `max_background_queue` (`5`), and the yt-dlp JavaScript runtime (`js_runtime`, `js_runtime_path`, `remote_components`).
 
+**`[archive]`**: the media archive, see [Media archive](#media-archive): `path` (empty: `<data dir>/archive`), `quota_bytes`
+(`0`: no limit) and `warn_frac` (`0.9`).
+
 **`[transcripts]`**: `cache_ttl_s`, `no_captions_ttl_s` (default 3 days), `video_failure_ttl_s` (1 h), `empty_track_retry_s` (1 h), `fetch_timeout_s`, `default_language`, `cookies_file`
 (only if YouTube blocks the host), `skip_if_longer_than_s`. (`max_concurrency` is gone: `[youtube] max_concurrent` replaces it;
 an old entry is ignored.)
@@ -209,6 +212,25 @@ jitter_s = 2.0
 tier2_daily_cap_per_user = 30
 ```
 
+## Media archive
+
+Nothing downloaded from YouTube is thrown away, and nothing is downloaded twice. Every file a pipeline fetches (today: the
+original-language audio of a transcription; later: low-res video for frame features) is kept in the **media archive**:
+content-addressed by its sha256 under `[archive] path` (default `<data dir>/archive`, put it on a large disk), described by a
+`media_archive` row per video — format id, codec, bitrate, language, original-track flag, size, sha256, fetch time. Identical
+bytes are stored once; the scratch copy under `data_dir/media` is removed when the job is done, as before.
+
+Pipelines read from the archive first: a job whose video is already archived never contacts YouTube for its audio (no gate wait,
+the report shows "From the media archive"), and only a miss leads to a download, which the job then stores. Removing entries is
+an explicit admin act — *Admin → Media archive* in the web UI (usage against the quota, one row per video with format, size,
+sha256 and age, a *Remove* button) or `DELETE /v1/admin/archive/{video_id}` (`GET /v1/admin/archive` lists it). Nothing in the
+archive is ever deleted automatically, and the scratch sweep of `data_dir/media` never touches it.
+
+The quota (`[archive] quota_bytes`, `0`: no limit) never frees space by itself. At `warn_frac` (`0.9`) of the quota a warning is
+logged; at the quota new downloads are refused — the job fails with "The media archive is full; an admin must free space in it
+(nothing is deleted automatically)" — while archived media keeps serving every pipeline. A download whose storage fails (the
+archive disk is out of space or gone) fails the job and keeps the file in its scratch directory instead of deleting it.
+
 ## Users, pairing, devices
 
 A *user* is a person (own settings, own prompt sets). Create users with `utubot user add NAME` (token printed once, hash stored in
@@ -242,7 +264,7 @@ no external requests). Everything it shows comes from authenticated JSON endpoin
 | Captions | the automatic-transcription policy, "transcribe this video" from a link, the job list with cancel and retry; every job links to its [detail report](#job-details) |
 | TVs | *Link a TV* (a big one-time code and the steps), linked devices with revoke, the TV settings kept on the server |
 | Updates | the app version this server publishes, the newest GitHub release, the last `sync-github` run |
-| Admin | users (add, set a password, admin flag, pairing code), each user's settings and TVs |
+| Admin | users (add, set a password, admin flag, pairing code), each user's settings and TVs, the [media archive](#media-archive) (usage, per-video entries, manual cleanup) |
 
 Screenshots (390 x 844 at 2x): [home](screenshots/webui/02-home.png), [models](screenshots/webui/04-models.png),
 [prompts](screenshots/webui/06-prompts.png), [try a prompt](screenshots/webui/09-prompts-try.png),
@@ -275,7 +297,7 @@ The log is the `job_events` table: one row per event (`job_id`, `ts`, `stage`, `
 running job shows its progress and a crashed one shows where it stopped. Stages: `queued`, `promoted`, `started` (attempt and time
 waited), `gate_wait` (the YouTube class and how long the gate held the job), `caption_recheck` (found, none, delayed or skipped and why),
 `audio_download` (format id, original/dubbed/unmarked track, language, bytes, length, seconds, and `source`: `downloaded` or `from_archive`),
-`ffmpeg`, `chunking` (chunks and their sizes), `asr` and `asr_chunk` (engine, model, seconds, characters, detected language per chunk),
+`media_archive` (bytes and the sha256 prefix of what was kept; skipped when the audio came from the archive), `ffmpeg`, `chunking` (chunks and their sizes), `asr` and `asr_chunk` (engine, model, seconds, characters, detected language per chunk),
 `asr_fallback` (an engine gave up on a chunk, and why: `http_503`, `transport_timeout`, `unhealthy`, `language_mismatch` ...), `stitching`
 (seams, segments cut at overlaps, repeated words dropped), `diarization` (ran, or skipped and why: off, no Hugging Face token, package
 missing), `cues` (count, longest line), `text`, `translate`, `stored` (what was saved and how big), `retry`, `finished`, `failed` (cause

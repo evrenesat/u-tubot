@@ -11,6 +11,7 @@ from ..config import Config
 from ..db import Database
 from ..errors import MSG_JOB, MSG_JOB_RETRIES, MSG_TRANSCRIBE
 from ..llm import BACKGROUND, INTERACTIVE
+from ..media_archive import MediaArchiveError, MediaArchiveFull
 from ..transcripts import SOURCE_ASR, NoCaptions, TranscriptService
 from ..youtube import CLASS_MEDIA, FETCH_CLASSES, YoutubeDelayed, YoutubeVideoError
 from . import events
@@ -63,6 +64,7 @@ class JobQueue:
             removed = sweep_media(self.cfg.media_dir, self.cfg.captions.media_orphan_age_s)
             if removed:
                 log.info("removed %d orphaned media directories", removed)
+        self.pipeline.archive.sweep_scratch()
         interrupted = self.db.all("SELECT id FROM jobs WHERE status='running'")
         self.db.execute(
             "UPDATE jobs SET status='queued', progress=0, updated_at=? WHERE status='running'",
@@ -688,6 +690,12 @@ class JobQueue:
         except YoutubeVideoError as exc:
             self.transcripts.record_failure(job["video_id"], exc.reason)
             log.warning("%s job %s failed: %s", job["kind"], job["id"], exc.reason)
+            self._fail(job, exc.message, exc)
+        except MediaArchiveFull as exc:
+            log.warning("%s job %s failed: %s", job["kind"], job["id"], exc)
+            self._fail(job, exc.message, exc)
+        except MediaArchiveError as exc:
+            log.warning("%s job %s failed: %s", job["kind"], job["id"], exc)
             self._fail(job, exc.message, exc)
         except YoutubeDelayed as exc:
             self._retry(job, exc)
