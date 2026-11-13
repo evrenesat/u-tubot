@@ -59,6 +59,7 @@ class Transcript:
     meta: dict[str, Any] = field(default_factory=dict)
     engine: str | None = None
     model: str | None = None
+    segments: list[tuple[float, float, str]] | None = None
 
 
 @dataclass
@@ -67,6 +68,7 @@ class FetchResult:
     text: str | None
     lang: str | None
     answered: tuple[str, ...] | None = None
+    segments: list[tuple[float, float, str]] | None = None
 
 
 # A complete yt-dlp answer that lists no caption track says the video has none: the caption class
@@ -114,21 +116,41 @@ def segments_to_text(segments: list[tuple[float, str]]) -> str:
     return "\n".join(lines)
 
 
-def parse_json3(raw: str) -> list[tuple[float, str]]:
+def _load_segments(raw: str | None) -> list[tuple[float, float, str]] | None:
+    """The `(start, end, text)` rows stored next to a transcript, else None."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, list):
+        return None
+    return [(float(row[0]), float(row[1]), str(row[2])) for row in data if len(row) >= 3] or None
+
+
+def parse_json3(raw: str) -> list[tuple[float, float, str]]:
+    """`(start, end, text)` rows of a timedtext json3 answer.
+
+    An event lasts `dDurationMs`; when it names none, the row ends where the next begins (or has no
+    end, which `caption_cues` fills).
+    """
     data = json.loads(raw)
-    out: list[tuple[float, str]] = []
+    out: list[tuple[float, float, str]] = []
     for event in data.get("events", []):
         segs = event.get("segs")
         if not segs:
             continue
         text = "".join(seg.get("utf8", "") for seg in segs).replace("\n", " ").strip()
         if text:
-            out.append((event.get("tStartMs", 0) / 1000.0, text))
+            start = event.get("tStartMs", 0) / 1000.0
+            duration = (event.get("dDurationMs") or 0) / 1000.0
+            out.append((start, start + duration if duration > 0 else start, text))
     return out
 
 
-def parse_vtt(raw: str) -> list[tuple[float, str]]:
-    out: list[tuple[float, str]] = []
+def parse_vtt(raw: str) -> list[tuple[float, float, str]]:
+    out: list[tuple[float, float, str]] = []
     last = ""
     for block in re.split(r"\n\s*\n", raw.replace("\r", "")):
         lines = block.strip().split("\n")
@@ -138,9 +160,16 @@ def parse_vtt(raw: str) -> list[tuple[float, str]]:
                 continue
             h, mi, s, ms = (int(m.group(1) or 0), int(m.group(2)), int(m.group(3)), int(m.group(4)))
             start = h * 3600 + mi * 60 + s + ms / 1000
+            h2, mi2, s2, ms2 = (
+                int(m.group(5) or 0),
+                int(m.group(6)),
+                int(m.group(7)),
+                int(m.group(8)),
+            )
+            end = h2 * 3600 + mi2 * 60 + s2 + ms2 / 1000
             text = " ".join(TAG_RE.sub("", ln).strip() for ln in lines[i + 1 :]).strip()
             if text and text != last:
-                out.append((start, text))
+                out.append((start, max(end, start), text))
                 last = text
             break
     return out
@@ -292,10 +321,10 @@ class YoutubeFetcher:
             return FetchResult(meta, None, lang, answered=ANSWERED_NO_CAPTIONS)
         raw = await self._download_track(fmt["url"])
         segments = parse_json3(raw) if fmt["ext"] == "json3" else parse_vtt(raw)
-        text = segments_to_text(segments)
+        text = segments_to_text([(start, text) for start, _end, text in segments])
         if not text:
             raise YoutubeDelayed(REASON_EMPTY_TRACK, self.cfg.transcripts.empty_track_retry_s)
-        return FetchResult(meta, text, lang)
+        return FetchResult(meta, text, lang, segments=segments or None)
 
 
 class TranscriptService:
@@ -341,6 +370,7 @@ class TranscriptService:
             self.cached_meta(video_id) or {},
             row["engine"],
             row["model"],
+            segments=_load_segments(row["segments"]),
         )
 
     def no_captions(self, video_id: str) -> bool:
@@ -512,11 +542,19 @@ class TranscriptService:
             )
             raise NoCaptions(video_id)
         stored = self.db.execute_rc(
-            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at) VALUES(?,?,?,?,?)"
+            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,segments) VALUES(?,?,?,?,?,?)"
             " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
             " text=excluded.text, fetched_at=excluded.fetched_at, engine=NULL, model=NULL,"
-            " segments=NULL, job_id=NULL WHERE transcripts.source != ?",
-            [video_id, result.lang, SOURCE_CAPTIONS, result.text, time.time(), SOURCE_ASR],
+            " segments=excluded.segments, job_id=NULL WHERE transcripts.source != ?",
+            [
+                video_id,
+                result.lang,
+                SOURCE_CAPTIONS,
+                result.text,
+                time.time(),
+                json.dumps(result.segments) if result.segments else None,
+                SOURCE_ASR,
+            ],
         )
         self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])
         if not stored:
@@ -524,5 +562,10 @@ class TranscriptService:
             if kept is not None:
                 return kept
         return Transcript(
-            video_id, result.text, result.lang, SOURCE_CAPTIONS, self.cached_meta(video_id) or {}
+            video_id,
+            result.text,
+            result.lang,
+            SOURCE_CAPTIONS,
+            self.cached_meta(video_id) or {},
+            segments=result.segments,
         )

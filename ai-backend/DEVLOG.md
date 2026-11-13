@@ -18,6 +18,49 @@
   and validates the video id before using it as a file name; the test DNS guard also refuses
   bytes hosts and trailing-dot names (`www.youtube.com.`).
 
+## 2026-11-13 (lean HQ caption pipeline: improve existing captions, proofreading, alignment)
+
+- Why: "HQ captions" was fast ASR cut into cues. GitHub #33 (EVR-153) wants a lean pipeline with two cases: a video that already has
+  captions keeps their timing and gets better text; a video without captions gets the full audio path. Diarization is out of scope for
+  now (owner, 2026-11-13).
+- Captions first: a captions job now asks the transcript service what YouTube has (`caption_recheck`, same gate rules as transcript
+  jobs). A caption track with timings and a matching language improves (`CaptionPipeline.improve`); anything else — no captions, a
+  limited endpoint (`youtube_limited`), a track without timings, another language — builds from the audio (`run`), exactly as before.
+  The recheck never holds the audio back.
+- Improving existing captions: `transcripts.py` now parses timed segments (`start`, `end`, text) out of json3 (`dDurationMs`) and VTT,
+   carries them through the fetch and the `transcripts` row (the existing `segments` column), and returns them on `Transcript.segments`.
+  `captions/align.py caption_cues` turns them into cues (rolling repeats dropped, overlong text re-broken by `segment.retime_split` with
+  time shared by length); `merge_words_into_cues` replaces each cue's text with the ASR words whose midpoint falls inside its window
+  (margin `align_window_s`) and moves the boundaries to those words; a cue with no words keeps the caption text. When the ASR fails
+  entirely (`optional_asr`), the caption text is proofread and stored as it is (`asr` warn event, `engines_unavailable`).
+- Proofreading (`captions/proofread.py`): batches of `proofread_batch` (40) cue texts plus title/description (up to
+  `proofread_context_chars`) to `[llm.captions]`; the answer must be a JSON array of the same length, non-empty, and within
+  `proofread_max_ratio` (1.6) of the input length — otherwise the batch keeps its originals. An LLM failure warns per batch
+  (`proofread_batch` child event) and never fails the job. Corrected batches are cached in the new `stage_cache` table
+  (`captions/stages.py StageCache`), keyed by a sha256 of language, context and texts. Skips with `off` / `no_llm` events.
+- Alignment for the audio path: after `build_cues`, `snap_cues` nudges cue boundaries to the midpoint of a nearby silence
+  (`align_silence`, window `align_window_s`, silences by ffmpeg silencedetect with `silence_min_s`), never below `min_cue_s` and never
+  across a neighbour (`align` event, mode `silence`; the improve path uses mode `merge`).
+- Readability: `build_cues` now also splits when a cue would run faster than `max_cps` (20) characters per second (after `min_cue_s`).
+- ASR stage cache: `_recognise` keys the ASR answer by audio sha256 (from the media archive row), `want_words` and the requested
+  language; a cache hit skips the engines and reports `cached: true`. This makes a retried job (and a captions job after a transcript
+  job for the same audio) skip the transcription — the audio itself is reused through the archive anyway.
+- Vocal separation: `captions/separate.py`, off by default; `separation = "demucs"` runs `separation_cmd` (`demucs --two-stems vocals`,
+  must be on the PATH) over the 16 kHz WAV and re-converts the vocals stem for ASR. Missing tool, failure or `separation_timeout_s`
+  falls back to the original audio (`separation` event: ok / skipped `unavailable`), never fails the job. No music detector: the vocals
+  stem of a speech-only mix is the mix.
+- Diarization: the `diarization` stage only runs when `[captions] diarization` is not `none`; otherwise the stage is gone from the log.
+  The pyannote capability is unchanged.
+- Job report: new stages `separation`, `align` (mode `silence|merge`), `proofread` (corrected, warned, chars, cached) and
+  `proofread_batch` (a batch that kept its text), all labelled in `jobtext.js` (batch warnings hang under the proofread stage).
+  Config keys documented in `config.example.toml`; `docs/captions.md` rewritten around the two cases; `docs/server.md` and
+  `ai/CONTRACT.md` list the new stages.
+- Tests (`test_align.py`, `test_proofread.py`, `test_separate.py`, `test_stages.py`, `test_caption_source.py`, plus CPS/retime cases in
+  `test_captions.py`): no YouTube anywhere — fake fetcher (now with timed `segments`), mock ASR and mock LLM. The captions-job flow
+  tests cover improve (ASR words re-time and replace the text, proofread applied), fallbacks (no captions, no timings, other language,
+  broken ASR) and the stage cache (a retried job reports `cached: true` and reads the audio from the archive). Suite 691 passed, ruff
+  clean.
+
 ## 2026-11-13 (media archive: keep every downloaded file, issue 34)
 
 - Why: a job downloaded a video's audio, transcribed it and deleted everything; the next job downloaded the same audio again. Owner rule:

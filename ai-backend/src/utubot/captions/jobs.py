@@ -12,7 +12,7 @@ from ..db import Database
 from ..errors import MSG_JOB, MSG_JOB_RETRIES, MSG_TRANSCRIBE
 from ..llm import BACKGROUND, INTERACTIVE
 from ..media_archive import MediaArchiveError, MediaArchiveFull
-from ..transcripts import SOURCE_ASR, NoCaptions, TranscriptService
+from ..transcripts import SOURCE_ASR, SOURCE_CAPTIONS, NoCaptions, TranscriptService
 from ..youtube import CLASS_MEDIA, FETCH_CLASSES, YoutubeDelayed, YoutubeVideoError
 from . import events
 from .asr import normalize_language
@@ -480,6 +480,121 @@ class JobQueue:
             "UPDATE jobs SET progress=?, updated_at=? WHERE id=?", [value, time.time(), job_id]
         )
 
+    async def _run_captions(self, job: dict[str, Any]) -> None:
+        """HQ captions, lean: captions of the video are improved, missing ones are made from audio.
+
+        Case 1 (the video has captions): their timing is kept, the text is re-aligned to ASR words
+        and proofread (`CaptionPipeline.improve`). Case 2 (no captions, or YouTube will not answer
+        the check right now): the track is built from the audio (`CaptionPipeline.run`). The check
+        never holds the audio back: a limited caption or metadata endpoint goes straight to case 2.
+        """
+        video_id = job["video_id"]
+        priority = job["priority"]
+        gate = self.pipeline.gate
+        check = (
+            gate.interactive_ok(*FETCH_CLASSES)
+            if priority == INTERACTIVE
+            else gate.healthy(*FETCH_CLASSES)
+        )
+        if not check:
+            events.emit(
+                events.CAPTION_RECHECK,
+                events.SKIPPED,
+                reason="youtube_limited",
+                message="The caption or metadata endpoint of YouTube is limited right now; the track is built from the audio.",
+            )
+            await self.pipeline.run(
+                video_id,
+                job["lang"],
+                job["translate_to"],
+                lambda f: self._set_progress(job["id"], f),
+                priority,
+            )
+            return
+        found = await self._recheck_for_captions(video_id, priority)
+        if (
+            found is not None
+            and found.source == SOURCE_CAPTIONS
+            and found.segments
+            and self._lang_matches(job["lang"], found.lang)
+        ):
+            await self.pipeline.improve(
+                video_id,
+                found.segments,
+                found.lang,
+                job["translate_to"],
+                lambda f: self._set_progress(job["id"], f),
+                priority,
+            )
+            return
+        await self.pipeline.run(
+            video_id,
+            job["lang"],
+            job["translate_to"],
+            lambda f: self._set_progress(job["id"], f),
+            priority,
+        )
+
+    @staticmethod
+    def _lang_matches(lang: str, track_lang: str | None) -> bool:
+        """The requested language matches the track ("auto" always matches; base codes compare)."""
+        if lang == LANG_AUTO or not track_lang:
+            return True
+        return lang.split("-")[0].lower() == track_lang.split("-")[0].lower()
+
+    async def _recheck_for_captions(self, video_id: str, priority: int):
+        """Ask once more what captions exist; a Transcript, or None to build from audio."""
+        began = time.monotonic()
+
+        def took() -> float:
+            return round(time.monotonic() - began, 2)
+
+        try:
+            found = await self.transcripts.get(video_id, priority, recheck=True)
+        except NoCaptions:
+            events.emit(events.CAPTION_RECHECK, events.OK, result="no_captions", seconds=took())
+            return None
+        except YoutubeDelayed as exc:
+            events.emit(
+                events.CAPTION_RECHECK,
+                events.WARN,
+                result="delayed",
+                reason=exc.reason,
+                seconds=took(),
+                message="YouTube did not answer the caption check; the track is built from the audio.",
+            )
+            return None
+        except YoutubeVideoError as exc:
+            if not exc.can_transcribe:
+                events.emit(
+                    events.CAPTION_RECHECK,
+                    events.FAILED,
+                    result="video_unavailable",
+                    reason=exc.reason,
+                    seconds=took(),
+                )
+                raise
+            events.emit(
+                events.CAPTION_RECHECK,
+                events.WARN,
+                result="video_error",
+                reason=exc.reason,
+                seconds=took(),
+                message="YouTube refused the caption check, but the audio may still work.",
+            )
+            return None
+        events.emit(
+            events.CAPTION_RECHECK,
+            events.OK,
+            result="found",
+            source=found.source,
+            lang=found.lang,
+            timed=bool(found.segments),
+            chars=len(found.text),
+            seconds=took(),
+        )
+        return found
+
     async def _run_transcript(self, job: dict[str, Any]) -> None:
         """ASR, unless YouTube has captions after all: those are used and the audio is skipped.
 
@@ -671,13 +786,7 @@ class JobQueue:
             if job["kind"] == KIND_TRANSCRIPT:
                 await self._run_transcript(job)
             else:
-                await self.pipeline.run(
-                    job["video_id"],
-                    job["lang"],
-                    job["translate_to"],
-                    lambda f: self._set_progress(job["id"], f),
-                    job["priority"],
-                )
+                await self._run_captions(job)
             now = time.time()
             self.db.execute(
                 "UPDATE jobs SET status='ready', progress=1, updated_at=?, finished_at=?"

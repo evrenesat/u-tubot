@@ -221,6 +221,17 @@ class CaptionsConfig(BaseModel):
     max_lines: int = 2
     min_cue_s: float = 1.0
     max_cue_s: float = 7.0
+    max_cps: float = 20.0
+    align_silence: bool = True
+    align_window_s: float = 0.4
+    silence_min_s: float = 0.25
+    proofread: bool = True
+    proofread_batch: int = 40
+    proofread_max_ratio: float = 1.6
+    proofread_context_chars: int = 600
+    separation: Literal["off", "demucs"] = "off"
+    separation_cmd: list[str] = Field(default_factory=lambda: ["demucs", "--two-stems", "vocals"])
+    separation_timeout_s: float = 3600.0
     speaker_gap_s: float = 1.0
     sentence_gap_s: float = 0.6
     job_concurrency: int = 1

@@ -66,6 +66,9 @@ CREATE TABLE IF NOT EXISTS media_archive(
 CREATE TABLE IF NOT EXISTS captions(
   video_id TEXT NOT NULL, lang TEXT NOT NULL, label TEXT NOT NULL, speakers INTEGER NOT NULL,
   vtt TEXT NOT NULL, created_at REAL NOT NULL, job_id TEXT, PRIMARY KEY(video_id, lang));
+CREATE TABLE IF NOT EXISTS stage_cache(
+  video_id TEXT NOT NULL, stage TEXT NOT NULL, cache_key TEXT NOT NULL, json TEXT NOT NULL,
+  created_at REAL NOT NULL, PRIMARY KEY(video_id, stage, cache_key));
 CREATE TABLE IF NOT EXISTS device_tokens(
   id TEXT PRIMARY KEY, user TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, device TEXT NOT NULL,
   created_at REAL NOT NULL, last_used REAL);
