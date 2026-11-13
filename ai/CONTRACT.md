@@ -452,7 +452,11 @@ The phone web UI (`GET /`, static files under `/ui/`) uses the same API as the a
 ```
 
 `settings` is what applies (a TV reads this); `overrides` only what the user changed; `defaults` what a reset returns to. The
-precedence (override, `[users.policy]`, `[default_policy]`, built-in, then the server setting an unset field follows) is in
+summary default is dynamic: when the provider's discovered list has a model matching `models.summary_default_glob`
+(`ornith-*`) on the default provider, that model is the server default for the summary task (shown in `defaults.models.summary`
+and as "Server default" in the web UI), and summaries without a user choice run on it; with no match, a list that was never
+fetched, or an unreachable provider it falls back to `[llm.summary].model`. The precedence (override, `[users.policy]`,
+`[default_policy]`, built-in, then the server setting an unset field follows) is in
 [docs/server.md](../docs/server.md#per-user-settings). `version` rises by one on every change, also through `PUT /v1/me/policy` and
 the prompt-default calls. `auto_transcribe` is `off`, `on_dwell` or `on_open`; the TV settings are `summary_delay_ms` (0-10000),
 `summary_panel`, `auto_captions`, `update_checks`; thresholds are 0-1.01; at most 50 topics of at most 80 characters.
@@ -480,7 +484,9 @@ when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-adm
   what a task takes (`provider:id` for a provider other than the default). `new` marks models that appeared since the previous list
   (for 3 days); `added` those found by the latest fetch. A provider that fails is `ok:false` with a short `error` (and `stale:true`
   while an older list is kept). Admins also get `base_url` (no credentials). API keys are never returned.
-- `POST /v1/models/refresh` fetches again now (at most every 10 s; `refreshed:false` when it was too soon).
+- `POST /v1/models/refresh` fetches again now (at most every 10 s; `refreshed:false` when it was too soon). The backend also
+  refetches stale lists on its own every `models.refresh_interval_s` (600 s), so newly exposed models appear without a
+  manual refresh.
 
 ### Status and updates
 

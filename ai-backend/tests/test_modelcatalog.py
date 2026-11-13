@@ -138,3 +138,108 @@ async def test_providers_are_listed_default_first(env):
     alpha = body["providers"][1]
     assert alpha["models"][0]["value"] == "alpha:fast"
     assert body["providers"][0]["models"][0]["value"] == "fast"
+
+
+VID = "abcdefghijk"
+ORNITH = "ornith-1.0-35b-oq4e"
+TLDR_MARK = "TL;DR as 5 short bullet points"
+GLANCE_MARK = "280 characters"
+
+
+def calls_with(env, mark: str) -> list[dict]:
+    return [
+        c
+        for c in env.llm.calls
+        if mark in c["messages"][0]["content"] + c["messages"][1]["content"]
+    ]
+
+
+async def settings_doc(env):
+    return (await env.client.get("/v1/me/settings")).json()
+
+
+async def test_summary_default_falls_back_without_a_match(env):
+    """R7: no discovered model matches the glob, so the configured default stands."""
+    doc = await settings_doc(env)
+    assert doc["settings"]["models"]["summary"] == "worker"
+    assert doc["defaults"]["models"]["summary"] == "worker"
+
+
+async def test_summary_default_is_the_discovered_local_model(env):
+    """R7: a discovered `ornith-*` model on the default provider becomes the summary default."""
+    env.llm.models.append(ORNITH)
+    await env.client.get("/v1/models")
+    doc = await settings_doc(env)
+    assert doc["settings"]["models"]["summary"] == ORNITH
+    assert doc["defaults"]["models"]["summary"] == ORNITH
+    assert not doc["overrides"].get("models")
+
+
+async def test_summary_default_matches_by_name_not_version(env):
+    env.llm.models.append("Ornith-2.0-40B-oq5")
+    await env.client.get("/v1/models")
+    assert (await settings_doc(env))["settings"]["models"]["summary"] == "Ornith-2.0-40B-oq5"
+
+
+async def test_summary_default_falls_back_when_the_provider_is_unreachable(env):
+    env.llm.models.append(ORNITH)
+    env.llm.models_status = 503
+    await env.client.get("/v1/models")
+    doc = await settings_doc(env)
+    assert doc["settings"]["models"]["summary"] == "worker"
+
+
+async def test_summary_default_keeps_the_stale_match_while_the_provider_fails(env):
+    clock = use_clock(env)
+    env.llm.models.append(ORNITH)
+    await env.client.get("/v1/models")
+    env.llm.models_status = 503
+    clock.t += 301
+    prov = default_models((await env.client.get("/v1/models")).json())
+    assert prov["ok"] is False and prov["stale"] is True
+    doc = await settings_doc(env)
+    assert doc["settings"]["models"]["summary"] == ORNITH
+
+
+async def test_summaries_run_on_the_discovered_default(env):
+    env.llm.models.append(ORNITH)
+    await env.client.get("/v1/models")
+    body = (await env.client.get(f"/v1/videos/{VID}/summary", params={"wait_ms": 8000})).json()
+    assert body["status"] == "ready"
+    call = calls_with(env, TLDR_MARK)[-1]
+    assert call["model"] == ORNITH
+
+
+async def test_user_choice_beats_the_discovered_default(env):
+    env.llm.models.append(ORNITH)
+    await env.client.get("/v1/models")
+    r = await env.client.put("/v1/me/settings", json={"settings": {"models": {"summary": "smart"}}})
+    assert r.status_code == 200
+    body = (await env.client.get(f"/v1/videos/{VID}/summary", params={"wait_ms": 8000})).json()
+    assert body["status"] == "ready"
+    call = calls_with(env, TLDR_MARK)[-1]
+    assert call["model"] == "smart"
+    doc = await settings_doc(env)
+    assert doc["settings"]["models"]["summary"] == "smart"
+    assert doc["overrides"]["models"] == {"summary": "smart"}
+
+
+async def test_the_panel_keeps_its_configured_model(env):
+    """R7 is about the summary task; the glance panel keeps its fast configured model."""
+    env.llm.models.append(ORNITH)
+    await env.client.get("/v1/models")
+    body = (
+        await env.client.get(
+            f"/v1/videos/{VID}/summary", params={"prompt": "panel", "wait_ms": 8000}
+        )
+    ).json()
+    assert body["status"] == "ready"
+    call = calls_with(env, GLANCE_MARK)[-1]
+    assert call["model"] == "worker"
+
+
+async def test_disabling_the_glob_restores_the_configured_default(env):
+    env.cfg.models.summary_default_glob = ""
+    env.llm.models.append(ORNITH)
+    await env.client.get("/v1/models")
+    assert (await settings_doc(env))["settings"]["models"]["summary"] == "worker"

@@ -59,9 +59,11 @@ login_global_window_s = 3600
 cache_ttl_s = 300                 # 5 minutes
 error_ttl_s = 30                  # a failing provider is not asked again for this long
 refresh_min_interval_s = 10       # the "refresh" button is honoured at most this often
+refresh_interval_s = 600          # the backend refetches stale lists this often on its own
 timeout_s = 10.0
 new_for_s = 259200                # a model that appeared since the last list is marked "new" for 3 days
 max_models_per_provider = 2000
+summary_default_glob = "ornith-*" # a discovered local model matching this becomes the summary default
 
 # ---- LLM providers (all OpenAI-compatible chat completions) -----------------------------
 [llm]

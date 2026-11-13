@@ -66,7 +66,10 @@ published in `/setup.json` and in APK download links), `users_file` (default `da
 `login_global_failures`, `login_global_window_s` (see [Web UI](#web-ui)).
 
 **`[models]`**: the live model list behind the web UI: `cache_ttl_s` (300), `error_ttl_s` (30), `refresh_min_interval_s` (10),
-`timeout_s`, `new_for_s` (3 days), `max_models_per_provider`.
+`timeout_s`, `new_for_s` (3 days), `max_models_per_provider`, `refresh_interval_s` (600; the backend refetches stale provider
+lists this often in the background), `summary_default_glob` (`ornith-*`; a discovered model of the default provider matching it
+becomes the server default for the summary task, with `[llm.summary].model` as the fallback when nothing matches or the list is
+unavailable).
 
 **`[llm]`**: `default_provider`, `timeout_s`, `retries_on_bad_json`, `json_retry_max_tokens`, `reasoning_headroom_tokens`, `retry_max_attempts`, `retry_base_s`, `retry_max_s`,
 `deadline_interactive_s`, `deadline_background_s`; `[llm.providers.NAME]` with `base_url`, `api_key_env`, `max_concurrent`,

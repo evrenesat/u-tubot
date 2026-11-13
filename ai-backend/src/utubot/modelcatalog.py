@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -118,6 +119,24 @@ class ModelCatalog:
     def _first_seen(self, provider: str) -> dict[str, float]:
         rows = self.db.all("SELECT model, first_seen FROM model_seen WHERE provider=?", [provider])
         return {r["model"]: float(r["first_seen"]) for r in rows}
+
+    def preferred_summary(self) -> str | None:
+        """A discovered model of the default provider matching `models.summary_default_glob`.
+
+        Reads the last fetched list without going to the network, so every summary can pick its
+        default the same way the settings document does. Nothing matched, or the provider has
+        never answered, returns None and the summary falls back to its `[llm.summary]` model.
+        """
+        pattern = self.cfg.models.summary_default_glob.strip()
+        if not pattern:
+            return None
+        entry = self._entries.get(self.cfg.llm.default_provider)
+        if entry is None or not entry.ever_ok:
+            return None
+        for mid in entry.models:
+            if fnmatch.fnmatch(mid.casefold(), pattern.casefold()):
+                return self.value_for(self.cfg.llm.default_provider, mid)
+        return None
 
     async def refresh(self, *, force: bool, admin: bool = False) -> dict:
         """Fetch what is stale (or everything when forced and the minimum interval has passed)."""
