@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Debug builds only: plays a media file of the developer's own through the real player controller (see CaptionsHarnessActivity) -->
+    <application>
+        <activity
+            android:name="com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CaptionsHarnessActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+    </application>
+
+</manifest>

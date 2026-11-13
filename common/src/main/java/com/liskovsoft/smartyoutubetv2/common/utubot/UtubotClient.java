@@ -292,6 +292,61 @@ public class UtubotClient {
     }
 
     /**
+     * The file of a caption track, at most {@link UtubotCaptionStore#MAX_FILE_BYTES} long
+     */
+    public byte[] captionFile(String trackUrl) throws IOException {
+        String url = captionUrl(trackUrl);
+        Request.Builder builder;
+
+        try {
+            builder = new Request.Builder().url(url);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Bad caption address: " + url);
+        }
+
+        String authorization = authorizationFor(url);
+
+        if (authorization != null) {
+            builder.header("Authorization", authorization);
+        }
+
+        if (mIsCancelled) {
+            throw new IOException("Cancelled");
+        }
+
+        Call call = sBase.newCall(builder.build());
+        mCalls.add(call);
+        UtubotBusyTracker.instance().begin();
+
+        try (Response response = call.execute()) {
+            if (!response.isSuccessful()) {
+                throw new HttpException(response.code(), "HTTP " + response.code());
+            }
+
+            return response.body() != null ? readBoundedBytes(response.body().byteStream(), UtubotCaptionStore.MAX_FILE_BYTES) : new byte[0];
+        } finally {
+            mCalls.remove(call);
+            UtubotBusyTracker.instance().end();
+        }
+    }
+
+    private static byte[] readBoundedBytes(InputStream stream, int maxBytes) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] chunk = new byte[CHUNK_BYTES];
+        int read;
+
+        while ((read = stream.read(chunk)) != -1) {
+            out.write(chunk, 0, read);
+
+            if (out.size() > maxBytes) {
+                throw new IOException("The file is too large");
+            }
+        }
+
+        return out.toByteArray();
+    }
+
+    /**
      * The absolute address of a caption file
      */
     public String captionUrl(String trackUrl) {

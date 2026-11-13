@@ -394,6 +394,14 @@ public class PlayerUIController extends BasePlayerController {
     }
 
     @Override
+    public void onTrackSelected(FormatItem track) {
+        // A track picked by the app (e.g. the HQ captions of u·tubot) rather than from the dialog: the button follows it
+        if (track.getType() == FormatItem.TYPE_SUBTITLE) {
+            setSubtitleButtonState();
+        }
+    }
+
+    @Override
     public void onMetadata(MediaItemMetadata metadata) {
         if (getPlayer() == null) {
             return;

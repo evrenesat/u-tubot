@@ -40,8 +40,12 @@ so the other flavors behave as before.
 | `misc/AppDataSourceManager.java` | Settings entry "u·tubot", with its own tile icon `R.drawable.settings_utubot` | settings screen; Content filtering keeps `settings_aislist` |
 | `common/src/main/res/drawable-nodpi/settings_utubot.png` | new: the symbol, white on transparent, 302x302 with the canvas and padding of `settings_about.png`; `assets/brand/render.py` draws it from `utubot-symbol-mono.svg` | tile of the u·tubot Settings entry |
 | `utils/SimpleEditDialog.java` | `showNumber` | numeric pairing code dialog |
-| `exoplayer/controller/ExoPlayerController.java` | captions prefetch in `setVideo`, `attachUtubotCaptions` on source change, `selectUtubotCaptions` | HQ caption tracks, auto-select |
+| `exoplayer/controller/ExoPlayerController.java` | `followCaptions` in `setVideo` (stopped in `release`), `attachUtubotCaptions` on source change (keeps the source it merged into), `onUtubotCaptionsReady` (opens the source again with a track that came while playing, toast), `selectUtubotCaptions` (after the tracks changed), `isSelected` (an HQ track and a YouTube track in one language are two picks) | HQ caption tracks, live add, auto-select |
+| `tv/ui/widgets/embedplayer/EmbedPlayerView.java` | `setUtubotCaptionsEnabled(false)` | the muted previews of the cards take no HQ captions and wait for no job |
 | `exoplayer/selector/TrackSelectorUtil.java` | track name lookup | "u·tubot: label" in the subtitle picker |
+| `exoplayer/selector/TrackSelectorManager.java` | `findUtubotCaptionTrack` first in `findBestMatch`, `invalidateSubtitles` | an HQ track is picked by its id, not by the language it shares with YouTube's track |
+| `app/models/playback/controllers/VideoStateController.java` | `restoreSubtitleFormat` leaves the HQ track of the video selected | the saved subtitle choice (usually none) is applied twice per video, the second time after the HQ track was picked (#31) |
+| `app/models/playback/controllers/PlayerUIController.java` | `onTrackSelected` refreshes the CC button | the button follows a track the app picked |
 | `tv/presenter/VideoCardPresenter.java` | mark with own colour, `addMark` overload, card tag | mark rendering, panel reads the focused card |
 | `tv/ui/modern/widgets/ModernVideoCard.java` | card tag | panel reads the focused card |
 | `tv/ui/common/LeanbackActivity.java` | `UtubotPanelController` (key dispatch, resume, pause) | passive Summary panel and the Summary view (not in the player activity) |
@@ -113,6 +117,18 @@ so the other flavors behave as before.
   backend typed on 0.2.0); a setup that stored an empty address keeps none.
 - HQ captions: fetched with the `Authorization` header (never `?token=`); the header is only sent to the backend: same scheme, host
   and port, path under the backend's (`UtubotClient.authorizationFor`).
+- HQ captions, from start to storage (#31). `ExoPlayerController.setVideo` hands the video to `UtubotManager.followCaptions`
+  (`UtubotCaptionsFollower`): one `GET /captions` at the start, then every 10 s while the answer is `queued` or `running` (at most 2 h,
+  5 errors in a row). A ready answer is downloaded (`UtubotClient.captionFile`, header scoped to the backend) into
+  `UtubotCaptionStore` (`files/utubot_captions/<video id>/<lang>.vtt`), then kept in memory and given to the player. The store is
+  permanent: only WebVTT of at most 4 MiB, a track never replaced, nothing deleted, not cleared by a change of backend or token (the
+  memory caches are). `UtubotCaptions.attach` merges the stored tracks (no backend needed) and, until a track is stored, the answer
+  in memory (played from the backend). A video whose captions are stored makes no request.
+  At the start the track is selected when "auto-select HQ captions" is on (default). Captions that come after the source was opened
+  (a job finished while playing, or a late answer) open the source again with the track at the same position; the user-requested
+  ones are selected whatever the setting says and announced ("u·tubot captions ready"). `VideoStateController.restoreSubtitleFormat`
+  does not replace an HQ track of the playing video with the saved choice; the user's own pick in the subtitle menu always wins.
+  Not for the merged live sources (`openMerged`).
 - What the app keeps of the backend (`UtubotManager`: verdicts, summaries, captions, the prompt list, the session prompt) is dropped when
   `UtubotSettings.setUrl` or `setToken` changes a value (applySetup, Advanced, pairing all go through them), and the prompt list
   also when a prompt is made default, imported or refreshed. A request in flight during a switch is not stored
@@ -160,6 +176,13 @@ export JAVA_HOME=/path/to/jdk-25
 
 A private build can bake an address with `-PutubotUrl=https://host -PutubotToken=utb_...` or the gitignored
 `utubot.properties` at the repo root (`utubotUrl=`, `utubotToken=`). Both default to empty.
+
+## Checking the HQ captions without YouTube
+
+No test or check of this layer may contact YouTube. Debug builds of the flavor carry `CaptionsHarnessActivity` (`smarttubetv/src/stutubotDebug`,
+not in release builds): it plays a media file through the real `ExoPlayerController`, `TrackSelectorManager` and subtitle view, with the
+video id of your choice, so the captions of the mock backend can be checked on an emulator. `docs/development.md` ("Checking the HQ
+captions") has the recipe, including the network namespace that keeps the emulator away from the internet.
 
 ## End-to-end test without a device
 

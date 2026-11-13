@@ -77,6 +77,33 @@ not visible to the user, which is how an invisible grid shows: `modern_browse_co
 For an update, serve an `update.json` with a higher version (`downloadUrlList_x86` next to `downloadUrlList`) and an APK built with
 `-PutubotVersionName=0.9.0`.
 
+### Checking the HQ captions
+
+No test or check may contact YouTube. The app's own screens play YouTube videos only, so debug builds of the `stutubot` flavor include
+`CaptionsHarnessActivity` (`smarttubetv/src/stutubotDebug`): it plays a media file through the real player controller with the app's
+subtitle view and lists the subtitle formats on screen (Up and Down pick the previous and the next one, like the subtitle menu). The mock
+backend serves the files: `--media DIR` (a local stream, with byte ranges), `--vtt FILE` (the captions), and
+`/__mock/captions?video=ID&state=none|queued|running|ready|failed[&after=SECONDS][&latency=SECONDS]` sets the state of a video's captions.
+
+```sh
+ffmpeg -f lavfi -i testsrc=size=640x360:rate=25 -f lavfi -i sine=frequency=440 -t 240 -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart temp/media/test.mp4
+# Keep the emulator away from the internet: one network namespace with only a loopback, its own adb server on another port
+unshare -n sleep 14400 &  NS="nsenter -t $! -n"   # (pid of the sleep: pgrep -n -x sleep)
+$NS ip link set lo up
+$NS python3 scripts/emulator_mock_backend.py --port 18790 --vtt temp/captions.vtt --media temp/media &
+$NS emulator -avd tv -port 5554 -no-window -no-audio -memory 2048 -cores 2 &
+ADB="$NS adb -P 5038 -s emulator-5554"      # never the shared adb server on 5037
+$ADB install -r smarttubetv/build/outputs/apk/stutubot/debug/u-tubot_<ver>_x86.apk       # prefs as above (url, token)
+$NS curl "localhost:18790/__mock/captions?video=harnessCapA&state=running&after=25"        # a job that finishes while it plays
+$ADB shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CaptionsHarnessActivity \
+    --es video_id harnessCapA --es url http://10.0.2.2:18790/media/test.mp4
+```
+
+After the first run the captions are in the app's storage (`files/utubot_captions`): stop the mock, copy the MP4 into the app's files
+(`run-as dev.utubot.tv cp`) and start the harness with a `file:///data/data/dev.utubot.tv/files/test.mp4` url to see them offered
+without a backend. Screenshots of such a run: `docs/screenshots/captions/`. The harness is not the app's screens: the saved subtitle
+choice is applied by `VideoStateController`, which only the unit tests (`UtubotCaptionsRestoreTest`) run.
+
 ### Private builds with a baked backend
 
 A build for your own devices may carry defaults: `-PutubotUrl=https://utubot.example.com -PutubotToken=...` or a gitignored

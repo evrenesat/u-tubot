@@ -1,5 +1,36 @@
 # u·tubot devlog
 
+## 2026-11-13 (HQ captions did not show, issue 31)
+
+- Report from a real TV (Android TV 14, Modern skin): the job finished, the TV fetched `/captions` and `/captions/tr.vtt` (200, 48 KB)
+  and nothing appeared. Root cause (found in the player's log, track selection and the order of events): `ExoPlayerController` selected
+  the HQ track when the tracks appeared, which also starts the download of the file, and about 1.5 s later `VideoStateController.onMetadata`
+  ran `restoreSubtitleFormat()`: the subtitle choice saved in the settings ("no subtitles" by default) was applied again, which cleared
+  the selection override ("Something went wrong. Selected track not found for renderer=2") and every later selection pass found no match.
+  Not the cause: the MIME type, the numbered cues (the file parses), the language, the renderer, the style.
+- Fix: `UtubotCaptions.mayRestoreSavedChoice` (what is selected is the HQ track of this video: the saved choice is not applied;
+  the track of another video or any other track gives way as before). `UtubotCaptionsRestoreTest` runs the real `VideoStateController`
+  and fails without the guard. Also: the HQ track is picked by id (`TrackSelectorManager.findBestMatch`; YouTube's track in the same
+  language comes first in the list and won the match by language, and `selectFormat` took the two for the same pick), the CC button
+  follows a track the app picked (`PlayerUIController.onTrackSelected`), and the subtitle tracks are read again after the tracks changed.
+- Live: `UtubotCaptionsFollower` (on `UtubotScheduler`) asks for the captions of the playing video, polls a queued or running job every
+  10 s (at most 2 h, 5 errors) and tells the player when they are ready; the player opens the source again with the track (`prepare(source,
+  false, false)`, the position is kept, about 1-4 s of rebuffering), selects it (asked-for captions always, late ones by the setting)
+  and toasts "u·tubot captions ready" only for a job that finished while playing. `Prepare HQ captions` tells the follower for the video
+  that plays.
+- Persistence: `UtubotCaptionStore` keeps the downloaded VTT under `files/utubot_captions/<video id>/<lang>.vtt` (+ `index.json` with the
+  labels; the files are the truth, a lost index costs the labels). Only WebVTT of at most 4 MiB is stored, written beside the file and
+  renamed, never replaced, never deleted, and a change of backend does not touch it. `UtubotCaptions.attach` merges stored tracks even
+  without a backend; the backend's own answer is only used for tracks not stored yet. Unit tests: `UtubotCaptionStoreTest`,
+  `UtubotCaptionsOfflineTest` (a restart, the backend gone, a change of backend, a failed download retried).
+- Verification never touches YouTube (owner rule): the first runs on the emulator did play a real video (before the rule reached
+  this work; their screenshots were dropped); everything kept was redone with a debug-only harness, `CaptionsHarnessActivity`, that
+  plays a generated local MP4 through the real `ExoPlayerController` and `TrackSelectorManager`, with the mock backend serving the real
+  `tr.vtt`, in a network namespace with no route out (`docs/development.md`, "Checking the HQ captions"). Checked: a job that finishes
+  while playing (toast, track listed and selected, cues, position kept), the captions from the store with the backend off after a
+  restart, auto-select off (offered, not selected), picking "Subtitles disabled" and the track again. Screenshots: `docs/screenshots/captions/`.
+  The harness does not run the app's screens, so the saved-choice clash itself is covered by the unit test, not by the emulator.
+
 ## 2026-11-12 (server messages in the app, issue 25)
 
 - The server's words win: `UtubotStateText.noCaptionsShort` (the passive panel) used the local "press Info to transcribe" whenever

@@ -26,9 +26,13 @@ import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo;
+import com.liskovsoft.sharedutils.helpers.Helpers;
+import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptions;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptionsFollower;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Captions;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.BuildConfig;
 import com.liskovsoft.smartyoutubetv2.common.R;
@@ -65,12 +69,22 @@ import org.json.JSONArray;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.util.List;
+import java.util.Set;
 
 public class ExoPlayerController implements Player.EventListener {
     private static final String TAG = ExoPlayerController.class.getSimpleName();
     private final Context mContext;
     private final ExoMediaSourceFactory mMediaSourceFactory;
     private boolean mUtubotCaptionsSelectPending;
+    /**
+     * What was opened before the HQ captions were merged in, to open it again with them when they come while it plays. Null for the
+     * sources the captions are not merged into.
+     */
+    @Nullable
+    private MediaSource mUtubotBaseSource;
+    private boolean mUtubotCaptionsAttached;
+    private boolean mUtubotCaptionsEnabled = true;
+    private final UtubotCaptionsFollower.Listener mUtubotCaptionsListener = this::onUtubotCaptionsReady;
     private final TrackSelectorManager mTrackSelectorManager;
     private final TrackInfoFormatter2 mTrackFormatter;
     private final TrackErrorFixer mTrackErrorFixer;
@@ -470,34 +484,93 @@ public class ExoPlayerController implements Player.EventListener {
     }
 
     /**
-     * The HQ captions of the backend, when they were fetched in time (see setVideo). Not in the merged live sources: their tracks
-     * are filtered by codec and bitrate, which a text track has none of.
+     * The HQ captions of the backend, when they were fetched in time (see setVideo; the ones that come later are added by
+     * {@link #onUtubotCaptionsReady}). Not in the merged live sources: their tracks are filtered by codec and bitrate, which a text
+     * track has none of.
      */
     private MediaSource attachUtubotCaptions(MediaSource mediaSource) {
         Video video = getVideo();
+        mUtubotBaseSource = null;
+        mUtubotCaptionsAttached = false;
+        mUtubotCaptionsSelectPending = false;
 
-        if (!UtubotSettings.isBuiltIn() || video == null || mediaSource instanceof MergingMediaSource) {
+        if (!UtubotSettings.isBuiltIn() || !mUtubotCaptionsEnabled || video == null || mediaSource instanceof MergingMediaSource) {
             return mediaSource;
         }
 
+        mUtubotBaseSource = mediaSource;
         MediaSource merged = UtubotCaptions.attach(mContext, mediaSource, video.videoId);
-        mUtubotCaptionsSelectPending = merged != mediaSource && UtubotSettings.instance(mContext).isAutoCaptionsEnabled();
+        mUtubotCaptionsAttached = merged != mediaSource;
+        mUtubotCaptionsSelectPending = mUtubotCaptionsAttached && UtubotCaptions.shouldSelect(isUtubotAutoCaptionsEnabled(), false);
         return merged;
     }
 
     /**
-     * Selects the HQ captions track once the tracks are there, when it's set to
+     * The HQ captions came after the source was opened (a job that was running, or an answer that was late). The source is opened
+     * again with them where the video is, and the track is selected when it is wanted: captions the user asked for always, the others
+     * with the setting "Select HQ captions automatically".
      */
-    private void selectUtubotCaptions() {
-        if (!mUtubotCaptionsSelectPending) {
+    private void onUtubotCaptionsReady(String videoId, Captions captions, boolean requested) {
+        Video video = getVideo();
+
+        if (mPlayer == null || mUtubotBaseSource == null || mUtubotCaptionsAttached || video == null || !videoId.equals(video.videoId)
+                || mPlayer.getPlaybackState() == Player.STATE_IDLE || mPlayer.getPlaybackState() == Player.STATE_ENDED) {
             return;
         }
 
-        mUtubotCaptionsSelectPending = false;
+        MediaSource merged = UtubotCaptions.attach(mContext, mUtubotBaseSource, videoId);
 
-        for (MediaTrack track : mTrackSelectorManager.getSubtitleTracks()) {
-            if (UtubotCaptions.isCaptionTrack(track.format)) {
+        if (merged == mUtubotBaseSource) {
+            return;
+        }
+
+        Log.d(TAG, "HQ captions of %s are ready: opening the source again with them at %s ms", videoId, mPlayer.getCurrentPosition());
+
+        mUtubotCaptionsAttached = true;
+        mUtubotCaptionsSelectPending = UtubotCaptions.shouldSelect(isUtubotAutoCaptionsEnabled(), requested);
+
+        if (requested) {
+            MessageHelpers.showMessage(mContext, R.string.utubot_captions_ready);
+        }
+
+        mTrackSelectorManager.invalidate();
+        mPlayer.prepare(merged, false, false);
+    }
+
+    /**
+     * Off for the muted previews of the cards: no captions, no waiting for a job
+     */
+    public void setUtubotCaptionsEnabled(boolean enabled) {
+        mUtubotCaptionsEnabled = enabled;
+    }
+
+    private boolean isUtubotAutoCaptionsEnabled() {
+        return UtubotSettings.instance(mContext).isAutoCaptionsEnabled();
+    }
+
+    /**
+     * Selects the HQ captions track of the video once the tracks are there, when it's set to
+     */
+    private void selectUtubotCaptions() {
+        Video video = getVideo();
+
+        if (!mUtubotCaptionsSelectPending || video == null) {
+            return;
+        }
+
+        // What was read before these tracks were there (e.g. by the subtitle button) is not what the player has now
+        mTrackSelectorManager.invalidateSubtitles();
+        Set<MediaTrack> subtitleTracks = mTrackSelectorManager.getSubtitleTracks();
+
+        if (subtitleTracks == null) {
+            return;
+        }
+
+        for (MediaTrack track : subtitleTracks) {
+            if (track.format != null && UtubotCaptions.isCaptionTrackOf(track.format.id, video.videoId)) {
+                mUtubotCaptionsSelectPending = false;
                 mTrackSelectorManager.selectTrack(track);
+                mEventListener.onTrackSelected(ExoFormatItem.from(track));
                 return;
             }
         }
@@ -578,6 +651,11 @@ public class ExoPlayerController implements Player.EventListener {
     }
     
     public void release() {
+        if (UtubotSettings.isBuiltIn()) {
+            UtubotManager.instance(mContext).stopFollowingCaptions(mUtubotCaptionsListener);
+        }
+
+        mUtubotBaseSource = null;
         mTrackSelectorManager.release();
         mMediaSourceFactory.release();
         releasePlayer();
@@ -653,10 +731,22 @@ public class ExoPlayerController implements Player.EventListener {
     }
     
     public void setVideo(Video video) {
+        Video previous = getVideo();
         mVideo = new WeakReference<>(video);
 
-        if (UtubotSettings.isBuiltIn() && video != null) {
-            UtubotManager.instance(mContext).prefetchCaptions(video.videoId);
+        // What is open still belongs to the previous video until the next source is opened: its captions must not be added to it
+        if (previous != null && (video == null || !Helpers.equals(previous.videoId, video.videoId))) {
+            mUtubotBaseSource = null;
+            mUtubotCaptionsAttached = false;
+            mUtubotCaptionsSelectPending = false;
+        }
+
+        if (UtubotSettings.isBuiltIn() && mUtubotCaptionsEnabled) {
+            if (video != null) {
+                UtubotManager.instance(mContext).followCaptions(video.videoId, mUtubotCaptionsListener);
+            } else {
+                UtubotManager.instance(mContext).stopFollowingCaptions(mUtubotCaptionsListener);
+            }
         }
     }
     
@@ -679,11 +769,20 @@ public class ExoPlayerController implements Player.EventListener {
     public void selectFormat(FormatItem formatItem) {
         if (formatItem != null && formatItem.getTrack() != null) {
             FormatItem selectedFormatItem = getSelectedFormat(formatItem.getTrack().rendererIndex);
-            if (!formatItem.equals(selectedFormatItem)) {
+            if (!isSelected(formatItem, selectedFormatItem)) {
                 mTrackSelectorManager.selectTrack(formatItem.getTrack());
                 mEventListener.onTrackSelected(formatItem);
             }
         }
+    }
+
+    /**
+     * Subtitles are told apart by their language, so the HQ track of the backend and a track of YouTube in the same language are not
+     * the same pick.
+     */
+    private static boolean isSelected(FormatItem formatItem, @Nullable FormatItem selectedFormatItem) {
+        return formatItem.equals(selectedFormatItem) && (formatItem.getType() != FormatItem.TYPE_SUBTITLE ||
+                UtubotCaptions.isSameSource(formatItem.getFormatId(), selectedFormatItem.getFormatId()));
     }
 
     public FormatItem getVideoFormat() {

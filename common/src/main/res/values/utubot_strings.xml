@@ -64,6 +64,7 @@
     <string name="utubot_prepare_captions">Prepare HQ captions</string>
     <string name="utubot_captions_status">HQ captions: %s</string>
     <string name="utubot_captions_failed">HQ captions failed: %s</string>
+    <string name="utubot_captions_ready">u·tubot captions ready</string>
     <string name="utubot_panel_prompt">Prompt</string>
     <string name="utubot_panel_loading">Summarizing…</string>
     <string name="utubot_panel_waiting">Waiting…</string>

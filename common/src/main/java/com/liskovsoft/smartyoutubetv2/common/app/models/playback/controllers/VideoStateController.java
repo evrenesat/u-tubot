@@ -14,6 +14,8 @@ import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem;
 import com.liskovsoft.smartyoutubetv2.common.misc.MediaServiceManager;
 import com.liskovsoft.smartyoutubetv2.common.misc.ScreensaverManager;
 import com.liskovsoft.smartyoutubetv2.common.prefs.GeneralData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptions;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utils.AppDialogUtil;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 
@@ -505,6 +507,14 @@ public class VideoStateController extends BasePlayerController {
 
     private void restoreSubtitleFormat() {
         if (getPlayer() == null) {
+            return;
+        }
+
+        // The HQ captions of u·tubot, picked for this video after the saved choice (usually "no subtitles") was applied, stay
+        FormatItem selected = getPlayer().getSubtitleFormat();
+
+        if (UtubotSettings.isBuiltIn() && selected != null && getVideo() != null
+                && !UtubotCaptions.mayRestoreSavedChoice(selected.getFormatId(), getVideo().videoId)) {
             return;
         }
 

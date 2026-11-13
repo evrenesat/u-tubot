@@ -16,9 +16,11 @@ Whisper, optionally labels speakers, and serves a WebVTT track the TV adds to th
 6. **Store.** The track is saved as `<language> (u·tubot)` or `<language> (u·tubot, N speakers)`. Speaker turns are prefixed
    `[S1] `, `[S2] `. The downloaded media is deleted unless `keep_media = true`.
 
-Optionally `translate_to` translates the cues with `[llm.captions]`. Captions are shared by everyone on the server. The TV polls the
-job and, when ready, adds the track; with *Select HQ captions automatically* it is turned on for you. The app fetches the VTT with
-its `Authorization` header.
+Optionally `translate_to` translates the cues with `[llm.captions]`. Captions are shared by everyone on the server. The TV follows the
+job while the video plays and, when it is ready, adds the track to the video and turns it on (you asked for it) with a short "u·tubot
+captions ready"; at the start of a video the setting *Select HQ captions automatically* decides. The app fetches the VTT once, with
+its `Authorization` header, and keeps the file in its own storage: the subtitle menu offers it for that video from then on, after a
+restart or an update, with another backend or with this one off the air.
 
 Every step above is written to the job's event log with its time, and the web UI shows it as a timeline with the result and the clients that
 fetched it (`server.md`, Job details).

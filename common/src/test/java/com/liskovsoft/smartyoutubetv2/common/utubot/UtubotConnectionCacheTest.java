@@ -130,7 +130,7 @@ public class UtubotConnectionCacheTest {
         mManager.setSessionPrompt("builtin/tldr");
         mManager.putVerdict(readyVerdict("v1"));
         mManager.summaryObserve(video(READY_ID), "panel").blockingFirst();
-        mManager.prefetchCaptions(CAPTIONS_ID);
+        mManager.followCaptions(CAPTIONS_ID, (videoId, captions, requested) -> { });
 
         long deadline = System.currentTimeMillis() + WAIT_MS;
 

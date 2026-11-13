@@ -145,7 +145,10 @@ public final class UtubotMenu {
         RxHelper.disposeActions(sAction);
         sAction = UtubotManager.instance(context).prepareCaptionsObserve(video.videoId)
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(status -> MessageHelpers.showMessage(context, context.getString(R.string.utubot_captions_status, status)),
+                .subscribe(status -> {
+                            MessageHelpers.showMessage(context, context.getString(R.string.utubot_captions_status, status));
+                            UtubotManager.instance(context).captionsRequested(video.videoId, status);
+                        },
                         error -> MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_captions_failed, error.getMessage())));
     }
 }
