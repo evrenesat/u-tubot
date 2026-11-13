@@ -141,8 +141,8 @@ def test_remove_is_explicit_and_never_takes_a_file_another_entry_uses(tmp_path, 
     arc.store(OTHER, write_media(tmp_path, "b", MEDIA))
     alone = arc.store(THIRD, write_media(tmp_path, "c", b"unique"))
     removed, freed = arc.remove(VID)
-    assert (removed, freed) == (1, len(MEDIA))
-    assert arc.path_of(shared).is_file(), "OTHER still uses the same bytes"
+    assert (removed, freed) == (1, 0), "the bytes stay: OTHER still uses the same file"
+    assert arc.path_of(shared).is_file()
     assert arc.count() == 2
     assert arc.remove(VID) == (0, 0)
     assert arc.lookup(VID) is None and arc.lookup(OTHER) is not None
@@ -310,3 +310,22 @@ def test_the_video_kind_is_a_distinct_entry_for_later_pipelines(tmp_path, cfg):
     assert arc.lookup(VID, KIND_AUDIO)["sha256"] != frame["sha256"]
     assert arc.lookup(VID, KIND_VIDEO)["sha256"] == frame["sha256"]
     assert arc.lookup(VID, KIND_VIDEO)["ext"] == "mp4"
+
+
+def test_an_archive_inside_the_media_scratch_dir_is_refused(tmp_path, cfg):
+    cfg.archive.path = str(cfg.media_dir / "archive")
+    with pytest.raises(ValueError) as exc:
+        archive_of(cfg, Database(tmp_path / "t.sqlite"))
+    assert "orphan sweep" in str(exc.value)
+
+
+def test_a_failing_store_keeps_the_scratch_file(tmp_path, cfg):
+    arc = archive_of(cfg, Database(tmp_path / "t.sqlite"))
+    blocker = cfg.archive_dir
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_text("not a directory")
+    src = write_media(tmp_path, "audio", MEDIA)
+    with pytest.raises(MediaArchiveError) as exc:
+        arc.store(VID, src, work=cfg.media_dir / VID)
+    assert exc.value.work == cfg.media_dir / VID
+    assert src.is_file(), "nothing was recorded, so the download must survive"

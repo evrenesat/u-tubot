@@ -25,7 +25,7 @@
 - Tests (`tests/test_media_archive.py`, no YouTube — the fake downloader and the env fixture): store/lookup round trip, content-addressed
   dedupe, original-first lookup, missing file pruned, quota stop before a download, warn state, job reuses the archive on the second run
   (downloader called once, `from_archive` in the event), job fails clear when full, admin API auth (401/403) and removal, scratch sweep
-  leaves the archive alone. Suite 652 passed, ruff clean.
+  leaves the archive alone. Suite 654 passed, ruff clean.
 
 ## 2026-11-13 (job report: event log, delivery, detail page)
 

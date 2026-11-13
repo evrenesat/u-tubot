@@ -9,8 +9,9 @@ through `store`, which copies it into `files/<sha256[:2]>/<sha256>.<ext>` and re
 The quota (`[archive] quota_bytes`, 0: no limit) is a ceiling the archive never frees by itself:
 `require_room` refuses a download that would start past it (the job fails with a clear message
 and nothing was downloaded), and `store` warns when a file pushes the usage over it. Removing
-entries is an explicit admin act (`remove`, `remove_missing`) — the archive never deletes on its
-own, and the scratch sweep of `media_dir` never sees these files.
+entries is an explicit admin act (`remove`) — the archive never deletes on its own, its root is
+refused when it sits inside the media scratch directory, and the scratch sweep of `media_dir`
+never sees these files.
 """
 
 from __future__ import annotations
@@ -70,8 +71,22 @@ class MediaArchive:
     def __init__(self, cfg: Config, db: Database):
         self.cfg, self.db = cfg, db
         self.root = cfg.archive_dir
+        self._refuse_inside_media_dir()
         self.files = self.root / FILES_DIRNAME
         self.tmp = self.root / TMP_DIRNAME
+
+    def _refuse_inside_media_dir(self) -> None:
+        """The scratch sweep of `data_dir/media` must never see archive files (nothing deletes here)."""
+        try:
+            root = self.root.resolve()
+            media = self.cfg.media_dir.resolve()
+        except OSError:
+            return
+        if root == media or media in root.parents:
+            raise ValueError(
+                f"[archive] path ({self.root}) must not be inside the media scratch directory"
+                f" ({self.cfg.media_dir}): its orphan sweep removes old directories"
+            )
 
     # ---- reads ---------------------------------------------------------------------------------
 
@@ -206,42 +221,47 @@ class MediaArchive:
             raise MediaArchiveError(
                 f"the media archive could not keep the download: {exc}", work
             ) from None
+        size = dest.stat().st_size
+        rel = dest.relative_to(self.root).as_posix()
+        fetched_at = time.time()
+        try:
+            self.db.execute(
+                "INSERT OR IGNORE INTO media_archive(video_id,sha256,kind,format_id,codec,"
+                "bitrate_kbps,language,original,size,ext,path,fetched_at,job_id)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    video_id,
+                    sha256,
+                    kind,
+                    format_id,
+                    codec,
+                    bitrate_kbps,
+                    language,
+                    int(bool(original)),
+                    size,
+                    dest.suffix.lstrip("."),
+                    rel,
+                    fetched_at,
+                    job_id,
+                ],
+            )
+        except Exception as exc:
+            raise MediaArchiveError(
+                f"the media archive could not record the download: {exc}", work
+            ) from None
         try:
             src.unlink(missing_ok=True)
         except OSError:
             pass
-        size = dest.stat().st_size
-        rel = dest.relative_to(self.root).as_posix()
-        fetched_at = time.time()
-        self.db.execute(
-            "INSERT OR IGNORE INTO media_archive(video_id,sha256,kind,format_id,codec,"
-            "bitrate_kbps,language,original,size,ext,path,fetched_at,job_id)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            [
-                video_id,
-                sha256,
-                kind,
-                format_id,
-                codec,
-                bitrate_kbps,
-                language,
-                int(bool(original)),
-                size,
-                dest.suffix.lstrip("."),
-                rel,
-                fetched_at,
-                job_id,
-            ],
-        )
-        if self._warn_level():
+        if self.cfg.archive.quota_bytes > 0 and self.usage() > self.cfg.archive.quota_bytes:
             log.warning(
-                "media archive near its quota: %d of %d bytes (admin cleanup frees space)",
+                "media archive over its quota: %d of %d bytes (the file was kept anyway)",
                 self.usage(),
                 self.cfg.archive.quota_bytes,
             )
-        elif self.cfg.archive.quota_bytes > 0 and self.usage() > self.cfg.archive.quota_bytes:
+        elif self._warn_level():
             log.warning(
-                "media archive over its quota: %d of %d bytes (the file was kept anyway)",
+                "media archive near its quota: %d of %d bytes (admin cleanup frees space)",
                 self.usage(),
                 self.cfg.archive.quota_bytes,
             )
@@ -269,13 +289,13 @@ class MediaArchive:
         A file that another entry still uses stays. Returns (entries, bytes) that went away.
         """
         rows = self.db.all("SELECT * FROM media_archive WHERE video_id=?", [video_id])
-        removed = 0
         for row in rows:
             self.db.execute(
                 "DELETE FROM media_archive WHERE video_id=? AND sha256=?",
                 [video_id, row["sha256"]],
             )
-            removed += 1
+        removed = 0
+        freed = 0
         for row in rows:
             path = self.root / row["path"]
             still = self.db.one(
@@ -285,21 +305,9 @@ class MediaArchive:
                 log.info("media archive: a file of %s is still in use; kept", video_id)
             elif path.is_file():
                 path.unlink(missing_ok=True)
-        return removed, sum(int(r["size"]) for r in rows)
-
-    def remove_missing(self) -> tuple[int, int]:
-        """Drop entries whose file vanished out-of-band; reports the entries and bytes cleaned."""
-        gone = self.db.all("SELECT video_id,sha256,size,path FROM media_archive")
-        removed = 0
-        for row in gone:
-            if (self.root / row["path"]).is_file():
-                continue
-            self.db.execute(
-                "DELETE FROM media_archive WHERE video_id=? AND sha256=?",
-                [row["video_id"], row["sha256"]],
-            )
+                freed += int(row["size"])
             removed += 1
-        return removed, sum(int(r["size"]) for r in gone if not (self.root / r["path"]).is_file())
+        return removed, freed
 
     def sweep_scratch(self) -> None:
         """Left-over staging files (a crash between copy and rename) go; recorded rows never."""

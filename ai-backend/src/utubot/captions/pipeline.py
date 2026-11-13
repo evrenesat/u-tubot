@@ -247,9 +247,8 @@ class CaptionPipeline:
 
         entry = self.archive.lookup(video_id, KIND_AUDIO)
         if entry is not None:
-            with events.stage(events.AUDIO) as st:
+            with events.stage(events.AUDIO, source=events.AUDIO_FROM_ARCHIVE) as st:
                 st.set(
-                    source=events.AUDIO_FROM_ARCHIVE,
                     bytes=entry["size"],
                     format_id=entry["format_id"],
                     track="original" if entry["original"] else None,

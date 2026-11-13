@@ -151,7 +151,7 @@ const DESCRIBERS = {
     return join([d.result, reasonText(d.reason)]);
   },
   audio_download(d, status) {
-    if (status === "running") return "Downloading the audio";
+    if (status === "running") return d.source === "from_archive" ? "Reading the audio from the media archive" : "Downloading the audio";
     if (status === "failed") return join(["Download failed", reasonText(d.error_class)]);
     return join([
       d.source === "from_archive" ? "From the media archive" : "Downloaded",
