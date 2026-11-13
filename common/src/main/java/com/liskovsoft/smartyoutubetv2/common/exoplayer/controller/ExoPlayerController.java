@@ -82,6 +82,7 @@ public class ExoPlayerController implements Player.EventListener {
     @Nullable
     private MediaSource mUtubotBaseSource;
     private boolean mUtubotCaptionsAttached;
+    private boolean mUtubotCaptionsEnabled = true;
     private final UtubotCaptionsFollower.Listener mUtubotCaptionsListener = this::onUtubotCaptionsReady;
     private final TrackSelectorManager mTrackSelectorManager;
     private final TrackInfoFormatter2 mTrackFormatter;
@@ -492,7 +493,7 @@ public class ExoPlayerController implements Player.EventListener {
         mUtubotCaptionsAttached = false;
         mUtubotCaptionsSelectPending = false;
 
-        if (!UtubotSettings.isBuiltIn() || video == null || mediaSource instanceof MergingMediaSource) {
+        if (!UtubotSettings.isBuiltIn() || !mUtubotCaptionsEnabled || video == null || mediaSource instanceof MergingMediaSource) {
             return mediaSource;
         }
 
@@ -535,6 +536,13 @@ public class ExoPlayerController implements Player.EventListener {
         mPlayer.prepare(merged, false, false);
     }
 
+    /**
+     * Off for the muted previews of the cards: no captions, no waiting for a job
+     */
+    public void setUtubotCaptionsEnabled(boolean enabled) {
+        mUtubotCaptionsEnabled = enabled;
+    }
+
     private boolean isUtubotAutoCaptionsEnabled() {
         return UtubotSettings.instance(mContext).isAutoCaptionsEnabled();
     }
@@ -549,6 +557,8 @@ public class ExoPlayerController implements Player.EventListener {
             return;
         }
 
+        // What was read before these tracks were there (e.g. by the subtitle button) is not what the player has now
+        mTrackSelectorManager.invalidateSubtitles();
         Set<MediaTrack> subtitleTracks = mTrackSelectorManager.getSubtitleTracks();
 
         if (subtitleTracks == null) {
@@ -722,7 +732,7 @@ public class ExoPlayerController implements Player.EventListener {
     public void setVideo(Video video) {
         mVideo = new WeakReference<>(video);
 
-        if (UtubotSettings.isBuiltIn()) {
+        if (UtubotSettings.isBuiltIn() && mUtubotCaptionsEnabled) {
             if (video != null) {
                 UtubotManager.instance(mContext).followCaptions(video.videoId, mUtubotCaptionsListener);
             } else {

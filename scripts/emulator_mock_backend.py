@@ -22,12 +22,14 @@ answers `pending` + `transcribing` (at `progress`), without the app asking.
 
 HQ captions have a state of their own, per video, so they can be tried while the video plays:
 
-    GET /__mock/captions?video=ID&state=none|queued|running|ready|failed[&after=SECONDS]
+    GET /__mock/captions?video=ID&state=none|queued|running|ready|failed[&after=SECONDS][&latency=SECONDS]
 
 `state` sets the answer of `GET /v1/videos/ID/captions` at once; with `after` the answer stays `running` for that many seconds and then
-becomes `ready` (a job that finishes while the video plays). `POST /v1/videos/ID/captions` queues a job that is ready after `--captions-delay`
+becomes `ready` (a job that finishes while the video plays); `latency` holds every captions answer back that many seconds (captions that
+come after the player opened its source). `POST /v1/videos/ID/captions` queues a job that is ready after `--captions-delay`
 seconds (default 20). A ready answer lists the track `tr` ("Turkish (u·tubot)", `--lang` and `--label` change it) whose
-`GET /v1/videos/ID/captions/tr.vtt` serves the file of `--vtt` (default `temp-real-tr.vtt` in the working directory).
+`GET /v1/videos/ID/captions/tr.vtt` serves the file of `--vtt` (default `temp/captions.vtt` in the working directory). `--media DIR` serves
+the files of DIR under `/media/` with byte ranges: the local stream the debug build's captions harness plays (docs/development.md).
 """
 import argparse
 import json
@@ -46,7 +48,7 @@ STATE = {"mode": "ready", "delay": 1.0, "delayed_left": 2, "progress": {}, "tran
          "estimate": DEFAULT_ESTIMATE_S, "retry_after": DEFAULT_RETRY_AFTER_S, "start_progress": 0.0}
 LOCK = threading.Lock()
 CAPTIONS = {}
-CAPTIONS_CONFIG = {"delay": 20.0, "lang": "tr", "label": "Turkish (u\u00b7tubot)", "vtt": Path("temp-real-tr.vtt")}
+CAPTIONS_CONFIG = {"delay": 20.0, "lang": "tr", "label": "Turkish (u\u00b7tubot)", "vtt": Path("temp/captions.vtt"), "latency": 0.0}
 PROMPTS = [
     ("glance", "Glance", False, True),
     ("tldr", "TL;DR", True, False),
@@ -130,6 +132,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "mock"
     protocol_version = "HTTP/1.1"
     static_dir = None
+    media_dir = None
     base_url = ""
 
     def log_message(self, fmt, *args):
@@ -170,6 +173,37 @@ class Handler(BaseHTTPRequestHandler):
                                    "progress": 0.0, "estimate_s": STATE["estimate"]})
         return self.send_json({"error": "not found"}, 404)
 
+    def send_media(self, f):
+        """A local media file with byte ranges, the stream the harness plays in place of a video of YouTube"""
+        if not f.is_file():
+            return self.send_json({"error": "not found"}, 404)
+        size = f.stat().st_size
+        start, end, code = 0, size - 1, 200
+        m = re.match(r"bytes=(\d*)-(\d*)$", self.headers.get("Range") or "")
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                start = int(m.group(1))
+                end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+            else:
+                start = max(size - int(m.group(2)), 0)
+            code = 206
+        self.send_response(code)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if code == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with f.open("rb") as fh:
+            fh.seek(start)
+            left = end - start + 1
+            while left > 0:
+                chunk = fh.read(min(65536, left))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                left -= len(chunk)
+
     def do_PUT(self):
         return self.send_json({"ok": True})
 
@@ -192,6 +226,10 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["start_progress"] = float(q["progress"][0]) if "progress" in q else 0.0
             return self.send_json({k: (list(v) if isinstance(v, set) else v) for k, v in STATE.items()})
         if path == "/__mock/captions":
+            if "latency" in q:
+                CAPTIONS_CONFIG["latency"] = float(q["latency"][0])
+            if "video" not in q:
+                return self.send_json({"latency": CAPTIONS_CONFIG["latency"]})
             vid = q["video"][0]
             state = q.get("state", ["none"])[0]
             with LOCK:
@@ -204,6 +242,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(captions_answer(vid))
         if path == "/v1/health":
             return self.send_json({"ok": True, "version": "mock"})
+        if path.startswith("/media/") and self.media_dir:
+            return self.send_media(Path(self.media_dir) / Path(path[len("/media/"):]).name)
         if path == "/setup.json":
             return self.send_json({"utubot_setup": 1, "name": "Emulator mock", "backend_url": self.base_url,
                                    "update_url": self.base_url + "/app/update.json", "pairing": True,
@@ -264,6 +304,7 @@ class Handler(BaseHTTPRequestHandler):
                                    "key_points": ["a", "b"], "source": "youtube_captions"})
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/captions$", path)
         if m:
+            time.sleep(CAPTIONS_CONFIG["latency"])
             return self.send_json(captions_answer(m.group(1)))
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/captions/([A-Za-z-]+)\.vtt$", path)
         if m:
@@ -285,6 +326,7 @@ def main():
     ap.add_argument("--port", type=int, default=8790)
     ap.add_argument("--static", default=None)
     ap.add_argument("--base", default=None)
+    ap.add_argument("--media", default=None, help="folder served under /media/ (with byte ranges), for the captions harness of the debug build")
     ap.add_argument("--vtt", default=str(CAPTIONS_CONFIG["vtt"]), help="WebVTT file served as the HQ captions track")
     ap.add_argument("--lang", default=CAPTIONS_CONFIG["lang"])
     ap.add_argument("--label", default=CAPTIONS_CONFIG["label"])
@@ -293,6 +335,7 @@ def main():
     args = ap.parse_args()
     CAPTIONS_CONFIG.update(vtt=Path(args.vtt), lang=args.lang, label=args.label, delay=args.captions_delay)
     Handler.static_dir = args.static
+    Handler.media_dir = args.media
     Handler.base_url = args.base or f"http://10.0.2.2:{args.port}"
     ThreadingHTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
 

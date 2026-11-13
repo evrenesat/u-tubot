@@ -348,7 +348,10 @@ Stored for later threshold tuning.
 - Settings → u·tubot → Prompts: list sets, "Import from URL", "Refresh all",
   choose default.
 - Player: when `captions_ready`, offer the u·tubot track(s) in the subtitle
-  picker; optionally auto-select.
+  picker ("u·tubot: <label>"); optionally auto-select. The app asks `GET /v1/videos/{id}/captions` when a video starts and, while the
+  answer is `queued` or `running`, every 10 s while the video plays; ready captions are added to the playing video, selected and
+  announced. It downloads each ready track once (`GET .../captions/{lang}.vtt`, `Authorization` header) into its own storage and keeps
+  it for good: the backend is not asked again for a video whose captions are stored, and a track never changes once stored.
 - Settings: Import setup (first item), enable switches, mark-only switch, pairing, test button.
   Backend URL and token are under Advanced. Private builds can bake defaults
   (`-PutubotUrl=… -PutubotToken=…`); public builds ship with none.

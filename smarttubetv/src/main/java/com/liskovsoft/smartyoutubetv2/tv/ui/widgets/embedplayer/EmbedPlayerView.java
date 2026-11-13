@@ -559,6 +559,7 @@ public class EmbedPlayerView extends PlayerView implements PlaybackView {
         mPlayerInitializer = new ExoPlayerInitializer(getContext());
         mPlaybackPresenter.setView(this);
         mExoPlayerController = new ExoPlayerController(getContext(), mPlaybackPresenter);
+        mExoPlayerController.setUtubotCaptionsEnabled(false); // a preview of a card needs no HQ captions
         mExoPlayerController.setOnVideoLoaded(this::onVideoLoaded);
         mPlaybackPresenter.onViewInitialized(); // init all controllers
 

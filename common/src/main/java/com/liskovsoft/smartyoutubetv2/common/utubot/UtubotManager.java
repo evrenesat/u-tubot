@@ -440,7 +440,8 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      * the ones that come once the source is open. A video whose captions are kept needs no listener.
      */
     public void followCaptions(String videoId, UtubotCaptionsFollower.Listener listener) {
-        if (!mSettings.isConfigured() || videoId == null || getCachedCaptions(videoId) != null) {
+        // Captions stored on the TV are all there is to ask for
+        if (!mSettings.isConfigured() || videoId == null || getCachedCaptions(videoId) != null || UtubotCaptionStore.instance(mContext).has(videoId)) {
             return;
         }
 
@@ -479,7 +480,8 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     /**
-     * Ready captions are kept as soon as they are known, off the main thread; the follower hears of them on the main thread
+     * Ready captions are downloaded into the storage of the TV and kept as soon as they are known, off the main thread; the follower
+     * hears of them on the main thread
      */
     private void fetchCaptions(String videoId, UtubotCaptionsFollower.Callback callback) {
         UtubotClient client = newClient();
@@ -487,9 +489,13 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
         Observable.fromCallable(() -> {
             Captions captions = client.captions(videoId);
 
-            if (captions.isReady() && isCurrent(client)) {
-                synchronized (mCaptions) {
-                    mCaptions.put(videoId, captions);
+            if (captions.isReady()) {
+                storeCaptions(client, videoId, captions);
+
+                if (isCurrent(client)) {
+                    synchronized (mCaptions) {
+                        mCaptions.put(videoId, captions);
+                    }
                 }
             }
 
@@ -502,6 +508,26 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             Log.d(TAG, "No HQ captions for %s: %s", videoId, error.getMessage());
             callback.onError(error);
         });
+    }
+
+    /**
+     * Keeps the files of the tracks that are not stored yet. A track that can't be downloaded now is played from the backend and
+     * tried again the next time.
+     */
+    private void storeCaptions(UtubotClient client, String videoId, Captions captions) {
+        UtubotCaptionStore store = UtubotCaptionStore.instance(mContext);
+
+        for (UtubotModels.CaptionTrack track : captions.tracks) {
+            if (store.hasTrack(videoId, track.lang)) {
+                continue;
+            }
+
+            try {
+                store.save(videoId, track, client.captionFile(track.url));
+            } catch (IOException e) {
+                Log.d(TAG, "Can't download the %s captions of %s: %s", track.lang, videoId, e.getMessage());
+            }
+        }
     }
 
     @Nullable

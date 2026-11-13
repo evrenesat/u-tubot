@@ -13,6 +13,17 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
   cues, what was stored), the error of a failed job, a preview of the result with downloads (`.vtt`, transcript text) and which client
   fetched it and when, so a "ready" job that the TV never downloaded is visible. Jobs from before this release show one note instead of
   a log. See `docs/server.md`, Job details.
+- Fixed: HQ captions that were ready never showed on the TV (#31). The track was added and selected, and about a second later the
+  player applied the subtitle choice saved in its settings (usually "no subtitles") once the video's details arrived, which switched the
+  captions off again. The captions the app picked for a video now stay selected, until you pick something else in the subtitle menu. The
+  track is picked by its id, so a YouTube track in the same language neither hides it nor replaces it; the CC button follows it.
+- HQ captions that finish while the video plays are added to it, selected (you asked for them) and announced with "u·tubot captions
+  ready"; the video goes on from where it was after a short rebuffer. The app follows a queued or running job of the video every 10
+  seconds for as long as it plays. At the start of a video the setting "Select HQ captions automatically" (on by default) decides
+  whether the captions are turned on; they are always in the subtitle menu as "u·tubot: <label>".
+- HQ captions are kept on the TV: the first time they are ready the file is downloaded into the app's storage, and from then on the
+  subtitle menu offers them for that video after a restart or an update of the app, with another backend, or with the backend off the
+  air. Nothing is ever deleted or replaced; the backend is not asked for a video whose captions are stored.
 - Fixed: signing in to the web UI from a phone failed with "invalid username or password" when the keyboard capitalised the user name. User names now match regardless of case and surrounding spaces, failed attempts count under one name whatever the case, new users cannot differ from an existing one only by case, and the input fields turn off auto-capitalisation and auto-correction.
 - App releases are numbered and published automatically (0.3.x onwards).
 - Fixed: the Modern skin could show an empty screen (no grid, the sidebar and the top bar only) after the app started or a section

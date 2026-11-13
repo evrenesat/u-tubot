@@ -64,6 +64,13 @@ public class TrackSelectorManager implements TrackSelectorCallback {
     }
 
     /**
+     * The subtitle tracks are read again from the tracks of the player the next time they are asked for
+     */
+    public void invalidateSubtitles() {
+        mRenderers[RENDERER_INDEX_SUBTITLE] = null;
+    }
+
+    /**
      * Shows the selection dialog for a given renderer.
      * @param rendererIndex The index of the renderer. <br/>
      *                      One of the {@link #RENDERER_INDEX_VIDEO}, {@link #RENDERER_INDEX_AUDIO}, {@link #RENDERER_INDEX_SUBTITLE}
