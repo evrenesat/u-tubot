@@ -452,7 +452,9 @@ public class StorageSyncTest {
 
         mServer.revoked = true;
         StorageSync.instance(mContext).wake();
-        await("not authorized", () -> !StorageSync.instance(mContext).getConfig().isAuthorized());
+        // The loop clears the authorization before it sets the status: wait until both settled, else the status check races
+        await("not authorized", () -> !StorageSync.instance(mContext).getConfig().isAuthorized()
+                && StorageSync.instance(mContext).getStatus().state == StorageSync.State.NOT_AUTHORIZED);
         assertEquals(StorageSync.State.NOT_AUTHORIZED, StorageSync.instance(mContext).getStatus().state);
         assertEquals(1.5f, player.getSubtitleScale(), 0.001f);
         assertFalse(StorageSync.instance(mContext).getConfig().isAuthorized());
