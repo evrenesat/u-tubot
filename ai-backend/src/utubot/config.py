@@ -225,6 +225,7 @@ class CaptionsConfig(BaseModel):
     align_silence: bool = True
     align_window_s: float = 0.4
     silence_min_s: float = 0.25
+    translate_to: str = "en"
     proofread: bool = True
     proofread_batch: int = 40
     proofread_max_ratio: float = 1.6

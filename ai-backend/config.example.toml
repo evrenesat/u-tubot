@@ -258,8 +258,11 @@ align_silence = true               # nudge cue boundaries to nearby silences, so
 align_window_s = 0.4               # how far a boundary may move (also the margin that assigns ASR
                                    # words to a caption cue in the improve path)
 silence_min_s = 0.25               # silences shorter than this do not count for alignment
+translate_to = "en"                # default translation target of captions jobs: English whatever
+                                   # the source language (owner, 2026-11-13). "off" keeps the source
 proofread = true                   # LLM proofreading pass ([llm.captions]): punctuation, capitalisation,
                                    # names and terms from the title/description; skipped without an LLM
+                                   # also runs over translated text, so the English output is proofread
 proofread_batch = 40               # cues sent to the LLM at once
 proofread_max_ratio = 1.6          # a batch whose proofread text is longer than this factor is kept as it
                                    # was (a sign the model invented text)

@@ -18,6 +18,19 @@
   and validates the video id before using it as a file name; the test DNS guard also refuses
   bytes hosts and trailing-dot names (`www.youtube.com.`).
 
+## 2026-11-13 (English as the default caption target; owner direction on EVR-153 / #33)
+
+- The goal is high-quality English captions for every requested video, whatever its source language; same-language captions are a side
+  effect. `[captions] translate_to` (new, default `"en"`) is the default translation target of captions jobs: `POST
+  /v1/videos/{id}/captions` with an unset (or null) `translate_to` — which is what the TV app's "prepare captions" sends — now resolves
+  to the configured default instead of "no translation". `translate_to: "off"` (or `"none"`, or `""`) keeps the source language, and a
+  config default of `"off"` makes that the default for everyone. The job row stores the resolved target, so the dedup key and the job
+  report show the real target ("en").
+- Quality bar on the English output: after the `translate` stage the translated text is proofread again (`Proofreader.enabled` gates it)
+  with the title and description as context, so the English captions get the same punctuation/name pass as the source text. Both paths
+  (`run` from audio, `improve` from the video's captions) go through `_finish`, so both benefit; the proofread stage cache is keyed by
+  language and texts, so the two passes never collide.
+
 ## 2026-11-13 (lean HQ caption pipeline: improve existing captions, proofreading, alignment)
 
 - Why: "HQ captions" was fast ASR cut into cues. GitHub #33 (EVR-153) wants a lean pipeline with two cases: a video that already has

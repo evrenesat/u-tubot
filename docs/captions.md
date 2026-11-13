@@ -23,7 +23,10 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
    second. Cue boundaries are then nudged to nearby silences (`align_silence`), so a cue does not cut into a word.
 7. **Proofreading.** The LLM (`[llm.captions]`) fixes punctuation, capitalisation, names and terms, using the video's title and
    description as context ([below](#proofreading)).
-8. **Store.** The track is saved as `<language> (u·tubot)`. Optionally `translate_to` translates the cues. Each stage is written to the
+8. **Translation.** The job targets English by default (`[captions] translate_to`, "en"): a track in another language is translated
+   ([below](#translation)), so the result is English captions whatever the source language. A track already in the target language is
+   kept as it is.
+9. **Store.** The track is saved as `<language> (u·tubot)`. Each stage is written to the
    job's event log with its time, and the web UI shows it as a timeline with the result and the clients that fetched it (`server.md`,
    Job details).
 
@@ -43,6 +46,15 @@ The cue texts go to the LLM in batches of `proofread_batch` (40) with the video'
 empty string, or a batch whose text grew beyond `proofread_max_ratio` (1.6 — a sign of invention) falls back to the original texts. A
 failing LLM never fails the job: those batches keep their text and the stage warns. Corrected batches are cached per video, so a
 retried job does not pay twice.
+
+## Translation
+
+The goal is high-quality English captions for every requested video, whatever its source language (owner, 2026-11-13). The default
+translation target is English: `[captions] translate_to` is `"en"`, the API leaves `translate_to` unset by default, and the TV app's
+"prepare captions" request resolves to the same default. A track whose language differs is translated by the LLM (`translate_batch`, 40,
+cues at a time) and — so the quality bar holds for the English output — the translated text is proofread again with the title and
+description as context. Same-language captions stay available: pass `translate_to: "off"` (or "none") explicitly, or set
+`[captions] translate_to` to `"off"` to make that the default.
 
 ## Vocal separation
 

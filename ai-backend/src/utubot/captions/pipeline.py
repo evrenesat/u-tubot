@@ -643,6 +643,10 @@ class CaptionPipeline:
                 cues = await self.translate(cues, translate_to)
                 st.set(cues=len(cues))
             track_lang = translate_to
+            # the English output carries the quality bar: translated text is proofread too,
+            # so names and punctuation are fixed against the title and description as well
+            if self.proofreader.enabled:
+                cues = await self._polish(video_id, cues, track_lang)
         vtt = to_vtt(cues)
         speakers = count_speakers(cues)
         label = track_label(track_lang, speakers)
