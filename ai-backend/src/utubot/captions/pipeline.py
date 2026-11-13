@@ -428,8 +428,7 @@ class CaptionPipeline:
             result = asr_from_cache(cached)
             with events.stage(events.ASR, requested_language=requested) as st:
                 _set_asr(st, result, cached=True)
-            if self._asr_empty(result, want_words):
-                raise PipelineError("ASR returned no words")
+            self._require_speech(result, want_words, optional_asr)
             return result
         try:
             with events.stage(events.ASR, requested_language=requested) as st:
@@ -455,9 +454,25 @@ class CaptionPipeline:
                 message="No speech engine could transcribe the audio; the caption text is kept as it is.",
             )
             return ASRResult(words=[], language=None, segments=[], engine=None, model=None)
-        if self._asr_empty(result, want_words):
-            raise PipelineError("ASR returned no words")
+        self._require_speech(result, want_words, optional_asr)
         return result
+
+    def _require_speech(self, result: ASRResult, want_words: bool, optional_asr: bool) -> None:
+        """The audio path needs recognised speech; the captions-improvement path does not.
+
+        A video whose audio carries no recognisable speech (music) still has usable captions to
+        improve, so with `optional_asr` the empty answer only warns.
+        """
+        if not self._asr_empty(result, want_words):
+            return
+        if not optional_asr:
+            raise PipelineError("ASR returned no words")
+        events.emit(
+            events.ASR,
+            events.WARN,
+            reason="no_speech",
+            message="No speech was recognised in the audio; the caption text is kept as it is.",
+        )
 
     @staticmethod
     def _asr_empty(result: ASRResult, want_words: bool) -> bool:
@@ -542,17 +557,17 @@ class CaptionPipeline:
                 if not c.align_silence:
                     st.skip(reason="off")
                 else:
+                    before = [(cue.start, cue.end) for cue in cues]
                     silences = await asyncio.to_thread(detect_silences, wav, c.silence_min_s)
-                    snapped = snap_cues(cues, silences, c)
+                    cues = snap_cues(cues, silences, c)
                     st.set(
                         silences=len(silences),
                         moved=sum(
                             1
-                            for a, b in zip(cues, snapped, strict=True)
-                            if a.start != b.start or a.end != b.end
+                            for a, cue in zip(before, cues, strict=True)
+                            if a != (cue.start, cue.end)
                         ),
                     )
-                    cues = snapped
             track_lang = result.language or normalize_language(requested) or "und"
             cues = await self._polish(video_id, cues, track_lang)
             track_lang = await self._finish(video_id, cues, track_lang, translate_to, progress)
@@ -581,7 +596,8 @@ class CaptionPipeline:
         work = self.cfg.media_dir / video_id
         work.mkdir(parents=True, exist_ok=True)
         try:
-            requested = normalize_language(lang_hint)
+            base_hint = (lang_hint or "").split("-")[0] or None
+            requested = normalize_language(base_hint)
             result, _wav = await self._recognise(
                 video_id,
                 requested,
@@ -600,7 +616,7 @@ class CaptionPipeline:
             with events.stage(events.ALIGN, mode="merge", margin_s=c.align_window_s) as st:
                 cues, from_asr = merge_words_into_cues(cues, result.words, c)
                 st.set(cues=len(cues), from_asr=from_asr)
-            track_lang = result.language or normalize_language(requested) or lang_hint or "und"
+            track_lang = result.language or requested or base_hint or "und"
             track_lang = await self._finish(
                 video_id,
                 await self._polish(video_id, cues, track_lang),

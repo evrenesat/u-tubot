@@ -522,7 +522,7 @@ Every media file a pipeline downloads from YouTube is kept once, content-address
 read from the archive first and download only when the media is missing, so a video is never fetched twice.
 
 - `GET /v1/admin/archive?video_id=&limit=` -> `{"files","usage_bytes","quota_bytes","state":"ok|warn|full","entries":[...rows...]}`.
-- `DELETE /v1/admin/archive/{video_id}` -> `{"ok":true,"removed","bytes_freed"}`; `404` when nothing is stored for it. This is the
+- `DELETE /v1/admin/archive/{video_id}` -> `{"ok":true,"removed","bytes_freed","stage_cache_rows_removed"}`; `404` when nothing is stored for it. This is the
   only cleanup: nothing in the archive is ever deleted automatically. At `quota_bytes` (0: no limit) new downloads are refused
   (the job fails with "The media archive is full...") until an admin removes entries; at `warn_frac` (0.9) a warning is logged.
 - `GET /v1/admin/status` also carries `"archive":{"files","usage_bytes","quota_bytes","state"}`.

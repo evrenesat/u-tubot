@@ -3,8 +3,8 @@
 The media archive keeps the downloaded media; this table keeps what later stages produced from it:
 the recognised words of an audio file, the proofread text of a batch of cues. Entries are keyed by
 the inputs that define them (a sha256 of the audio, of the texts), so a changed input is never
-served from the cache. Rows live until an admin removes the video from the archive; nothing in a
-stage result is secret (a `proofread` entry holds subtitle text).
+served from the cache. Rows are removed together with the video's archived media (the one admin
+cleanup); nothing in a stage result is secret (a `proofread` entry holds subtitle text).
 """
 
 from __future__ import annotations
