@@ -19,6 +19,15 @@ come before a ready one. After `POST /v1/videos/ID/transcribe` the video reports
 for example), `estimate` is the `estimate_s` of a transcription, `retry_after` the `retry_after_s` of a `delayed` answer. Mode
 `auto_transcribe` is the server's automatic policy: the first summary or insight request of a video starts the transcription itself and
 answers `pending` + `transcribing` (at `progress`), without the app asking.
+
+HQ captions have a state of their own, per video, so they can be tried while the video plays:
+
+    GET /__mock/captions?video=ID&state=none|queued|running|ready|failed[&after=SECONDS]
+
+`state` sets the answer of `GET /v1/videos/ID/captions` at once; with `after` the answer stays `running` for that many seconds and then
+becomes `ready` (a job that finishes while the video plays). `POST /v1/videos/ID/captions` queues a job that is ready after `--captions-delay`
+seconds (default 20). A ready answer lists the track `tr` ("Turkish (u·tubot)", `--lang` and `--label` change it) whose
+`GET /v1/videos/ID/captions/tr.vtt` serves the file of `--vtt` (default `temp-real-tr.vtt` in the working directory).
 """
 import argparse
 import json
@@ -36,6 +45,8 @@ DEFAULT_RETRY_AFTER_S = 4
 STATE = {"mode": "ready", "delay": 1.0, "delayed_left": 2, "progress": {}, "transcribing": set(), "message": None,
          "estimate": DEFAULT_ESTIMATE_S, "retry_after": DEFAULT_RETRY_AFTER_S, "start_progress": 0.0}
 LOCK = threading.Lock()
+CAPTIONS = {}
+CAPTIONS_CONFIG = {"delay": 20.0, "lang": "tr", "label": "Turkish (u\u00b7tubot)", "vtt": Path("temp-real-tr.vtt")}
 PROMPTS = [
     ("glance", "Glance", False, True),
     ("tldr", "TL;DR", True, False),
@@ -95,6 +106,26 @@ def summary(video_id, prompt, hints):
     return {**base, "status": "ready", "transcript_status": "ok", "text": text}
 
 
+def captions_answer(video_id):
+    with LOCK:
+        job = CAPTIONS.get(video_id)
+    if job is None:
+        return {"status": "none", "progress": 0, "tracks": []}
+    state = job["state"]
+    if state in ("queued", "running") and job.get("ready_at") is not None and time.time() >= job["ready_at"]:
+        state = "ready"
+    if state == "ready":
+        lang = CAPTIONS_CONFIG["lang"]
+        return {"status": "ready", "progress": 1.0, "tracks": [
+            {"lang": lang, "label": CAPTIONS_CONFIG["label"], "url": f"/v1/videos/{video_id}/captions/{lang}.vtt", "speakers": 0}]}
+    return {"status": state, "progress": 0.4 if state == "running" else 0.0, "tracks": []}
+
+
+def start_captions_job(video_id, state="queued", after=None):
+    with LOCK:
+        CAPTIONS[video_id] = {"state": state, "ready_at": time.time() + (CAPTIONS_CONFIG["delay"] if after is None else after)}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "mock"
     protocol_version = "HTTP/1.1"
@@ -123,6 +154,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"results": [
                 {"video_id": v["video_id"], "status": "ready", "action": "none", "mark_label": None, "flags": [],
                  "title_question": None, "answer_short": None, "insight_ready": False, "captions_ready": False} for v in vids]})
+        m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/captions$", url.path)
+        if m:
+            vid = m.group(1)
+            if captions_answer(vid)["status"] != "ready":
+                start_captions_job(vid)
+            return self.send_json({"status": captions_answer(vid)["status"], "job_id": "cap1", "eta_s": None})
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/transcribe$", url.path)
         if m:
             vid = m.group(1)
@@ -154,6 +191,17 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["retry_after"] = int(q["retry_after"][0]) if "retry_after" in q else DEFAULT_RETRY_AFTER_S
                 STATE["start_progress"] = float(q["progress"][0]) if "progress" in q else 0.0
             return self.send_json({k: (list(v) if isinstance(v, set) else v) for k, v in STATE.items()})
+        if path == "/__mock/captions":
+            vid = q["video"][0]
+            state = q.get("state", ["none"])[0]
+            with LOCK:
+                if state == "none":
+                    CAPTIONS.pop(vid, None)
+                else:
+                    CAPTIONS[vid] = {"state": state, "ready_at": None}
+            if "after" in q:
+                start_captions_job(vid, "running", float(q["after"][0]))
+            return self.send_json(captions_answer(vid))
         if path == "/v1/health":
             return self.send_json({"ok": True, "version": "mock"})
         if path == "/setup.json":
@@ -214,8 +262,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({k: v for k, v in state.items() if k not in ("prompt", "text")})
             return self.send_json({"video_id": m.group(1), "status": "ready", "transcript_status": "ok", "answer": "Yes.", "summary": LONG,
                                    "key_points": ["a", "b"], "source": "youtube_captions"})
-        if path.endswith("/captions"):
-            return self.send_json({"status": "none", "progress": 0, "tracks": []})
+        m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/captions$", path)
+        if m:
+            return self.send_json(captions_answer(m.group(1)))
+        m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/captions/([A-Za-z-]+)\.vtt$", path)
+        if m:
+            vtt = CAPTIONS_CONFIG["vtt"]
+            if captions_answer(m.group(1))["status"] != "ready" or not vtt.is_file():
+                return self.send_json({"error": "not found"}, 404)
+            body = vtt.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/vtt; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         return self.send_json({"error": "not found"}, 404)
 
 
@@ -224,7 +285,13 @@ def main():
     ap.add_argument("--port", type=int, default=8790)
     ap.add_argument("--static", default=None)
     ap.add_argument("--base", default=None)
+    ap.add_argument("--vtt", default=str(CAPTIONS_CONFIG["vtt"]), help="WebVTT file served as the HQ captions track")
+    ap.add_argument("--lang", default=CAPTIONS_CONFIG["lang"])
+    ap.add_argument("--label", default=CAPTIONS_CONFIG["label"])
+    ap.add_argument("--captions-delay", type=float, default=CAPTIONS_CONFIG["delay"],
+                    help="seconds a captions job queued by POST /v1/videos/ID/captions takes")
     args = ap.parse_args()
+    CAPTIONS_CONFIG.update(vtt=Path(args.vtt), lang=args.lang, label=args.label, delay=args.captions_delay)
     Handler.static_dir = args.static
     Handler.base_url = args.base or f"http://10.0.2.2:{args.port}"
     ThreadingHTTPServer(("0.0.0.0", args.port), Handler).serve_forever()

@@ -34,7 +34,44 @@ public final class UtubotCaptions {
     }
 
     public static boolean isCaptionTrack(@Nullable Format format) {
-        return format != null && format.id != null && format.id.startsWith(TRACK_ID_PREFIX);
+        return format != null && isCaptionTrackId(format.id);
+    }
+
+    public static boolean isCaptionTrackId(@Nullable String formatId) {
+        return formatId != null && formatId.startsWith(TRACK_ID_PREFIX);
+    }
+
+    /**
+     * Whether the track is one of the HQ captions of this video. The id is "utubot:VIDEO:LANG", so the track of the video played
+     * before does not count.
+     */
+    public static boolean isCaptionTrackOf(@Nullable String formatId, @Nullable String videoId) {
+        return videoId != null && formatId != null && formatId.startsWith(TRACK_ID_PREFIX + videoId + ":");
+    }
+
+    /**
+     * Two subtitle tracks of the same language are the same pick only when both come from the same side: an HQ track of the
+     * backend next to a track of YouTube in that language is another choice.
+     */
+    public static boolean isSameSource(@Nullable String formatId, @Nullable String otherFormatId) {
+        return isCaptionTrackId(formatId) == isCaptionTrackId(otherFormatId);
+    }
+
+    /**
+     * Whether the saved subtitle choice of the user (see VideoStateController#restoreSubtitleFormat) may replace what is selected.
+     * It may not when what is selected is the HQ track of this video: that pick (the automatic one, or the one the user asked the
+     * backend for) comes after the saved choice, which is usually "no subtitles", and must not lose to it.
+     */
+    public static boolean mayRestoreSavedChoice(@Nullable String selectedFormatId, @Nullable String videoId) {
+        return !isCaptionTrackOf(selectedFormatId, videoId);
+    }
+
+    /**
+     * Whether the HQ track is selected once the captions are there. At the start of the video the setting "Select HQ captions
+     * automatically" decides; captions the user asked for are selected whatever it says.
+     */
+    public static boolean shouldSelect(boolean autoSelectEnabled, boolean requestedByUser) {
+        return requestedByUser || autoSelectEnabled;
     }
 
     /**

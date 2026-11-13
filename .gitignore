@@ -84,3 +84,5 @@ changelog_override.txt
 .settings/
 utubot.properties
 temp/
+
+temp-*

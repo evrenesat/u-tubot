@@ -62,6 +62,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     };
     private String mSessionPrompt;
     private PromptList mPrompts;
+    private UtubotCaptionsFollower mCaptionsFollower;
 
     private UtubotManager(Context context) {
         mContext = context.getApplicationContext();
@@ -99,9 +100,16 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             mCaptions.clear();
         }
 
+        UtubotCaptionsFollower follower;
+
         synchronized (this) {
             mPrompts = null;
             mSessionPrompt = null;
+            follower = mCaptionsFollower;
+        }
+
+        if (follower != null) {
+            follower.stop();
         }
     }
 
@@ -427,22 +435,73 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     /**
-     * Asks for the HQ captions of a video about to play. Ready ones are kept, so the player finds them when it opens the source.
+     * The video starts to play: asks for its HQ captions and, while a job is queued or running, keeps asking until they are ready (see
+     * {@link UtubotCaptionsFollower}). Ready captions are kept, so the player finds them when it opens the source; the listener hears of
+     * the ones that come once the source is open. A video whose captions are kept needs no listener.
      */
-    public void prefetchCaptions(String videoId) {
+    public void followCaptions(String videoId, UtubotCaptionsFollower.Listener listener) {
         if (!mSettings.isConfigured() || videoId == null || getCachedCaptions(videoId) != null) {
             return;
         }
 
+        captionsFollower().follow(videoId, listener);
+    }
+
+    public void stopFollowingCaptions(UtubotCaptionsFollower.Listener listener) {
+        UtubotCaptionsFollower follower;
+
+        synchronized (this) {
+            follower = mCaptionsFollower;
+        }
+
+        if (follower != null) {
+            follower.stop(listener);
+        }
+    }
+
+    /**
+     * The user asked for the HQ captions of a video (Prepare HQ captions) and the backend answered with this status
+     */
+    public void captionsRequested(String videoId, @Nullable String status) {
+        if (!mSettings.isConfigured() || videoId == null) {
+            return;
+        }
+
+        captionsFollower().requested(videoId, status);
+    }
+
+    private synchronized UtubotCaptionsFollower captionsFollower() {
+        if (mCaptionsFollower == null) {
+            mCaptionsFollower = new UtubotCaptionsFollower(UtubotScheduler.mainThread(), this::fetchCaptions, System::currentTimeMillis);
+        }
+
+        return mCaptionsFollower;
+    }
+
+    /**
+     * Ready captions are kept as soon as they are known, off the main thread; the follower hears of them on the main thread
+     */
+    private void fetchCaptions(String videoId, UtubotCaptionsFollower.Callback callback) {
         UtubotClient client = newClient();
 
-        Observable.fromCallable(() -> client.captions(videoId)).subscribeOn(Schedulers.io()).subscribe(captions -> {
+        Observable.fromCallable(() -> {
+            Captions captions = client.captions(videoId);
+
             if (captions.isReady() && isCurrent(client)) {
                 synchronized (mCaptions) {
                     mCaptions.put(videoId, captions);
                 }
             }
-        }, error -> Log.d(TAG, "No HQ captions for %s: %s", videoId, error.getMessage()));
+
+            return captions;
+        }).subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread()).subscribe(captions -> {
+            if (isCurrent(client)) {
+                callback.onResult(captions);
+            }
+        }, error -> {
+            Log.d(TAG, "No HQ captions for %s: %s", videoId, error.getMessage());
+            callback.onError(error);
+        });
     }
 
     @Nullable

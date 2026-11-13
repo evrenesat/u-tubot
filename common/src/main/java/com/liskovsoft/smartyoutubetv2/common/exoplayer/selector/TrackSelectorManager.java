@@ -23,6 +23,7 @@ import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.selector.Restore
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.selector.RestoreTrackSelector.TrackSelectorCallback;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerTweaksData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptions;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 
 import java.util.ArrayList;
@@ -471,6 +472,12 @@ public class TrackSelectorManager implements TrackSelectorCallback {
 
         Renderer renderer = mRenderers[originTrack.rendererIndex];
 
+        MediaTrack captionTrack = findUtubotCaptionTrack(renderer, originTrack);
+
+        if (captionTrack != null) {
+            return captionTrack;
+        }
+
         MediaTrack result = createAutoSelection(originTrack.rendererIndex);
 
         if (originTrack.format != null) { // not auto selection
@@ -563,6 +570,30 @@ public class TrackSelectorManager implements TrackSelectorCallback {
         Log.d(TAG, "findBestMatch: Found: " + result.format);
 
         return result;
+    }
+
+    /**
+     * An HQ track of the backend is picked by its id: a track of YouTube in the same language comes first in the list and would win
+     * the match by language.
+     */
+    private static MediaTrack findUtubotCaptionTrack(Renderer renderer, MediaTrack originTrack) {
+        if (originTrack.format == null || !UtubotCaptions.isCaptionTrackId(originTrack.format.id) || renderer.mediaTracks == null) {
+            return null;
+        }
+
+        for (MediaTrack[] trackGroup : renderer.mediaTracks) {
+            if (trackGroup == null) {
+                continue;
+            }
+
+            for (MediaTrack mediaTrack : trackGroup) {
+                if (mediaTrack != null && mediaTrack.format != null && originTrack.format.id.equals(mediaTrack.format.id)) {
+                    return mediaTrack;
+                }
+            }
+        }
+
+        return null;
     }
 
     private void applyOverride(int rendererIndex) {
