@@ -102,6 +102,21 @@ class YoutubeConfig(BaseModel):
     remote_components: list[str] = Field(default_factory=list)
 
 
+class ArchiveConfig(BaseModel):
+    """The media archive: every file downloaded from YouTube is kept and reused.
+
+    Files live content-addressed by their sha256 under `path` (empty: `<data dir>/archive`),
+    one row per video in the `media_archive` table. `quota_bytes` (0: no limit) is a ceiling the
+    archive never frees by itself: when the usage reaches it new downloads are refused (the job
+    fails with a clear message) until an admin removes entries; at `warn_frac` of the quota a
+    warning is logged. Nothing in the archive is ever deleted automatically.
+    """
+
+    path: str = ""
+    quota_bytes: int = Field(0, ge=0)
+    warn_frac: float = Field(0.9, ge=0.0, le=1.0)
+
+
 class TranscriptConfig(BaseModel):
     cache_ttl_s: int = 30 * 86400
     no_captions_ttl_s: int = 3 * 86400
@@ -427,6 +442,7 @@ class Config(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     assess: AssessConfig = Field(default_factory=AssessConfig)
     youtube: YoutubeConfig = Field(default_factory=YoutubeConfig)
+    archive: ArchiveConfig = Field(default_factory=ArchiveConfig)
     transcripts: TranscriptConfig = Field(default_factory=TranscriptConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     captions: CaptionsConfig = Field(default_factory=CaptionsConfig)
@@ -450,6 +466,11 @@ class Config(BaseModel):
     @property
     def media_dir(self) -> Path:
         return self.data_dir / "media"
+
+    @property
+    def archive_dir(self) -> Path:
+        """Where the media archive keeps its files (`[archive] path`, else `<data dir>/archive`)."""
+        return Path(self.archive.path) if self.archive.path else self.data_dir / "archive"
 
     @property
     def users_path(self) -> Path:

@@ -8,6 +8,7 @@ export const STAGE_LABELS = {
   gate_wait: "Waited for YouTube's gate",
   caption_recheck: "Caption recheck",
   audio_download: "Audio download",
+  media_archive: "Media archive",
   ffmpeg: "Audio conversion",
   chunking: "Chunking",
   asr: "Speech to text",
@@ -166,6 +167,11 @@ const DESCRIBERS = {
     if (status === "running") return "Converting to 16 kHz mono";
     if (status === "failed") return "Conversion failed";
     return join([fmtClock(d.audio_s || 0) + " of audio", d.bytes ? fmtBytes(d.bytes) : null]);
+  },
+  media_archive(d, status) {
+    if (status === "running") return "Storing the download in the media archive";
+    if (status === "failed") return join(["Not kept in the media archive", reasonText(d.error_class)]);
+    return join(["Kept in the media archive", d.bytes ? fmtBytes(d.bytes) : null, d.sha256 ? "sha256 " + d.sha256 + "…" : null]);
   },
   chunking(d) {
     const sizes = (d.sizes_s || []).map((s) => Math.round(s) + " s").join(", ");

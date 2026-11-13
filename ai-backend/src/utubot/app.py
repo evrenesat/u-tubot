@@ -33,6 +33,7 @@ from .config import Config, UserConfig, load_config
 from .content import ContentService
 from .db import Database
 from .llm import LLMClient
+from .media_archive import ENTRY_LIMIT, MediaArchive
 from .modelcatalog import ModelCatalog
 from .models import (
     AskRequest,
@@ -114,6 +115,7 @@ class Services:
     reports: JobReports
     gate: YoutubeGate
     transcription: Transcription
+    archive: MediaArchive
     limiter: RateLimiter
     webauth: WebAuth
     catalog: ModelCatalog
@@ -138,8 +140,15 @@ def build_services(
     gate = YoutubeGate(cfg.youtube, db, clock)
     transcripts = TranscriptService(cfg, db, fetcher, gate)
     prompts = PromptStore(cfg, db, prompt_transport)
+    archive = MediaArchive(cfg, db)
     pipeline = CaptionPipeline(
-        cfg, db, asr or make_asr(cfg.captions), llm, downloader=downloader, gate=gate
+        cfg,
+        db,
+        asr or make_asr(cfg.captions),
+        llm,
+        downloader=downloader,
+        gate=gate,
+        archive=archive,
     )
     jobs = JobQueue(cfg, db, pipeline, transcripts)
     reports = JobReports(cfg, db, jobs, transcripts)
@@ -159,6 +168,7 @@ def build_services(
         reports=reports,
         gate=gate,
         transcription=transcription,
+        archive=archive,
         limiter=RateLimiter(cfg.security.rate_window_s),
         webauth=WebAuth(cfg, db, auth),
         catalog=catalog,
@@ -498,7 +508,27 @@ def create_app(
         return {
             "youtube": svc.gate.snapshot(),
             "asr": {"engines": svc.transcription.engines.status()},
+            "archive": svc.archive.status(),
         }
+
+    @app.get("/v1/admin/archive")
+    async def admin_archive(
+        video_id: str | None = None,
+        limit: int = Query(ENTRY_LIMIT, ge=1, le=ENTRY_LIMIT),
+        admin: UserConfig = Depends(admin_user),
+    ):
+        """The media archive: usage against the quota and the stored entries, newest first."""
+        doc = svc.archive.status()
+        doc["entries"] = svc.archive.entries(check_video_id(video_id) if video_id else None, limit)
+        return doc
+
+    @app.delete("/v1/admin/archive/{video_id}")
+    async def admin_archive_remove(video_id: str, admin: UserConfig = Depends(admin_user)):
+        """The one admin cleanup: removes a video's archived files; nothing deletes by itself."""
+        removed, freed = svc.archive.remove(check_video_id(video_id))
+        if not removed:
+            raise HTTPException(404, "no archived media for this video")
+        return {"ok": True, "removed": removed, "bytes_freed": freed}
 
     @app.delete("/v1/admin/devices/{device_id}")
     async def admin_revoke(device_id: str, admin: UserConfig = Depends(admin_user)):

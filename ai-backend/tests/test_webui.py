@@ -165,6 +165,8 @@ async def test_admin_only_routes_forbid_ordinary_users(env):
         ("POST", "/v1/admin/pair", {"user": "owner"}),
         ("DELETE", "/v1/admin/devices/x", None),
         ("PUT", "/v1/admin/users/owner/policy", {}),
+        ("GET", "/v1/admin/archive", None),
+        ("DELETE", "/v1/admin/archive/abcdefghijk", None),
     ]
     for method, url, body in cases:
         res = await other.request(method, url, json=body)

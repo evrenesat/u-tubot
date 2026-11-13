@@ -283,7 +283,8 @@ anybody else and for an unknown id.
 `events` is the log in order of writing. `status` is `running`, `ok`, `warn`, `skipped`, `failed`, `info`, `cancelled` or `interrupted`;
 a `running` event is followed by the `ok`/`failed`/`skipped` event of the same stage, which carries `seconds`. Stages: `queued`, `promoted`,
 `started`, `gate_wait`, `caption_recheck`, `audio_download` (`format_id`, `track` = `original|dubbed|descriptive|unmarked`, `original`,
-`language`, `bytes`, `duration_s`, `source` = `downloaded|from_archive`), `ffmpeg`, `chunking`, `asr`, `asr_chunk`, `asr_fallback`, `stitching`,
+`language`, `bytes`, `duration_s`, `source` = `downloaded|from_archive`), `media_archive` (`bytes`, `sha256` prefix; skipped when the audio
+came from the archive), `ffmpeg`, `chunking`, `asr`, `asr_chunk`, `asr_fallback`, `stitching`,
 `diarization` (`reason` and `message` when skipped), `cues`, `text`, `translate`, `stored`, `retry`, `finished`, `failed` (`error_class`,
 `message`, `stage`, `technical`) and `delivered` (`via` = `captions_status|vtt|transcript_status|summary|summary_panel|insight|answer|transcript_txt`,
 `client`, `user`, `count`, `first_ts`). Details never carry a URL, token or secret. A job from before the log has one synthetic event,
@@ -510,6 +511,19 @@ when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-adm
 password); `PUT /v1/users/{name}` `{"admin":true}` (`409` for a user declared in `config.toml` or for your own flag);
 `PUT /v1/users/{name}/password` `{"password"}`; `GET/PUT /v1/users/{name}/settings` as above. The older `GET /v1/admin/users`,
 `POST /v1/admin/pair`, `DELETE /v1/admin/devices/{id}` and `PUT /v1/admin/users/{name}/policy` stay.
+
+### Media archive (admin only)
+
+Every media file a pipeline downloads from YouTube is kept once, content-addressed by its sha256 under `[archive] path`
+(empty: `<data dir>/archive`), with one `media_archive` row per video: `video_id`, `sha256`, `kind` (`audio`, later `video`),
+`format_id`, `codec`, `bitrate_kbps`, `language`, `original`, `size`, `ext`, `path` (relative), `fetched_at`, `job_id`. Pipelines
+read from the archive first and download only when the media is missing, so a video is never fetched twice.
+
+- `GET /v1/admin/archive?video_id=&limit=` -> `{"files","usage_bytes","quota_bytes","state":"ok|warn|full","entries":[...rows...]}`.
+- `DELETE /v1/admin/archive/{video_id}` -> `{"ok":true,"removed","bytes_freed"}`; `404` when nothing is stored for it. This is the
+  only cleanup: nothing in the archive is ever deleted automatically. At `quota_bytes` (0: no limit) new downloads are refused
+  (the job fails with "The media archive is full...") until an admin removes entries; at `warn_frac` (0.9) a warning is logged.
+- `GET /v1/admin/status` also carries `"archive":{"files","usage_bytes","quota_bytes","state"}`.
 
 Every response carries `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and
 `Referrer-Policy: no-referrer`; `/v1/*` answers are `Cache-Control: no-store`.
