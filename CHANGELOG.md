@@ -7,6 +7,12 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 ## Unreleased
 
+- Server: every transcript and HQ-captions job now has a detail report (web UI: Captions, tap a job; API: `GET /v1/jobs/ID`). It
+  shows what was asked for, by which TV or client and why (explicitly or by the automatic-transcription policy), a timeline of every
+  stage with its time (audio format and track, chunks, which speech engine took which chunk and why it fell back, speaker labels,
+  cues, what was stored), the error of a failed job, a preview of the result with downloads (`.vtt`, transcript text) and which client
+  fetched it and when, so a "ready" job that the TV never downloaded is visible. Jobs from before this release show one note instead of
+  a log. See `docs/server.md`, Job details.
 - Fixed: signing in to the web UI from a phone failed with "invalid username or password" when the keyboard capitalised the user name. User names now match regardless of case and surrounding spaces, failed attempts count under one name whatever the case, new users cannot differ from an existing one only by case, and the input fields turn off auto-capitalisation and auto-correction.
 - App releases are numbered and published automatically (0.3.x onwards).
 - Fixed: the Modern skin could show an empty screen (no grid, the sidebar and the top bar only) after the app started or a section

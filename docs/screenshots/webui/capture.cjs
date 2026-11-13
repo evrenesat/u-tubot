@@ -46,7 +46,7 @@ async function checkOverflow(browser) {
   await page.locator("input[name=password]").fill("demo-password-123");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForSelector("#nav:not([hidden])");
-  for (const name of [...PAGES, "admin/user/partner"]) {
+  for (const name of [...PAGES, "admin/user/partner", "jobs/demojob0005", "jobs/demojob0006", "jobs/demojob0002", "jobs/demojob0000"]) {
     await go(page, name, 600);
     const extra = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (extra > 0) problems.push(`${name}: ${extra}px of horizontal scroll at 360px`);
@@ -120,6 +120,17 @@ async function checkOverflow(browser) {
   await shot(page, "12-captions");
   await scrollTo(page, page.getByRole("heading", { name: "Jobs" }));
   await shot(page, "13-captions-jobs");
+
+  await go(page, "captions");
+  await page.getByRole("link", { name: "Türkiye'de enflasyon neden düşmüyor?" }).click();
+  await page.waitForSelector(".timeline");
+  await shot(page, "22-job-detail");
+  await scrollTo(page, page.getByRole("heading", { name: "What happened" }));
+  await shot(page, "23-job-timeline");
+  await go(page, "captions");
+  await page.getByRole("link", { name: "Slow TV: eight hours of canal boats" }).click();
+  await page.waitForSelector(".timeline");
+  await shot(page, "24-job-failed");
 
   await go(page, "tvs");
   await page.getByRole("button", { name: "Make a code" }).click();

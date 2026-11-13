@@ -58,6 +58,9 @@ CANCELLED = "cancelled"
 INTERRUPTED = "interrupted"
 TERMINAL_STAGES = frozenset({FINISHED, FAILED_STAGE, RETRY, QUEUED, DELIVERED})
 
+# Where the audio of an `audio_download` event came from: the download, or the media archive.
+AUDIO_DOWNLOADED = "downloaded"
+AUDIO_FROM_ARCHIVE = "from_archive"
 SYNTHETIC_MESSAGE = "finished (no detailed log, created before event logging)"
 SYNTHETIC_QUEUED_MESSAGE = "queued (no detailed log, created before event logging)"
 PRIORITY_NAMES = {0: "interactive", 1: "background"}
@@ -74,7 +77,13 @@ SECRET_WORD_RE = re.compile(
     r"(?i)\bbearer\s+\S+|\b(?:token|api[_-]?key|key|secret|passw(?:or)?d|authorization|signature|sig|cookie)"
     r"\b\s*[=:]\s*\S+"
 )
-LONG_TOKEN_RE = re.compile(r"\b(?=[A-Za-z_\-+/=]*\d)[A-Za-z0-9_\-+/=]{32,}\b")
+HEX_RUN_RE = re.compile(r"\b[0-9A-Fa-f]{32,}\b")
+KEY_PREFIX_RE = re.compile(r"\b(?:utb|sk|hf|ghp|gho|xox[a-z])[_-][A-Za-z0-9_\-]{8,}")
+# Random base64-like runs: long, no separator a model name would have, with upper case, lower case and digits.
+MIXED_RUN_RE = re.compile(
+    r"\b(?=[A-Za-z0-9_\-+/=]*[A-Z])(?=[A-Za-z0-9_\-+/=]*[a-z])(?=[A-Za-z0-9_\-+/=]*\d)"
+    r"[A-Za-z0-9_\-+/=]{32,}\b"
+)
 SECRET_KEY_RE = re.compile(
     r"(?i)(token|secret|passw|authorization|cookie|signature|api_?key|(^|_)(url|uri|href)($|_)|header)"
 )
@@ -92,7 +101,8 @@ def clean(value: Any, depth: int = 0) -> Any:
         text = URL_RE.sub(URL_PLACEHOLDER, value)
         text = WWW_RE.sub(URL_PLACEHOLDER, text)
         text = SECRET_WORD_RE.sub(REDACTED, text)
-        text = LONG_TOKEN_RE.sub(REDACTED, text)
+        for pattern in (KEY_PREFIX_RE, HEX_RUN_RE, MIXED_RUN_RE):
+            text = pattern.sub(REDACTED, text)
         return text[:DETAIL_TEXT_CHARS]
     if depth >= DETAIL_DEPTH:
         return None

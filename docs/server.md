@@ -239,7 +239,7 @@ no external requests). Everything it shows comes from authenticated JSON endpoin
 | Models | the model for each task (glance, summary, answer, triage, analysis), picked from the live model list; "Other model name" for anything unlisted |
 | Prompts | defaults (side panel, long summary, language, background long summary), prompt sets (import from URL, refresh, edit JSON with validation messages), try a prompt on a video link or id |
 | Filters | hide and mark topics as chips, thresholds as sliders, mark-only |
-| Captions | the automatic-transcription policy, "transcribe this video" from a link, the job list with cancel and retry |
+| Captions | the automatic-transcription policy, "transcribe this video" from a link, the job list with cancel and retry; every job links to its [detail report](#job-details) |
 | TVs | *Link a TV* (a big one-time code and the steps), linked devices with revoke, the TV settings kept on the server |
 | Updates | the app version this server publishes, the newest GitHub release, the last `sync-github` run |
 | Admin | users (add, set a password, admin flag, pairing code), each user's settings and TVs |
@@ -248,8 +248,46 @@ Screenshots (390 x 844 at 2x): [home](screenshots/webui/02-home.png), [models](s
 [prompts](screenshots/webui/06-prompts.png), [try a prompt](screenshots/webui/09-prompts-try.png),
 [filters](screenshots/webui/11-filters-thresholds.png), [captions](screenshots/webui/13-captions-jobs.png),
 [link a TV](screenshots/webui/14-tv-link.png), [updates](screenshots/webui/16-updates.png), [admin](screenshots/webui/17-admin.png),
-[light theme](screenshots/webui/20-home-light.png). `ai-backend/tests/webui_demo.py` serves the same canned data locally (mock LLM,
+[light theme](screenshots/webui/20-home-light.png), [job report](screenshots/webui/22-job-detail.png),
+[its stage timeline](screenshots/webui/23-job-timeline.png), [a failed job](screenshots/webui/24-job-failed.png). `ai-backend/tests/webui_demo.py` serves the same canned data locally (mock LLM,
 no network) and `docs/screenshots/webui/capture.cjs` takes them with Playwright.
+
+### Job details
+
+Every job in the *Captions* list (and `GET /v1/jobs`, via `detail_url`) opens a report: what was requested, what was done, what
+happened and whether anything fetched the result. The page is `/#/jobs/ID`, the data `GET /v1/jobs/ID` (the owner of the job and admins
+only; anybody else gets `404`). It shows
+
+- **What was requested**: the video (id, title, channel, length, spoken language), the kind of job, who asked and from which client (a
+  paired TV by the name it was linked under, "Web UI", or "API token"), the endpoint, why it was queued (asked for explicitly, or started by
+  the automatic-transcription policy: `on_open` / `on_dwell`, side panel or not, the minutes limit), its priority.
+- **What it produced**: the transcript (source, language, engine, model, size, the first 10 lines, a download of the whole text) or the
+  captions track(s) (label, language, speakers, cue count, size, the first 10 cues, `.vtt` and text downloads).
+- **Delivery**: which client fetched the result, how (the `.vtt`, the captions list, the transcript status, a summary, the panel summary,
+  an answer, the downloaded text), how often and when last. A job that is `ready` but was never fetched says so, in the job list too
+  ("Not fetched by any client yet"), which is how to tell that a TV never asked for its captions.
+- **What happened**: a timeline of the stages with their duration and a status icon (done, running, skipped, warning, failed), refreshed
+  every few seconds while the job runs and every 15 s afterwards.
+- **Errors**, with the stage that failed, the cause and a scrubbed technical line; *Retry* (failed or cancelled) and *Cancel* (waiting),
+  for the owner only.
+
+The log is the `job_events` table: one row per event (`job_id`, `ts`, `stage`, `status`, `detail` JSON), written as the stage happens, so a
+running job shows its progress and a crashed one shows where it stopped. Stages: `queued`, `promoted`, `started` (attempt and time
+waited), `gate_wait` (the YouTube class and how long the gate held the job), `caption_recheck` (found, none, delayed or skipped and why),
+`audio_download` (format id, original/dubbed/unmarked track, language, bytes, length, seconds, and `source`: `downloaded` or `from_archive`),
+`ffmpeg`, `chunking` (chunks and their sizes), `asr` and `asr_chunk` (engine, model, seconds, characters, detected language per chunk),
+`asr_fallback` (an engine gave up on a chunk, and why: `http_503`, `transport_timeout`, `unhealthy`, `language_mismatch` ...), `stitching`
+(seams, segments cut at overlaps, repeated words dropped), `diarization` (ran, or skipped and why: off, no Hugging Face token, package
+missing), `cues` (count, longest line), `text`, `translate`, `stored` (what was saved and how big), `retry`, `finished`, `failed` (cause
+class, human message, stage) and `delivered`. A `delivered` row is added by the routes clients use (`GET /v1/videos/ID/captions`, the
+`.vtt`, `GET /v1/videos/ID/transcript`, summary, insight and ask built from a transcript the audio made); the same client fetching the
+same way again within `[captions] delivery_coalesce_s` (300) raises the `count` of one row instead of adding rows. At most
+`[captions] job_events_max` (400) stage events are kept per job; queued, finished, failed, retry and delivered rows are always kept.
+
+Nothing secret or signed is stored: details pass through `captions/events.py clean`, which drops keys that name a token, secret, cookie,
+header or URL and replaces URLs, `key=value` secrets, bearer tokens and long random strings in any text with `[url]` / `[redacted]`.
+Failure text is the scrubbed exception, never a raw yt-dlp message. Jobs from before the log existed get one synthetic event
+("finished (no detailed log, created before event logging)") at the first start, so their page works.
 
 ### Sign-in and sessions
 

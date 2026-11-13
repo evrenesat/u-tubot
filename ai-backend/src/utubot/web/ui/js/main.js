@@ -6,6 +6,7 @@ import * as admin from "./pages/admin.js";
 import * as devices from "./pages/devices.js";
 import * as filtering from "./pages/filtering.js";
 import * as home from "./pages/home.js";
+import * as job from "./pages/job.js";
 import * as login from "./pages/login.js";
 import * as models from "./pages/models.js";
 import * as more from "./pages/more.js";
@@ -14,13 +15,15 @@ import * as transcripts from "./pages/transcripts.js";
 import * as updates from "./pages/updates.js";
 import { applyTheme } from "./theme.js";
 
-// path -> page. `primary` entries sit in the phone's bottom bar; the rest live under "More".
+// path -> page. `primary` entries sit in the phone's bottom bar; the rest live under "More". `hidden` pages are
+// reached by links only and light up their `parent` in the bar.
 const ROUTES = [
   { path: "home", label: "Home", icon: "home", page: home, primary: true },
   { path: "models", label: "Models", icon: "models", page: models, primary: true },
   { path: "prompts", label: "Prompts", icon: "prompts", page: prompts, primary: true },
   { path: "filters", label: "Filters", icon: "filters", page: filtering, primary: true },
   { path: "captions", label: "Captions", icon: "captions", page: transcripts, primary: true },
+  { path: "jobs", label: "Job", icon: "captions", page: job, parent: "captions", hidden: true },
   { path: "tvs", label: "TVs", icon: "tv", page: devices },
   { path: "updates", label: "Updates", icon: "updates", page: updates },
   { path: "account", label: "Account", icon: "account", page: account },
@@ -39,7 +42,7 @@ function parseHash() {
 }
 
 function drawNav(current) {
-  const items = ROUTES.filter((r) => !r.adminOnly || session.admin);
+  const items = ROUTES.filter((r) => (!r.adminOnly || session.admin) && !r.hidden);
   const primary = items.filter((r) => r.primary);
   const links = primary.map((r) => navLink(r, current === r.path));
   links.push(
@@ -84,7 +87,7 @@ async function renderRoute() {
   if (path === "more") {
     drawNav("more");
     mount(view);
-    cleanup = await more.render(view, { routes: ROUTES.filter((r) => !r.primary && (!r.adminOnly || session.admin)) });
+    cleanup = await more.render(view, { routes: ROUTES.filter((r) => !r.primary && !r.hidden && (!r.adminOnly || session.admin)) });
     return;
   }
   const route = ROUTES.find((r) => r.path === path && (!r.adminOnly || session.admin));
@@ -92,7 +95,7 @@ async function renderRoute() {
     location.hash = "#/home";
     return;
   }
-  drawNav(route.path);
+  drawNav(route.parent || route.path);
   mount(view, loading());
   window.scrollTo(0, 0);
   try {

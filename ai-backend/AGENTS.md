@@ -34,5 +34,11 @@
   explicit (summary view, insight, ask) and passive (side panel) triggers apart.
 - No summary, insight or answer is ever generated from the title/channel/description alone. Without a transcript return
   `pending` + `transcript_status` (`delayed`) or `needs_transcript`; never cache those.
+- Job events: every stage of a transcript or captions job is logged through `captions/events.py` (`stage`, `emit`, `note`); never put a URL,
+  token, cookie or raw exception text in a detail (`events.clean` / `events.technical` filter it, but do not rely on that). Routes that can
+  queue a job call `mark_origin`; routes that hand a stored result to a client call the `record_*_delivery` helpers (`JobQueue`). The detail
+  page lives in `web/ui/js/pages/job.js` + `jobtext.js`; document stages in `docs/server.md` (Job details) and `ai/CONTRACT.md`.
+- Tests and demos never reach YouTube (owner rule): `tests/conftest.py` `block_youtube()` makes real yt-dlp and httpx requests to YouTube hosts
+  fail. Use the fake fetcher/downloader or a stand-in `yt_dlp.YoutubeDL`; `tests/webui_demo.py` is the same.
 - Commit messages: `<type>/<scope>: <summary>` plus bullets; no AI attribution trailers.
 - Update `DEVLOG.md` for each session.

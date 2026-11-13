@@ -241,7 +241,12 @@ class CaptionPipeline:
             )
             with events.stage(events.AUDIO) as st:
                 path = await self.downloader(video_id, work, started)
-                st.set(bytes=file_size(path), **events.take_notes())
+                notes = events.take_notes()
+                st.set(
+                    source=notes.pop("source", events.AUDIO_DOWNLOADED),
+                    bytes=file_size(path),
+                    **notes,
+                )
             return path
 
         src = await self.gate.run_started(
