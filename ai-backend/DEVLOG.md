@@ -1,5 +1,23 @@
 # DEVLOG
 
+## 2026-11-13 (review follow-ups: cassettes carry no URL at all, offline misses are not held)
+
+- Review (EVR-168) found two leaks in the cassette sanitizer and one wrong hold; fixed:
+- The sanitizer now keeps no URL at all: every `http(s)://…` string in a cassette becomes `<url>`
+  (`strip_urls`), because signatures can hide in URL paths — YouTube HLS `manifest_url` carries
+  the signature and the recorder's public IP in its path, which query-stripping left intact.
+  `manifest_url` and `cookies` (yt-dlp can copy session cookies into the info dict) join the
+  dropped keys, `protocol` goes too (replay never reads it), and the caption track text is
+  stripped as well. The URL-free check now globs every committed `fixtures/youtube/*.json` for
+  URL, signature and cookie text — a cassette the owner records later cannot slip through.
+- An offline miss no longer records a failure hold: a missing cassette says nothing about the
+  video, so `record_failure` ignores the `offline` reason and the next attempt (cassette
+  recorded, or offline off) starts clean. The user-facing answer is still the `offline` video
+  error, and no audio fallback is offered.
+- Recorder hardening: `youtube-record` refuses when `CI` is set or `[youtube] offline` is on,
+  and validates the video id before using it as a file name; the test DNS guard also refuses
+  bytes hosts and trailing-dot names (`www.youtube.com.`).
+
 ## 2026-11-13 (media archive: keep every downloaded file, issue 34)
 
 - Why: a job downloaded a video's audio, transcribed it and deleted everything; the next job downloaded the same audio again. Owner rule:

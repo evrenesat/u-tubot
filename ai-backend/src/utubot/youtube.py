@@ -208,6 +208,19 @@ def redact_urls(text: str) -> str:
     return URL_RE.sub(r"\1", text)
 
 
+URL_PLACEHOLDER = "<url>"
+
+
+def strip_urls(text: str) -> str:
+    """Replace every URL in `text` with a placeholder; what cassettes keep carries no URL at all.
+
+    `redact_urls` keeps the scheme and host for log and error text; recorded fixtures get this
+    stricter treatment, because even a URL's path can carry signed tokens and the recorder's IP
+    (HLS manifest URLs do).
+    """
+    return URL_RE.sub(lambda _m: URL_PLACEHOLDER, text)
+
+
 def classify_failure(
     exc: BaseException,
     network_retry_s: float,

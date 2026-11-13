@@ -40,12 +40,19 @@ def siggy_info() -> dict:
         "id": DEMO_ID,
         "title": "Signed",
         "duration": 30,
+        "language": "en",
         "description": "watch https://example.com/watch?v=x&t=1s here " + "x" * 3000,
+        "cookies": "VISITOR_INFO1_LIVE=s3ssion; Domain=.youtube.com; Path=/",
         "formats": [
             {
                 "format_id": "251",
                 "ext": "webm",
                 "url": "https://rr3---sn.googlevideo.com/videoplayback?id=abc&sig=SIGNED&ratebypass=yes",
+                "manifest_url": (
+                    "https://manifest.googlevideo.com/api/manifest/hls_variant/expire/1799999999"
+                    "/ei/SETEI/ip/203.0.113.9/sparams/expire%2Cei%2Cip%2Cid%2Citag"
+                    "/sig/SIGTOKEN/file/index.m3u8"
+                ),
                 "http_headers": {"User-Agent": "ua"},
             }
         ],
@@ -54,7 +61,8 @@ def siggy_info() -> dict:
             "en": [
                 {"ext": "json3", "url": TRACK_URL},
                 {"ext": "vtt", "url": "https://www.youtube.com/api/timedtext?v=x&sig=OTHER"},
-            ]
+            ],
+            "ja": [{"ext": "vtt", "url": "https://www.youtube.com/api/timedtext?v=x&lang=ja"}],
         },
         "heatmap": [{"x": i, "url": "https://i.ytimg.com/an_webp/x?sigh=SIGN"} for i in range(3)],
     }
@@ -73,7 +81,11 @@ def url_keys(value) -> list[str]:
 
 def signed_tokens(value) -> list[str]:
     flat = json.dumps(value)
-    return [token for token in ("sig=", "sigh=", "SIGNED", "SECRET") if token in flat]
+    return [
+        token
+        for token in ("sig=", "sigh=", "SIGNED", "SECRET", "SIGTOKEN", "SETEI", "203.0.113.")
+        if token in flat
+    ]
 
 
 def gate_svc(tmp_path: Path, cfg: Config, fetcher) -> tuple[YoutubeGate, TranscriptService]:
@@ -88,14 +100,15 @@ def test_sanitize_strips_every_url_and_signature():
     assert url_keys(clean) == []
     assert signed_tokens(clean) == []
     flat = json.dumps(clean)
-    assert "http_headers" not in flat and "User-Agent" not in flat
+    # No URL of any kind survives: not even scheme + host + path (paths carry signatures too).
+    assert "http" not in flat and "googlevideo" not in flat
+    assert "manifest_url" not in flat and "cookies" not in flat and "User-Agent" not in flat
     # The structure the fetchers and pickers need survives.
     assert clean["formats"][0]["format_id"] == "251"
     assert [f["ext"] for f in clean["automatic_captions"]["en"]] == ["json3", "vtt"]
     assert len(clean["heatmap"]) == 3
-    # A description keeps its link but loses the query (and stays capped).
-    assert "https://example.com/watch" in clean["description"]
-    assert "?v=x" not in clean["description"] and "&t=1s" not in clean["description"]
+    # A description loses its link entirely; the words around it (and the cap) survive.
+    assert "watch <url> here" in clean["description"]
     assert len(clean["description"]) <= 2000
 
 
@@ -112,6 +125,16 @@ def test_cassette_roundtrip_and_demo_shape(tmp_path, demo):
     assert demo["info"]["id"] == DEMO_ID and demo["track"]["ext"] == "json3"
 
 
+def test_committed_cassettes_carry_no_url_text():
+    """Every cassette in the repository is checked, not just the demo: a recorded one too."""
+    fixture_files = sorted(default_fixture_dir().glob("*.json"))
+    assert fixture_files, "the fixture directory must hold at least the demo cassette"
+    for path in fixture_files:
+        text = path.read_text()
+        for banned in ("http", "googlevideo", "/sig/", "/ip/", "cookies"):
+            assert banned not in text, f"{path.name} must not carry {banned!r} in a cassette"
+
+
 async def test_record_cassette_from_stubs_is_sanitized(tmp_path):
     path = await record_cassette(
         Config(),
@@ -123,6 +146,10 @@ async def test_record_cassette_from_stubs_is_sanitized(tmp_path):
     )
     saved = json.loads(path.read_text())
     assert url_keys(saved) == [] and signed_tokens(saved) == []
+    flat = json.dumps(saved)
+    assert "http" not in flat and "manifest_url" not in flat and "cookies" not in flat
+    # Only the languages the server may ask for are kept: not the whole 150-language table.
+    assert sorted(saved["info"]["automatic_captions"]) == ["en"]
     assert saved["track"] == {"lang": "en", "ext": "json3", "text": '{"events":[]}'}
     assert saved["note"] == "stubbed"
 
@@ -132,9 +159,19 @@ async def test_record_cassette_refuses_the_real_path_under_pytest(tmp_path):
         await record_cassette(Config(), DEMO_ID, out_dir=tmp_path)
 
 
-def test_guard_refuses_automated_runs():
+def test_guard_refuses_automated_runs(monkeypatch):
     with pytest.raises(RuntimeError, match="never run it from tests"):
         guard_recording()
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(RuntimeError, match="never run it from CI"):
+        guard_recording()
+    monkeypatch.delenv("CI", raising=False)
+    cfg = Config()
+    cfg.youtube.offline = True
+    with pytest.raises(RuntimeError, match="offline.*forbids"):
+        guard_recording(cfg)
+    guard_recording(Config())  # an owner run with a normal config passes
 
 
 async def test_offline_fetcher_serves_the_demo_cassette(demo):
@@ -164,9 +201,12 @@ async def test_offline_fetcher_through_the_gate(tmp_path):
     assert (await svc.get(DEMO_ID)).text == transcript.text  # the second call is the cache
     with pytest.raises(YoutubeOffline):
         await svc.get("zzzzzzzzzzz")
-    # A video the offline server cannot answer is remembered as failed, so the audio fallback
-    # (which offline mode refuses too) is never offered for it.
-    assert svc.hold("zzzzzzzzzzz")["reason"] == "offline"
+    # A video the offline server cannot answer is a video error (no audio fallback: offline mode
+    # refuses media too) — but it is NOT remembered as failed: a missing cassette says nothing
+    # about the video, so a later run with one recorded (or offline off) starts clean.
+    assert svc.hold("zzzzzzzzzzz") is None
+    with pytest.raises(YoutubeOffline):
+        await svc.get("zzzzzzzzzzz")
 
 
 async def test_cassette_replays_through_the_real_fetcher(tmp_path, demo):

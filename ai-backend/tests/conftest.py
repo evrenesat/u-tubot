@@ -47,7 +47,8 @@ def block_youtube():
         raise AssertionError(NO_YOUTUBE)
 
     def guard(host: str) -> None:
-        if host.lower().endswith(YOUTUBE_HOST_SUFFIXES):
+        name = host.lower().rstrip(".")  # a trailing dot is a valid absolute DNS name
+        if name.endswith(YOUTUBE_HOST_SUFFIXES):
             raise AssertionError(f"{NO_YOUTUBE} ({host})")
 
     def sync_guarded(self, request):
@@ -67,7 +68,9 @@ def block_youtube():
         original = real_resolvers[name]
 
         def guarded(host, *args, **kwargs):
-            if isinstance(host, str):
+            if isinstance(host, bytes):
+                guard(host.decode("idna"))
+            elif isinstance(host, str):
                 guard(host)
             return original(host, *args, **kwargs)
 

@@ -43,7 +43,8 @@
   `yt_dlp.YoutubeDL`; `tests/webui_demo.py` is the same. The offline dev-proxy mode (`[youtube] offline = true`) is the same rule for a
   running backend: it refuses every YouTube request and answers from caches and recorded fixtures (`youtube_fixtures.py`, cassettes in
   `fixtures/youtube/`; unknown videos answer `offline`). Recording a cassette (`utubot youtube-record`) is the one command that reaches
-  YouTube and belongs to the owner: never run it from tests, CI or an agent's verification runs — it refuses under pytest, and committed
-  cassettes must carry no URL (signed tokens); the recorder strips them.
+  YouTube and belongs to the owner: never run it from tests, CI or an agent's verification runs — it refuses under pytest, in CI and
+  with an offline config, and committed cassettes must carry no URL at all (signatures can sit in URL paths); the recorder replaces
+  every URL with a `<url>` placeholder.
 - Commit messages: `<type>/<scope>: <summary>` plus bullets; no AI attribution trailers.
 - Update `DEVLOG.md` for each session.

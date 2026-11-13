@@ -146,8 +146,15 @@ def cmd_youtube_record(args: argparse.Namespace) -> int:
     """
     import asyncio
 
+    from .videoref import VIDEO_ID_RE
     from .youtube_fixtures import fixture_dir, record_cassette
 
+    if not VIDEO_ID_RE.match(args.video_id):
+        print(
+            f"youtube-record failed: {args.video_id!r} is not an 11-character YouTube video id",
+            file=sys.stderr,
+        )
+        return 1
     cfg = load_config(args.config)
     try:
         target = asyncio.run(

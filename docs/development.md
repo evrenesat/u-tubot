@@ -55,8 +55,10 @@ hand-written demo cassette; the owner records real ones — the one command that
 uv run utubot youtube-record VIDEO_ID [--lang en] [--note "why this video"]
 ```
 
-Cassettes carry no URLs (they carry signed tokens): the recorder strips them before writing, and `test_youtube_fixtures.py` checks
-that. Point the emulator or the E2E run at this backend instead of `scripts/emulator_mock_backend.py` when you want the real routes;
+Cassettes carry no URLs at all (signed tokens can hide in URL paths too): the recorder replaces every URL with a `<url>` placeholder
+before writing, and `test_youtube_fixtures.py` checks every committed cassette for URL, signature and cookie text. An offline miss is
+not remembered as a failure: record the cassette (or turn offline off) and the video is fetched normally again. Point the emulator or
+the E2E run at this backend instead of `scripts/emulator_mock_backend.py` when you want the real routes;
 the mock script stays the lighter stand-in for panel checks.
 
 The web UI (`ai-backend/src/utubot/web/`) is plain HTML, CSS and ES modules served as they are: edit, reload, no build. To look at it

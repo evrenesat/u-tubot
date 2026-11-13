@@ -23,6 +23,7 @@ from .youtube import (
     REASON_EMPTY_TRACK,
     REASON_INCOMPLETE,
     REASON_NETWORK,
+    REASON_OFFLINE,
     YoutubeCooldown,
     YoutubeDelayed,
     YoutubeError,
@@ -365,7 +366,13 @@ class TranscriptService:
         )
 
     def record_failure(self, video_id: str, reason: str) -> None:
-        """Remember that this video cannot be read (private, members-only, too long, ...)."""
+        """Remember that this video cannot be read (private, members-only, too long, ...).
+
+        An offline miss is not remembered: a missing fixture cassette says nothing about the
+        video, so the next attempt — with a cassette recorded, or offline mode off — starts clean.
+        """
+        if reason == REASON_OFFLINE:
+            return
         self._record_hold(video_id, HOLD_FAILED, reason, self.cfg.transcripts.video_failure_ttl_s)
 
     @staticmethod

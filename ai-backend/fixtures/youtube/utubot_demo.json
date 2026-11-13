@@ -19,7 +19,6 @@
         "acodec": "mp4a.40.2",
         "abr": 128.0,
         "vcodec": "none",
-        "protocol": "https",
         "format_note": "DASH audio (synthetic)"
       },
       {
@@ -28,7 +27,6 @@
         "acodec": "opus",
         "abr": 130.0,
         "vcodec": "none",
-        "protocol": "https",
         "format_note": "DASH audio (synthetic)"
       },
       {
@@ -36,7 +34,6 @@
         "ext": "mp4",
         "acodec": "mp4a.40.2",
         "vcodec": "avc1.64001F",
-        "protocol": "https",
         "format_note": "720p (synthetic)"
       }
     ],

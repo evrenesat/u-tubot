@@ -43,14 +43,19 @@ from .youtube import (
     CLASS_CAPTIONS,
     CLASS_METADATA,
     YoutubeOffline,
-    redact_urls,
+    strip_urls,
     ytdlp_runtime_options,
 )
 
 # Where the cassettes live when `[youtube] fixtures_dir` is empty: the repository checkout.
 FIXTURE_SUBDIR = Path("fixtures/youtube")
-# Keys dropped everywhere (URLs carry signed tokens; headers are noise the replayers rebuild).
-DROPPED_KEYS = frozenset({"url", "fragment_base_url", "http_headers"})
+# Keys dropped everywhere (URLs carry signed tokens and the recorder's IP — HLS manifest URLs
+# carry both in their path —; headers are noise the replayers rebuild; yt-dlp's `cookies` field
+# can hold the cookie jar's session cookies; `protocol` is just transport trivia the replay
+# never needs, and its "https" value would keep URL-shaped text out of cassettes for good).
+DROPPED_KEYS = frozenset(
+    {"url", "fragment_base_url", "http_headers", "manifest_url", "cookies", "protocol"}
+)
 VALUE_MAX_CHARS = 4000
 DESCRIPTION_MAX_CHARS = 2000
 VERSION_MAX_CHARS = 40
@@ -67,7 +72,7 @@ def fixture_dir(cfg: Config) -> Path:
 
 
 def _sanitize(value: Any) -> Any:
-    """A git-safe copy of a yt-dlp answer: no URLs, no headers, capped strings."""
+    """A git-safe copy of a yt-dlp answer: no URLs, no headers, no cookies, capped strings."""
     if isinstance(value, dict):
         return {
             key: _sanitize(item)
@@ -77,7 +82,7 @@ def _sanitize(value: Any) -> Any:
     if isinstance(value, list):
         return [_sanitize(item) for item in value]
     if isinstance(value, str):
-        text = redact_urls(value)
+        text = strip_urls(value)
         if len(text) > VALUE_MAX_CHARS:
             text = text[:VALUE_MAX_CHARS] + "…"
         return text
@@ -85,12 +90,26 @@ def _sanitize(value: Any) -> Any:
 
 
 def sanitize_info(info: dict[str, Any]) -> dict[str, Any]:
-    """The yt-dlp info dict a cassette keeps: structure and metadata, nothing signed."""
+    """The yt-dlp info dict a cassette keeps: structure and metadata, nothing signed, no URL."""
     clean = _sanitize(info)
     description = clean.get("description")
     if isinstance(description, str) and len(description) > DESCRIPTION_MAX_CHARS:
         clean["description"] = description[:DESCRIPTION_MAX_CHARS]
     return clean
+
+
+def prune_automatic_captions(info: dict[str, Any], keep: set[str]) -> dict[str, Any]:
+    """A copy of `info` whose automatic-captions table keeps only the `keep` languages.
+
+    The real table lists about 150 languages × formats; a cassette needs the languages the
+    server asks for and the video's own, so the file stays small.
+    """
+    languages = {lang for lang in keep if lang}
+    captions = info.get("automatic_captions")
+    if not isinstance(captions, dict):
+        return info
+    pruned = {**info, "automatic_captions": {k: v for k, v in captions.items() if k in languages}}
+    return pruned
 
 
 def save_cassette(
@@ -104,6 +123,8 @@ def save_cassette(
 ) -> Path:
     """Write one cassette (`<video_id>.json`) atomically; `track` is `{lang, ext, text}` or None."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    if track is not None and isinstance(track.get("text"), str):
+        track = {**track, "text": strip_urls(track["text"])}
     cassette = {
         "video_id": video_id,
         "recorded_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -177,7 +198,7 @@ async def record_cassette(
     only be started by hand (never from tests, CI or an agent's verification runs).
     """
     if extract is None or transport is None:
-        guard_recording()
+        guard_recording(cfg)
     extract_fn = extract or (lambda vid: _default_extract(cfg, vid))
     info = await asyncio.to_thread(extract_fn, video_id)
     if not info_complete(info):
@@ -185,6 +206,7 @@ async def record_cassette(
     prefer = lang or cfg.transcripts.default_language
     found = pick_track(info, prefer)
     track: dict[str, Any] | None = None
+    track_lang: str | None = None
     if found:
         formats, track_lang = found
         fmt = pick_format(formats)
@@ -196,6 +218,10 @@ async def record_cassette(
             }
         else:
             track = {"lang": track_lang, "ext": "vtt", "text": ""}
+    # Keep the cassette small: only the caption languages the server may ask for survive.
+    info = prune_automatic_captions(
+        info, {track_lang or "", prefer, str(info.get("language") or "")}
+    )
     return save_cassette(
         out_dir or fixture_dir(cfg),
         video_id,
@@ -206,10 +232,14 @@ async def record_cassette(
     )
 
 
-def guard_recording() -> None:
+def guard_recording(cfg: Config | None = None) -> None:
     """Refuse to record from an automated run (tests, CI); the owner starts it by hand."""
     if os.environ.get("PYTEST_CURRENT_TEST"):
         raise RuntimeError("recording a fixture reaches YouTube; never run it from tests")
+    if os.environ.get("CI"):
+        raise RuntimeError("recording a fixture reaches YouTube; never run it from CI")
+    if cfg is not None and cfg.youtube.offline:
+        raise RuntimeError("recording needs YouTube; `[youtube] offline` forbids it")
 
 
 async def _download_track_text(
