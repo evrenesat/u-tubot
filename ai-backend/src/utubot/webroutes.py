@@ -7,8 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from .auth import PairError
 from .captions.jobs import JobRefused
@@ -26,6 +26,7 @@ from .webauth import SESSION_TOKEN_ID, LoginError, csrf_token
 
 UPDATE_CHECKS_PER_WINDOW = 6
 PASSWORD_ATTEMPTS_PER_WINDOW = 5
+LANG_MAX_CHARS = 16
 
 
 @dataclass
@@ -39,6 +40,9 @@ class Deps:
     clear_session_cookie: Callable[[Response, Request], None]
     check_same_origin: Callable[[Request], None]
     check_csrf: Callable[[Request, str], None]
+    client_of: Callable[[Request], str]
+    mark_origin: Callable[[Request, UserConfig], str]
+    note_delivery: Callable[..., None]
 
 
 def install_web_routes(app: FastAPI, d: Deps) -> None:
@@ -224,8 +228,42 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
 
     # ---- jobs and video references --------------------------------------------------------
 
+    def visible_job(job_id: str, user: UserConfig) -> dict[str, Any]:
+        """The job for its owner or an admin; anybody else is told it does not exist."""
+        job = svc.jobs.get(job_id)
+        if not svc.reports.visible(job, user.name, user.admin):
+            raise HTTPException(404, "unknown job")
+        return job
+
+    @app.get("/v1/jobs/{job_id}")
+    async def job_detail(job_id: str, user: UserConfig = Depends(current_user)):
+        return svc.reports.report(visible_job(job_id, user), user.name)
+
+    @app.get("/v1/jobs/{job_id}/transcript.txt")
+    async def job_transcript_text(
+        job_id: str,
+        request: Request,
+        lang: str | None = Query(None, max_length=LANG_MAX_CHARS),
+        user: UserConfig = Depends(current_user),
+    ):
+        job = visible_job(job_id, user)
+        text = svc.reports.transcript_text(job, lang)
+        if text is None:
+            raise HTTPException(404, "this job has no transcript text")
+        d.note_delivery(
+            svc.jobs.events.deliver, job["id"], "transcript_txt", d.client_of(request), user.name
+        )
+        return PlainTextResponse(
+            text,
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="transcript-{job["video_id"]}.txt"'
+            },
+        )
+
     @app.post("/v1/jobs/{job_id}/cancel")
-    async def job_cancel(job_id: str, user: UserConfig = Depends(current_user)):
+    async def job_cancel(job_id: str, request: Request, user: UserConfig = Depends(current_user)):
+        d.mark_origin(request, user)
         try:
             svc.jobs.cancel(user.name, job_id)
         except JobRefused as exc:
@@ -233,7 +271,8 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
         return {"ok": True}
 
     @app.post("/v1/jobs/{job_id}/retry")
-    async def job_retry(job_id: str, user: UserConfig = Depends(current_user)):
+    async def job_retry(job_id: str, request: Request, user: UserConfig = Depends(current_user)):
+        d.mark_origin(request, user)
         try:
             svc.jobs.retry(user.name, job_id)
         except JobRefused as exc:

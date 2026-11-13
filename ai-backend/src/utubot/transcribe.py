@@ -176,7 +176,16 @@ class Transcription:
             return fields
         try:
             queued = self.request(
-                user, video_id, hint, priority=BACKGROUND if passive else INTERACTIVE
+                user,
+                video_id,
+                hint,
+                priority=BACKGROUND if passive else INTERACTIVE,
+                trigger={
+                    "kind": "auto",
+                    "mode": policy.auto_transcribe,
+                    "passive": passive,
+                    "max_minutes": policy.auto_transcribe_max_minutes,
+                },
             )
         except TranscribeRefused:
             return fields
@@ -300,11 +309,13 @@ class Transcription:
         video_id: str,
         hint: dict[str, Any] | None = None,
         priority: int = INTERACTIVE,
+        trigger: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Queue (or rejoin) the user's ASR transcript job for a video.
 
         The user asked for it, so it is interactive unless the caller says otherwise (`BACKGROUND`:
-        started on the user's behalf by a passive trigger).
+        started on the user's behalf by a passive trigger). `trigger` says why it was queued (for
+        the job's event log): explicit by default, or the automatic-transcription policy that fired.
         """
         base = {"video_id": video_id}
         state = self.state(video_id, hint)
@@ -322,7 +333,7 @@ class Transcription:
                 raise TranscribeRefused(
                     429, "too many transcriptions queued, wait for one to finish"
                 )
-            job = self.jobs.enqueue_transcript(user, video_id, meta.get("title"), priority)
+            job = self.jobs.enqueue_transcript(user, video_id, meta.get("title"), priority, trigger)
         elif priority == INTERACTIVE:
             self.jobs.promote_transcript(video_id)
         return {

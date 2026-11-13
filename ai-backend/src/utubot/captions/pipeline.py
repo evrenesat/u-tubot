@@ -26,6 +26,7 @@ from ..youtube import (
     classify_failure,
     ytdlp_runtime_options,
 )
+from . import events
 from .asr import (
     LANGUAGE_NAMES,
     ASRBackend,
@@ -37,7 +38,7 @@ from .asr import (
     wav_duration,
 )
 from .diarize import Diarizer, assign_speakers, make_diarizer
-from .formats import audio_selector
+from .formats import audio_selector, track_kind
 from .segment import build_cues, count_speakers, to_vtt, wrap_lines
 from .types import Cue, Segment
 
@@ -137,11 +138,35 @@ async def download_audio(
                 path = Path(ydl.prepare_filename(info))
                 if not path.exists():
                     raise YoutubeVideoError(REASON_TOO_LONG)
+                events.note(**chosen_format(info))
                 return path
         except yt_dlp.utils.YoutubeDLError as exc:
             raise classify_failure(exc, network_retry_s, media=True, klass=CLASS_MEDIA) from None
 
     return await asyncio.to_thread(_run)
+
+
+def chosen_format(info: dict[str, Any]) -> dict[str, Any]:
+    """What the job's log says about the downloaded audio: format id, track kind, language, duration."""
+    fmt = (info.get("requested_formats") or [info])[0]
+    kind = track_kind(fmt)
+    return {
+        "format_id": fmt.get("format_id"),
+        "track": kind,
+        "original": kind == "original",
+        "language": fmt.get("language") or info.get("language"),
+        "codec": fmt.get("acodec"),
+        "ext": fmt.get("ext"),
+        "bitrate_kbps": fmt.get("abr"),
+        "duration_s": info.get("duration"),
+    }
+
+
+def file_size(path: Path) -> int | None:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
 
 
 def sweep_media(media_dir: Path, max_age_s: float) -> int:
@@ -204,38 +229,62 @@ class CaptionPipeline:
         """Audio download (through the YouTube gate), 16 kHz mono WAV, ASR. Shared by both jobs."""
         c = self.cfg.captions
         progress(0.02)
+        asked = time.monotonic()
+
+        async def fetch(started: Started) -> Path:
+            events.emit(
+                events.GATE_WAIT,
+                events.OK,
+                klass=CLASS_MEDIA,
+                waited_s=round(time.monotonic() - asked, 2),
+                priority=events.priority_name(priority),
+            )
+            with events.stage(events.AUDIO) as st:
+                path = await self.downloader(video_id, work, started)
+                st.set(bytes=file_size(path), **events.take_notes())
+            return path
+
         src = await self.gate.run_started(
-            lambda started: self.downloader(video_id, work, started),
-            priority,
-            key=f"audio:{video_id}",
-            classes=MEDIA_CLASSES,
+            fetch, priority, key=f"audio:{video_id}", classes=MEDIA_CLASSES
         )
         progress(0.2)
         wav = work / "audio16k.wav"
-        await run_ffmpeg(
-            "-i",
-            str(src),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            str(c.sample_rate),
-            "-c:a",
-            "pcm_s16le",
-            str(wav),
-        )
+        with events.stage(events.FFMPEG) as st:
+            await run_ffmpeg(
+                "-i",
+                str(src),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                str(c.sample_rate),
+                "-c:a",
+                "pcm_s16le",
+                str(wav),
+            )
+            audio_s = wav_duration(wav, c.sample_rate)
+            st.set(audio_s=round(audio_s, 1), bytes=file_size(wav), sample_rate=c.sample_rate)
         progress(0.25)
-        if wav_duration(wav, c.sample_rate) > c.max_duration_s:
+        if audio_s > c.max_duration_s:
             raise YoutubeVideoError(REASON_TOO_LONG)
-        result = await self.asr.transcribe(
-            wav,
-            requested,
-            lambda f: progress(0.25 + 0.6 * f),
-            priority=priority,
-            want_words=want_words,
-        )
-        if not (result.words if want_words else result.segments):
-            raise PipelineError("ASR returned no words")
+        with events.stage(events.ASR, requested_language=requested) as st:
+            result = await self.asr.transcribe(
+                wav,
+                requested,
+                lambda f: progress(0.25 + 0.6 * f),
+                priority=priority,
+                want_words=want_words,
+            )
+            st.set(
+                engine=result.engine,
+                model=result.model,
+                language=result.language,
+                segments=len(result.segments),
+                words=len(result.words),
+                chars=sum(len(seg.text) for seg in result.segments),
+            )
+            if not (result.words if want_words else result.segments):
+                raise PipelineError("ASR returned no words")
         return result, wav
 
     async def transcribe(
@@ -253,9 +302,11 @@ class CaptionPipeline:
             result, _wav = await self._recognise(
                 video_id, language, work, progress, priority=priority, want_words=False
             )
-            text = segments_to_text([(seg.start, seg.text) for seg in result.segments])
-            if not text:
-                raise PipelineError("ASR returned no text")
+            with events.stage(events.TEXT, announce=False) as st:
+                text = segments_to_text([(seg.start, seg.text) for seg in result.segments])
+                if not text:
+                    raise PipelineError("ASR returned no text")
+                st.set(segments=len(result.segments), chars=len(text), lines=text.count("\n") + 1)
             progress(1.0)
             return AsrTranscript(
                 text, result.language, result.segments, result.engine, result.model
@@ -280,27 +331,47 @@ class CaptionPipeline:
             result, wav = await self._recognise(
                 video_id, requested, work, progress, priority=priority
             )
-            turns = await self.diarizer.diarize(wav)
+            with events.stage(events.DIARIZATION) as st:
+                turns = await self.diarizer.diarize(wav)
+                notes = events.take_notes()
+                if notes.get("skip"):
+                    st.skip(reason=notes["skip"], message=notes.get("message"))
+                else:
+                    st.set(turns=len(turns), speakers=len({turn[2] for turn in turns}))
             progress(0.9)
             assign_speakers(result.words, turns)
-            cues = build_cues(result.words, c)
+            with events.stage(events.CUES, announce=False) as st:
+                cues = build_cues(result.words, c)
+                st.set(
+                    cues=len(cues),
+                    words=len(result.words),
+                    max_line_chars=max((len(ln) for cue in cues for ln in cue.lines), default=0),
+                    max_lines=max((len(cue.lines) for cue in cues), default=0),
+                    limit_line_chars=c.max_chars_per_line,
+                )
             track_lang = result.language or normalize_language(requested) or "und"
             if translate_to and translate_to != track_lang:
-                cues = await self.translate(cues, translate_to)
+                with events.stage(events.TRANSLATE, source=track_lang, to=translate_to) as st:
+                    cues = await self.translate(cues, translate_to)
+                    st.set(cues=len(cues))
                 track_lang = translate_to
             vtt = to_vtt(cues)
             speakers = count_speakers(cues)
+            label = track_label(track_lang, speakers)
             self.db.execute(
-                "INSERT OR REPLACE INTO captions(video_id,lang,label,speakers,vtt,created_at)"
-                " VALUES(?,?,?,?,?,?)",
-                [
-                    video_id,
-                    track_lang,
-                    track_label(track_lang, speakers),
-                    speakers,
-                    vtt,
-                    time.time(),
-                ],
+                "INSERT OR REPLACE INTO captions(video_id,lang,label,speakers,vtt,created_at,job_id)"
+                " VALUES(?,?,?,?,?,?,?)",
+                [video_id, track_lang, label, speakers, vtt, time.time(), events.job_id()],
+            )
+            events.emit(
+                events.STORED,
+                events.OK,
+                kind="captions",
+                lang=track_lang,
+                label=label,
+                speakers=speakers,
+                cues=len(cues),
+                bytes=len(vtt.encode()),
             )
             progress(1.0)
             return track_lang

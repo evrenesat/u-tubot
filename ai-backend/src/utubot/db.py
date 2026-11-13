@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS video_meta(
   video_id TEXT PRIMARY KEY, json TEXT NOT NULL, fetched_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS transcripts(
   video_id TEXT PRIMARY KEY, lang TEXT, source TEXT NOT NULL, text TEXT NOT NULL,
-  fetched_at REAL NOT NULL, engine TEXT, model TEXT, segments TEXT);
+  fetched_at REAL NOT NULL, engine TEXT, model TEXT, segments TEXT, job_id TEXT);
 CREATE INDEX IF NOT EXISTS transcripts_fetched ON transcripts(fetched_at);
 CREATE TABLE IF NOT EXISTS no_captions(
   video_id TEXT PRIMARY KEY, checked_at REAL NOT NULL);
@@ -54,9 +54,13 @@ CREATE TABLE IF NOT EXISTS jobs(
   created_at REAL NOT NULL, updated_at REAL NOT NULL, kind TEXT NOT NULL DEFAULT 'captions',
   title TEXT, finished_at REAL, attempts INTEGER NOT NULL DEFAULT 0, not_before REAL,
   priority INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS job_events(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, ts REAL NOT NULL,
+  stage TEXT NOT NULL, status TEXT NOT NULL, detail TEXT);
+CREATE INDEX IF NOT EXISTS job_events_job ON job_events(job_id, id);
 CREATE TABLE IF NOT EXISTS captions(
   video_id TEXT NOT NULL, lang TEXT NOT NULL, label TEXT NOT NULL, speakers INTEGER NOT NULL,
-  vtt TEXT NOT NULL, created_at REAL NOT NULL, PRIMARY KEY(video_id, lang));
+  vtt TEXT NOT NULL, created_at REAL NOT NULL, job_id TEXT, PRIMARY KEY(video_id, lang));
 CREATE TABLE IF NOT EXISTS device_tokens(
   id TEXT PRIMARY KEY, user TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, device TEXT NOT NULL,
   created_at REAL NOT NULL, last_used REAL);
@@ -95,7 +99,8 @@ JOB_COLUMNS = {
     "priority": "INTEGER NOT NULL DEFAULT 1",
 }
 POLICY_COLUMNS = {"version": "INTEGER NOT NULL DEFAULT 0", "updated_at": "REAL NOT NULL DEFAULT 0"}
-TRANSCRIPT_COLUMNS = {"engine": "TEXT", "model": "TEXT", "segments": "TEXT"}
+TRANSCRIPT_COLUMNS = {"engine": "TEXT", "model": "TEXT", "segments": "TEXT", "job_id": "TEXT"}
+CAPTION_COLUMNS = {"job_id": "TEXT"}
 METADATA_ONLY = "metadata_only"
 
 
@@ -122,6 +127,7 @@ class Database:
         self._add_missing_columns("jobs", JOB_COLUMNS)
         self._add_missing_columns("policy_overrides", POLICY_COLUMNS)
         self._add_missing_columns("transcripts", TRANSCRIPT_COLUMNS)
+        self._add_missing_columns("captions", CAPTION_COLUMNS)
         # Rows written when a transcript could not be fetched: nothing may be built on a title alone.
         self._conn.execute("DELETE FROM transcripts WHERE source=?", [METADATA_ONLY])
         self._conn.execute("DELETE FROM summaries WHERE source=?", [METADATA_ONLY])

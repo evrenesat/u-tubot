@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import time
 from contextlib import asynccontextmanager
@@ -22,10 +23,12 @@ from fastapi.responses import (
 
 from . import __version__, appchannel
 from .assess import Assessor
-from .auth import Auth, Forbidden, PairError, Principal, Unauthorized
+from .auth import CONFIG_TOKEN_ID, Auth, Forbidden, PairError, Principal, Unauthorized
+from .captions import events
 from .captions.asr import ASRBackend, make_asr
 from .captions.jobs import JobQueue
 from .captions.pipeline import CaptionPipeline, Downloader
+from .captions.report import JobReports
 from .config import Config, UserConfig, load_config
 from .content import ContentService
 from .db import Database
@@ -63,6 +66,7 @@ from .webauth import SESSION_TOKEN_ID, WebAuth, csrf_valid
 from .webroutes import Deps, install_web_routes
 from .youtube import Clock, YoutubeGate
 
+log = logging.getLogger("utubot.app")
 APK_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\.apk$")
 APK_MIME = "application/vnd.android.package-archive"
 LANG_RE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
@@ -89,6 +93,9 @@ SECURITY_HEADERS = {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
 RECENT_JOBS_LIMIT = 20
+WEB_CLIENT = "Web UI"
+TOKEN_CLIENT = "API token"
+DEVICE_CLIENT = "device"
 JOBS_LIMIT_DEFAULT = 50
 JOBS_LIMIT_MAX = 200
 
@@ -104,6 +111,7 @@ class Services:
     prompts: PromptStore
     content: ContentService
     jobs: JobQueue
+    reports: JobReports
     gate: YoutubeGate
     transcription: Transcription
     limiter: RateLimiter
@@ -134,6 +142,7 @@ def build_services(
         cfg, db, asr or make_asr(cfg.captions), llm, downloader=downloader, gate=gate
     )
     jobs = JobQueue(cfg, db, pipeline, transcripts)
+    reports = JobReports(cfg, db, jobs, transcripts)
     transcription = Transcription(cfg, transcripts, jobs)
     auth = Auth(cfg, db)
     catalog = ModelCatalog(cfg, db, llm)
@@ -147,6 +156,7 @@ def build_services(
         prompts=prompts,
         content=ContentService(cfg, db, llm, transcripts, prompts, transcription),
         jobs=jobs,
+        reports=reports,
         gate=gate,
         transcription=transcription,
         limiter=RateLimiter(cfg.security.rate_window_s),
@@ -324,6 +334,44 @@ def create_app(
         if not user.admin:
             raise Forbidden
         return user
+
+    def client_of(request: Request) -> str:
+        """Who is calling, as the job log names it: a paired device by its name, the web UI, or a token."""
+        principal = getattr(request.state, "principal", None)
+        if principal is None:
+            return "unknown"
+        if principal.token_id == SESSION_TOKEN_ID:
+            return WEB_CLIENT
+        if principal.token_id == CONFIG_TOKEN_ID:
+            return TOKEN_CLIENT
+        row = svc.db.one("SELECT device FROM device_tokens WHERE id=?", [principal.token_id])
+        return row["device"] if row else DEVICE_CLIENT
+
+    def mark_origin(request: Request, user: UserConfig) -> str:
+        """Tell the job log who is behind this request (read when the request queues a job)."""
+        route = request.scope.get("route")
+        path = getattr(route, "path", request.url.path)
+        client = client_of(request)
+        events.set_origin(events.Origin(client, user.name, f"{request.method} {path}"))
+        return client
+
+    def note_delivery(record, *args, **kwargs) -> None:
+        """Log that a client fetched a job's result; never lets the log break the response."""
+        try:
+            record(*args, **kwargs)
+        except Exception:
+            log.warning("could not record a delivery", exc_info=True)
+
+    def note_transcript_use(request: Request, user: UserConfig, video_id: str, result, via: str):
+        if isinstance(result, dict) and result.get("status") == "ready":
+            note_delivery(
+                svc.jobs.record_transcript_delivery,
+                video_id,
+                via,
+                client_of(request),
+                user.name,
+            )
+        return result
 
     @app.middleware("http")
     async def edge(request: Request, call_next):
@@ -506,15 +554,18 @@ def create_app(
 
     @app.get("/v1/videos/{video_id}/insight")
     async def insight(
+        request: Request,
         video_id: str,
         wait_ms: int | None = None,
         meta: QueryMeta = Depends(qmeta),
         user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
-        return await svc.content.insight(
+        mark_origin(request, user)
+        result = await svc.content.insight(
             user.policy, video_id, meta.as_dict(), wait_ms, user=user.name
         )
+        return note_transcript_use(request, user, video_id, result, "insight")
 
     @app.get("/v1/prompts")
     async def prompts_list(user: UserConfig = Depends(current_user)):
@@ -589,6 +640,7 @@ def create_app(
 
     @app.get("/v1/videos/{video_id}/summary")
     async def summary(
+        request: Request,
         video_id: str,
         prompt: str | None = None,
         wait_ms: int | None = None,
@@ -596,6 +648,7 @@ def create_app(
         user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
+        mark_origin(request, user)
         panel = prompt == PANEL_ALIAS
         if panel:
             key = svc.prompts.panel_key(user.name)
@@ -617,16 +670,20 @@ def create_app(
         )
         if panel and result["status"] == "ready":
             svc.content.schedule_long(user.name, user.policy, video_id, meta.as_dict(), key)
-        return result
+        return note_transcript_use(
+            request, user, video_id, result, "summary_panel" if panel else "summary"
+        )
 
     @app.post("/v1/videos/{video_id}/summary")
     async def summary_adhoc(
+        request: Request,
         video_id: str,
         body: SummaryAdhoc,
         meta: QueryMeta = Depends(qmeta),
         user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
+        mark_origin(request, user)
         try:
             adhoc = Prompt(
                 id="adhoc",
@@ -638,7 +695,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         adhoc = svc.content.with_user_model(adhoc, user.policy)
-        return await svc.content.summary(
+        result = await svc.content.summary(
             user.policy,
             video_id,
             adhoc,
@@ -648,24 +705,32 @@ def create_app(
             adhoc=True,
             user=user.name,
         )
+        return note_transcript_use(request, user, video_id, result, "summary")
 
     @app.post("/v1/videos/{video_id}/ask")
     async def ask(
+        request: Request,
         video_id: str,
         body: AskRequest,
         meta: QueryMeta = Depends(qmeta),
         user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
-        return await svc.content.ask(
+        mark_origin(request, user)
+        result = await svc.content.ask(
             user.policy, video_id, body.question, meta.as_dict(), body.wait_ms, user=user.name
         )
+        return note_transcript_use(request, user, video_id, result, "answer")
 
     @app.post("/v1/videos/{video_id}/captions")
     async def captions_queue(
-        video_id: str, body: CaptionsRequest | None = None, user: UserConfig = Depends(current_user)
+        request: Request,
+        video_id: str,
+        body: CaptionsRequest | None = None,
+        user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
+        mark_origin(request, user)
         body = body or CaptionsRequest()
         for lang in (body.lang, body.translate_to):
             if lang and lang != "auto" and not LANG_RE.match(lang):
@@ -674,17 +739,31 @@ def create_app(
         return {"status": job["status"], "job_id": job["id"], "eta_s": None}
 
     @app.get("/v1/videos/{video_id}/captions")
-    async def captions_status(video_id: str, user: UserConfig = Depends(current_user)):
+    async def captions_status(
+        request: Request, video_id: str, user: UserConfig = Depends(current_user)
+    ):
         check_video_id(video_id)
-        return svc.jobs.status(video_id)
+        status = svc.jobs.status(video_id)
+        if status["tracks"]:
+            note_delivery(
+                svc.jobs.record_captions_delivery,
+                video_id,
+                [track["lang"] for track in status["tracks"]],
+                "captions_status",
+                client_of(request),
+                user.name,
+            )
+        return status
 
     @app.post("/v1/videos/{video_id}/transcribe")
     async def transcribe(
+        request: Request,
         video_id: str,
         meta: QueryMeta = Depends(qmeta),
         user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
+        mark_origin(request, user)
         try:
             return svc.transcription.request(user.name, video_id, meta.as_dict())
         except TranscribeRefused as exc:
@@ -692,12 +771,22 @@ def create_app(
 
     @app.get("/v1/videos/{video_id}/transcript")
     async def transcript_status(
+        request: Request,
         video_id: str,
         meta: QueryMeta = Depends(qmeta),
         user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
-        return svc.transcription.status(video_id, user.name, meta.as_dict())
+        out = svc.transcription.status(video_id, user.name, meta.as_dict())
+        if out.get("transcript_status") == "ok" and out.get("source") == "asr":
+            note_delivery(
+                svc.jobs.record_transcript_delivery,
+                video_id,
+                "transcript_status",
+                client_of(request),
+                user.name,
+            )
+        return out
 
     @app.get("/v1/jobs")
     async def jobs_list(
@@ -712,12 +801,24 @@ def create_app(
 
     @app.get("/v1/videos/{video_id}/captions/{lang}.vtt")
     async def captions_vtt(
-        video_id: str, lang: str, user: UserConfig = Depends(current_user_or_query)
+        request: Request,
+        video_id: str,
+        lang: str,
+        user: UserConfig = Depends(current_user_or_query),
     ):
         check_video_id(video_id)
         row = svc.db.one("SELECT vtt FROM captions WHERE video_id=? AND lang=?", [video_id, lang])
         if not row:
             raise HTTPException(404, "no such track")
+        note_delivery(
+            svc.jobs.record_captions_delivery,
+            video_id,
+            [lang],
+            "vtt",
+            client_of(request),
+            user.name,
+            bytes=len(row["vtt"].encode()),
+        )
         return PlainTextResponse(row["vtt"], media_type="text/vtt")
 
     @app.post("/v1/feedback")
@@ -740,6 +841,9 @@ def create_app(
             clear_session_cookie=clear_session_cookie,
             check_same_origin=check_same_origin,
             check_csrf=check_csrf,
+            client_of=client_of,
+            mark_origin=mark_origin,
+            note_delivery=note_delivery,
         ),
     )
     return app

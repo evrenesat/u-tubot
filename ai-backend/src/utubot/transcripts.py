@@ -383,6 +383,7 @@ class TranscriptService:
         engine: str | None = None,
         model: str | None = None,
         segments: list[tuple[float, float, str]] | None = None,
+        job_id: str | None = None,
     ) -> bool:
         """Keep an ASR transcript unless the video has fresh stored YouTube captions.
 
@@ -390,15 +391,15 @@ class TranscriptService:
         later do not replace ASR (`_fetch`). Captions older than `cache_ttl_s` are no longer used
         (`cached`), so the ASR transcript replaces them. Returns False when nothing was stored.
         `segments` are `(start_s, end_s, text)` rows kept next to the text with the engine and
-        model that produced them.
+        model that produced them; `job_id` is the job that made it (for its delivery log).
         """
         now = time.time()
         stored = self.db.execute_rc(
-            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,engine,model,segments)"
-            " VALUES(?,?,?,?,?,?,?,?)"
+            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,engine,model,segments,job_id)"
+            " VALUES(?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
             " text=excluded.text, fetched_at=excluded.fetched_at, engine=excluded.engine,"
-            " model=excluded.model, segments=excluded.segments"
+            " model=excluded.model, segments=excluded.segments, job_id=excluded.job_id"
             " WHERE transcripts.source != ? OR transcripts.fetched_at < ?",
             [
                 video_id,
@@ -409,6 +410,7 @@ class TranscriptService:
                 engine,
                 model,
                 json.dumps(segments) if segments else None,
+                job_id,
                 SOURCE_CAPTIONS,
                 now - self.cfg.transcripts.cache_ttl_s,
             ],
@@ -502,7 +504,7 @@ class TranscriptService:
             "INSERT INTO transcripts(video_id,lang,source,text,fetched_at) VALUES(?,?,?,?,?)"
             " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
             " text=excluded.text, fetched_at=excluded.fetched_at, engine=NULL, model=NULL,"
-            " segments=NULL WHERE transcripts.source != ?",
+            " segments=NULL, job_id=NULL WHERE transcripts.source != ?",
             [video_id, result.lang, SOURCE_CAPTIONS, result.text, time.time(), SOURCE_ASR],
         )
         self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])

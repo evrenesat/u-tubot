@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from ..config import CaptionsConfig
+from . import events
 from .types import Word
 
 log = logging.getLogger("utubot.diarize")
@@ -20,6 +21,7 @@ class Diarizer(Protocol):
 
 class NoDiarizer:
     async def diarize(self, wav: Path) -> list[Turn]:
+        events.note(skip="off", message="Speaker labels are off ([captions] diarization is none).")
         return []
 
 
@@ -31,11 +33,19 @@ class PyannoteDiarizer:
         token = os.environ.get(self.cfg.hf_token_env)
         if not token:
             log.warning("diarization skipped: %s is not set", self.cfg.hf_token_env)
+            events.note(
+                skip="no_hf_token",
+                message=f"No Hugging Face token was set ({self.cfg.hf_token_env} is empty).",
+            )
             return []
         try:
             from pyannote.audio import Pipeline
         except ImportError:
             log.warning("diarization skipped: pyannote.audio is not installed")
+            events.note(
+                skip="pyannote_missing",
+                message="pyannote.audio is not installed (uv sync --extra diarization).",
+            )
             return []
         pipeline = Pipeline.from_pretrained(PYANNOTE_PIPELINE, token=token)
         result = pipeline(str(wav))

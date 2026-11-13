@@ -249,6 +249,8 @@ media_orphan_age_s = 3600          # on start, scratch directories under data_di
 max_download_bytes = 419430400     # yt-dlp skips audio larger than this (400 MiB); the duration limit is max_duration_s
 audio_format = "bestaudio/best"    # yt-dlp selector used only when no usable format was recognised: the audio is normally the
                                    # lowest-bitrate stream of the ORIGINAL-language track (never an AI-dubbed one; docs/captions.md)
+job_events_max = 400               # stage events kept per job (the log of GET /v1/jobs/ID); past this only milestones (queued, finished, failed, delivered) are added
+delivery_coalesce_s = 300.0        # a client that fetches a result the same way again within this time only raises the count of its "delivered" event
 
 # An engine chain: each engine is used when its key variable is set (none needed when api_key_env is omitted).
 # Per audio file the router picks, among healthy engines that serve the video's language, the lowest `priority`
