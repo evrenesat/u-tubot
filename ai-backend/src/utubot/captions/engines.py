@@ -28,6 +28,7 @@ from ..config import (
     CaptionsConfig,
 )
 from ..llm import BACKGROUND, INTERACTIVE, PriorityLimiter
+from . import events
 from .asr import (
     ASRError,
     ASRResult,
@@ -36,7 +37,15 @@ from .asr import (
     wav_duration,
     words_from_segment,
 )
-from .chunking import Span, plan_chunks, shift, stitch_segments, stitch_words, write_chunk
+from .chunking import (
+    Span,
+    StitchStats,
+    plan_chunks,
+    shift,
+    stitch_segments,
+    stitch_words,
+    write_chunk,
+)
 from .types import Segment, Word
 
 log = logging.getLogger("utubot.asr")
@@ -56,13 +65,22 @@ class EngineError(ASRError):
 
     `penalize` lets the failure count against the engine's health. With `isolated` it may be the
     file's fault (a 5xx or an answer that does not parse): the engine is only marked unhealthy once
-    two different files failed in a row on it (`AsrRouter._record_failure`).
+    two different files failed in a row on it (`AsrRouter._record_failure`). `code` is a short stable
+    name of the cause for the job's event log (`http_503`, `transport_timeout`, `unhealthy` ...).
     """
 
-    def __init__(self, message: str, *, penalize: bool = True, isolated: bool = False):
+    def __init__(
+        self,
+        message: str,
+        *,
+        penalize: bool = True,
+        isolated: bool = False,
+        code: str | None = None,
+    ):
         super().__init__(message)
         self.penalize = penalize
         self.isolated = isolated
+        self.code = code
 
 
 @dataclass
@@ -106,6 +124,14 @@ def parse_verbose_json(data: dict[str, Any], duration_s: float, want_words: bool
     return ChunkResult(segments, words, normalize_language(data.get("language")))
 
 
+def transport_code(exc: httpx.HTTPError) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        return "transport_timeout"
+    if isinstance(exc, httpx.ConnectError):
+        return "transport_connect"
+    return "transport_error"
+
+
 class OpenAIEngine:
     """Any server with `POST /v1/audio/transcriptions` (OpenAI, mlx-audio, whisper.cpp, vLLM ...)."""
 
@@ -143,23 +169,27 @@ class OpenAIEngine:
             raise EngineError(
                 f"asr transport error: {type(exc).__name__}",
                 isolated=not isinstance(exc, httpx.ConnectError | httpx.TimeoutException),
+                code=transport_code(exc),
             ) from None
         if resp.status_code >= HTTP_ERROR_FLOOR:
             raise EngineError(
                 f"asr http {resp.status_code}: {resp.text[:ERROR_TEXT_CHARS]}",
                 penalize=resp.status_code not in STATUS_INPUT_REJECTED,
                 isolated=resp.status_code >= HTTP_SERVER_ERROR_FLOOR,
+                code=f"http_{resp.status_code}",
             )
         try:
             body = resp.json()
         except ValueError:
-            raise EngineError("asr answered something that is not JSON", isolated=True) from None
+            raise EngineError(
+                "asr answered something that is not JSON", isolated=True, code="not_json"
+            ) from None
         duration = wav_duration(wav)
         try:
             return parse_verbose_json(body, duration, want_words)
         except (ValueError, KeyError, TypeError, AttributeError):
             raise EngineError(
-                "asr answered an unexpected transcript shape", isolated=True
+                "asr answered an unexpected transcript shape", isolated=True, code="bad_shape"
             ) from None
 
 
@@ -178,7 +208,9 @@ class FasterWhisperEngine:
             try:
                 from faster_whisper import WhisperModel
             except ImportError as exc:
-                raise EngineError("faster-whisper is not installed (uv sync --extra asr)") from exc
+                raise EngineError(
+                    "faster-whisper is not installed (uv sync --extra asr)", code="not_installed"
+                ) from exc
             self._model = WhisperModel(
                 self.cfg.model,
                 device="cpu",
@@ -396,9 +428,12 @@ class AsrRouter:
     ) -> ChunkResult:
         limiter = self._limiter(engine)
         await limiter.acquire(job.priority)
+        began = time.monotonic()
         try:
             if self._passed_over(engine, rest):
-                raise EngineError(f"asr engine {engine.name} went unhealthy", penalize=False)
+                raise EngineError(
+                    f"asr engine {engine.name} went unhealthy", penalize=False, code="unhealthy"
+                )
             if span.start <= 0 and span.end >= job.total_s:
                 result = await self._engine(engine).transcribe_chunk(
                     job.wav, job.language, job.want_words
@@ -412,10 +447,37 @@ class AsrRouter:
                     )
                 finally:
                     part.unlink(missing_ok=True)
+        except EngineError as exc:
+            events.emit(
+                events.ASR_CHUNK,
+                events.FAILED,
+                **self._chunk_detail(engine, span, began),
+                error_class=events.error_class(exc),
+                technical=events.technical(exc),
+            )
+            raise
         finally:
             limiter.release()
         self._failed_files.pop(engine.name, None)
+        events.emit(
+            events.ASR_CHUNK,
+            events.OK,
+            **self._chunk_detail(engine, span, began),
+            chars=sum(len(seg.text) for seg in result.segments),
+            segments=len(result.segments),
+            language=result.language,
+        )
         return result
+
+    @staticmethod
+    def _chunk_detail(engine: AsrEngineConfig, span: Span, began: float) -> dict[str, Any]:
+        return {
+            "engine": engine.name,
+            "model": engine.model,
+            "start_s": round(span.start, 1),
+            "end_s": round(span.end, 1),
+            "seconds": round(time.monotonic() - began, 2),
+        }
 
     async def _span_on(
         self, engine: AsrEngineConfig, span: Span, job: _Job, rest: list[AsrEngineConfig]
@@ -427,7 +489,9 @@ class AsrRouter:
         placed: list[Span] = []
         for sub in subspans:
             if self._passed_over(engine, rest):
-                raise EngineError(f"asr engine {engine.name} went unhealthy", penalize=False)
+                raise EngineError(
+                    f"asr engine {engine.name} went unhealthy", penalize=False, code="unhealthy"
+                )
             absolute = Span(sub.index, span.start + sub.start, span.start + sub.end)
             result = await self._chunk_on(engine, absolute, job, rest)
             placed.append(absolute)
@@ -438,13 +502,37 @@ class AsrRouter:
             stitch_segments(segments, placed), stitch_words(words, placed), languages, [engine]
         )
 
+    @staticmethod
+    def _fell_through(
+        engine: AsrEngineConfig,
+        rest: list[AsrEngineConfig],
+        reason: str,
+        span: Span,
+        **detail: Any,
+    ) -> None:
+        """Log that the work of `span` moves on from `engine` (to the next one of the chain, if any)."""
+        events.emit(
+            events.ASR_FALLBACK,
+            events.WARN if rest else events.FAILED,
+            engine=engine.name,
+            reason=reason,
+            next=rest[0].name if rest else None,
+            start_s=round(span.start, 1),
+            end_s=round(span.end, 1),
+            **detail,
+        )
+
     async def _span(self, chain: list[AsrEngineConfig], span: Span, job: _Job) -> SpanResult:
         failure: EngineError | None = None
         misfit: SpanResult | None = None
         detected: str | None = None
         for position, engine in enumerate(chain):
             rest = chain[position + 1 :]
-            if (detected and not serves(engine, detected)) or self._passed_over(engine, rest):
+            if detected and not serves(engine, detected):
+                self._fell_through(engine, rest, "language_mismatch", span, detected=detected)
+                continue
+            if self._passed_over(engine, rest):
+                self._fell_through(engine, rest, "unhealthy", span)
                 continue
             try:
                 result = await self._span_on(engine, span, job, rest)
@@ -452,6 +540,7 @@ class AsrRouter:
                 failure = exc
                 self._record_failure(engine, exc, job.source)
                 log.warning("asr engine %s failed a chunk: %s", engine.name, exc)
+                self._fell_through(engine, rest, events.error_class(exc), span)
                 continue
             found = dominant_language(result.languages)
             if job.language is None and found and not serves(engine, found):
@@ -460,6 +549,7 @@ class AsrRouter:
                     log.info(
                         "asr engine %s took %s audio outside its languages", engine.name, found
                     )
+                    self._fell_through(engine, rest, "language_mismatch", span, detected=found)
                     continue
             return result
         if misfit is not None:
@@ -483,6 +573,16 @@ class AsrRouter:
             )
         total = wav_duration(wav, self.cfg.sample_rate)
         spans = plan_chunks(total, chain[0].max_chunk_s, self.cfg.asr_chunk_overlap_s)
+        events.emit(
+            events.CHUNKING,
+            events.OK,
+            chunks=len(spans),
+            sizes_s=[round(sp.duration, 1) for sp in spans],
+            audio_s=round(total, 1),
+            chunk_limit_s=chain[0].max_chunk_s,
+            overlap_s=self.cfg.asr_chunk_overlap_s,
+            engines=[e.name for e in chain],
+        )
         done = 0
 
         async def run(span: Span, job: _Job) -> SpanResult:
@@ -499,8 +599,20 @@ class AsrRouter:
 
     @staticmethod
     def _merge(results: list[SpanResult], spans: list[Span]) -> ASRResult:
-        segments = stitch_segments([r.segments for r in results], spans)
+        stats = StitchStats()
+        segments = stitch_segments([r.segments for r in results], spans, stats)
         words = stitch_words([r.words for r in results], spans)
+        if len(spans) > 1:
+            events.emit(
+                events.STITCHING,
+                events.OK,
+                chunks=len(spans),
+                seams=len(spans) - 1,
+                cut_segments=stats.cut,
+                repeated_words=stats.repeated_words,
+            )
+        else:
+            events.emit(events.STITCHING, events.SKIPPED, reason="single_chunk", chunks=1)
         language = dominant_language([item for r in results for item in r.languages])
         used = list(dict.fromkeys(e.name for r in results for e in r.engines))
         models = list(dict.fromkeys(e.model for r in results for e in r.engines))

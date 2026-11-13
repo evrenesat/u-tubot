@@ -45,6 +45,13 @@ const ICONS = {
   refresh: "M20 11a8 8 0 0 0-14-4L4 9M4 4v5h5M4 13a8 8 0 0 0 14 4l2-2M20 20v-5h-5",
   check: "M5 12l5 5 9-10",
   external: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
+  warn: "M12 5l8 14H4zM12 10v4M12 17h.01",
+  skip: "M7 12h10",
+  run: "M12 4a8 8 0 1 0 8 8",
+  info: "M12 11v5M12 8h.01",
+  chevron: "M9 6l6 6-6 6",
+  download: "M12 4v11M7 11l5 5 5-5M5 20h14",
+  back: "M15 6l-6 6 6 6",
 };
 
 export function icon(name) {

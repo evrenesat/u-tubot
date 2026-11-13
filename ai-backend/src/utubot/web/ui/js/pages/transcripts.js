@@ -17,7 +17,8 @@ import {
   textInput,
   toast,
 } from "../components.js";
-import { youtubeHref } from "../dom.js";
+import { icon, youtubeHref } from "../dom.js";
+import { stageLabel } from "../jobtext.js";
 
 const MODES = [
   ["off", "Off"],
@@ -77,40 +78,55 @@ export function transcriptPolicyForm(settingsPath, doc, onUpdate) {
   );
 }
 
+function jobAction(job, reload) {
+  if (job.state === "waiting") {
+    return button("Cancel", async () => {
+      await api("/v1/jobs/" + job.id + "/cancel", { method: "POST" });
+      toast("Cancelled");
+      await reload();
+    }, { kind: "sec" });
+  }
+  if (job.state === "failed" || job.state === "cancelled") {
+    return button("Retry", async () => {
+      await api("/v1/jobs/" + job.id + "/retry", { method: "POST" });
+      toast("Queued again");
+      await reload();
+    }, { kind: "sec" });
+  }
+  return null;
+}
+
 function jobRow(job, reload) {
   const href = youtubeHref(job.video_id);
-  const title = job.title || job.video_id;
   const ago = job.finished_at || job.created_at;
+  const doing = job.state === "processing" && job.stage ? ", now: " + stageLabel(job.stage).toLowerCase() : "";
   return h(
     "div",
     { class: "job" },
     h(
       "div",
       { class: "row between nowrap" },
-      href ? h("a", { class: "job-title", href, target: "_blank", rel: "noopener noreferrer", text: title }) : h("span", { class: "job-title", text: title }),
+      h("a", { class: "job-title", href: job.detail_url, text: job.title || job.video_id }),
       pill(job.state, STATE_KIND[job.state] || ""),
     ),
-    h("small", { class: "muted", text: job.kind + ", " + fmtAgo(ago) }),
+    h(
+      "small",
+      { class: "muted" },
+      job.kind + ", " + fmtAgo(ago) + doing,
+      href ? [" · ", h("a", { href, target: "_blank", rel: "noopener noreferrer", text: "YouTube" })] : null,
+    ),
+    job.state === "ready"
+      ? h("small", { class: job.delivered ? "ok" : "warn", text: job.delivered ? "Fetched by a client " + fmtAgo(job.delivered_at) : "Not fetched by any client yet" })
+      : null,
     job.state === "processing" ? progressBar(job.progress) : null,
     job.retry_after_s ? h("small", { class: "muted", text: "Waiting for YouTube, about " + fmtDuration(job.retry_after_s) }) : null,
     job.error && job.state !== "cancelled" ? h("small", { class: "bad", text: job.error }) : null,
-    job.state === "waiting" || job.state === "failed" || job.state === "cancelled"
-      ? h(
-          "div",
-          { class: "row" },
-          job.state === "waiting"
-            ? button("Cancel", async () => {
-                await api("/v1/jobs/" + job.id + "/cancel", { method: "POST" });
-                toast("Cancelled");
-                await reload();
-              }, { kind: "sec" })
-            : button("Retry", async () => {
-                await api("/v1/jobs/" + job.id + "/retry", { method: "POST" });
-                toast("Queued again");
-                await reload();
-              }, { kind: "sec" }),
-        )
-      : null,
+    h(
+      "div",
+      { class: "row" },
+      h("a", { class: "btn sec", href: job.detail_url }, h("span", { text: "Details" }), icon("chevron")),
+      jobAction(job, reload),
+    ),
   );
 }
 

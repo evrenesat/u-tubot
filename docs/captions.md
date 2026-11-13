@@ -20,6 +20,9 @@ Optionally `translate_to` translates the cues with `[llm.captions]`. Captions ar
 job and, when ready, adds the track; with *Select HQ captions automatically* it is turned on for you. The app fetches the VTT with
 its `Authorization` header.
 
+Every step above is written to the job's event log with its time, and the web UI shows it as a timeline with the result and the clients that
+fetched it (`server.md`, Job details).
+
 ## ASR engines
 
 Speech to text goes through a chain of engines. Each engine is one `[[captions.asr_engines]]` entry and is used when it is enabled

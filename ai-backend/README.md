@@ -79,6 +79,9 @@ host anywhere, import by URL (short links followed, 256 KiB cap).
 optional diarization, segmentation (42 chars x 2 lines, 1-7 s), WebVTT with `[S1]` prefixes.
 Jobs survive restarts. Needs `ffmpeg` on PATH.
 
+Every job has a detail report (web UI: *Captions*, tap a job; `GET /v1/jobs/ID`): what was asked, each stage with its time, the result with
+downloads, and which client fetched it (`../docs/server.md`, Job details).
+
 ## No transcript, no summary
 
 Everything that reaches YouTube goes through `youtube.py` (`YoutubeGate`: pacing plus a 429/403/bot-check circuit breaker).

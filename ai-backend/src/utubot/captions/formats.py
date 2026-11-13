@@ -114,6 +114,17 @@ def _original_group(pool: list[Format]) -> list[Format]:
     return _preferred_track(plain) if plain else pool
 
 
+def track_kind(fmt: Format) -> str:
+    """How the format's audio track is marked: `original`, `dubbed`, `descriptive` or `unmarked`."""
+    if is_original(fmt):
+        return "original"
+    if is_dubbed(fmt):
+        return "dubbed"
+    if DESCRIPTIVE_RE.search(_note(fmt)):
+        return "descriptive"
+    return "unmarked"
+
+
 def pick_audio_format(formats: Iterable[Format]) -> Format | None:
     """The lowest-bitrate usable format of the original-language track, or None (see module doc)."""
     candidates = [fmt for fmt in formats if usable(fmt)]

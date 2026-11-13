@@ -21,6 +21,14 @@ DEDUPE_MIN_WORDS = 2
 NON_WORD_RE = re.compile(r"[^\w]+", re.UNICODE)
 
 
+@dataclass
+class StitchStats:
+    """What stitching did, for the job's event log: items cut at the overlaps, words dropped as repeats."""
+
+    cut: int = 0
+    repeated_words: int = 0
+
+
 @dataclass(frozen=True)
 class Span:
     index: int
@@ -97,12 +105,16 @@ def _mid(item: Timed) -> float:
     return (item.start + item.end) / 2
 
 
-def cut_overlaps[T: (Segment, Word)](parts: list[list[T]], spans: list[Span]) -> list[list[T]]:
+def cut_overlaps[T: (Segment, Word)](
+    parts: list[list[T]], spans: list[Span], stats: StitchStats | None = None
+) -> list[list[T]]:
     """Per chunk, the items (times already absolute) that fall in the stretch it owns."""
     kept: list[list[T]] = []
     for index, items in enumerate(parts):
         low, high = _keep_range(index, spans)
         kept.append([item for item in items if low <= _mid(item) < high])
+        if stats is not None:
+            stats.cut += len(items) - len(kept[-1])
     return kept
 
 
@@ -126,7 +138,9 @@ def _drop_leading_words(text: str, count: int) -> str:
     return ""
 
 
-def dedupe_segments(parts: list[list[Segment]], spans: list[Span]) -> list[Segment]:
+def dedupe_segments(
+    parts: list[list[Segment]], spans: list[Span], stats: StitchStats | None = None
+) -> list[Segment]:
     """Join chunk segments; text a chunk repeats from its predecessor's end is cut from its start.
 
     Only a chunk whose first segment starts inside the overlap with the previous chunk can repeat it.
@@ -139,13 +153,17 @@ def dedupe_segments(parts: list[list[Segment]], spans: list[Span]) -> list[Segme
             tail = [w for seg in out[-3:] for w in words_of(seg.text)]
             repeat = _repeat_length(tail, words_of(items[0].text))
             if repeat:
+                if stats is not None:
+                    stats.repeated_words += repeat
                 head = replace(items[0], text=_drop_leading_words(items[0].text, repeat))
                 items = [head, *items[1:]] if head.text else items[1:]
         out.extend(items)
     return out
 
 
-def dedupe_words(parts: list[list[Word]], spans: list[Span]) -> list[Word]:
+def dedupe_words(
+    parts: list[list[Word]], spans: list[Span], stats: StitchStats | None = None
+) -> list[Word]:
     out: list[Word] = []
     for index, items in enumerate(parts):
         if not items:
@@ -153,7 +171,10 @@ def dedupe_words(parts: list[list[Word]], spans: list[Span]) -> list[Word]:
         if out and index > 0 and items[0].start < spans[index - 1].end:
             tail = [_bare(w.text) for w in out[-DEDUPE_MAX_WORDS:]]
             head = [_bare(w.text) for w in items[:DEDUPE_MAX_WORDS]]
-            items = items[_repeat_length(tail, head) :]
+            repeat = _repeat_length(tail, head)
+            if stats is not None:
+                stats.repeated_words += repeat
+            items = items[repeat:]
         out.extend(items)
     return out
 
@@ -162,9 +183,13 @@ def _bare(word: str) -> str:
     return "".join(words_of(word))
 
 
-def stitch_segments(parts: list[list[Segment]], spans: list[Span]) -> list[Segment]:
-    return dedupe_segments(cut_overlaps(parts, spans), spans)
+def stitch_segments(
+    parts: list[list[Segment]], spans: list[Span], stats: StitchStats | None = None
+) -> list[Segment]:
+    return dedupe_segments(cut_overlaps(parts, spans, stats), spans, stats)
 
 
-def stitch_words(parts: list[list[Word]], spans: list[Span]) -> list[Word]:
-    return dedupe_words(cut_overlaps(parts, spans), spans)
+def stitch_words(
+    parts: list[list[Word]], spans: list[Span], stats: StitchStats | None = None
+) -> list[Word]:
+    return dedupe_words(cut_overlaps(parts, spans, stats), spans, stats)

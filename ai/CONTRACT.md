@@ -239,13 +239,65 @@ The caller's background jobs of every kind, newest first (groundwork for a "chec
 ```json
 {"jobs":[{"id":"a1b2c3d4e5f6","kind":"transcript|captions","video_id":"...","title":"...or null",
           "state":"waiting|processing|ready|failed","progress":0.0-1.0,"error":null,
-          "created_at":1700000000.0,"finished_at":null,"retry_after_s":null}]}
+          "created_at":1700000000.0,"finished_at":null,"retry_after_s":null,
+          "stage":"asr_chunk","delivered":false,"delivered_at":null,
+          "detail_url":"/#/jobs/a1b2c3d4e5f6","api_url":"/v1/jobs/a1b2c3d4e5f6"}]}
 ```
+`stage` is the stage of the job's newest log event (what it is doing, or did last), `delivered`/`delivered_at` say whether a client has fetched
+the result (below), `detail_url` is the web UI page of the job (relative to the server, needs a web sign-in) and `api_url` the JSON report.
 `waiting` = queued (including while YouTube has the server in a cooldown; then `retry_after_s` says roughly how long),
 `processing` = running, `cancelled` = the user cancelled it while it waited. `error` is a short generic message for `failed`.
 A waiting job can be cancelled and a failed or cancelled one retried: `POST /v1/jobs/{id}/cancel`, `POST /v1/jobs/{id}/retry`
 (`{"ok":true}`; `404` for another user's or an unknown job, `409` when the state does not allow it, `429` when a retry would exceed
 `[captions] transcribe_max_active_per_user`).
+
+### `GET /v1/jobs/{id}`
+The detail report of one job: what was requested, what was done, what happened. Allowed for the job's owner and for admins; `404` for
+anybody else and for an unknown id.
+
+```json
+{"id":"a1b2c3d4e5f6","kind":"transcript|captions","user":"owner","state":"waiting|processing|ready|failed|cancelled",
+ "progress":1.0,"error":null,"priority":"interactive|background","attempts":0,
+ "created_at":1700000000.0,"updated_at":1700000050.0,"finished_at":1700000050.0,"retry_after_s":null,
+ "detail_url":"/#/jobs/a1b2c3d4e5f6","api_url":"/v1/jobs/a1b2c3d4e5f6",
+ "can_cancel":false,"can_retry":false,
+ "inputs":{"video_id":"...","title":"...","channel":"...","duration_s":1740,"language":"tr","lang":"auto","translate_to":null,
+           "requested":{"user":"owner","client":"Living room TV","endpoint":"POST /v1/videos/{video_id}/captions",
+                        "trigger":{"kind":"explicit"},"priority":"background","at":1700000000.0}},
+ "outputs":{"transcript":{"source":"asr","lang":"en","engine":"mac","model":"whisper-large-v3-turbo","chars":4830,"lines":6,
+                          "segments":6,"stored_at":1700000050.0,"from_this_job":true,"first_lines":["[00:00] ..."],
+                          "text_url":"/v1/jobs/a1b2c3d4e5f6/transcript.txt"},
+            "captions":[{"lang":"tr","label":"Turkish (u·tubot)","speakers":1,"cues":612,"bytes":58120,"created_at":1700000050.0,
+                         "from_this_job":true,"preview":[{"start":1.2,"text":"..."}],
+                         "vtt_url":"/v1/videos/{video_id}/captions/tr.vtt","text_url":"/v1/jobs/a1b2c3d4e5f6/transcript.txt?lang=tr"}]},
+ "delivery":{"delivered":true,"count":6,"last_ts":1700000900.0,
+             "clients":[{"client":"Living room TV","user":"owner","count":6,"last_ts":1700000900.0,"via":["captions_status","vtt"]}]},
+ "events":[{"id":1,"ts":1700000000.0,"stage":"queued","status":"ok","detail":{"user":"owner","client":"Living room TV",
+            "trigger":{"kind":"explicit"},"priority":"background"}}]}
+```
+`outputs.transcript` is for `transcript` jobs and `outputs.captions` for `captions` jobs; both show what is stored for the video now
+(`from_this_job` is false when another job made it, null for rows from before the log), with the first 10 lines or cues. `can_cancel` and
+`can_retry` are true only for the job's owner. `trigger` is `{"kind":"explicit"}` or `{"kind":"auto","mode":"on_open|on_dwell",
+"passive":false,"max_minutes":30}`; `client` is the name a TV was linked under, `Web UI` or `API token`.
+
+`events` is the log in order of writing. `status` is `running`, `ok`, `warn`, `skipped`, `failed`, `info`, `cancelled` or `interrupted`;
+a `running` event is followed by the `ok`/`failed`/`skipped` event of the same stage, which carries `seconds`. Stages: `queued`, `promoted`,
+`started`, `gate_wait`, `caption_recheck`, `audio_download` (`format_id`, `track` = `original|dubbed|descriptive|unmarked`, `original`,
+`language`, `bytes`, `duration_s`, `source` = `downloaded|from_archive`), `ffmpeg`, `chunking`, `asr`, `asr_chunk`, `asr_fallback`, `stitching`,
+`diarization` (`reason` and `message` when skipped), `cues`, `text`, `translate`, `stored`, `retry`, `finished`, `failed` (`error_class`,
+`message`, `stage`, `technical`) and `delivered` (`via` = `captions_status|vtt|transcript_status|summary|summary_panel|insight|answer|transcript_txt`,
+`client`, `user`, `count`, `first_ts`). Details never carry a URL, token or secret. A job from before the log has one synthetic event,
+`finished` (or `queued` while it waits) with `detail.synthetic: true` and the message "finished (no detailed log, created before event
+logging)".
+
+**Delivery.** Fetching a result adds (or counts up) a `delivered` event on the job that made it: `GET /v1/videos/{id}/captions` with tracks,
+`GET .../captions/{lang}.vtt`, `GET /v1/videos/{id}/transcript` (source `asr`), a ready summary, insight or answer built from a transcript
+that audio produced, and `GET /v1/jobs/{id}/transcript.txt`. The same client and kind within `[captions] delivery_coalesce_s` (300) only
+raises `count`. This is how to see whether a TV actually downloaded a track.
+
+### `GET /v1/jobs/{id}/transcript.txt`
+`text/plain`, served as an attachment: the stored transcript of a `transcript` job, or the cue text of a `captions` job's track (query
+`lang` picks the track; default the first). Same access as the report; `404` when nothing is stored.
 
 ### `POST /v1/videos/{id}/captions`
 Queue high-quality captions. Body: `{"lang":"auto","translate_to":null}`.

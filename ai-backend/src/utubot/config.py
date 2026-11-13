@@ -212,6 +212,9 @@ class CaptionsConfig(BaseModel):
     audio_format: str = "bestaudio/best"
     asr_chunk_s: int = 600
     translate_batch: int = 40
+    job_events_max: int = 400
+    delivery_coalesce_s: float = 300.0
+    delivery_events_max: int = 50
 
     def engines(self) -> list[AsrEngineConfig]:
         """The engine chain: `asr_engines`, or the legacy `asr_backend`/`asr_*` keys as one engine."""

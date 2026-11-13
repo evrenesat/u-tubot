@@ -1,5 +1,53 @@
 # DEVLOG
 
+## 2026-11-13 (job report: event log, delivery, detail page)
+
+- Why: the jobs list only showed kind/state/progress; a "ready" captions job for a Turkish video did not say what it produced or whether the TV
+  fetched it. Every job now keeps a log and has a report page.
+- Log: new `job_events(id, job_id, ts, stage, status, detail JSON)` table (index on job_id) and `job_id` columns on `captions` and
+  `transcripts` (migrated; `store_asr(..., job_id=)`). `captions/events.py`: `JobEvents` (record, list, `deliver`, `backfill`), `JobTrace` bound
+  per running job in a `ContextVar` (`events.bind`/`unbind`), module helpers `emit`, `stage(...)` (a running event, then ok/failed/skipped with
+  `seconds`), `note` / `take_notes` (facts learnt deep inside a stage, for example the yt-dlp format), and `set_origin` (who is behind the HTTP request).
+  A ContextVar instead of parameters because `pipeline.transcribe`, `ASRBackend.transcribe` and the downloaders have many stubs in tests and
+  threads (`to_thread`, `gather`) inherit the context. Without a bound trace every helper is a no-op.
+- Instrumented: `JobQueue` (queued with user, client, endpoint, trigger and priority; promoted; started; retry; restart; cancelled;
+  caption recheck; stored; finished; failed with cause class, message and stage), `CaptionPipeline` (gate wait, audio download with
+  format id / track kind / language / bytes / `source`, ffmpeg, ASR totals, text, diarization, cues, translate, stored), `AsrRouter` (chunking,
+  one event per chunk with engine, model, seconds, characters and language, `asr_fallback` with `EngineError.code`, stitching via
+  `chunking.StitchStats`), the diarizers (`events.note(skip=...)`). `audio_download.source` is `downloaded` or `from_archive`; the media archive
+  (GitHub #34) sets it with `events.note(source=events.AUDIO_FROM_ARCHIVE)`.
+- Privacy: `events.clean` filters every detail before it is stored (keys naming token/secret/cookie/header/url dropped; URLs, `key=value`
+  secrets, bearer tokens, hex digests, `utb_`/`sk-` keys and mixed-case 32+ character runs replaced; text cut to 240 characters; depth and list
+  limits). Failure text is `events.technical(exc)`, never `str(exc)` raw. A model name such as `whisper-large-v3-turbo+whisper-small` must
+  survive, which is why the random-run rule needs upper case, lower case and a digit.
+- Delivery: `JobQueue.record_captions_delivery` / `record_transcript_delivery` credit the job that made the stored track (`captions.job_id`) or
+  transcript (`transcripts.job_id`, ASR only; older rows fall back to the video's newest ready job). Called from `GET .../captions` (with
+  tracks), `.vtt`, `GET .../transcript` (ok, asr), ready summary / panel summary / ask, `GET /v1/jobs/ID/transcript.txt`. Client name:
+  `client_of(request)` = device name, "Web UI" or "API token". `deliver` coalesces the same client and way within `delivery_coalesce_s` into
+  one row with a `count`. `[captions] job_events_max` caps stage events per job (milestones always kept).
+- API: `GET /v1/jobs/{id}` (`captions/report.py`, `JobReports`; owner or admin, else 404 like cancel/retry), `GET /v1/jobs/{id}/transcript.txt`,
+  `detail_url` / `api_url` / `stage` / `delivered` / `delivered_at` on `GET /v1/jobs`. Routes that can queue a job call `mark_origin(request, user)`
+  first (cancel and retry too). `Transcription.request(..., trigger=)` carries the policy that fired for automatic starts.
+- Backfill: `JobQueue.__init__` writes one synthetic event (`finished`, or `queued` for waiting jobs) for every job without events; the report
+  also synthesises one on the fly for jobs inserted by other means.
+- UI: `pages/job.js` (route `#/jobs/ID`, hidden from the bar, Captions stays lit), `jobtext.js` (labels, one-line summaries, `collapse` folds a
+  running event into the one that ends it; pure, checked with node in the tests), `transcripts.js` rows link to the report and show
+  fetched / not fetched. Auto refresh every 3 s while the job is waiting or running, 15 s afterwards; the page redraws only when the data changed.
+  Screenshots 22 to 24 and a new 13; `capture.cjs` also checks the job pages for sideways scroll and console (CSP) errors at 360 px.
+- Owner rule (no YouTube in tests): `tests/conftest.py` `block_youtube()` makes yt-dlp `extract_info`/`download`/`urlopen` raise and the real
+  httpx transports refuse YouTube hosts, in an autouse fixture and in `webui_demo.py`; tests stand in for `yt_dlp.YoutubeDL` or the fetcher and
+  downloader. `webui_demo.py`: the gate close endpoint now resets the per-class breakers (it still set the old single-breaker fields), demo job
+  reports with event logs (a Turkish captions job fetched by a TV, an unfetched transcript, a failed and a waiting job).
+- Review fixes: `events.clean` now handles quoted keys and values, `Authorization`/`Proxy-Authorization` with Bearer/Basic/Digest values,
+  bare `Bearer ...`, cookie values to the end of the line (also `Set-Cookie`), compound names (`hf_token`, `client_secret`, `x-api-key`) and
+  `token abcdefgh1234` without a separator (only a value of 8+ characters with a digit), and scans at most 2000 characters; plain words such as
+  "Keyboard: the build" or "token provided" stay. `delivered` rows are capped per job (`[captions] delivery_events_max`, 50): past it a
+  delivery is counted into the newest row. `Database` sets `PRAGMA synchronous=NORMAL` with WAL: no corruption risk, but a power loss may drop
+  the last few commits (a delivery count, a just-written session) instead of none.
+- Tests: `test_job_report.py` (stage order for transcript and captions jobs, who asked and the policy, cancel/retry/restart/transient retries,
+  caps, mocked yt-dlp format notes, mocked engine fallbacks and stitching, secrets/URLs, auth, delivery by client kind, backfill, the UI assets
+  under the CSP and the report text through node).
+
 ## 2026-11-12 (audio when captions are limited)
 
 - Why: production showed "YouTube is limiting transcript downloads, retrying in 34 minutes". Only the caption class (timedtext) was 429;

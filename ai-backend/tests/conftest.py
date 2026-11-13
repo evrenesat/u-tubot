@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 import pytest_asyncio
+import yt_dlp
 
 from tests.fakes import FakeClock
 from tests.mock_openai import MockOpenAI
@@ -11,6 +12,65 @@ from utubot.auth import hash_token
 from utubot.captions.asr import make_asr
 from utubot.config import Config, UserConfig, UserPolicy
 from utubot.transcripts import FetchResult
+
+YOUTUBE_HOST_SUFFIXES = (
+    "youtube.com",
+    "youtu.be",
+    "googlevideo.com",
+    "ytimg.com",
+    "youtube-nocookie.com",
+)
+YDL_METHODS = ("extract_info", "download", "urlopen", "process_ie_result")
+NO_YOUTUBE = "tests and demos never reach YouTube: use a fake fetcher, downloader or yt-dlp"
+
+
+def block_youtube():
+    """Make any real request to YouTube (yt-dlp, timedtext, googlevideo) fail loudly.
+
+    yt-dlp's extract/download/urlopen raise, and the real httpx transports refuse YouTube hosts.
+    Tests that stand in for `yt_dlp.YoutubeDL` replace the class itself and are not affected.
+    Returns the function that undoes it.
+    """
+    real_ydl = yt_dlp.YoutubeDL
+    originals = {name: getattr(real_ydl, name) for name in YDL_METHODS}
+    sync_send = httpx.HTTPTransport.handle_request
+    async_send = httpx.AsyncHTTPTransport.handle_async_request
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError(NO_YOUTUBE)
+
+    def guard(host: str) -> None:
+        if host.lower().endswith(YOUTUBE_HOST_SUFFIXES):
+            raise AssertionError(f"{NO_YOUTUBE} ({host})")
+
+    def sync_guarded(self, request):
+        guard(request.url.host)
+        return sync_send(self, request)
+
+    async def async_guarded(self, request):
+        guard(request.url.host)
+        return await async_send(self, request)
+
+    for name in YDL_METHODS:
+        setattr(real_ydl, name, refuse)
+    httpx.HTTPTransport.handle_request = sync_guarded
+    httpx.AsyncHTTPTransport.handle_async_request = async_guarded
+
+    def restore() -> None:
+        for name, original in originals.items():
+            setattr(real_ydl, name, original)
+        httpx.HTTPTransport.handle_request = sync_send
+        httpx.AsyncHTTPTransport.handle_async_request = async_send
+
+    return restore
+
+
+@pytest.fixture(autouse=True)
+def no_youtube():
+    restore = block_youtube()
+    yield
+    restore()
+
 
 TOKEN = "utb_testtoken"
 OTHER_TOKEN = "utb_othertoken"
