@@ -384,6 +384,8 @@ class ModelsConfig(BaseModel):
     timeout_s: float = 10.0
     new_for_s: int = 3 * 86400
     max_models_per_provider: int = 2000
+    refresh_interval_s: int = 600
+    summary_default_glob: str = "ornith-*"
 
 
 class SetupDefaults(BaseModel):

@@ -11,6 +11,7 @@ from .config import TASK_ANALYSIS, TASK_ANSWER, Config, UserPolicy
 from .db import Database
 from .errors import public_error
 from .llm import BACKGROUND, CUT_MARK, INTERACTIVE, ChatResult, LLMClient
+from .modelcatalog import ModelCatalog
 from .prompts import DEFAULT_SYSTEM, TASK_GLANCE, TASK_SUMMARY, Prompt, PromptStore, render
 from .transcribe import OK, Transcription
 from .transcripts import Transcript, TranscriptService, fmt_ts
@@ -92,9 +93,11 @@ class ContentService:
         transcripts: TranscriptService,
         prompts: PromptStore,
         transcription: Transcription,
+        catalog: ModelCatalog,
     ):
         self.cfg, self.db, self.llm = cfg, db, llm
         self.transcripts, self.prompts, self.transcription = transcripts, prompts, transcription
+        self.catalog = catalog
         self.registry = TaskRegistry(cfg.summary.failure_cooldown_s)
         self._ask_results: dict[Any, tuple[str, float | None]] = {}
         self._auto_long_active = 0
@@ -325,15 +328,16 @@ class ContentService:
         text, source = task.result()
         return {**base, "status": "ready", "text": text, "source": source, "transcript_status": OK}
 
-    @staticmethod
-    def with_user_model(prompt: Prompt, policy: UserPolicy) -> Prompt:
-        """The prompt as this user runs it: its own `model`, else the user's choice for its task.
-
-        The model is part of the prompt's content hash, so summaries made with different models are
-        cached apart.
+    def with_user_model(self, prompt: Prompt, policy: UserPolicy) -> Prompt:
+        """The prompt as this user runs it: its own `model`, else the user's choice for its task,
+        else, for summaries, the model discovered on the default provider
+        (`models.summary_default_glob`, R7). The model is part of the prompt's content hash, so
+        summaries made with different models are cached apart.
         """
         task = TASK_GLANCE if prompt.task == TASK_GLANCE else TASK_SUMMARY
         chosen = policy.models.get(task)
+        if chosen is None and task == TASK_SUMMARY:
+            chosen = self.catalog.preferred_summary()
         if prompt.model is None and chosen:
             return prompt.model_copy(update={"model": chosen})
         return prompt

@@ -93,6 +93,9 @@ class SettingsService:
         values = resolved_fields(self.cfg, policy)
         out = self._sections(values)
         defaults = configured_models(self.cfg)
+        preferred = self.catalog.preferred_summary()
+        if preferred:
+            defaults["summary"] = preferred
         out["models"] = {t: policy.models.get(t) or defaults[t] for t in MODEL_TASKS}
         return out
 

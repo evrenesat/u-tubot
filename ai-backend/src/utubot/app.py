@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -154,7 +155,7 @@ def build_services(
         transcripts=transcripts,
         assessor=Assessor(cfg, db, llm, transcripts),
         prompts=prompts,
-        content=ContentService(cfg, db, llm, transcripts, prompts, transcription),
+        content=ContentService(cfg, db, llm, transcripts, prompts, transcription, catalog),
         jobs=jobs,
         reports=reports,
         gate=gate,
@@ -172,6 +173,20 @@ def error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
+async def catalog_refresh_loop(svc: Services) -> None:
+    """Refetch the providers' stale model lists in the background (`models.refresh_interval_s`).
+
+    Keeps newly exposed models arriving on their own, without anybody opening the models page. A
+    provider failure is recorded in the listing (`ok:false`); the next interval tries again.
+    """
+    while True:
+        await asyncio.sleep(svc.cfg.models.refresh_interval_s)
+        try:
+            await svc.catalog.refresh(force=False)
+        except Exception:  # noqa: BLE001 - the loop must survive any single failed sweep
+            pass
+
+
 def check_video_id(video_id: str) -> str:
     if not VIDEO_ID_RE.match(video_id):
         raise HTTPException(400, "invalid video id")
@@ -187,7 +202,11 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         svc.jobs.start()
+        refresh = asyncio.create_task(catalog_refresh_loop(svc))
         yield
+        refresh.cancel()
+        with suppress(asyncio.CancelledError):
+            await refresh
         await svc.jobs.stop()
         await svc.assessor.drain()
         await svc.llm.aclose()

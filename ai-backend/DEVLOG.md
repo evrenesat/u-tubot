@@ -1,5 +1,22 @@
 # DEVLOG
 
+## 2026-11-13 (R7: summary default from the discovered model list)
+
+- Why: GitHub issue #12 — the summary task was pinned to its `[llm.summary]` model, so the owner's local Ornith model (which shows up on
+  modelgate over time) was never picked unless a user chose it by hand.
+- Discovery default: `ModelCatalog.preferred_summary()` matches the cached list of the default provider against
+  `models.summary_default_glob` (new, default `ornith-*`, case-insensitive fnmatch) without going to the network. No match, a list that
+  was never fetched, or an unreachable provider returns None and the summary falls back to `[llm.summary].model`. Wired into
+  `SettingsService._resolved`, so the settings document (`defaults.models.summary`, "Server default" in the picker) and the actual run
+  (`ContentService.with_user_model`, now an instance method; the catalog is a `ContentService` dependency) agree. The user's override and
+  a prompt's own `model` still win; the glance panel keeps its configured fast model.
+- Background refresh: `catalog_refresh_loop` in `app.py` refetches stale provider lists every `models.refresh_interval_s` (new, default
+  600 s), cancelled on shutdown, so newly exposed models appear without anybody opening the models page.
+- Tests: `test_modelcatalog.py` — fallback without a match, Ornith default (also by name with a different version), unreachable provider,
+  stale list keeps the match, a real summary request runs on the discovered model, user override wins, panel unaffected, empty glob
+  disables the feature. Full suite 645+10 green, ruff clean.
+- Docs: `ai/CONTRACT.md` (settings defaults + Models), `docs/server.md` (`[models]`), `config.example.toml`.
+
 ## 2026-11-13 (job report: event log, delivery, detail page)
 
 - Why: the jobs list only showed kind/state/progress; a "ready" captions job for a Turkish video did not say what it produced or whether the TV
