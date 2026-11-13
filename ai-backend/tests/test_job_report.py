@@ -44,6 +44,7 @@ HOLD_S = 3600
 SECRET_URL = (
     "https://rr1---sn-abc.googlevideo.com/videoplayback?expire=1&sig=SECRETSIG&token=SECRETTOKEN"
 )
+REDACTED = "[redacted]"
 FORBIDDEN_IN_EVENTS = ("googlevideo", "SECRETSIG", "SECRETTOKEN", "http://", "https://", TOKEN)
 
 
@@ -410,6 +411,29 @@ async def test_the_events_of_one_job_are_capped_but_the_milestones_are_kept(env)
     assert [e["stage"] for e in log.list("capped")] == ["asr_chunk"] * 4 + ["finished", "delivered"]
 
 
+async def test_delivery_rows_per_job_are_capped_and_counted_into_the_newest(env):
+    env.cfg.captions.delivery_events_max = 3
+    log = env.svc.jobs.events
+    job_id = add_job(env)
+    for n in range(6):
+        log.deliver(job_id, "vtt", f"TV {n}", "owner")
+    rows = [e for e in log.list(job_id) if e["stage"] == "delivered"]
+    assert [r["detail"]["client"] for r in rows] == ["TV 0", "TV 1", "TV 2"]
+    assert rows[-1]["detail"]["count"] == 4 and rows[-1]["detail"]["merged"] == 3
+    log.deliver(job_id, "vtt", "TV 0", "owner")
+    rows = [e for e in log.list(job_id) if e["stage"] == "delivered"]
+    assert len(rows) == 3 and rows[0]["detail"]["count"] == 2, "the same client still coalesces"
+    doc = (await env.client.get(f"/v1/jobs/{job_id}")).json()
+    assert doc["delivery"]["count"] == 7 and doc["delivery"]["delivered"] is True
+
+
+def test_the_database_uses_wal_with_normal_synchronous(tmp_path):
+    db = Database(tmp_path / "wal.sqlite")
+    assert db.one("PRAGMA journal_mode")[0] == "wal"
+    assert db.one("PRAGMA synchronous")[0] == 1
+    db.close()
+
+
 # ---- yt-dlp and the engines, mocked -------------------------------------------------------------------
 
 
@@ -640,12 +664,54 @@ async def test_a_chunk_an_engine_heard_in_the_wrong_language_is_logged_as_a_fall
         ("api_key=sk-live-abcdef0123456789", ("sk-live", "abcdef0123456789")),
         ("hash " + "a" * 64 + " seen", ("a" * 40,)),
         ("random Zx9Kq2LmVb7Rt4WpYc1NdS8HgJf3Ae6Ou5", ("Zx9Kq2LmVb7Rt4WpYc1",)),
-        ("cookie=SID=abc123; HSID=def456", ("abc123",)),
+        ("cookie=SID=abc123; HSID=def456", ("abc123", "def456")),
+        ("Authorization: Bearer abc123456", ("abc123456", "Bearer")),
+        ("Authorization: Basic dXNlcjpwYXNzd29yZA==", ("dXNlcjpw",)),
+        ('"Authorization": "Bearer abc123456"', ("abc123456",)),
+        ("proxy-authorization=Basic dXNlcjpwYXNzd29yZA== sent", ("dXNlcjpw",)),
+        ("Bearer abcDEF-123_456.xyz", ("abcDEF-123",)),
+        ('{"api_key": "mysecretvalue99"}', ("mysecretvalue99",)),
+        ("{'password': 'my pass phrase 99'}", ("pass phrase", "99")),
+        ('"client_secret":"s3cr3t-value"', ("s3cr3t",)),
+        ("X-Api-Key: k_live_0123456789", ("0123456789",)),
+        ("hf_token=hf_abcdef123456", ("abcdef123456",)),
+        ("access_token = abcdefgh1234", ("abcdefgh1234",)),
+        ("token abcdefgh1234", ("abcdefgh1234",)),
+        ("password hunter2hunter2 was used", ("hunter2hunter2",)),
+        ("secret: a1b2c3d4e5", ("a1b2c3d4e5",)),
+        ("cookie: SID=a; HSID=z", ("SID=a", "HSID=z")),
+        ("Set-Cookie: session=abc123; Path=/; HttpOnly", ("abc123",)),
+        ('{"cookie": "SID=a; HSID=z"}', ("SID=a", "HSID=z")),
+        ("GET failed\ncookie: SID=a; HSID=z\nnext line", ("HSID=z",)),
     ],
 )
 def test_clean_removes_urls_and_secrets_from_text(raw, gone):
     out = clean({"message": raw})["message"]
     assert all(bit not in out for bit in gone), out
+    assert REDACTED in out or "[url]" in out, out
+
+
+@pytest.mark.parametrize(
+    "plain",
+    [
+        "No Hugging Face token was set (UTUBOT_HF_TOKEN is empty).",
+        "the token provided was rejected",
+        "Keyboard: the build, part 2",
+        "monkey: 5 bananas",
+        "key frame at 12 s",
+        "Basic usage of the router",
+        "asr http 503: busy",
+        "whisper-large-v3-turbo+whisper-small took 21.7 s",
+        "GET failed\nnext line is kept",
+    ],
+)
+def test_clean_keeps_ordinary_text(plain):
+    assert clean(plain) == plain
+
+
+def test_a_cookie_is_redacted_to_the_end_of_its_line_only():
+    out = clean("before\ncookie: SID=a; HSID=z\nafter")
+    assert out == "before\n[redacted]\nafter"
 
 
 async def test_no_test_can_reach_youtube(tmp_path):

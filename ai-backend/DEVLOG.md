@@ -38,6 +38,12 @@
   httpx transports refuse YouTube hosts, in an autouse fixture and in `webui_demo.py`; tests stand in for `yt_dlp.YoutubeDL` or the fetcher and
   downloader. `webui_demo.py`: the gate close endpoint now resets the per-class breakers (it still set the old single-breaker fields), demo job
   reports with event logs (a Turkish captions job fetched by a TV, an unfetched transcript, a failed and a waiting job).
+- Review fixes: `events.clean` now handles quoted keys and values, `Authorization`/`Proxy-Authorization` with Bearer/Basic/Digest values,
+  bare `Bearer ...`, cookie values to the end of the line (also `Set-Cookie`), compound names (`hf_token`, `client_secret`, `x-api-key`) and
+  `token abcdefgh1234` without a separator (only a value of 8+ characters with a digit), and scans at most 2000 characters; plain words such as
+  "Keyboard: the build" or "token provided" stay. `delivered` rows are capped per job (`[captions] delivery_events_max`, 50): past it a
+  delivery is counted into the newest row. `Database` sets `PRAGMA synchronous=NORMAL` with WAL: no corruption risk, but a power loss may drop
+  the last few commits (a delivery count, a just-written session) instead of none.
 - Tests: `test_job_report.py` (stage order for transcript and captions jobs, who asked and the policy, cancel/retry/restart/transient retries,
   caps, mocked yt-dlp format notes, mocked engine fallbacks and stitching, secrets/URLs, auth, delivery by client kind, backfill, the UI assets
   under the CSP and the report text through node).

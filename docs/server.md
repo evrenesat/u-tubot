@@ -282,7 +282,8 @@ missing), `cues` (count, longest line), `text`, `translate`, `stored` (what was 
 class, human message, stage) and `delivered`. A `delivered` row is added by the routes clients use (`GET /v1/videos/ID/captions`, the
 `.vtt`, `GET /v1/videos/ID/transcript`, summary, insight and ask built from a transcript the audio made); the same client fetching the
 same way again within `[captions] delivery_coalesce_s` (300) raises the `count` of one row instead of adding rows. At most
-`[captions] job_events_max` (400) stage events are kept per job; queued, finished, failed, retry and delivered rows are always kept.
+`[captions] job_events_max` (400) stage events are kept per job; queued, finished, failed and retry rows are always kept, and at most
+`[captions] delivery_events_max` (50) delivered rows (past that, new deliveries are counted into the newest row: `count` and `merged` go up).
 
 Nothing secret or signed is stored: details pass through `captions/events.py clean`, which drops keys that name a token, secret, cookie,
 header or URL and replaces URLs, `key=value` secrets, bearer tokens and long random strings in any text with `[url]` / `[redacted]`.

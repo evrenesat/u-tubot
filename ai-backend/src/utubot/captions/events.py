@@ -73,10 +73,25 @@ URL_PLACEHOLDER = "[url]"
 
 URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
 WWW_RE = re.compile(r"\bwww\.\S+", re.IGNORECASE)
-SECRET_WORD_RE = re.compile(
-    r"(?i)\bbearer\s+\S+|\b(?:token|api[_-]?key|key|secret|passw(?:or)?d|authorization|signature|sig|cookie)"
-    r"\b\s*[=:]\s*\S+"
+SCAN_CHARS = 2000
+SECRET_VALUE = r"""(?:"[^"]*"|'[^']*'|[^\s"',;}&]+)"""
+SECRET_NAME = (
+    r"(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_-])*"
+    r"(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|key|signature|sig)(?![A-Za-z0-9])"
 )
+# Scrubbed in this order; each pattern may eat what the next one would have looked at.
+COOKIE_RE = re.compile(r"""(?i)(?<![A-Za-z0-9])(?:set-)?cookie["']?\s*[=:]\s*[^\n]*""")
+AUTHORIZATION_RE = re.compile(
+    r"""(?i)(?<![A-Za-z0-9])(?:proxy-)?authorization["']?\s*[=:]\s*["']?"""
+    r"""(?:(?:bearer|basic|digest|token)\s+)?[^\s"',;}]+"""
+)
+BEARER_RE = re.compile(r"(?i)\b(?:bearer\s+\S+|basic\s+[A-Za-z0-9+/=_-]{8,})")
+SECRET_PAIR_RE = re.compile(r"""(?i)""" + SECRET_NAME + r"""["']?\s*[=:]\s*""" + SECRET_VALUE)
+# `token abcdefgh1234`: no separator, so only a value that looks like one (8+ characters with a digit).
+SECRET_SPACED_RE = re.compile(
+    r"(?i)" + SECRET_NAME + r"\s+(?=[A-Za-z0-9_\-+/=.]*\d)[A-Za-z0-9_\-+/=.]{8,}"
+)
+SECRET_PATTERNS = (COOKIE_RE, AUTHORIZATION_RE, BEARER_RE, SECRET_PAIR_RE, SECRET_SPACED_RE)
 HEX_RUN_RE = re.compile(r"\b[0-9A-Fa-f]{32,}\b")
 KEY_PREFIX_RE = re.compile(r"\b(?:utb|sk|hf|ghp|gho|xox[a-z])[_-][A-Za-z0-9_\-]{8,}")
 # Random base64-like runs: long, no separator a model name would have, with upper case, lower case and digits.
@@ -98,10 +113,9 @@ def clean(value: Any, depth: int = 0) -> Any:
     if value is None or isinstance(value, bool | int | float):
         return value
     if isinstance(value, str):
-        text = URL_RE.sub(URL_PLACEHOLDER, value)
+        text = URL_RE.sub(URL_PLACEHOLDER, value[:SCAN_CHARS])
         text = WWW_RE.sub(URL_PLACEHOLDER, text)
-        text = SECRET_WORD_RE.sub(REDACTED, text)
-        for pattern in (KEY_PREFIX_RE, HEX_RUN_RE, MIXED_RUN_RE):
+        for pattern in (*SECRET_PATTERNS, KEY_PREFIX_RE, HEX_RUN_RE, MIXED_RUN_RE):
             text = pattern.sub(REDACTED, text)
         return text[:DETAIL_TEXT_CHARS]
     if depth >= DETAIL_DEPTH:
@@ -201,7 +215,9 @@ class JobEvents:
         """Note that a client fetched the result of the job.
 
         The same client fetching the same way again within `delivery_coalesce_s` only raises the count
-        and moves the time of the one row, so a TV that polls does not flood the log.
+        and moves the time of the one row, so a TV that polls does not flood the log. A job keeps at most
+        `delivery_events_max` rows: past that every new delivery is counted into the newest row
+        (`count` and `merged` go up, its client and way stay).
         """
         now = time.time()
         client, user = str(clean(client)), str(clean(user))
@@ -212,19 +228,32 @@ class JobEvents:
         for row in recent:
             body = json.loads(row["detail"])
             if body.get("via") == via and body.get("client") == client:
-                body.update(clean(detail))
-                body["count"] = int(body.get("count", 1)) + 1
-                self.db.execute(
-                    "UPDATE job_events SET ts=?, detail=? WHERE id=?",
-                    [now, json.dumps(body, ensure_ascii=False), row["id"]],
-                )
+                self._count_up(row["id"], body, now, clean(detail))
                 return
+        newest = self.db.one(
+            "SELECT id,detail,(SELECT COUNT(*) FROM job_events WHERE job_id=? AND stage=?) AS n"
+            " FROM job_events WHERE job_id=? AND stage=? ORDER BY id DESC LIMIT 1",
+            [job_id, DELIVERED, job_id, DELIVERED],
+        )
+        if newest is not None and newest["n"] >= self.cfg.delivery_events_max:
+            body = json.loads(newest["detail"])
+            body["merged"] = int(body.get("merged", 0)) + 1
+            self._count_up(newest["id"], body, now, {})
+            return
         self.record(
             job_id,
             DELIVERED,
             OK,
             {"via": via, "client": client, "user": user, "count": 1, "first_ts": now, **detail},
             ts=now,
+        )
+
+    def _count_up(self, event_id: int, body: dict[str, Any], now: float, detail: Mapping) -> None:
+        body.update(detail)
+        body["count"] = int(body.get("count", 1)) + 1
+        self.db.execute(
+            "UPDATE job_events SET ts=?, detail=? WHERE id=?",
+            [now, json.dumps(body, ensure_ascii=False), event_id],
         )
 
     def backfill(self) -> int:
