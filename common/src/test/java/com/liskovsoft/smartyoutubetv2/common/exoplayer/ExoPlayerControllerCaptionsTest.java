@@ -2,10 +2,12 @@ package com.liskovsoft.smartyoutubetv2.common.exoplayer;
 
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.SilenceMediaSource;
+import com.google.android.exoplayer2.source.sabr.ValidatedNetwork;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.listener.PlayerEventListener;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.controller.ExoPlayerController;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -42,6 +44,12 @@ public class ExoPlayerControllerCaptionsTest {
         mVideoA = video(VIDEO_A);
         mController.setVideo(mVideoA);
         openedWith(mBase, true, true);
+    }
+
+    @After
+    public void tearDown() {
+        // The controller installs the network check of the player for the whole process
+        ValidatedNetwork.setSupplier(null);
     }
 
     @Test
