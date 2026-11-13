@@ -26,6 +26,7 @@ import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo;
+import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptions;
@@ -730,7 +731,15 @@ public class ExoPlayerController implements Player.EventListener {
     }
     
     public void setVideo(Video video) {
+        Video previous = getVideo();
         mVideo = new WeakReference<>(video);
+
+        // What is open still belongs to the previous video until the next source is opened: its captions must not be added to it
+        if (previous != null && (video == null || !Helpers.equals(previous.videoId, video.videoId))) {
+            mUtubotBaseSource = null;
+            mUtubotCaptionsAttached = false;
+            mUtubotCaptionsSelectPending = false;
+        }
 
         if (UtubotSettings.isBuiltIn() && mUtubotCaptionsEnabled) {
             if (video != null) {
