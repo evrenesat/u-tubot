@@ -56,6 +56,9 @@ class AskRequest(BaseModel):
 
 
 class CaptionsRequest(BaseModel):
+    """A captions job. An unset `translate_to` follows the `[captions] translate_to` default
+    ("en"): the goal is English captions whatever the source language; "off" keeps the source."""
+
     lang: str = "auto"
     translate_to: str | None = None
 

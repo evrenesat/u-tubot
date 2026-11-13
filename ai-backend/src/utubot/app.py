@@ -72,6 +72,19 @@ log = logging.getLogger("utubot.app")
 APK_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\.apk$")
 APK_MIME = "application/vnd.android.package-archive"
 LANG_RE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
+TRANSLATE_OFF = {"", "off", "none"}
+
+
+def resolve_translate_to(requested: str | None, default: str) -> str | None:
+    """The translation target of a captions job.
+
+    An unset target follows the configured default (`[captions] translate_to`, "en" by default);
+    "off"/"none" (or an empty value) keeps the source language instead of translating.
+    """
+    value = (default if requested is None else requested).strip().lower()
+    return None if value in TRANSLATE_OFF else value
+
+
 WEB_DIR = Path(__file__).parent / "web"
 UI_DIR = WEB_DIR / "ui"
 UI_TYPES = {
@@ -771,10 +784,12 @@ def create_app(
         check_video_id(video_id)
         mark_origin(request, user)
         body = body or CaptionsRequest()
-        for lang in (body.lang, body.translate_to):
-            if lang and lang != "auto" and not LANG_RE.match(lang):
-                raise HTTPException(400, "invalid language code")
-        job = svc.jobs.enqueue(user.name, video_id, body.lang, body.translate_to)
+        if body.lang and body.lang != "auto" and not LANG_RE.match(body.lang):
+            raise HTTPException(400, "invalid language code")
+        translate_to = resolve_translate_to(body.translate_to, svc.cfg.captions.translate_to)
+        if translate_to and not LANG_RE.match(translate_to):
+            raise HTTPException(400, "invalid language code")
+        job = svc.jobs.enqueue(user.name, video_id, body.lang, translate_to)
         return {"status": job["status"], "job_id": job["id"], "eta_s": None}
 
     @app.get("/v1/videos/{video_id}/captions")

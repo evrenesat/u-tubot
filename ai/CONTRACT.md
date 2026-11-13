@@ -303,7 +303,9 @@ raises `count`. This is how to see whether a TV actually downloaded a track.
 `lang` picks the track; default the first). Same access as the report; `404` when nothing is stored.
 
 ### `POST /v1/videos/{id}/captions`
-Queue high-quality captions. Body: `{"lang":"auto","translate_to":null}`.
+Queue high-quality captions. Body: `{"lang":"auto","translate_to":null}`. An unset `translate_to`
+follows `[captions] translate_to` (default `"en"`): captions come out in English whatever the
+source language; `"off"` keeps the source language instead.
 → `{"status":"queued|running|ready|failed","job_id":"...","eta_s":null}`
 
 ### `GET /v1/videos/{id}/captions`

@@ -185,6 +185,26 @@ async def test_translate_cues(env):
     assert out[0].lines == ["[S1] T:Hello world"] and out[1].lines == ["T:Second one"]
 
 
+async def test_translated_cues_are_proofread_again(env):
+    from tests.test_proofread import proofread_calls, respond_with_cues
+    from utubot.captions.types import Cue
+
+    respond_with_cues(env.llm, ["Hello, world."])
+    cues = [Cue(0, 2, ["merhaba dunya"], None)]
+    track = await env.svc.jobs.pipeline._finish(VID, cues, "tr", "en", lambda _f: None)
+    assert track == "en"
+    kinds = [
+        "translate" if "Translate each subtitle" in c["messages"][0]["content"] else "proofread"
+        for c in env.llm.calls
+        if "Translate each subtitle" in c["messages"][0]["content"]
+        or "proofread subtitle cues" in c["messages"][0]["content"]
+    ]
+    assert kinds == ["translate", "proofread"]  # the English text is proofread after translation
+    row = env.svc.db.one("SELECT lang,vtt FROM captions WHERE video_id=?", [VID])
+    assert row["lang"] == "en" and "Hello, world." in row["vtt"]
+    assert proofread_calls(env.llm) == 1
+
+
 async def test_pyannote_skips_without_token(monkeypatch, tmp_path):
     from utubot.captions.diarize import PyannoteDiarizer
 

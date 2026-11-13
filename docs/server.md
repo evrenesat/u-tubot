@@ -302,7 +302,9 @@ waited), `gate_wait` (the YouTube class and how long the gate held the job), `ca
 (seams, segments cut at overlaps, repeated words dropped), `separation` (the optional vocal separation before ASR, or skipped and why),
 `diarization` (only when `[captions] diarization` is enabled; ran, or skipped and why: no Hugging Face token, package missing), `cues`
 (count, longest line), `align` (cue boundaries moved to silences, or caption cues re-timed from the ASR words), `proofread` (corrected
-cues, or skipped: off, no LLM; per-batch warnings hang under it as `proofread_batch`), `text`, `translate`, `stored` (what was saved and
+cues, or skipped: off, no LLM; per-batch warnings hang under it as `proofread_batch`; runs once on the source text and once again on
+translated text, so the English output is proofread too), `text`, `translate` (the source and target language; skipped when the track
+already is in the target language), `stored` (what was saved and
 how big), `retry`, `finished`, `failed` (cause class, human message, stage) and `delivered`. A `delivered` row is added by the routes clients use (`GET /v1/videos/ID/captions`, the
 `.vtt`, `GET /v1/videos/ID/transcript`, summary, insight and ask built from a transcript the audio made); the same client fetching the
 same way again within `[captions] delivery_coalesce_s` (300) raises the `count` of one row instead of adding rows. At most

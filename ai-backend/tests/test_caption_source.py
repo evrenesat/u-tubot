@@ -184,3 +184,36 @@ async def test_captions_status_reports_the_track_kind(env):
     await queue_captions(env, device_client(env))
     body = (await env.client.get(f"/v1/videos/{VID}/captions")).json()
     assert body["status"] == "ready" and body["tracks"][0]["label"] == "English (u·tubot)"
+
+
+async def test_a_captions_job_targets_english_by_default(env):
+    env.fetcher.text = None  # the track is built from the audio, like any language
+    respond_with_cues(env.llm, ["Hello there, my friend.", "How are you doing today?"])
+    doc = await queue_captions(env)
+    row = env.svc.db.one("SELECT translate_to FROM jobs WHERE id=?", [doc["id"]])
+    assert row["translate_to"] == "en"
+    stages = stages_of(env, doc["id"])
+    assert "translate" not in stages  # an English track needs no translation
+    outcomes = [e["stage"] for e in log_of(env, doc["id"]) if e["status"] == "ok"]
+    assert outcomes.count("proofread") == 1  # exactly one pass: the source text, never translated
+
+
+async def test_the_config_default_is_the_translation_target(env):
+    env.cfg.captions.translate_to = "de"
+    env.fetcher.text = None
+    respond_with_cues(env.llm, ["Hello there, my friend.", "How are you doing today?"])
+    doc = await queue_captions(env)
+    row = env.svc.db.one("SELECT translate_to FROM jobs WHERE id=?", [doc["id"]])
+    assert row["translate_to"] == "de"
+    assert "T:" in stored_captions(env)  # the English audio was translated to German
+
+
+async def test_translate_to_off_keeps_the_source_language(env):
+    env.fetcher.text = None
+    respond_with_cues(env.llm, ["Hello there, my friend.", "How are you doing today?"])
+    for target in ("off", "none", ""):
+        queued = (
+            await env.client.post(f"/v1/videos/{VID}/captions", json={"translate_to": target})
+        ).json()
+        row = env.svc.db.one("SELECT translate_to FROM jobs WHERE id=?", [queued["job_id"]])
+        assert row["translate_to"] is None, target

@@ -44,6 +44,11 @@ class Proofreader:
         self.task = task
         self.cache = cache
 
+    @property
+    def enabled(self) -> bool:
+        """Whether the proofreading pass can run: switched on and an LLM is configured."""
+        return self.cfg.proofread and self.llm is not None
+
     @staticmethod
     def _cache_key(lang: str, context: dict[str, str], texts: list[str]) -> str:
         payload = json.dumps([lang, context, texts], ensure_ascii=False)
