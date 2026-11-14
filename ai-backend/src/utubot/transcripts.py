@@ -23,10 +23,12 @@ from .youtube import (
     REASON_EMPTY_TRACK,
     REASON_INCOMPLETE,
     REASON_NETWORK,
+    REASON_OFFLINE,
     YoutubeCooldown,
     YoutubeDelayed,
     YoutubeError,
     YoutubeGate,
+    YoutubeOffline,
     YoutubeVideoError,
     classify_failure,
     classify_status,
@@ -272,6 +274,9 @@ class YoutubeFetcher:
 
     async def __call__(self, video_id: str) -> FetchResult:
         retry_s = self.cfg.youtube.network_retry_s
+        if self.cfg.youtube.offline:
+            # The offline dev-proxy mode: never reach YouTube; the fixture fetcher answers instead.
+            raise YoutubeOffline(CLASS_METADATA)
         info = await asyncio.to_thread(self._extract_classified, video_id)
         if not info_complete(info):
             raise YoutubeDelayed(REASON_INCOMPLETE, retry_s)
@@ -361,7 +366,13 @@ class TranscriptService:
         )
 
     def record_failure(self, video_id: str, reason: str) -> None:
-        """Remember that this video cannot be read (private, members-only, too long, ...)."""
+        """Remember that this video cannot be read (private, members-only, too long, ...).
+
+        An offline miss is not remembered: a missing fixture cassette says nothing about the
+        video, so the next attempt — with a cassette recorded, or offline mode off — starts clean.
+        """
+        if reason == REASON_OFFLINE:
+            return
         self._record_hold(video_id, HOLD_FAILED, reason, self.cfg.transcripts.video_failure_ttl_s)
 
     @staticmethod

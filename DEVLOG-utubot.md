@@ -1,5 +1,13 @@
 # u·tubot devlog
 
+## 2026-11-13 (tests and agents never hit YouTube, issue 35)
+
+- Owner rule made enforceable end to end (backend work, see `ai-backend/DEVLOG.md`): recorded/replayed YouTube fixtures
+  (`ai-backend/fixtures/youtube/`, sanitized cassettes; `utubot youtube-record` records, owner only), an offline dev-proxy mode for the
+  real backend (`[youtube] offline = true` — emulator and `UtubotBackendE2eTest` runs against it touch no YouTube server), and a
+  DNS-level network guard in the pytest suite (yt-dlp, httpx and resolver refusal, autouse). Docs: `docs/development.md` ("Offline mode"),
+  root and backend `AGENTS.md` (real YouTube access only through production), `ai/CONTRACT.md` (`reason: "offline"`), `config.example.toml`.
+
 ## 2026-11-13 (HQ captions did not show, issue 31)
 
 - Report from a real TV (Android TV 14, Modern skin): the job finished, the TV fetched `/captions` and `/captions/tr.vtt` (200, 48 KB)

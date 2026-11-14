@@ -188,6 +188,9 @@ max_background_queue = 5           # tier-2 is not scheduled while this many bac
 js_runtime = "deno"                # deno (default), node, bun or quickjs
 # js_runtime_path = "/usr/local/bin/deno"     # example; unset: yt-dlp looks the runtime up on PATH
 # remote_components = ["ejs:github"]          # example; lets yt-dlp fetch its challenge solver script
+# offline = true                    # dev-proxy mode for tests, the emulator and E2E runs: no request ever
+                                    # reaches YouTube; answers come from caches and recorded fixtures only
+# fixtures_dir = "/path/fixtures"   # cassettes for offline mode (empty: the repository's fixtures/youtube)
 
 [archive]
 # Every media file a pipeline downloads from YouTube is kept here, content-addressed by its

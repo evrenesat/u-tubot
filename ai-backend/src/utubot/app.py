@@ -66,6 +66,7 @@ from .videoref import VIDEO_ID_RE
 from .webauth import SESSION_TOKEN_ID, WebAuth, csrf_valid
 from .webroutes import Deps, install_web_routes
 from .youtube import Clock, YoutubeGate
+from .youtube_fixtures import OfflineYoutubeFetcher
 
 log = logging.getLogger("utubot.app")
 APK_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\.apk$")
@@ -138,6 +139,8 @@ def build_services(
     db = Database(cfg.db_path)
     llm = LLMClient(cfg, transport=llm_transport, db=db)
     gate = YoutubeGate(cfg.youtube, db, clock)
+    if fetcher is None and cfg.youtube.offline:
+        fetcher = OfflineYoutubeFetcher(cfg)
     transcripts = TranscriptService(cfg, db, fetcher, gate)
     prompts = PromptStore(cfg, db, prompt_transport)
     archive = MediaArchive(cfg, db)

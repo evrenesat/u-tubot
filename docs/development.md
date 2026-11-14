@@ -27,6 +27,40 @@ Tests use an in-process mock OpenAI-compatible server (`tests/mock_openai.py`) a
 tests call `ffmpeg`. Rules for contributors are in `ai-backend/AGENTS.md` (tunables in `config.py` and `config.example.toml`,
 contract changes together with `ai/CONTRACT.md`).
 
+### Offline mode: a backend that never reaches YouTube
+
+Tests, the emulator and E2E runs must not touch YouTube (owner rule, `AGENTS.md`). The real backend has an offline dev-proxy mode for
+that: every request to YouTube is refused before it is made, and answers come from what the server has locally — cached transcripts
+and metadata, and recorded fixtures ("cassettes", `ai-backend/fixtures/youtube/`).
+
+```sh
+cd ai-backend
+UTUBOT_CONFIG=config.dev.toml uv run utubot serve      # config.dev.toml: [youtube] offline = true
+```
+
+A minimal dev config only needs its own data dir and the flag:
+
+```toml
+[server]
+data_dir = "temp/dev-data"
+
+[youtube]
+offline = true
+```
+
+Recorded fixtures replay real YouTube answers (yt-dlp metadata, the caption track) without the network. `utubot_demo.json` is a
+hand-written demo cassette; the owner records real ones — the one command that reaches YouTube, run by hand only:
+
+```sh
+uv run utubot youtube-record VIDEO_ID [--lang en] [--note "why this video"]
+```
+
+Cassettes carry no URLs at all (signed tokens can hide in URL paths too): the recorder replaces every URL with a `<url>` placeholder
+before writing, and `test_youtube_fixtures.py` checks every committed cassette for URL, signature and cookie text. An offline miss is
+not remembered as a failure: record the cassette (or turn offline off) and the video is fetched normally again. Point the emulator or
+the E2E run at this backend instead of `scripts/emulator_mock_backend.py` when you want the real routes;
+the mock script stays the lighter stand-in for panel checks.
+
 The web UI (`ai-backend/src/utubot/web/`) is plain HTML, CSS and ES modules served as they are: edit, reload, no build. To look at it
 without a real LLM or YouTube, run `uv run python tests/webui_demo.py temp/webui-demo` (mock LLM, canned data, owner password in
 its first output line) and, for the screenshots in `docs/screenshots/webui/`,
@@ -52,7 +86,8 @@ export JAVA_HOME=/path/to/jdk-25 ANDROID_HOME=/path/to/android-sdk
 Debug APKs: `smarttubetv/build/outputs/apk/stutubot/debug/u-tubot_<version>_<abi>.apk`. The flavor is `stutubot`, application id
 `dev.utubot.tv`. Other flavors (`stbeta`, `ststable`) are Electric Eel's and must keep working.
 
-An end-to-end test (`UtubotBackendE2eTest`) runs against a real backend when `UTUBOT_E2E_URL` and `UTUBOT_E2E_CODE` are set.
+An end-to-end test (`UtubotBackendE2eTest`) runs against a real backend when `UTUBOT_E2E_URL` and `UTUBOT_E2E_CODE` are set. Run that
+backend in offline mode (above) so the E2E run cannot reach YouTube either; unknown videos then answer `offline` instead of a fetch.
 
 ### Checking the TV app on an emulator
 
