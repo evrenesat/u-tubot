@@ -284,10 +284,10 @@ anybody else and for an unknown id.
 a `running` event is followed by the `ok`/`failed`/`skipped` event of the same stage, which carries `seconds`. Stages: `queued`, `promoted`,
 `started`, `gate_wait`, `caption_recheck`, `audio_download` (`format_id`, `track` = `original|dubbed|descriptive|unmarked`, `original`,
 `language`, `bytes`, `duration_s`, `source` = `downloaded|from_archive`), `media_archive` (`bytes`, `sha256` prefix; skipped when the audio
-came from the archive), `ffmpeg`, `separation` (skipped when off or the tool failed), `chunking`, `asr`, `asr_chunk`, `asr_fallback`, `stitching`,
-`diarization` (`reason` and `message` when skipped; only when diarization is configured), `cues`, `align` (`mode` = `silence|merge`),
+came from the archive), `ffmpeg`, `separation` (skipped when off, the tool failed, or the ASR answer was cached), `chunking`, `asr`, `asr_chunk`, `asr_fallback`, `stitching`,
+`diarization` (`reason` and `message` when skipped; only when diarization is configured), `cues`, `align` (`mode` = `silence|merge`; boundaries move outward only),
 `proofread` (`corrected`, `warned`, `chars_in`/`chars_out`, `cached`; skipped with `reason` = `off|no_llm`), `proofread_batch` (a batch that
-kept its original text), `text`, `translate`, `stored`, `retry`, `finished`, `failed` (`error_class`,
+kept its original text — length mismatch, empty text, growth or shrink beyond `proofread_max_ratio`), `text`, `translate`, `stored`, `retry`, `finished`, `failed` (`error_class`,
 `message`, `stage`, `technical`) and `delivered` (`via` = `captions_status|vtt|transcript_status|summary|summary_panel|insight|answer|transcript_txt`,
 `client`, `user`, `count`, `first_ts`). Details never carry a URL, token or secret. A job from before the log has one synthetic event,
 `finished` (or `queued` while it waits) with `detail.synthetic: true` and the message "finished (no detailed log, created before event

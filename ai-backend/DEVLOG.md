@@ -1,5 +1,44 @@
 # DEVLOG
 
+## 2026-11-14 (caption pipeline review round 2: rebase on main, snapping, limits, cache order)
+
+- Rebased on `main` (#41 tests-never-youtube, #45) and fixed the semantic conflict the review
+  found: the offline fixture fetcher (`youtube_fixtures.py`) now maps `parse_json3`/`parse_vtt`
+  rows to `(start, text)` for `segments_to_text` the same way `YoutubeFetcher` does, and passes
+  `segments=` into its `FetchResult`, so the improve path also works offline. The 4 fixture tests
+  that failed on a trial merge pass again (16/16).
+- Silence snapping (`align.py _snap_one`) moved boundaries onto pauses *inside* the cue — a start
+  could move later onto the first word's pause and cut it, an end earlier than the last word. Now
+  a boundary only moves outward (a start earlier, an end later, the last cue's end within the
+  window), the nearest outward midpoint wins, and a boundary never crosses a neighbour. Tests for
+  both cut-into-word cases and nearest-wins added.
+- The improve path (`merge_words_into_cues`) stored each cue's ASR words as one unwrapped line —
+  a 6 s cue of 18 words broke the 2x42 limit, and nothing but the proofreader re-wrapped it.
+  Now the merged text is wrapped to the line limits, and text that does not fit one cue — or runs
+  faster than `max_cps` — is re-split by `build_cues` over the words' own timings.
+  `Proofreader.polish` re-splits over-crowded corrected text over the cue's span (`retime_split`)
+  instead of keeping the unwrapped lines.
+- Assignment in `merge_words_into_cues` is linear now (exact candidate window around one bisect
+  position; cues are sorted and non-overlapping, so their ends are sorted too) and runs in
+  `asyncio.to_thread` — measured 11.9 s for a 3 h track before, all inside the event loop.
+- The ASR cache is checked before the vocal separation, and the cache key carries the separation
+  mode (`asr_cache_key`): a retried job with a cache hit no longer runs demucs for nothing, and
+  turning separation on does not keep serving ASR answers made from unseparated audio.
+- The proofread guard also rejects a batch that comes back much shorter than its input
+  (`< 1 / proofread_max_ratio`): dropped content is as suspicious as invented content. Cached
+  batches are no longer written back on every cache hit.
+- A captions job whose audio cannot be fetched (video gone, media class limited, archive full)
+  now warns (`asr` warn, `audio_unavailable`) and proofreads the caption text as it is, instead of
+  failing with the captions already in hand.
+- `[captions] translate_to` is validated in `CaptionsConfig` (a language code, or `off`/`none`/`""`),
+  so a bad config default fails at startup instead of answering 400 on every captions request;
+  `proofread_batch` requires `>= 1` (0 would divide by zero).
+- Known limitation (review nit, kept): caption-source transcripts cached before this PR have
+  `segments = NULL`, so `TranscriptService.get(recheck=True)` returns the cached hit without timed
+  segments and those videos build from the audio until the transcript TTL expires; new fetches
+  store segments.
+- Suite 724 passed, ruff clean.
+
 ## 2026-11-13 (review follow-ups: cassettes carry no URL at all, offline misses are not held)
 
 - Review (EVR-168) found two leaks in the cassette sanitizer and one wrong hold; fixed:

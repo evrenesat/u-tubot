@@ -16,7 +16,13 @@ import yt_dlp
 from ..config import Config
 from ..db import Database
 from ..llm import BACKGROUND, LLMClient
-from ..media_archive import KIND_AUDIO, SHA_PREFIX, MediaArchive, MediaArchiveError
+from ..media_archive import (
+    KIND_AUDIO,
+    SHA_PREFIX,
+    MediaArchive,
+    MediaArchiveError,
+    MediaArchiveFull,
+)
 from ..transcripts import segments_to_text
 from ..youtube import (
     CLASS_MEDIA,
@@ -92,6 +98,12 @@ def _set_asr(st, result: ASRResult, cached: bool = False) -> None:
         words=len(result.words),
         chars=sum(len(seg.text) for seg in result.segments),
     )
+
+
+def asr_cache_key(audio_sha: str, want_words: bool, requested: str | None, separation: str) -> str:
+    """The ASR stage-cache key: the audio bytes, the answer shape, the language and the audio
+    variant — separated vocals change what the engines hear, so the mode joins the key."""
+    return f"{audio_sha}:{int(want_words)}:{requested or 'auto'}:{separation}"
 
 
 class PipelineError(RuntimeError):
@@ -363,6 +375,19 @@ class CaptionPipeline:
             )
             audio_s = wav_duration(wav, c.sample_rate)
             st.set(audio_s=round(audio_s, 1), bytes=file_size(wav), sample_rate=c.sample_rate)
+        if audio_s > c.max_duration_s:
+            raise YoutubeVideoError(REASON_TOO_LONG)
+        # the ASR cache is keyed by the separation mode too: the answer depends on the audio that
+        # went in, and a hit must skip the separation (demucs can take tens of minutes on CPU)
+        key = asr_cache_key(audio_sha, want_words, requested, c.separation)
+        cached = self.cache.get(video_id, ASR_CACHE_STAGE, key)
+        if cached is not None:
+            result = asr_from_cache(cached)
+            with events.stage(events.ASR, requested_language=requested) as st:
+                _set_asr(st, result, cached=True)
+            self._require_speech(result, want_words, optional_asr)
+            progress(0.85)
+            return result, wav
         if self.cfg.captions.separation != "off":
             with events.stage(events.SEPARATION, tool="demucs") as st:
                 if self.separator is None:
@@ -395,8 +420,6 @@ class CaptionPipeline:
                             audio_s=round(wav_duration(wav, c.sample_rate), 1),
                         )
         progress(0.25)
-        if audio_s > c.max_duration_s:
-            raise YoutubeVideoError(REASON_TOO_LONG)
         result = await self._asr_stage(
             video_id,
             wav,
@@ -404,8 +427,8 @@ class CaptionPipeline:
             progress,
             priority=priority,
             want_words=want_words,
-            audio_sha=audio_sha,
             optional_asr=optional_asr,
+            key=key,
         )
         return result, wav
 
@@ -418,11 +441,10 @@ class CaptionPipeline:
         *,
         priority: int,
         want_words: bool,
-        audio_sha: str,
         optional_asr: bool,
+        key: str,
     ) -> ASRResult:
         """One ASR step of `_recognise`, with its per-video cache. See `_recognise`."""
-        key = f"{audio_sha}:{int(want_words)}:{requested or 'auto'}"
         cached = self.cache.get(video_id, ASR_CACHE_STAGE, key)
         if cached is not None:
             result = asr_from_cache(cached)
@@ -598,15 +620,28 @@ class CaptionPipeline:
         try:
             base_hint = (lang_hint or "").split("-")[0] or None
             requested = normalize_language(base_hint)
-            result, _wav = await self._recognise(
-                video_id,
-                requested,
-                work,
-                progress,
-                priority=priority,
-                want_words=True,
-                optional_asr=True,
-            )
+            try:
+                result, _wav = await self._recognise(
+                    video_id,
+                    requested,
+                    work,
+                    progress,
+                    priority=priority,
+                    want_words=True,
+                    optional_asr=True,
+                )
+            except (YoutubeVideoError, MediaArchiveFull) as exc:
+                # the captions are already in hand: audio trouble (unavailable video, a limited
+                # media class, a full archive) only means no better words - proofread them as they are
+                events.emit(
+                    events.ASR,
+                    events.WARN,
+                    reason="audio_unavailable",
+                    error_class=events.error_class(exc),
+                    technical=events.technical(exc),
+                    message="The audio could not be fetched; the caption text is kept as it is.",
+                )
+                result = ASRResult(words=[], language=None, segments=[], engine=None, model=None)
             with events.stage(events.CUES, announce=False, source="captions") as st:
                 cues = caption_cues(segments, c)
                 if not cues:
@@ -614,7 +649,11 @@ class CaptionPipeline:
                 st.set(cues=len(cues))
             progress(0.9)
             with events.stage(events.ALIGN, mode="merge", margin_s=c.align_window_s) as st:
-                cues, from_asr = merge_words_into_cues(cues, result.words, c)
+                # linear in cues and words, but hours of captions still take a moment: keep the
+                # API responsive the way `detect_silences` already does
+                cues, from_asr = await asyncio.to_thread(
+                    merge_words_into_cues, cues, result.words, c
+                )
                 st.set(cues=len(cues), from_asr=from_asr)
             track_lang = result.language or requested or base_hint or "und"
             track_lang = await self._finish(

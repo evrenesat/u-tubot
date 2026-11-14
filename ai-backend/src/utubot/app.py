@@ -29,7 +29,13 @@ from .captions.asr import ASRBackend, make_asr
 from .captions.jobs import JobQueue
 from .captions.pipeline import CaptionPipeline, Downloader
 from .captions.report import JobReports
-from .config import Config, UserConfig, load_config
+from .config import (
+    LANG_CODE_RE,
+    TRANSLATE_OFF_VALUES,
+    Config,
+    UserConfig,
+    load_config,
+)
 from .content import ContentService
 from .db import Database
 from .llm import LLMClient
@@ -71,8 +77,8 @@ from .youtube_fixtures import OfflineYoutubeFetcher
 log = logging.getLogger("utubot.app")
 APK_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\.apk$")
 APK_MIME = "application/vnd.android.package-archive"
-LANG_RE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
-TRANSLATE_OFF = {"", "off", "none"}
+LANG_RE = LANG_CODE_RE
+TRANSLATE_OFF = TRANSLATE_OFF_VALUES
 
 
 def resolve_translate_to(requested: str | None, default: str) -> str | None:

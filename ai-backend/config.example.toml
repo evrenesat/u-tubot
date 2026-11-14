@@ -254,21 +254,24 @@ min_cue_s = 1.0
 max_cue_s = 7.0
 max_cps = 20.0                     # readability ceiling: a cue that would run faster than this many
                                    # characters per second is cut earlier (0: off)
-align_silence = true               # nudge cue boundaries to nearby silences, so a cue does not cut a word
+align_silence = true               # nudge cue boundaries outward to nearby silences, so a cue does not
+                                   # cut a word (a boundary never moves into its own cue)
 align_window_s = 0.4               # how far a boundary may move (also the margin that assigns ASR
                                    # words to a caption cue in the improve path)
 silence_min_s = 0.25               # silences shorter than this do not count for alignment
 translate_to = "en"                # default translation target of captions jobs: English whatever
-                                   # the source language (owner, 2026-11-13). "off" keeps the source
+                                   # the source language (owner, 2026-11-13). "off" keeps the source.
+                                   # a language code, validated at startup
 proofread = true                   # LLM proofreading pass ([llm.captions]): punctuation, capitalisation,
                                    # names and terms from the title/description; skipped without an LLM
                                    # also runs over translated text, so the English output is proofread
-proofread_batch = 40               # cues sent to the LLM at once
-proofread_max_ratio = 1.6          # a batch whose proofread text is longer than this factor is kept as it
-                                   # was (a sign the model invented text)
+proofread_batch = 40               # cues sent to the LLM at once (1 or more)
+proofread_max_ratio = 1.6          # a batch whose proofread text is longer or shorter than this factor
+                                   # is kept as it was (a sign the model invented or dropped text)
 proofread_context_chars = 600      # title/description characters sent to the LLM as context
 separation = "off"                 # "off" or "demucs": separate the vocals from the music before ASR
-                                   # (needs `demucs` on the PATH, e.g. `uv tool install demucs`)
+                                   # (needs `demucs` on the PATH, e.g. `uv tool install demucs`);
+                                   # a job whose ASR answer is cached skips it
 separation_cmd = ["demucs", "--two-stems", "vocals"]
 separation_timeout_s = 3600.0      # give up on separation after this long and use the original audio
 job_concurrency = 1

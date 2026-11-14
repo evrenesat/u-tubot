@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from pathlib import Path
 from typing import Annotated, Literal
@@ -13,6 +14,8 @@ DEFAULT_PROVIDER = "default"
 DEFAULT_LLM_BASE_URL = "http://127.0.0.1:8000/v1"
 GLANCE_MAX_TOKENS = 160
 GLANCE_REASONING_EFFORT = "none"
+LANG_CODE_RE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
+TRANSLATE_OFF_VALUES = frozenset({"", "off", "none"})
 
 
 class LLMTask(BaseModel):
@@ -227,7 +230,7 @@ class CaptionsConfig(BaseModel):
     silence_min_s: float = 0.25
     translate_to: str = "en"
     proofread: bool = True
-    proofread_batch: int = 40
+    proofread_batch: int = Field(default=40, ge=1)
     proofread_max_ratio: float = 1.6
     proofread_context_chars: int = 600
     separation: Literal["off", "demucs"] = "off"
@@ -251,6 +254,21 @@ class CaptionsConfig(BaseModel):
     job_events_max: int = 400
     delivery_coalesce_s: float = 300.0
     delivery_events_max: int = 50
+
+    @field_validator("translate_to")
+    @classmethod
+    def _validate_translate_to(cls, value: str) -> str:
+        """The default translation target must be a language code, or an opt-out value.
+
+        Validated here so a bad config default (say `translate_to = "english"`) fails at startup
+        instead of making every captions request answer 400.
+        """
+        stripped = value.strip().lower()
+        if stripped not in TRANSLATE_OFF_VALUES and not LANG_CODE_RE.match(stripped):
+            raise ValueError(
+                "translate_to must be a language code (e.g. 'en') or one of: off, none, ''"
+            )
+        return stripped
 
     def engines(self) -> list[AsrEngineConfig]:
         """The engine chain: `asr_engines`, or the legacy `asr_backend`/`asr_*` keys as one engine."""

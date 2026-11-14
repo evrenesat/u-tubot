@@ -16,6 +16,7 @@ from utubot.llm import LLMClient
 
 VID = "abcdefghijk"
 CONTEXT = {"title": "A title", "description": "A description"}
+CFG = CaptionsConfig()
 
 
 def cues(*texts: str) -> list[Cue]:
@@ -71,12 +72,33 @@ async def test_proofread_corrects_cues_and_sends_the_context(mock_llm):
 
 
 async def test_proofread_batches_cues(mock_llm):
-    respond_with_cues(mock_llm, ["a", "b", "c"])
+    respond_with_cues(mock_llm, ["One.", "Two.", "Four."])
     out = await proofreader(mock_llm, proofread_batch=2).polish(
         VID, cues("one", "two", "three"), "English", CONTEXT
     )
-    assert [cue.lines for cue in out] == [["a"], ["b"], ["c"]]
+    assert [cue.lines for cue in out] == [["One."], ["Two."], ["Four."]]
     assert proofread_calls(mock_llm) == 2
+
+
+async def test_proofread_keeps_the_original_when_the_text_shrinks_too_much(mock_llm):
+    respond_with_cues(mock_llm, ["x"])
+    out = await proofreader(mock_llm).polish(
+        VID, cues("one fairly long cue text"), "English", CONTEXT
+    )
+    assert [cue.lines for cue in out] == [["one fairly long cue text"]]
+
+
+async def test_proofread_re_splits_corrected_text_that_no_longer_fits_one_cue(mock_llm):
+    long_text = " ".join(f"word{i}" for i in range(18))
+    respond_with_cues(mock_llm, [long_text])
+    out = await proofreader(mock_llm).polish(VID, cues(long_text), "English", CONTEXT)
+    assert len(out) > 1
+    for cue in out:
+        assert len(cue.lines) <= CFG.max_lines
+        assert all(len(line) <= CFG.max_chars_per_line for line in cue.lines)
+    assert out[-1].end == 2.0
+    for a, b in zip(out, out[1:], strict=False):
+        assert a.end <= b.start + 1e-6
 
 
 async def test_proofread_keeps_the_original_on_a_length_mismatch(mock_llm):
