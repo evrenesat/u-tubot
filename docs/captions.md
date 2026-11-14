@@ -15,12 +15,13 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
    from the media archive when it is already there — then `ffmpeg` converts it to 16 kHz mono WAV. Videos longer than `max_duration_s`
    (3 h) are refused. Every download is kept in the media archive, so no audio is ever fetched twice.
 4. **Vocal separation** (optional): when `separation = "demucs"`, the vocals stem is separated from the music before ASR
-   ([below](#vocal-separation)).
-5. **ASR.** Speech recognition with word timestamps, chunked and stitched ([below](#asr-engines)). The answer is cached per video and
-   audio, so a retried job or a second job for the same video does not transcribe the same audio twice.
+   ([below](#vocal-separation)). A job whose ASR answer is already cached skips it — demucs can take tens of minutes on CPU.
+5. **ASR.** Speech recognition with word timestamps, chunked and stitched ([below](#asr-engines)). The answer is cached per video, audio
+   and separation mode, so a retried job or a second job for the same video does not transcribe the same audio twice.
 6. **Cues and alignment.** Words are grouped into cues of at most `max_lines` (2) lines of `max_chars_per_line` (42) characters, 1 to 7
    seconds (`min_cue_s`, `max_cue_s`), breaking at sentence and speaker changes, and never faster than `max_cps` (20) characters per
-   second. Cue boundaries are then nudged to nearby silences (`align_silence`), so a cue does not cut into a word.
+   second. Cue boundaries are then nudged outward to the middle of a nearby silence (`align_silence`) — outward only, so a cue never
+   loses its first or last word to the snap.
 7. **Proofreading.** The LLM (`[llm.captions]`) fixes punctuation, capitalisation, names and terms, using the video's title and
    description as context ([below](#proofreading)).
 8. **Translation.** The job targets English by default (`[captions] translate_to`, "en"): a track in another language is translated
@@ -35,17 +36,19 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
 When the video already has a caption track, its timing is the skeleton: each caption becomes a cue, rolling repeats of automatic
 captions are dropped and text too long for one cue is re-broken (`max_lines` x `max_chars_per_line`, time shared by length). Then the
 ASR words that fall inside each cue's window (plus `align_window_s`, 0.4 s) replace its text and move its boundaries to the words
-actually spoken — the video's captions keep the timing, the speech recognition provides the better transcription. A cue the ASR heard
-nothing in keeps the caption text. The proofreading pass runs last. When no speech engine is available, the caption text is proofread
-and stored as it is.
+actually spoken — the video's captions keep the timing, the speech recognition provides the better transcription. The merged text is
+wrapped to the line limits again; when it no longer fits one cue — or would run faster than `max_cps` — it is re-split into several
+cues over the words' own timings. A cue the ASR heard nothing in keeps the caption text. The proofreading pass runs last. When no
+speech engine is available, or the audio cannot be fetched at all, the caption text is proofread and stored as it is.
 
 ## Proofreading
 
 The cue texts go to the LLM in batches of `proofread_batch` (40) with the video's title and description (up to
 `proofread_context_chars` each). The answer must be a JSON array with the same length and order as the batch; a different shape, an
-empty string, or a batch whose text grew beyond `proofread_max_ratio` (1.6 — a sign of invention) falls back to the original texts. A
-failing LLM never fails the job: those batches keep their text and the stage warns. Corrected batches are cached per video, so a
-retried job does not pay twice.
+empty string, a batch whose text grew beyond `proofread_max_ratio` (1.6 — a sign of invention) or shrank below `1 / proofread_max_ratio`
+(dropped content) falls back to the original texts. Corrected texts are wrapped to the line limits again; text that no longer fits one
+cue is re-split over the cue's own span, so the stored cues never break the limits. A failing LLM never fails the job: those batches
+keep their text and the stage warns. Corrected batches are cached per video, so a retried job does not pay twice.
 
 ## Translation
 
@@ -61,7 +64,8 @@ description as context. Same-language captions stay available: pass `translate_t
 With `separation = "demucs"` the pipeline runs `separation_cmd` (default `demucs --two-stems vocals`; install it with
 `uv tool install demucs`) over the converted audio and feeds ASR the vocals stem. A speech-only mix loses almost nothing, so there is no
 music detector. The stage is best-effort: a missing tool, a failure or `separation_timeout_s` (1 h) falls back to the original audio and
-says so in the job log.
+says so in the job log. A job whose ASR answer is already cached skips the separation — the cache is keyed by the separation mode, so
+separated and unseparated audio never share an answer.
 job while the video plays and, when it is ready, adds the track to the video and turns it on (you asked for it) with a short "u·tubot
 captions ready"; at the start of a video the setting *Select HQ captions automatically* decides. The app fetches the VTT once, with
 its `Authorization` header, and keeps the file in its own storage: the subtitle menu offers it for that video from then on, after a

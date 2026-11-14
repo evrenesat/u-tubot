@@ -3,9 +3,10 @@
 Two jobs:
 - `merge_words_into_cues`: the video had captions, so their timing is kept and each cue's text is
   replaced by the ASR words that fall inside its window (better transcription); a cue the ASR heard
-  nothing in keeps the caption text. Cue boundaries move to the words they now hold.
-- `snap_cues`: cue boundaries are nudged to the middle of a nearby silence (ffmpeg silencedetect),
-  so a cue does not cut into a word; a light stand-in for a full forced alignment.
+  nothing in keeps the caption text. Cue boundaries move to the words they now hold, and the text
+  is wrapped or re-split so every produced cue respects the line, duration and cps limits.
+- `snap_cues`: cue boundaries are nudged outward to the middle of a nearby silence (ffmpeg
+  silencedetect), so a cue does not cut into a word; a light stand-in for a full forced alignment.
 
 `caption_cues` turns the timed segments of a fetched caption track into cues: it drops the repeats
 of rolling windows and re-breaks text that is too long for one cue (`segment.retime_split`).
@@ -13,11 +14,12 @@ of rolling windows and re-breaks text that is too long for one cue (`segment.ret
 
 from __future__ import annotations
 
+import bisect
 import re
 import subprocess
 
 from ..config import CaptionsConfig
-from .segment import enforce_timing, retime_split, wrap_lines
+from .segment import build_cues, enforce_timing, retime_split, wrap_lines
 from .types import Cue, Word
 
 MIDPOINT_EPS = 1e-9
@@ -43,20 +45,34 @@ def merge_words_into_cues(
     """Replace cue text with the ASR words inside each cue window (plus `align_window_s` margin).
 
     Every word goes to at most one cue: the one whose window its midpoint is closest to, and only
-    when that distance is within the margin. Words outside every window are dropped. Returns the
-    new cues (timing re-enforced) and how many cues took their text from the ASR.
+    when that distance is within the margin. Words outside every window are dropped. The cues are
+    expected sorted by start (as `caption_cues` and `build_cues` leave them), so each word finds
+    its cue around one `bisect` position instead of scanning every cue. A cue that took ASR words
+    is re-wrapped to the line limits; text that does not fit — or runs faster than `max_cps` — is
+    re-split into several cues over the words' own timings (`build_cues`). Returns the new cues
+    and how many cues took their text from the ASR.
     """
     margin = max(cfg.align_window_s, 0.0)
+    starts = [cue.start for cue in cues]
     buckets: list[list[Word]] = [[] for _ in cues]
     for word in words:
         if not word.text.strip():
             continue
         mid = _midpoint(word)
         best, best_dist = None, margin + MIDPOINT_EPS
-        for i, cue in enumerate(cues):
-            dist = _window_distance(mid, cue.start, cue.end)
+        # exact candidate window: the cues whose `[start-margin, end+margin]` holds the midpoint.
+        # The cues are sorted and non-overlapping, so their ends are sorted too and the candidates
+        # form one contiguous run around the bisect position — no scan of every cue.
+        j_hi = bisect.bisect_right(starts, mid)
+        while j_hi < len(cues) and cues[j_hi].start - margin <= mid:
+            j_hi += 1
+        j_lo = j_hi
+        while j_lo > 0 and cues[j_lo - 1].end + margin >= mid:
+            j_lo -= 1
+        for j in range(j_lo, j_hi):
+            dist = _window_distance(mid, cues[j].start, cues[j].end)
             if dist < best_dist:
-                best, best_dist = i, dist
+                best, best_dist = j, dist
         if best is not None:
             buckets[best].append(word)
     out: list[Cue] = []
@@ -64,17 +80,30 @@ def merge_words_into_cues(
     for cue, bucket in zip(cues, buckets, strict=True):
         if bucket:
             from_asr += 1
-            out.append(
-                Cue(
-                    bucket[0].start,
-                    max(bucket[-1].end, bucket[0].start),
-                    [" ".join(w.text.strip() for w in bucket)],
-                    cue.speaker,
+            text = " ".join(w.text.strip() for w in bucket)
+            lines = wrap_lines(text, cfg.max_chars_per_line, cfg.max_lines)
+            if lines is not None and not _too_fast(text, bucket[0].start, bucket[-1].end, cfg):
+                out.append(
+                    Cue(
+                        bucket[0].start,
+                        max(bucket[-1].end, bucket[0].start),
+                        lines,
+                        cue.speaker,
+                    )
                 )
-            )
+            else:
+                # does not fit one cue: let the words' own timings re-split it, so line, duration
+                # and cps limits all hold
+                out.extend(build_cues(bucket, cfg))
         else:
             out.append(Cue(cue.start, cue.end, list(cue.lines), cue.speaker))
     return enforce_timing(out, cfg), from_asr
+
+
+def _too_fast(text: str, start: float, end: float, cfg: CaptionsConfig) -> bool:
+    if cfg.max_cps <= 0:
+        return False
+    return len(text) / max(end - start, 0.1) > cfg.max_cps
 
 
 def caption_cues(segments: list[tuple[float, float, str]], cfg: CaptionsConfig) -> list[Cue]:
@@ -152,10 +181,11 @@ def _silence_midpoints(silences: list[tuple[float, float]]) -> list[float]:
 def snap_cues(
     cues: list[Cue], silences: list[tuple[float, float]], cfg: CaptionsConfig
 ) -> list[Cue]:
-    """Nudge each cue boundary to a silence midpoint within `align_window_s`; never cross a neighbour.
+    """Nudge each cue boundary outward to the nearest silence midpoint within `align_window_s`.
 
-    A boundary only moves when the cue keeps at least `min_cue_s` afterwards. Cues that touch their
-    neighbour (back-to-back speech) stay put; there is no silence between them to snap to anyway.
+    A start may only move earlier and an end only later — onto a silence *outside* the cue.
+    Snapping inward would park the boundary on a pause inside the cue and cut its first or last
+    word. A boundary never crosses a neighbour, and the cue keeps at least `min_cue_s`.
     """
     if not cues or not silences:
         return cues
@@ -177,12 +207,23 @@ def _snap_one(
     cfg: CaptionsConfig,
 ) -> None:
     lo = prev_end if prev_end is not None else 0.0
-    hi = next_start if next_start is not None else cue.end
+    # the last cue has no neighbour: its end may still move outward, within the window
+    hi = next_start if next_start is not None else cue.end + window
+    best, best_dist = None, window + MIDPOINT_EPS
     for point in midpoints:
-        if abs(point - cue.start) <= window and cue.end - point >= cfg.min_cue_s and point >= lo:
-            cue.start = point
-            break
+        if point > cue.start + MIDPOINT_EPS or point < lo or cue.end - point < cfg.min_cue_s:
+            continue
+        dist = cue.start - point
+        if dist < best_dist:
+            best, best_dist = point, dist
+    if best is not None:
+        cue.start = best
+    best, best_dist = None, window + MIDPOINT_EPS
     for point in midpoints:
-        if abs(point - cue.end) <= window and point - cue.start >= cfg.min_cue_s and point <= hi:
-            cue.end = point
-            break
+        if point < cue.end - MIDPOINT_EPS or point > hi or point - cue.start < cfg.min_cue_s:
+            continue
+        dist = point - cue.end
+        if dist < best_dist:
+            best, best_dist = point, dist
+    if best is not None:
+        cue.end = best

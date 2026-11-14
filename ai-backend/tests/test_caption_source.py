@@ -141,6 +141,65 @@ async def test_a_captions_job_keeps_the_caption_text_when_the_audio_has_no_speec
     assert "Hello there, my friend." in stored_captions(env)
 
 
+async def test_a_captions_job_keeps_the_caption_text_when_the_audio_cannot_be_fetched(env):
+    from utubot.youtube import YoutubeVideoError
+
+    env.fetcher.text = "[00:00] hello there my friend"
+    env.fetcher.segments = [(0.0, 4.0, "hello there my friend")]
+    respond_with_cues(env.llm, ["Hello there, my friend."])
+
+    async def broken_downloader(vid, out, started):
+        raise YoutubeVideoError("unavailable")
+
+    env.svc.jobs.pipeline.downloader = broken_downloader
+    doc = await queue_captions(env)
+    asr = event(env, doc["id"], "asr", "warn")["detail"]
+    assert asr["reason"] == "audio_unavailable"
+    align = event(env, doc["id"], "align")["detail"]
+    assert align["mode"] == "merge" and align["from_asr"] == 0
+    assert "Hello there, my friend." in stored_captions(env)
+
+
+async def test_the_improve_path_stores_cues_within_the_line_and_cps_limits(env):
+    from utubot.captions.asr import ASRResult
+
+    env.fetcher.text = "[00:00] big cue"
+    env.fetcher.segments = [(0.0, 6.0, "big cue")]
+    env.cfg.captions.proofread = False  # only the merge itself must respect the limits
+
+    class WordyASR:
+        async def transcribe(self, wav, language, progress, *, priority=1, want_words=True):
+            # 18 words inside the one 6 s cue window: ~125 characters, over the 2x42 limit
+            words = []
+            for i in range(18):
+                start = 0.3 + i * 0.3
+                words.append((start, start + 0.25, f"speech{i}"))
+            return ASRResult(
+                words=[Word(*word) for word in words],
+                language="en",
+                segments=[],
+                engine="mock",
+                model="mock",
+            )
+
+    from utubot.captions.types import Word
+
+    asr = WordyASR()
+    env.svc.jobs.pipeline.asr = asr
+    doc = await queue_captions(env)
+    align = event(env, doc["id"], "align")["detail"]
+    assert align["mode"] == "merge" and align["from_asr"] == 1
+    assert align["cues"] > 1  # the bucket was re-split instead of stored as one long cue
+    vtt = stored_captions(env)
+    lines = [
+        line
+        for line in vtt.splitlines()
+        if line and "-->" not in line and not line.isdigit() and line != "WEBVTT"
+    ]
+    assert lines, vtt
+    assert all(len(line) <= env.cfg.captions.max_chars_per_line for line in lines)
+
+
 async def test_a_captions_job_says_when_separation_is_not_installed(env):
     env.fetcher.text = None
     env.cfg.captions.separation = "demucs"
@@ -150,6 +209,52 @@ async def test_a_captions_job_says_when_separation_is_not_installed(env):
     separation = event(env, doc["id"], "separation", "skipped")["detail"]
     assert separation["reason"] == "not_installed"
     assert "Hello there." in stored_captions(env)
+
+
+class RecordingSeparator:
+    """A separator that counts its runs and never produces a vocals stem."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def separate(self, wav, work):
+        self.calls += 1
+        return None
+
+
+async def test_a_retried_captions_job_skips_separation_on_the_asr_cache_hit(env):
+    env.fetcher.text = None
+    env.cfg.captions.separation = "demucs"
+    separator = RecordingSeparator()
+    env.svc.jobs.pipeline.separator = separator
+    env.llm.fail_status = 500  # the translate stage fails after the ASR, forcing a retry
+    queued = (
+        await env.client.post(f"/v1/videos/{VID}/captions", json={"translate_to": "de"})
+    ).json()
+    doc = await wait_state(env.client, queued["job_id"])
+    assert doc["state"] == "failed", doc["events"]
+    assert separator.calls == 1  # the first job ran the separation ahead of its ASR
+    separation_entries = len(
+        [e for e in log_of(env, queued["job_id"]) if e["stage"] == "separation"]
+    )
+    env.llm.fail_status = None
+    retry = await env.client.post(f"/v1/jobs/{queued['job_id']}/retry")
+    assert retry.status_code == 200, retry.text
+    doc = await wait_state(env.client, queued["job_id"])
+    assert doc["state"] == "ready", doc["events"]
+    assert event(env, queued["job_id"], "asr", "ok")["detail"]["cached"] is True
+    assert separator.calls == 1  # the cached answer skipped the separation entirely
+    log = log_of(env, queued["job_id"])
+    assert len([e for e in log if e["stage"] == "separation"]) == separation_entries
+
+
+def test_the_asr_cache_key_includes_the_separation_mode():
+    from utubot.captions.pipeline import asr_cache_key
+
+    off = asr_cache_key("sha", True, "en", "off")
+    demucs = asr_cache_key("sha", True, "en", "demucs")
+    assert off != demucs
+    assert off == asr_cache_key("sha", True, "en", "off")
 
 
 async def test_a_retried_captions_job_reuses_the_cached_asr(env):
@@ -217,3 +322,25 @@ async def test_translate_to_off_keeps_the_source_language(env):
         ).json()
         row = env.svc.db.one("SELECT translate_to FROM jobs WHERE id=?", [queued["job_id"]])
         assert row["translate_to"] is None, target
+
+
+def test_a_bad_translate_to_config_default_is_rejected_at_startup():
+    import pytest
+    from pydantic import ValidationError
+
+    from utubot.config import CaptionsConfig
+
+    with pytest.raises(ValidationError):
+        CaptionsConfig(translate_to="english")
+    assert CaptionsConfig(translate_to=" EN ").translate_to == "en"
+    assert CaptionsConfig(translate_to="OFF").translate_to == "off"
+
+
+def test_proofread_batch_must_be_at_least_one():
+    import pytest
+    from pydantic import ValidationError
+
+    from utubot.config import CaptionsConfig
+
+    with pytest.raises(ValidationError):
+        CaptionsConfig(proofread_batch=0)

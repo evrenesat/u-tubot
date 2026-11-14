@@ -89,23 +89,46 @@ def test_parse_silencedetect():
     assert parse_silencedetect(output) == [(0.0, 1.5), (7.25, 8.0)]
 
 
-def test_snap_cues_moves_boundaries_to_silence():
-    cues = [Cue(1.0, 3.3, ["one"]), Cue(3.3, 6.0, ["two"]), Cue(7.0, 9.0, ["three"])]
-    # silence midpoints: 1.3, 3.1, 6.2, 7.3
-    silences = [(1.2, 1.4), (3.0, 3.2), (6.1, 6.3), (7.2, 7.4)]
+def test_snap_cues_moves_boundaries_outward_to_silence():
+    cues = [Cue(2.0, 5.0, ["one"]), Cue(5.0, 8.0, ["two"])]
+    # silence midpoints: 1.7 (before the first cue) and 8.2 (after the last one)
+    silences = [(1.5, 1.9), (8.0, 8.4)]
     out = snap_cues(cues, silences, CFG)
-    assert (round(out[0].start, 6), round(out[0].end, 6)) == (1.3, 3.1)
-    assert (round(out[1].start, 6), round(out[1].end, 6)) == (3.1, 6.2)
-    assert (round(out[2].start, 6), round(out[2].end, 6)) == (7.3, 9.0)
+    assert (out[0].start, out[0].end) == (1.7, 5.0)
+    assert (out[1].start, out[1].end) == (5.0, 8.2)
+
+
+def test_snap_cues_never_moves_a_boundary_into_the_cue():
+    cfg = CaptionsConfig()
+    cues = [Cue(10.0, 13.0, ["one"])]
+    # a silence inside the cue near its start: snapping to 10.35 would cut the first word
+    out = snap_cues(cues, [(10.2, 10.5)], cfg)
+    assert (out[0].start, out[0].end) == (10.0, 13.0)
+    # a silence inside the cue near its end: snapping to 12.6 would hide the last word
+    out = snap_cues(cues, [(12.4, 12.8)], cfg)
+    assert (out[0].start, out[0].end) == (10.0, 13.0)
+
+
+def test_snap_cues_picks_the_nearest_outward_silence():
+    cfg = CaptionsConfig(align_window_s=0.4)
+    cues = [Cue(10.0, 13.0, ["one"])]
+    # midpoints 9.0, 9.8, 13.1, 13.55: the nearest outward one wins on both sides
+    silences = [(8.9, 9.1), (9.7, 9.9), (13.05, 13.15), (13.4, 13.7)]
+    out = snap_cues(cues, silences, cfg)
+    assert (out[0].start, round(out[0].end, 6)) == (9.8, 13.1)
 
 
 def test_snap_cues_never_breaks_the_minimum_duration_or_the_neighbours():
     cfg = CaptionsConfig(min_cue_s=1.0, align_window_s=0.4)
-    cues = [Cue(1.0, 1.2, ["tiny"]), Cue(1.2, 5.0, ["rest"])]
-    silences = [(1.25, 1.35)]  # midpoint 1.3 would leave the first cue 0.3 s
+    cues = [Cue(1.0, 1.2, ["tiny"]), Cue(1.2, 5.0, ["rest"]), Cue(5.15, 9.0, ["next"])]
+    # midpoints: 1.3 sits inside the tiny and the rest cue (no inward snapping); 5.3 is within
+    # the window of the rest cue's end but past the neighbour's start; 5.05 is the free gap
+    # midpoint both neighbouring boundaries meet at
+    silences = [(1.25, 1.35), (5.0, 5.1), (5.2, 5.4)]
     out = snap_cues(cues, silences, cfg)
     assert (out[0].start, out[0].end) == (1.0, 1.2)
-    assert (out[1].start, out[1].end) == (1.3, 5.0)
+    assert (out[1].start, out[1].end) == (1.2, 5.05)
+    assert (out[2].start, out[2].end) == (5.05, 9.0)
 
 
 def test_snap_cues_without_silences_returns_the_cues():
