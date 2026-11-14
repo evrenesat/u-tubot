@@ -3,7 +3,8 @@
 The release workflow attaches `release.json` (version, versionCode, ABIs, SHA-256 per APK) to every release. A release is
 published into the channel only when its versionCode is newer than the channel's, every download matches its SHA-256 and
 every APK's signing certificate equals the pinned one (`[app] signing_cert_sha256`). The signature is checked by `apksigner`
-when `[app] apksigner_path` is set and by the built-in reader (`apksig`) otherwise.
+when `[app] apksigner_path` is set and by the built-in reader (`apksig`) otherwise. The APK's own manifest (`apkmanifest`) must
+agree with the release metadata: package `dev.utubot.tv`, its versionName and, when release.json gives one, its versionCode.
 """
 
 from __future__ import annotations
@@ -22,12 +23,13 @@ from typing import Any
 
 import httpx
 
-from . import apksig, appchannel
+from . import apkmanifest, apksig, appchannel
 from .config import Config
 
 GITHUB_API = "https://api.github.com"
 GITHUB_API_VERSION = "2022-11-28"
 USER_AGENT = "utubot-sync"
+APPLICATION_ID = "dev.utubot.tv"
 TAG_PREFIX = "utubot-v"
 TAG_RE = re.compile(rf"^{TAG_PREFIX}(\d+)\.(\d+)\.(\d+)$")
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
@@ -359,6 +361,25 @@ def verify_signature(
         raise SyncError(f"{apk.name} is signed with certificate {digests[0]}, not the pinned {pin}")
 
 
+def check_manifest(apk: Path, info: ReleaseInfo) -> None:
+    """Refuse the APK unless its own manifest agrees with the release metadata: package, versionName and, when
+    release.json supplied one, versionCode. A release without release.json has a derived code, which is not compared."""
+    try:
+        declared = apkmanifest.read_apk_manifest(apk)
+    except apkmanifest.ManifestError as exc:
+        raise SyncError(f"{apk.name}: {exc}") from exc
+    if declared.package != APPLICATION_ID:
+        raise SyncError(f"{apk.name} is package {declared.package!r}, not {APPLICATION_ID!r}")
+    if declared.version_name != info.version_name:
+        raise SyncError(
+            f"{apk.name} declares versionName {declared.version_name!r} but the release is {info.version_name}"
+        )
+    if info.has_manifest and declared.version_code != info.version_code:
+        raise SyncError(
+            f"{apk.name} declares versionCode {declared.version_code} but {RELEASE_MANIFEST} says {info.version_code}"
+        )
+
+
 def resolve_apksigner(cfg: Config) -> str | None:
     """The configured apksigner, or None to use the built-in verifier. A configured path that does not run is an error."""
     configured = cfg.app.apksigner_path.strip()
@@ -462,7 +483,7 @@ def sync_github(
             lines = [
                 head,
                 f"would download {names}",
-                "would verify SHA-256 and the signing certificate, then publish",
+                "would verify SHA-256, the signing certificate and the APK manifest (package, version), then publish",
             ]
             if not pin:
                 lines.append(
@@ -495,6 +516,7 @@ def sync_github(
                         f"{item.name}: SHA-256 {actual} does not match the release's {item.sha256}"
                     )
                 verify_signature(cfg, apksigner, dest, pin, runner)
+                check_manifest(dest, info)
                 apks.append(dest)
             try:
                 appchannel.publish(cfg, apks, info.version_name, info.version_code, info.changelog)

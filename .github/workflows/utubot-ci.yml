@@ -4,7 +4,7 @@ name: u-tubot CI
 # The backend and the app are tested only when their files changed. A skipped job counts as passed.
 #
 # On a push to main, a change to the app (since the newest utubot-v* tag, so a failed or cancelled earlier push is not lost)
-# also starts the release workflow once the app tests pass.
+# also starts the release workflow once the app tests pass and the backend tests (when they ran) did not fail.
 on:
   pull_request:
   push:
@@ -153,8 +153,13 @@ jobs:
 
   release:
     # Hosted by this repository only: forks do not hold the signing key.
-    needs: [changes, app]
-    if: github.event_name == 'push' && github.repository == 'evrenesat/u-tubot' && needs.changes.outputs.release == 'true'
+    # A red backend blocks the release too: the app and the backend are one contract, and the deployment of a red commit never
+    # happens, so an app released from it would meet a server that does not speak its version yet. Skipped jobs count as passed.
+    needs: [changes, backend, app]
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.repository == 'evrenesat/u-tubot'
+      && needs.changes.outputs.release == 'true' && needs.app.result == 'success'
+      && (needs.backend.result == 'success' || needs.backend.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
