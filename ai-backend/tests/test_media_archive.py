@@ -290,9 +290,12 @@ async def test_admin_archive_endpoints_are_admin_only_and_remove_entries(env):
     filtered = (await env.client.get("/v1/admin/archive", params={"video_id": OTHER})).json()
     assert filtered["entries"] == [] and filtered["files"] == 1
 
+    env.svc.jobs.pipeline.cache.put(VID, "asr", "k", {"cached": True})
     removed = await env.client.delete("/v1/admin/archive/" + VID)
     assert removed.status_code == 200 and removed.json()["removed"] == 1
     assert removed.json()["bytes_freed"] == len(MEDIA)
+    assert removed.json()["stage_cache_rows_removed"] == 1
+    assert env.svc.jobs.pipeline.cache.get(VID, "asr", "k") is None
     assert not arc.path_of(entry).exists() and arc.count() == 0
     assert (await env.client.delete("/v1/admin/archive/" + VID)).status_code == 404
     await other.aclose()

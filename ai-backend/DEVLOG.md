@@ -1,5 +1,44 @@
 # DEVLOG
 
+## 2026-11-14 (caption pipeline review round 2: rebase on main, snapping, limits, cache order)
+
+- Rebased on `main` (#41 tests-never-youtube, #45) and fixed the semantic conflict the review
+  found: the offline fixture fetcher (`youtube_fixtures.py`) now maps `parse_json3`/`parse_vtt`
+  rows to `(start, text)` for `segments_to_text` the same way `YoutubeFetcher` does, and passes
+  `segments=` into its `FetchResult`, so the improve path also works offline. The 4 fixture tests
+  that failed on a trial merge pass again (16/16).
+- Silence snapping (`align.py _snap_one`) moved boundaries onto pauses *inside* the cue — a start
+  could move later onto the first word's pause and cut it, an end earlier than the last word. Now
+  a boundary only moves outward (a start earlier, an end later, the last cue's end within the
+  window), the nearest outward midpoint wins, and a boundary never crosses a neighbour. Tests for
+  both cut-into-word cases and nearest-wins added.
+- The improve path (`merge_words_into_cues`) stored each cue's ASR words as one unwrapped line —
+  a 6 s cue of 18 words broke the 2x42 limit, and nothing but the proofreader re-wrapped it.
+  Now the merged text is wrapped to the line limits, and text that does not fit one cue — or runs
+  faster than `max_cps` — is re-split by `build_cues` over the words' own timings.
+  `Proofreader.polish` re-splits over-crowded corrected text over the cue's span (`retime_split`)
+  instead of keeping the unwrapped lines.
+- Assignment in `merge_words_into_cues` is linear now (exact candidate window around one bisect
+  position; cues are sorted and non-overlapping, so their ends are sorted too) and runs in
+  `asyncio.to_thread` — measured 11.9 s for a 3 h track before, all inside the event loop.
+- The ASR cache is checked before the vocal separation, and the cache key carries the separation
+  mode (`asr_cache_key`): a retried job with a cache hit no longer runs demucs for nothing, and
+  turning separation on does not keep serving ASR answers made from unseparated audio.
+- The proofread guard also rejects a batch that comes back much shorter than its input
+  (`< 1 / proofread_max_ratio`): dropped content is as suspicious as invented content. Cached
+  batches are no longer written back on every cache hit.
+- A captions job whose audio cannot be fetched (video gone, media class limited, archive full)
+  now warns (`asr` warn, `audio_unavailable`) and proofreads the caption text as it is, instead of
+  failing with the captions already in hand.
+- `[captions] translate_to` is validated in `CaptionsConfig` (a language code, or `off`/`none`/`""`),
+  so a bad config default fails at startup instead of answering 400 on every captions request;
+  `proofread_batch` requires `>= 1` (0 would divide by zero).
+- Known limitation (review nit, kept): caption-source transcripts cached before this PR have
+  `segments = NULL`, so `TranscriptService.get(recheck=True)` returns the cached hit without timed
+  segments and those videos build from the audio until the transcript TTL expires; new fetches
+  store segments.
+- Suite 724 passed, ruff clean.
+
 ## 2026-11-13 (review follow-ups: cassettes carry no URL at all, offline misses are not held)
 
 - Review (EVR-168) found two leaks in the cassette sanitizer and one wrong hold; fixed:
@@ -17,6 +56,67 @@
 - Recorder hardening: `youtube-record` refuses when `CI` is set or `[youtube] offline` is on,
   and validates the video id before using it as a file name; the test DNS guard also refuses
   bytes hosts and trailing-dot names (`www.youtube.com.`).
+
+## 2026-11-13 (English as the default caption target; owner direction on EVR-153 / #33)
+
+- The goal is high-quality English captions for every requested video, whatever its source language; same-language captions are a side
+  effect. `[captions] translate_to` (new, default `"en"`) is the default translation target of captions jobs: `POST
+  /v1/videos/{id}/captions` with an unset (or null) `translate_to` — which is what the TV app's "prepare captions" sends — now resolves
+  to the configured default instead of "no translation". `translate_to: "off"` (or `"none"`, or `""`) keeps the source language, and a
+  config default of `"off"` makes that the default for everyone. The job row stores the resolved target, so the dedup key and the job
+  report show the real target ("en").
+- Quality bar on the English output: after the `translate` stage the translated text is proofread again (`Proofreader.enabled` gates it)
+  with the title and description as context, so the English captions get the same punctuation/name pass as the source text. Both paths
+  (`run` from audio, `improve` from the video's captions) go through `_finish`, so both benefit; the proofread stage cache is keyed by
+  language and texts, so the two passes never collide.
+
+## 2026-11-13 (lean HQ caption pipeline: improve existing captions, proofreading, alignment)
+
+- Why: "HQ captions" was fast ASR cut into cues. GitHub #33 (EVR-153) wants a lean pipeline with two cases: a video that already has
+  captions keeps their timing and gets better text; a video without captions gets the full audio path. Diarization is out of scope for
+  now (owner, 2026-11-13).
+- Captions first: a captions job now asks the transcript service what YouTube has (`caption_recheck`, same gate rules as transcript
+  jobs). A caption track with timings and a matching language improves (`CaptionPipeline.improve`); anything else — no captions, a
+  limited endpoint (`youtube_limited`), a track without timings, another language — builds from the audio (`run`), exactly as before.
+  The recheck never holds the audio back.
+- Improving existing captions: `transcripts.py` now parses timed segments (`start`, `end`, text) out of json3 (`dDurationMs`) and VTT,
+   carries them through the fetch and the `transcripts` row (the existing `segments` column), and returns them on `Transcript.segments`.
+  `captions/align.py caption_cues` turns them into cues (rolling repeats dropped, overlong text re-broken by `segment.retime_split` with
+  time shared by length); `merge_words_into_cues` replaces each cue's text with the ASR words whose midpoint falls inside its window
+  (margin `align_window_s`) and moves the boundaries to those words; a cue with no words keeps the caption text. When the ASR fails
+  entirely (`optional_asr`), the caption text is proofread and stored as it is (`asr` warn event, `engines_unavailable`).
+- Proofreading (`captions/proofread.py`): batches of `proofread_batch` (40) cue texts plus title/description (up to
+  `proofread_context_chars`) to `[llm.captions]`; the answer must be a JSON array of the same length, non-empty, and within
+  `proofread_max_ratio` (1.6) of the input length — otherwise the batch keeps its originals. An LLM failure warns per batch
+  (`proofread_batch` child event) and never fails the job. Corrected batches are cached in the new `stage_cache` table
+  (`captions/stages.py StageCache`), keyed by a sha256 of language, context and texts. Skips with `off` / `no_llm` events.
+- Alignment for the audio path: after `build_cues`, `snap_cues` nudges cue boundaries to the midpoint of a nearby silence
+  (`align_silence`, window `align_window_s`, silences by ffmpeg silencedetect with `silence_min_s`), never below `min_cue_s` and never
+  across a neighbour (`align` event, mode `silence`; the improve path uses mode `merge`).
+- Readability: `build_cues` now also splits when a cue would run faster than `max_cps` (20) characters per second (after `min_cue_s`).
+- ASR stage cache: `_recognise` keys the ASR answer by audio sha256 (from the media archive row), `want_words` and the requested
+  language; a cache hit skips the engines and reports `cached: true`. This makes a retried job (and a captions job after a transcript
+  job for the same audio) skip the transcription — the audio itself is reused through the archive anyway.
+- Vocal separation: `captions/separate.py`, off by default; `separation = "demucs"` runs `separation_cmd` (`demucs --two-stems vocals`,
+  must be on the PATH) over the 16 kHz WAV and re-converts the vocals stem for ASR. Missing tool, failure or `separation_timeout_s`
+  falls back to the original audio (`separation` event: ok / skipped `unavailable`), never fails the job. No music detector: the vocals
+  stem of a speech-only mix is the mix.
+- Diarization: the `diarization` stage only runs when `[captions] diarization` is not `none`; otherwise the stage is gone from the log.
+  The pyannote capability is unchanged.
+- Job report: new stages `separation`, `align` (mode `silence|merge`), `proofread` (corrected, warned, chars, cached) and
+  `proofread_batch` (a batch that kept its text), all labelled in `jobtext.js` (batch warnings hang under the proofread stage).
+  Config keys documented in `config.example.toml`; `docs/captions.md` rewritten around the two cases; `docs/server.md` and
+  `ai/CONTRACT.md` list the new stages.
+- Tests (`test_align.py`, `test_proofread.py`, `test_separate.py`, `test_stages.py`, `test_caption_source.py`, plus CPS/retime cases in
+  `test_captions.py`): no YouTube anywhere — fake fetcher (now with timed `segments` and a configurable `lang`), mock ASR and mock LLM.
+  The captions-job flow tests cover improve (ASR words re-time and replace the text, proofread applied), fallbacks (no captions, no
+  timings, other language, broken ASR, audio without speech) and the stage cache (a retried job reports `cached: true` and reads the
+  audio from the archive). Suite 694 passed, ruff clean.
+- Review fixes: the caption track's language reaches ASR as its base code (an automatic track reports `en-orig`, which
+  faster-whisper rejects hard); the improve path no longer fails when the ASR succeeds but hears nothing (music video with captions:
+  the caption text is proofread and stored, `no_speech` warn); the `align` event's `moved` count compares against a snapshot of the
+  boundaries (`snap_cues` mutates in place); the admin archive removal also clears the video's `stage_cache` rows (was promised by the
+  docstring, never wired).
 
 ## 2026-11-13 (media archive: keep every downloaded file, issue 34)
 

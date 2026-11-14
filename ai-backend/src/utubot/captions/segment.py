@@ -106,11 +106,60 @@ def build_cues(words: list[Word], cfg: CaptionsConfig) -> list[Cue]:
                     and cur_dur >= cfg.min_cue_s
                     and len(joined) >= capacity * CLAUSE_SPLIT_FRACTION
                 )
+                or (
+                    cfg.max_cps > 0
+                    and cur_dur >= cfg.min_cue_s
+                    and len(f"{joined} {word.text.strip()}".lstrip())
+                    / max(word.end - current[0].start, 0.1)
+                    > cfg.max_cps
+                )
             ):
                 flush()
         current.append(word)
     flush()
     return enforce_timing(cues, cfg)
+
+
+def forced_lines(words: list[str], max_chars: int) -> list[str]:
+    """Greedy line packing that never fails: a word longer than `max_chars` keeps its own line."""
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= max_chars or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def retime_split(text: str, start: float, end: float, cfg: CaptionsConfig) -> list[Cue]:
+    """Text too long for one cue, cut into timed cues: lines first, then cues of `max_lines`.
+
+    Time is shared by character count, so a cue lasts as long as its text is long; the last cue
+    ends exactly at `end`.
+    """
+    tokens = text.split()
+    if not tokens:
+        return []
+    lines = forced_lines(tokens, cfg.max_chars_per_line)
+    groups = [lines[i : i + cfg.max_lines] for i in range(0, len(lines), cfg.max_lines)]
+    weights = [sum(len(line) for line in group) + len(group) for group in groups]
+    span = max(end - start, 0.2 * len(groups))
+    total = sum(weights) or 1
+    out: list[Cue] = []
+    cursor = start
+    for i, group in enumerate(groups):
+        if i == len(groups) - 1:
+            cue_end = max(end, cursor + 0.2)
+        else:
+            cue_end = min(cursor + max(span * weights[i] / total, 0.2), end)
+        out.append(Cue(cursor, cue_end, list(group)))
+        cursor = cue_end
+    return [c for c in out if c.lines]
 
 
 def enforce_timing(cues: list[Cue], cfg: CaptionsConfig) -> list[Cue]:

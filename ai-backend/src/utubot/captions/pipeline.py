@@ -16,7 +16,13 @@ import yt_dlp
 from ..config import Config
 from ..db import Database
 from ..llm import BACKGROUND, LLMClient
-from ..media_archive import KIND_AUDIO, SHA_PREFIX, MediaArchive, MediaArchiveError
+from ..media_archive import (
+    KIND_AUDIO,
+    SHA_PREFIX,
+    MediaArchive,
+    MediaArchiveError,
+    MediaArchiveFull,
+)
 from ..transcripts import segments_to_text
 from ..youtube import (
     CLASS_MEDIA,
@@ -29,6 +35,7 @@ from ..youtube import (
     ytdlp_runtime_options,
 )
 from . import events
+from .align import caption_cues, detect_silences, merge_words_into_cues, snap_cues
 from .asr import (
     LANGUAGE_NAMES,
     ASRBackend,
@@ -41,8 +48,11 @@ from .asr import (
 )
 from .diarize import Diarizer, assign_speakers, make_diarizer
 from .formats import audio_selector, track_kind
+from .proofread import Proofreader
 from .segment import build_cues, count_speakers, to_vtt, wrap_lines
-from .types import Cue, Segment
+from .separate import make_separator
+from .stages import StageCache
+from .types import Cue, Segment, Word
 
 log = logging.getLogger("utubot.captions")
 VIDEO_URL = "https://www.youtube.com/watch?v={}"
@@ -55,6 +65,45 @@ TRANSLATE_SYSTEM = (
 Started = Callable[[], None]
 Downloader = Callable[[str, Path, Started], Awaitable[Path]]
 Progress = Callable[[float], None]
+ASR_CACHE_STAGE = "asr"
+
+
+def asr_to_cache(result: ASRResult) -> dict[str, Any]:
+    return {
+        "language": result.language,
+        "engine": result.engine,
+        "model": result.model,
+        "segments": [[seg.start, seg.end, seg.text] for seg in result.segments],
+        "words": [[w.start, w.end, w.text] for w in result.words],
+    }
+
+
+def asr_from_cache(payload: dict[str, Any]) -> ASRResult:
+    return ASRResult(
+        words=[Word(*word) for word in payload.get("words") or []],
+        language=payload.get("language"),
+        segments=[Segment(seg[0], seg[1], seg[2]) for seg in payload.get("segments") or []],
+        engine=payload.get("engine"),
+        model=payload.get("model"),
+    )
+
+
+def _set_asr(st, result: ASRResult, cached: bool = False) -> None:
+    st.set(
+        cached=cached or None,
+        engine=result.engine,
+        model=result.model,
+        language=result.language,
+        segments=len(result.segments),
+        words=len(result.words),
+        chars=sum(len(seg.text) for seg in result.segments),
+    )
+
+
+def asr_cache_key(audio_sha: str, want_words: bool, requested: str | None, separation: str) -> str:
+    """The ASR stage-cache key: the audio bytes, the answer shape, the language and the audio
+    variant — separated vocals change what the engines hear, so the mode joins the key."""
+    return f"{audio_sha}:{int(want_words)}:{requested or 'auto'}:{separation}"
 
 
 class PipelineError(RuntimeError):
@@ -217,6 +266,9 @@ class CaptionPipeline:
         self.gate = gate or YoutubeGate(cfg.youtube, db)
         self.diarizer = diarizer or make_diarizer(cfg.captions)
         self.archive = archive or MediaArchive(cfg, db)
+        self.cache = StageCache(db)
+        self.separator = make_separator(cfg.captions)
+        self.proofreader = Proofreader(llm, cfg.captions, cfg.llm.captions, self.cache)
         self.downloader = downloader or (
             lambda vid, out, started: download_audio(
                 vid,
@@ -239,8 +291,15 @@ class CaptionPipeline:
         *,
         priority: int = BACKGROUND,
         want_words: bool = True,
+        optional_asr: bool = False,
     ) -> tuple[ASRResult, Path]:
-        """Audio (from the archive, else a download that the archive keeps), 16 kHz WAV, ASR."""
+        """Audio (from the archive, else a download that the archive keeps), 16 kHz WAV, ASR.
+
+        The WAV passes the optional vocal separation first. The ASR answer is cached per video and
+        audio hash (`StageCache`), so a retried job or a second job for the same video does not
+        transcribe the same audio twice. With `optional_asr` (the captions-improvement path) a
+        failing engine chain leaves the words empty instead of failing the job.
+        """
         c = self.cfg.captions
         progress(0.02)
         asked = time.monotonic()
@@ -257,6 +316,7 @@ class CaptionPipeline:
                     bitrate_kbps=entry["bitrate_kbps"],
                 )
             src = self.archive.path_of(entry)
+            audio_sha = entry["sha256"]
         else:
             self.archive.require_room()
 
@@ -296,6 +356,7 @@ class CaptionPipeline:
                     work=work,
                 )
                 src = self.archive.path_of(stored)
+                audio_sha = stored["sha256"]
                 st.set(bytes=stored["size"], sha256=stored["sha256"][:SHA_PREFIX])
         progress(0.2)
         wav = work / "audio16k.wav"
@@ -314,28 +375,141 @@ class CaptionPipeline:
             )
             audio_s = wav_duration(wav, c.sample_rate)
             st.set(audio_s=round(audio_s, 1), bytes=file_size(wav), sample_rate=c.sample_rate)
-        progress(0.25)
         if audio_s > c.max_duration_s:
             raise YoutubeVideoError(REASON_TOO_LONG)
-        with events.stage(events.ASR, requested_language=requested) as st:
-            result = await self.asr.transcribe(
-                wav,
-                requested,
-                lambda f: progress(0.25 + 0.6 * f),
-                priority=priority,
-                want_words=want_words,
-            )
-            st.set(
-                engine=result.engine,
-                model=result.model,
-                language=result.language,
-                segments=len(result.segments),
-                words=len(result.words),
-                chars=sum(len(seg.text) for seg in result.segments),
-            )
-            if not (result.words if want_words else result.segments):
-                raise PipelineError("ASR returned no words")
+        # the ASR cache is keyed by the separation mode too: the answer depends on the audio that
+        # went in, and a hit must skip the separation (demucs can take tens of minutes on CPU)
+        key = asr_cache_key(audio_sha, want_words, requested, c.separation)
+        cached = self.cache.get(video_id, ASR_CACHE_STAGE, key)
+        if cached is not None:
+            result = asr_from_cache(cached)
+            with events.stage(events.ASR, requested_language=requested) as st:
+                _set_asr(st, result, cached=True)
+            self._require_speech(result, want_words, optional_asr)
+            progress(0.85)
+            return result, wav
+        if self.cfg.captions.separation != "off":
+            with events.stage(events.SEPARATION, tool="demucs") as st:
+                if self.separator is None:
+                    st.skip(
+                        reason="not_installed",
+                        message="The separation tool is not on the PATH; using the original audio.",
+                    )
+                else:
+                    vocals = await self.separator.separate(wav, work)
+                    if vocals is None:
+                        st.skip(
+                            reason="unavailable",
+                            message="Vocal separation produced no vocals stem; using the original audio.",
+                        )
+                    else:
+                        await run_ffmpeg(
+                            "-i",
+                            str(vocals),
+                            "-vn",
+                            "-ac",
+                            "1",
+                            "-ar",
+                            str(c.sample_rate),
+                            "-c:a",
+                            "pcm_s16le",
+                            str(wav),
+                        )
+                        st.set(
+                            bytes=file_size(vocals),
+                            audio_s=round(wav_duration(wav, c.sample_rate), 1),
+                        )
+        progress(0.25)
+        result = await self._asr_stage(
+            video_id,
+            wav,
+            requested,
+            progress,
+            priority=priority,
+            want_words=want_words,
+            optional_asr=optional_asr,
+            key=key,
+        )
         return result, wav
+
+    async def _asr_stage(
+        self,
+        video_id: str,
+        wav: Path,
+        requested: str | None,
+        progress: Progress,
+        *,
+        priority: int,
+        want_words: bool,
+        optional_asr: bool,
+        key: str,
+    ) -> ASRResult:
+        """One ASR step of `_recognise`, with its per-video cache. See `_recognise`."""
+        cached = self.cache.get(video_id, ASR_CACHE_STAGE, key)
+        if cached is not None:
+            result = asr_from_cache(cached)
+            with events.stage(events.ASR, requested_language=requested) as st:
+                _set_asr(st, result, cached=True)
+            self._require_speech(result, want_words, optional_asr)
+            return result
+        try:
+            with events.stage(events.ASR, requested_language=requested) as st:
+                result = await self.asr.transcribe(
+                    wav,
+                    requested,
+                    lambda f: progress(0.25 + 0.6 * f),
+                    priority=priority,
+                    want_words=want_words,
+                )
+                _set_asr(st, result)
+                if not self._asr_empty(result, want_words):
+                    self.cache.put(video_id, ASR_CACHE_STAGE, key, asr_to_cache(result))
+        except ASRError as exc:
+            if not optional_asr:
+                raise
+            events.emit(
+                events.ASR,
+                events.WARN,
+                reason="engines_unavailable",
+                requested_language=requested,
+                error_class=events.error_class(exc),
+                message="No speech engine could transcribe the audio; the caption text is kept as it is.",
+            )
+            return ASRResult(words=[], language=None, segments=[], engine=None, model=None)
+        self._require_speech(result, want_words, optional_asr)
+        return result
+
+    def _require_speech(self, result: ASRResult, want_words: bool, optional_asr: bool) -> None:
+        """The audio path needs recognised speech; the captions-improvement path does not.
+
+        A video whose audio carries no recognisable speech (music) still has usable captions to
+        improve, so with `optional_asr` the empty answer only warns.
+        """
+        if not self._asr_empty(result, want_words):
+            return
+        if not optional_asr:
+            raise PipelineError("ASR returned no words")
+        events.emit(
+            events.ASR,
+            events.WARN,
+            reason="no_speech",
+            message="No speech was recognised in the audio; the caption text is kept as it is.",
+        )
+
+    @staticmethod
+    def _asr_empty(result: ASRResult, want_words: bool) -> bool:
+        return not (result.words if want_words else result.segments)
+
+    async def _polish(self, video_id: str, cues: list[Cue], lang: str) -> list[Cue]:
+        """The proofreading pass, with the video's title and description as context."""
+        meta = self.db.get_json("video_meta", "video_id=?", [video_id]) or {}
+        context = {
+            "title": str(meta.get("title") or "")[: self.cfg.captions.proofread_context_chars],
+            "description": str(meta.get("description") or "")[
+                : self.cfg.captions.proofread_context_chars
+            ],
+        }
+        return await self.proofreader.polish(video_id, cues, lang, context)
 
     async def transcribe(
         self,
@@ -373,6 +547,7 @@ class CaptionPipeline:
         progress: Progress,
         priority: int = BACKGROUND,
     ) -> str:
+        """HQ captions from the audio (no usable captions on YouTube, or fetching is limited)."""
         c = self.cfg.captions
         work = self.cfg.media_dir / video_id
         work.mkdir(parents=True, exist_ok=True)
@@ -381,15 +556,16 @@ class CaptionPipeline:
             result, wav = await self._recognise(
                 video_id, requested, work, progress, priority=priority
             )
-            with events.stage(events.DIARIZATION) as st:
-                turns = await self.diarizer.diarize(wav)
-                notes = events.take_notes()
-                if notes.get("skip"):
-                    st.skip(reason=notes["skip"], message=notes.get("message"))
-                else:
-                    st.set(turns=len(turns), speakers=len({turn[2] for turn in turns}))
+            if c.diarization != "none":
+                with events.stage(events.DIARIZATION) as st:
+                    turns = await self.diarizer.diarize(wav)
+                    notes = events.take_notes()
+                    if notes.get("skip"):
+                        st.skip(reason=notes["skip"], message=notes.get("message"))
+                    else:
+                        st.set(turns=len(turns), speakers=len({turn[2] for turn in turns}))
+                assign_speakers(result.words, turns)
             progress(0.9)
-            assign_speakers(result.words, turns)
             with events.stage(events.CUES, announce=False) as st:
                 cues = build_cues(result.words, c)
                 st.set(
@@ -399,35 +575,137 @@ class CaptionPipeline:
                     max_lines=max((len(cue.lines) for cue in cues), default=0),
                     limit_line_chars=c.max_chars_per_line,
                 )
+            with events.stage(events.ALIGN, mode="silence") as st:
+                if not c.align_silence:
+                    st.skip(reason="off")
+                else:
+                    before = [(cue.start, cue.end) for cue in cues]
+                    silences = await asyncio.to_thread(detect_silences, wav, c.silence_min_s)
+                    cues = snap_cues(cues, silences, c)
+                    st.set(
+                        silences=len(silences),
+                        moved=sum(
+                            1
+                            for a, cue in zip(before, cues, strict=True)
+                            if a != (cue.start, cue.end)
+                        ),
+                    )
             track_lang = result.language or normalize_language(requested) or "und"
-            if translate_to and translate_to != track_lang:
-                with events.stage(events.TRANSLATE, source=track_lang, to=translate_to) as st:
-                    cues = await self.translate(cues, translate_to)
-                    st.set(cues=len(cues))
-                track_lang = translate_to
-            vtt = to_vtt(cues)
-            speakers = count_speakers(cues)
-            label = track_label(track_lang, speakers)
-            self.db.execute(
-                "INSERT OR REPLACE INTO captions(video_id,lang,label,speakers,vtt,created_at,job_id)"
-                " VALUES(?,?,?,?,?,?,?)",
-                [video_id, track_lang, label, speakers, vtt, time.time(), events.job_id()],
-            )
-            events.emit(
-                events.STORED,
-                events.OK,
-                kind="captions",
-                lang=track_lang,
-                label=label,
-                speakers=speakers,
-                cues=len(cues),
-                bytes=len(vtt.encode()),
-            )
-            progress(1.0)
+            cues = await self._polish(video_id, cues, track_lang)
+            track_lang = await self._finish(video_id, cues, track_lang, translate_to, progress)
             return track_lang
         finally:
             if not c.keep_media and not _keep_for_archive(work):
                 shutil.rmtree(work, ignore_errors=True)
+
+    async def improve(
+        self,
+        video_id: str,
+        segments: list[tuple[float, float, str]],
+        lang_hint: str | None,
+        translate_to: str | None,
+        progress: Progress,
+        priority: int = BACKGROUND,
+    ) -> str:
+        """HQ captions built on the video's own captions: their timing, better text.
+
+        The caption track provides the cue timing; the ASR words that fall inside each cue window
+        (alignment) replace its text, and the proofreading pass fixes punctuation, names and terms.
+        Cues the ASR heard nothing in keep the caption text. When no engine can transcribe, the
+        captions are proofread and stored as they are.
+        """
+        c = self.cfg.captions
+        work = self.cfg.media_dir / video_id
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            base_hint = (lang_hint or "").split("-")[0] or None
+            requested = normalize_language(base_hint)
+            try:
+                result, _wav = await self._recognise(
+                    video_id,
+                    requested,
+                    work,
+                    progress,
+                    priority=priority,
+                    want_words=True,
+                    optional_asr=True,
+                )
+            except (YoutubeVideoError, MediaArchiveFull) as exc:
+                # the captions are already in hand: audio trouble (unavailable video, a limited
+                # media class, a full archive) only means no better words - proofread them as they are
+                events.emit(
+                    events.ASR,
+                    events.WARN,
+                    reason="audio_unavailable",
+                    error_class=events.error_class(exc),
+                    technical=events.technical(exc),
+                    message="The audio could not be fetched; the caption text is kept as it is.",
+                )
+                result = ASRResult(words=[], language=None, segments=[], engine=None, model=None)
+            with events.stage(events.CUES, announce=False, source="captions") as st:
+                cues = caption_cues(segments, c)
+                if not cues:
+                    raise PipelineError("the caption track had no usable cues")
+                st.set(cues=len(cues))
+            progress(0.9)
+            with events.stage(events.ALIGN, mode="merge", margin_s=c.align_window_s) as st:
+                # linear in cues and words, but hours of captions still take a moment: keep the
+                # API responsive the way `detect_silences` already does
+                cues, from_asr = await asyncio.to_thread(
+                    merge_words_into_cues, cues, result.words, c
+                )
+                st.set(cues=len(cues), from_asr=from_asr)
+            track_lang = result.language or requested or base_hint or "und"
+            track_lang = await self._finish(
+                video_id,
+                await self._polish(video_id, cues, track_lang),
+                track_lang,
+                translate_to,
+                progress,
+            )
+            return track_lang
+        finally:
+            if not c.keep_media and not _keep_for_archive(work):
+                shutil.rmtree(work, ignore_errors=True)
+
+    async def _finish(
+        self,
+        video_id: str,
+        cues: list[Cue],
+        track_lang: str,
+        translate_to: str | None,
+        progress: Progress,
+    ) -> str:
+        """Proofread (done by the caller), optionally translate, then store the track."""
+        if translate_to and translate_to != track_lang:
+            with events.stage(events.TRANSLATE, source=track_lang, to=translate_to) as st:
+                cues = await self.translate(cues, translate_to)
+                st.set(cues=len(cues))
+            track_lang = translate_to
+            # the English output carries the quality bar: translated text is proofread too,
+            # so names and punctuation are fixed against the title and description as well
+            if self.proofreader.enabled:
+                cues = await self._polish(video_id, cues, track_lang)
+        vtt = to_vtt(cues)
+        speakers = count_speakers(cues)
+        label = track_label(track_lang, speakers)
+        self.db.execute(
+            "INSERT OR REPLACE INTO captions(video_id,lang,label,speakers,vtt,created_at,job_id)"
+            " VALUES(?,?,?,?,?,?,?)",
+            [video_id, track_lang, label, speakers, vtt, time.time(), events.job_id()],
+        )
+        events.emit(
+            events.STORED,
+            events.OK,
+            kind="captions",
+            lang=track_lang,
+            label=label,
+            speakers=speakers,
+            cues=len(cues),
+            bytes=len(vtt.encode()),
+        )
+        progress(1.0)
+        return track_lang
 
     async def translate(self, cues: list[Cue], target: str) -> list[Cue]:
         if self.llm is None:
