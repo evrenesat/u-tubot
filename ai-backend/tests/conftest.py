@@ -106,9 +106,11 @@ class FakeFetcher:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.text: str | None = TRANSCRIPT
+        self.lang = "en"
         self.fail = False
         self.error: Exception | None = None
         self.meta_extra: dict = {}
+        self.segments: list[tuple[float, float, str]] | None = None
 
     async def __call__(self, video_id: str) -> FetchResult:
         self.calls.append(video_id)
@@ -123,7 +125,7 @@ class FakeFetcher:
             "duration_s": 900,
             **self.meta_extra,
         }
-        return FetchResult(meta, self.text, "en")
+        return FetchResult(meta, self.text, self.lang, segments=self.segments)
 
 
 @pytest.fixture

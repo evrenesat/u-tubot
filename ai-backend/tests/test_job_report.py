@@ -218,24 +218,30 @@ async def test_a_captions_job_logs_the_cues_and_the_tv_download(env):
         [
             "queued",
             "started",
+            "caption_recheck",
             "gate_wait",
             "audio_download",
             "ffmpeg",
             "chunking",
             "stitching",
             "asr",
-            "diarization",
             "cues",
+            "align",
+            "proofread",
             "stored",
             "finished",
         ],
     )
     asked = event(env, job_id, "queued")["detail"]
     assert asked["client"] == "Living room TV" and asked["priority"] == "background"
-    skipped = event(env, job_id, "diarization", "skipped")["detail"]
-    assert skipped["reason"] == "off" and "off" in skipped["message"]
+    recheck = event(env, job_id, "caption_recheck")["detail"]
+    assert recheck["result"] == "found" and recheck["timed"] is False
+    align = event(env, job_id, "align")["detail"]
+    assert align["mode"] == "silence" and align["silences"] >= 0
     cues = event(env, job_id, "cues")["detail"]
     assert cues["cues"] >= 1 and cues["max_line_chars"] <= cues["limit_line_chars"]
+    proofread = event(env, job_id, "proofread")["detail"]
+    assert proofread["cues"] == cues["cues"] and proofread["warned"] == 0
     stored = event(env, job_id, "stored")["detail"]
     assert (
         stored["kind"] == "captions" and stored["lang"] == "en" and stored["cues"] == cues["cues"]

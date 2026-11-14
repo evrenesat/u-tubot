@@ -136,7 +136,7 @@ class JobReports:
                     "from_this_job": row["job_id"] == job["id"] if row["job_id"] else None,
                     "preview": [
                         {"start": round(start, 2), "text": text[:PREVIEW_CHARS]}
-                        for start, text in cues[:PREVIEW_ITEMS]
+                        for start, _end, text in cues[:PREVIEW_ITEMS]
                     ],
                     "vtt_url": VTT_URL.format(job["video_id"], row["lang"]),
                     "text_url": TRACK_TEXT_URL.format(job["id"], row["lang"]),
@@ -150,7 +150,7 @@ class JobReports:
             rows = [r for r in self._track_rows(job) if lang in (None, r["lang"])]
             if not rows:
                 return None
-            return "\n".join(text for _, text in parse_vtt(rows[0]["vtt"]))
+            return "\n".join(text for _start, _end, text in parse_vtt(rows[0]["vtt"]))
         row = self.db.one(
             "SELECT text, source FROM transcripts WHERE video_id=?", [job["video_id"]]
         )

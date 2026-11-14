@@ -175,10 +175,10 @@ class OfflineYoutubeFetcher:
         segments = (
             parse_json3(track["text"]) if track.get("ext") == "json3" else parse_vtt(track["text"])
         )
-        text = segments_to_text(segments)
+        text = segments_to_text([(start, seg_text) for start, _end, seg_text in segments])
         if not text:
             raise YoutubeOffline(CLASS_CAPTIONS)
-        return FetchResult(meta, text, track.get("lang"))
+        return FetchResult(meta, text, track.get("lang"), segments=segments or None)
 
 
 async def record_cassette(

@@ -284,8 +284,10 @@ anybody else and for an unknown id.
 a `running` event is followed by the `ok`/`failed`/`skipped` event of the same stage, which carries `seconds`. Stages: `queued`, `promoted`,
 `started`, `gate_wait`, `caption_recheck`, `audio_download` (`format_id`, `track` = `original|dubbed|descriptive|unmarked`, `original`,
 `language`, `bytes`, `duration_s`, `source` = `downloaded|from_archive`), `media_archive` (`bytes`, `sha256` prefix; skipped when the audio
-came from the archive), `ffmpeg`, `chunking`, `asr`, `asr_chunk`, `asr_fallback`, `stitching`,
-`diarization` (`reason` and `message` when skipped), `cues`, `text`, `translate`, `stored`, `retry`, `finished`, `failed` (`error_class`,
+came from the archive), `ffmpeg`, `separation` (skipped when off, the tool failed, or the ASR answer was cached), `chunking`, `asr`, `asr_chunk`, `asr_fallback`, `stitching`,
+`diarization` (`reason` and `message` when skipped; only when diarization is configured), `cues`, `align` (`mode` = `silence|merge`; boundaries move outward only),
+`proofread` (`corrected`, `warned`, `chars_in`/`chars_out`, `cached`; skipped with `reason` = `off|no_llm`), `proofread_batch` (a batch that
+kept its original text — length mismatch, empty text, growth or shrink beyond `proofread_max_ratio`), `text`, `translate`, `stored`, `retry`, `finished`, `failed` (`error_class`,
 `message`, `stage`, `technical`) and `delivered` (`via` = `captions_status|vtt|transcript_status|summary|summary_panel|insight|answer|transcript_txt`,
 `client`, `user`, `count`, `first_ts`). Details never carry a URL, token or secret. A job from before the log has one synthetic event,
 `finished` (or `queued` while it waits) with `detail.synthetic: true` and the message "finished (no detailed log, created before event
@@ -301,7 +303,9 @@ raises `count`. This is how to see whether a TV actually downloaded a track.
 `lang` picks the track; default the first). Same access as the report; `404` when nothing is stored.
 
 ### `POST /v1/videos/{id}/captions`
-Queue high-quality captions. Body: `{"lang":"auto","translate_to":null}`.
+Queue high-quality captions. Body: `{"lang":"auto","translate_to":null}`. An unset `translate_to`
+follows `[captions] translate_to` (default `"en"`): captions come out in English whatever the
+source language; `"off"` keeps the source language instead.
 → `{"status":"queued|running|ready|failed","job_id":"...","eta_s":null}`
 
 ### `GET /v1/videos/{id}/captions`
@@ -520,7 +524,7 @@ Every media file a pipeline downloads from YouTube is kept once, content-address
 read from the archive first and download only when the media is missing, so a video is never fetched twice.
 
 - `GET /v1/admin/archive?video_id=&limit=` -> `{"files","usage_bytes","quota_bytes","state":"ok|warn|full","entries":[...rows...]}`.
-- `DELETE /v1/admin/archive/{video_id}` -> `{"ok":true,"removed","bytes_freed"}`; `404` when nothing is stored for it. This is the
+- `DELETE /v1/admin/archive/{video_id}` -> `{"ok":true,"removed","bytes_freed","stage_cache_rows_removed"}`; `404` when nothing is stored for it. This is the
   only cleanup: nothing in the archive is ever deleted automatically. At `quota_bytes` (0: no limit) new downloads are refused
   (the job fails with "The media archive is full...") until an admin removes entries; at `warn_frac` (0.9) a warning is logged.
 - `GET /v1/admin/status` also carries `"archive":{"files","usage_bytes","quota_bytes","state"}`.

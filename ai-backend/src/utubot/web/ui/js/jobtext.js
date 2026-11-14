@@ -15,6 +15,10 @@ export const STAGE_LABELS = {
   asr_chunk: "Chunk recognised",
   asr_fallback: "Engine fallback",
   stitching: "Stitching",
+  separation: "Vocal separation",
+  align: "Alignment",
+  proofread: "Proofreading",
+  proofread_batch: "Proofread batch",
   diarization: "Speaker labels",
   cues: "Subtitle cues",
   text: "Transcript text",
@@ -65,6 +69,9 @@ const REASONS = {
   incomplete_response: "YouTube answered only in part",
   PipelineError: "the pipeline stopped",
   ASRError: "no speech engine could do it",
+  engines_unavailable: "no speech engine available",
+  no_llm: "no LLM model configured",
+  unavailable: "no output",
 };
 const TRACKS = {
   original: "original track",
@@ -201,6 +208,26 @@ const DESCRIBERS = {
     if (status === "skipped") return "Skipped: " + (d.message || reasonText(d.reason));
     return num(d.turns) + " speaker turns, " + num(d.speakers) + (d.speakers === 1 ? " speaker" : " speakers");
   },
+  separation(d, status) {
+    if (status === "running") return "Separating the vocals from the music";
+    if (status === "skipped") return "Skipped: " + (d.message || reasonText(d.reason));
+    return join(["Vocals kept", d.bytes ? fmtBytes(d.bytes) : null, d.audio_s ? fmtClock(d.audio_s) + " of audio" : null]);
+  },
+  align(d) {
+    if (d.mode === "merge") {
+      return join([num(d.from_asr) + " of " + num(d.cues) + " cues re-timed from speech recognition", d.margin_s ? "window " + d.margin_s + " s" : null]);
+    }
+    return join([num(d.silences) + " silences found", num(d.moved) + " boundaries moved"]);
+  },
+  proofread(d, status) {
+    if (status === "running") return join([num(d.cues) + " cues in " + d.batches + " batch" + (d.batches === 1 ? "" : "es"), d.language ? "language " + d.language : null]);
+    if (status === "skipped") return "Skipped: " + (d.message || reasonText(d.reason));
+    return join([num(d.corrected) + " of " + num(d.cues) + " cues corrected", d.warned ? d.warned + " batch" + (d.warned === 1 ? "" : "es") + " not proofread" : null, d.cached ? "from the stage cache" : null, num(d.chars_in) + " → " + num(d.chars_out) + " characters"]);
+  },
+  proofread_batch(d, status) {
+    if (status === "failed" || status === "warn") return join(["Batch " + d.batch + " kept its original text", reasonText(d.error_class)]);
+    return join(["Batch " + d.batch, num(d.cues) + " cues"]);
+  },
   cues: (d) => join([num(d.cues) + " cues", "longest line " + d.max_line_chars + " of " + d.limit_line_chars + " characters", "up to " + d.max_lines + " lines"]),
   text: (d) => join([num(d.segments) + " segments", num(d.lines) + " lines", num(d.chars) + " characters"]),
   translate(d, status) {
@@ -248,7 +275,7 @@ export function collapse(events) {
   const open = new Map();
   for (const ev of events) {
     if (ev.stage === "delivered") continue;
-    const child = ev.stage === "asr_chunk" || ev.stage === "asr_fallback";
+    const child = ev.stage === "asr_chunk" || ev.stage === "asr_fallback" || ev.stage === "proofread_batch";
     const row = { stage: ev.stage, status: ev.status, detail: ev.detail || {}, ts: ev.ts, end: ev.ts, child };
     const earlier = !child && ev.status !== "running" && open.get(ev.stage);
     if (earlier) {

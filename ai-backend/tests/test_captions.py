@@ -7,7 +7,7 @@ import time
 import pytest
 
 from utubot.captions.diarize import assign_speakers
-from utubot.captions.segment import build_cues, fmt_vtt_time, to_vtt
+from utubot.captions.segment import build_cues, fmt_vtt_time, retime_split, to_vtt
 from utubot.captions.types import Word
 from utubot.config import CaptionsConfig
 
@@ -49,6 +49,36 @@ def test_sentence_split_and_min_duration():
     assert cues[0].lines == ["Hi there my friend."]
     assert cues[0].end - cues[0].start >= CFG.min_cue_s - 1e-6
     assert cues[0].end <= cues[1].start + 1e-6
+
+
+def test_cps_cuts_cues_that_would_run_too_fast():
+    cfg = CaptionsConfig(max_cps=20.0)
+    # five-character words every 0.2 s: 25 characters per second, faster than the ceiling
+    text = " ".join("abcde" for _ in range(30))
+    ws = words_from(text, per=0.2)
+    fast = build_cues(ws, cfg)
+    dense = build_cues(ws, CaptionsConfig(max_cps=0.0))
+    assert max(len(" ".join(cue.lines)) for cue in fast) < max(
+        len(" ".join(cue.lines)) for cue in dense
+    )
+    for cue in fast:
+        chars = sum(len(line) for line in cue.lines)
+        duration = cue.end - cue.start
+        # the cue is cut as soon as adding the next word would run faster than the ceiling, so it
+        # carries at most a couple of words beyond what the ceiling allows for its duration
+        assert chars <= cfg.max_cps * duration + 2 * len("abcde") + 2
+
+
+def test_retime_split_spreads_long_text_over_timed_cues():
+    text = " ".join(f"word{i}" for i in range(40))
+    out = retime_split(text, 10.0, 40.0, CFG)
+    assert len(out) > 1
+    assert out[0].start == 10.0 and out[-1].end == 40.0
+    for cue in out:
+        assert len(cue.lines) <= CFG.max_lines
+        assert all(len(line) <= CFG.max_chars_per_line for line in cue.lines)
+    for a, b in zip(out, out[1:], strict=False):
+        assert a.end <= b.start + 1e-9
 
 
 def test_speaker_prefixes_only_on_turns():
@@ -153,6 +183,26 @@ async def test_translate_cues(env):
     cues = [Cue(0, 2, ["[S1] Hello world"], "S1"), Cue(2, 4, ["Second one"], None)]
     out = await env.svc.jobs.pipeline.translate(cues, "tr")
     assert out[0].lines == ["[S1] T:Hello world"] and out[1].lines == ["T:Second one"]
+
+
+async def test_translated_cues_are_proofread_again(env):
+    from tests.test_proofread import proofread_calls, respond_with_cues
+    from utubot.captions.types import Cue
+
+    respond_with_cues(env.llm, ["Hello, world."])
+    cues = [Cue(0, 2, ["merhaba dunya"], None)]
+    track = await env.svc.jobs.pipeline._finish(VID, cues, "tr", "en", lambda _f: None)
+    assert track == "en"
+    kinds = [
+        "translate" if "Translate each subtitle" in c["messages"][0]["content"] else "proofread"
+        for c in env.llm.calls
+        if "Translate each subtitle" in c["messages"][0]["content"]
+        or "proofread subtitle cues" in c["messages"][0]["content"]
+    ]
+    assert kinds == ["translate", "proofread"]  # the English text is proofread after translation
+    row = env.svc.db.one("SELECT lang,vtt FROM captions WHERE video_id=?", [VID])
+    assert row["lang"] == "en" and "Hello, world." in row["vtt"]
+    assert proofread_calls(env.llm) == 1
 
 
 async def test_pyannote_skips_without_token(monkeypatch, tmp_path):
