@@ -109,6 +109,24 @@ class FakeFetcher:
         self.fail = False
         self.error: Exception | None = None
         self.meta_extra: dict = {}
+        self.meta_calls: list[str] = []
+        self.meta_error: Exception | None = None
+
+    def _meta(self, video_id: str) -> dict:
+        return {
+            "video_id": video_id,
+            "title": f"Title {video_id}",
+            "channel": "Chan",
+            "duration_s": 900,
+            **self.meta_extra,
+        }
+
+    async def meta(self, video_id: str) -> FetchResult:
+        """The metadata-only request (`YoutubeFetcher.meta`)."""
+        self.meta_calls.append(video_id)
+        if self.meta_error is not None:
+            raise self.meta_error
+        return FetchResult(self._meta(video_id), None, None, answered=("metadata",))
 
     async def __call__(self, video_id: str) -> FetchResult:
         self.calls.append(video_id)
@@ -116,14 +134,7 @@ class FakeFetcher:
             raise self.error
         if self.fail:
             raise RuntimeError("youtube blocked")
-        meta = {
-            "video_id": video_id,
-            "title": f"Title {video_id}",
-            "channel": "Chan",
-            "duration_s": 900,
-            **self.meta_extra,
-        }
-        return FetchResult(meta, self.text, "en")
+        return FetchResult(self._meta(video_id), self.text, "en")
 
 
 @pytest.fixture
