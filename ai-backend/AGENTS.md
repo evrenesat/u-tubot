@@ -3,6 +3,8 @@
 - Python 3.12, `uv` only. Run `uv run pytest -q`, `uv run ruff check`, `uv run ruff format --check`
   before committing. Scratch in `temp/` (gitignored).
 - Contract lives in `../ai/CONTRACT.md`; change code and contract together.
+- Database changes are additive (new tables, nullable or defaulted columns) so a rollback to the previous revision needs no database step;
+  `tests/test_db_migrations.py` enforces it (`docs/server.md`, Updating and rolling back).
 - No magic numbers: tunables go in `src/utubot/config.py` and `config.example.toml`.
 - Never log or commit secrets. Keys come from env vars named in config. Tokens are stored only as
   sha256 hashes. Tests use the mock server in `tests/mock_openai.py`; never call real LLMs there.

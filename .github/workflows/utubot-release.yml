@@ -10,6 +10,8 @@ name: u-tubot release
 # versionName comes from the tag and versionCode is derived from it (docs/development.md, "Releasing").
 # An automatic run whose commit is already contained in the newest release does nothing, so runs that reach the queue out of
 # order never publish an older build under a newer version.
+# Every path is guarded the same way: the commit must be on main and its CI run (app tests, and the backend tests when they
+# ran) must be green; a manual run must also be for the newest utubot-v* tag, whose release does not exist yet.
 #
 # Secrets (Settings, Secrets and variables, Actions):
 #   UTUBOT_KEYSTORE_B64    base64 of the release keystore (base64 -w0 utubot-release.jks)
@@ -38,6 +40,9 @@ jobs:
   plan:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     outputs:
       auto: ${{ steps.source.outputs.auto }}
       ref: ${{ steps.source.outputs.ref }}
@@ -95,7 +100,42 @@ jobs:
           set -euo pipefail
           gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/utubot-v" --jq '.[].ref' \
             | sed -n 's#^refs/tags/utubot-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' > "$RUNNER_TEMP/versions.txt"
+          # Only a commit whose CI is green is released. CI starts an automatic release while its own run is still open, so
+          # then its app and backend jobs must be green (a skipped backend job counts); otherwise a finished run must be green.
+          ci_green() {
+            local runs id
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/utubot-ci.yml/runs?head_sha=$1&event=push&branch=main&per_page=20" \
+              --jq '.workflow_runs[] | [.id, .status, (.conclusion // "")] | @tsv')
+            [ -n "$runs" ] || return 1
+            if grep -q $'\tcompleted\tsuccess$' <<<"$runs"; then return 0; fi
+            [ "$AUTO" = true ] || return 1
+            id=$(awk -F '\t' '$2 == "in_progress" { print $1; exit }' <<<"$runs")
+            [ -n "$id" ] || return 1
+            [ "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" --jq '
+              [.jobs[] | select(.name == "app" or .name == "backend")]
+              | length > 0 and all(.[]; .conclusion == "success" or .conclusion == "skipped")')" = true ]
+          }
+
           skip=false
+          if [ "$AUTO" != true ]; then
+            # A manual release is for the newest tag only, so an older build never goes out under an older number later,
+            # and a release that exists is never replaced.
+            newest=$(sort -V "$RUNNER_TEMP/versions.txt" | tail -1)
+            if [ "${TAG#utubot-v}" != "$newest" ]; then
+              echo "::error::$TAG is not the newest tag (utubot-v$newest is); releases only go forward" >&2
+              exit 1
+            fi
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              echo "::error::the release $TAG already exists" >&2
+              exit 1
+            fi
+            commit=$(git -C u-tubot rev-parse HEAD)
+            case $(gh api "repos/$GITHUB_REPOSITORY/compare/main...$commit" --jq .status) in
+              identical|behind) ;;
+              *) echo "::error::$TAG ($commit) is not on main" >&2; exit 1 ;;
+            esac
+            ci_green "$commit" || { echo "::error::no finished green CI run on main for $TAG ($commit); wait for it or fix it" >&2; exit 1; }
+          fi
           if [ "$AUTO" = true ]; then
             newest=$(sort -V "$RUNNER_TEMP/versions.txt" | tail -1)
             if [ -n "$newest" ]; then
@@ -107,6 +147,7 @@ jobs:
             if [ "$skip" = true ]; then
               VERSION=""; TAG=""
             else
+              ci_green "$SHA" || { echo "::error::CI for $SHA is not green (or has not run on main); not releasing it" >&2; exit 1; }
               VERSION=$(python3 u-tubot/scripts/utubot_release.py next-version --series "$(cat u-tubot/utubot.version)" \
                 --tags "$RUNNER_TEMP/versions.txt")
               TAG="utubot-v$VERSION"

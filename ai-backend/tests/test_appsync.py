@@ -8,7 +8,9 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests import axml
 from utubot import appsync
+from utubot.apkmanifest import ApkManifest
 from utubot.cli import main
 from utubot.config import AppConfig, Config, ServerConfig
 
@@ -23,8 +25,21 @@ API_RELEASES = f"https://api.github.com/repos/{REPO}/releases?per_page=20"
 DOWNLOAD_BASE = f"https://github.com/{REPO}/releases/download"
 
 
-def apk_bytes(version: str, abi: str) -> bytes:
-    return f"APK {version} {abi}\n".encode() * 50
+def apk_bytes(
+    version: str,
+    abi: str,
+    code: int | None = None,
+    *,
+    package: str = appsync.APPLICATION_ID,
+    declared_version: str | None = None,
+) -> bytes:
+    """A small APK whose binary manifest declares the package, versionName and versionCode of the release."""
+    return axml.apk(
+        package,
+        code if code is not None else appsync.derive_version_code(appsync.parse_version(version)),
+        declared_version or version,
+        extra=f"APK {version} {abi}\n".encode() * 50,
+    )
 
 
 def digest(data: bytes) -> str:
@@ -86,10 +101,13 @@ class Github:
         body: str = "",
         tamper: str | None = None,
         apk_data: bytes | None = None,
+        apk_kwargs: dict | None = None,
     ) -> None:
         tag = f"utubot-v{version}"
         assets = []
-        apks = {abi: apk_data or apk_bytes(version, abi) for abi in abis}
+        apks = {
+            abi: apk_data or apk_bytes(version, abi, code, **(apk_kwargs or {})) for abi in abis
+        }
         files_meta = {}
         for abi, data in apks.items():
             name = f"u-tubot_{version}_{abi}.apk"
@@ -164,7 +182,7 @@ def test_publishes_the_newest_release_and_verifies_every_apk(tmp_path, github):
     assert (result.version_name, result.version_code) == ("0.3.1", 3001)
     app_dir = tmp_path / "app"
     for abi in ABIS:
-        assert (app_dir / f"u-tubot_0.3.1_{abi}.apk").read_bytes() == apk_bytes("0.3.1", abi)
+        assert (app_dir / f"u-tubot_0.3.1_{abi}.apk").read_bytes() == apk_bytes("0.3.1", abi, 3001)
     latest = json.loads((app_dir / "latest.json").read_text())
     assert latest["version_code"] == 3001
     assert latest["changelog"] == ["first", "second"]
@@ -251,27 +269,37 @@ def test_configured_but_missing_apksigner_refuses_instead_of_weakening_the_check
     assert not (tmp_path / "app").exists()
 
 
+@pytest.fixture(autouse=False)
+def fixture_manifest(monkeypatch):
+    """The signed fixture APK declares another package and no version; make it look like release 0.3.1."""
+    monkeypatch.setattr(
+        appsync.apkmanifest,
+        "read_apk_manifest",
+        lambda apk: ApkManifest(appsync.APPLICATION_ID, 3001, "0.3.1"),
+    )
+
+
 def builtin_cfg(tmp_path: Path, **app) -> Config:
     return make_cfg(
         tmp_path, **{"apksigner_path": "", "signing_cert_sha256": SIGNED_APK_CERT, **app}
     )
 
 
-def test_builtin_verifier_publishes_a_correctly_signed_apk(tmp_path, github):
+def test_builtin_verifier_publishes_a_correctly_signed_apk(tmp_path, github, fixture_manifest):
     github.add_release("0.3.1", 3001, apk_data=SIGNED_APK)
     result = sync(builtin_cfg(tmp_path), github)
     assert result.status == "published"
     assert (tmp_path / "app" / "u-tubot_0.3.1_arm64-v8a.apk").read_bytes() == SIGNED_APK
 
 
-def test_builtin_verifier_refuses_another_certificate(tmp_path, github):
+def test_builtin_verifier_refuses_another_certificate(tmp_path, github, fixture_manifest):
     github.add_release("0.3.1", 3001, apk_data=SIGNED_APK)
     with pytest.raises(appsync.SyncError, match="not the pinned"):
         sync(builtin_cfg(tmp_path, signing_cert_sha256=OTHER_PIN), github)
     assert not (tmp_path / "app" / "update.json").exists()
 
 
-def test_builtin_verifier_refuses_an_apk_changed_after_signing(tmp_path, github):
+def test_builtin_verifier_refuses_an_apk_changed_after_signing(tmp_path, github, fixture_manifest):
     changed = bytearray(SIGNED_APK)
     changed[0] ^= 0xFF
     github.add_release("0.3.1", 3001, apk_data=bytes(changed))
@@ -510,3 +538,40 @@ def test_cli_needs_a_repository(tmp_path, capsys):
     path.write_text('[server]\ndata_dir="d"\n')
     assert main(["--config", str(path), "app", "sync-github"]) == 1
     assert "github_repo" in capsys.readouterr().err
+
+
+def test_refuses_an_apk_of_another_package(tmp_path, github):
+    github.add_release("0.3.1", 3001, apk_kwargs={"package": "com.example.other"})
+    with pytest.raises(appsync.SyncError, match="not 'dev.utubot.tv'"):
+        sync(make_cfg(tmp_path), github)
+    assert not any((tmp_path / "app").glob("*.apk"))
+
+
+def test_refuses_an_apk_whose_version_name_differs_from_the_release(tmp_path, github):
+    github.add_release("0.3.1", 3001, apk_kwargs={"declared_version": "0.2.0"})
+    with pytest.raises(appsync.SyncError, match="declares versionName '0.2.0'"):
+        sync(make_cfg(tmp_path), github)
+    assert not (tmp_path / "app" / "update.json").exists()
+
+
+def test_refuses_an_apk_whose_version_code_differs_from_release_json(tmp_path, github):
+    github.add_release("0.3.1", 3001)
+    manifest_url = f"{DOWNLOAD_BASE}/utubot-v0.3.1/release.json"
+    meta = json.loads(github.files[manifest_url])
+    meta["version_code"] = 9999
+    github.files[manifest_url] = json.dumps(meta).encode()
+    with pytest.raises(
+        appsync.SyncError, match="declares versionCode 3001 but release.json says 9999"
+    ):
+        sync(make_cfg(tmp_path), github)
+
+
+def test_a_release_without_release_json_skips_the_version_code_comparison(tmp_path, github):
+    github.add_release("0.3.1", None, manifest=False, sums=True)
+    assert sync(make_cfg(tmp_path), github).status == "published"
+
+
+def test_refuses_an_apk_without_a_readable_manifest(tmp_path, github):
+    github.add_release("0.3.1", 3001, apk_data=b"not a zip file at all")
+    with pytest.raises(appsync.SyncError, match="AndroidManifest.xml"):
+        sync(make_cfg(tmp_path), github)

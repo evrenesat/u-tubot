@@ -1,5 +1,16 @@
 # DEVLOG
 
+## 2026-11-13 (delivery pipeline hardening, issue 17)
+
+- `utubot app sync-github` now cross-checks each downloaded APK's own `AndroidManifest.xml` (`utubot/apkmanifest.py`, a small binary
+  XML reader that agrees with `aapt2 dump badging` on real APKs) with the release metadata: package `dev.utubot.tv`, versionName, and
+  versionCode when `release.json` gives one (a legacy release without it has a derived code and is not compared). No external tool.
+- Release workflow: every path (automatic, tag push, dispatch) needs the commit on `main` and a green CI run; a manual release must be
+  for the newest tag, with no existing release. CI's `release` job also waits for the backend job (skipped counts as passed).
+- Database changes must stay additive so a rollback needs no migration step; `tests/test_db_migrations.py` enforces it, docs/server.md
+  explains it. The `utubot-cd` controller changes of the same issue (transient deploy errors, the exit-2 ambiguity) live in the
+  owner's ops repository.
+
 ## 2026-11-13 (review follow-ups: cassettes carry no URL at all, offline misses are not held)
 
 - Review (EVR-168) found two leaks in the cassette sanitizer and one wrong hold; fixed:
