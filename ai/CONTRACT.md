@@ -219,6 +219,17 @@ chosen speech engine's chunked recognition time.
 `400` when the video cannot be transcribed (live, or longer than the configured maximum), `429` when the user
 already has the maximum number of active transcriptions (`[captions] transcribe_max_active_per_user`, 5).
 
+### `POST /v1/videos/{id}/retry`
+The Retry action. Forgets everything the backend remembers about a *failure* of this video, so the next request really tries again:
+a failed or delayed transcript fetch, the "no captions" memory, and failed summary, insight, answer and analysis tasks. Stored successes
+(transcript, summaries, captions, analyses) stay. Nothing is generated here: the client asks again right after (summary, insight, assess).
+`{"ok":true,"cleared":{"fetch":2,"tasks":1,"analysis":0}}` (counts of memories dropped). Same auth and rate limits as other `/v1` routes.
+
+Failure policy (what a client may rely on): successes are cached and versioned by their key (prompt content hash, language, model);
+failures are short-lived. A busy language model (`error` = "the language model is busy, ...") is never remembered, any other model failure
+for `[summary] failure_cooldown_s` (2 min), a video that cannot be read for `[transcripts] video_failure_ttl_s` (15 min). A client keeps
+no failure longer than that either, and always offers Retry.
+
 ### `GET /v1/videos/{id}/transcript`
 Where the transcript stands. Cheap: never contacts YouTube.
 

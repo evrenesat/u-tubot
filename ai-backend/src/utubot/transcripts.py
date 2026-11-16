@@ -492,6 +492,16 @@ class TranscriptService:
             return
         self._record_hold(video_id, HOLD_FAILED, reason, self.cfg.transcripts.video_failure_ttl_s)
 
+    def clear_failures(self, video_id: str) -> int:
+        """Forget what was remembered about a failed or empty fetch of this video (Retry).
+
+        Removes the failure/delay hold and the "no captions" memory; stored transcripts stay.
+        Returns how many memories were dropped.
+        """
+        dropped = self.db.execute_rc("DELETE FROM video_holds WHERE video_id=?", [video_id])
+        dropped += self.db.execute_rc("DELETE FROM no_captions WHERE video_id=?", [video_id])
+        return dropped
+
     @staticmethod
     def _audio_can_help(held: dict[str, Any]) -> bool:
         return held["kind"] == HOLD_FAILED and YoutubeVideoError(held["reason"]).can_transcribe

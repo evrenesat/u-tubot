@@ -23,6 +23,7 @@ from fastapi.responses import (
 from starlette.datastructures import UploadFile
 
 from . import __version__, appchannel
+from .artifacts import KIND_NAMES, ArtifactCache
 from .assess import Assessor
 from .auth import CONFIG_TOKEN_ID, Auth, Forbidden, PairError, Principal, Unauthorized
 from .captions import events
@@ -154,6 +155,7 @@ class Services:
     settings: SettingsService
     status: StatusService
     updates: UpdatesStatus
+    artifacts: ArtifactCache
 
 
 def build_services(
@@ -189,15 +191,17 @@ def build_services(
     transcription = Transcription(cfg, transcripts, jobs)
     auth = Auth(cfg, db)
     catalog = ModelCatalog(cfg, db, llm)
+    assessor = Assessor(cfg, db, llm, transcripts)
+    content = ContentService(cfg, db, llm, transcripts, prompts, transcription)
     return Services(
         cfg=cfg,
         db=db,
         auth=auth,
         llm=llm,
         transcripts=transcripts,
-        assessor=Assessor(cfg, db, llm, transcripts),
+        assessor=assessor,
         prompts=prompts,
-        content=ContentService(cfg, db, llm, transcripts, prompts, transcription),
+        content=content,
         jobs=jobs,
         reports=reports,
         cuts=CutService(cfg, db, llm, transcripts, prompts, jobs),
@@ -211,6 +215,7 @@ def build_services(
         settings=SettingsService(cfg, auth, prompts, catalog),
         status=StatusService(cfg, db, gate, llm.usage, transcription.engines),
         updates=UpdatesStatus(cfg, github_transport),
+        artifacts=ArtifactCache(db, transcripts, content, assessor, archive),
     )
 
 
@@ -600,6 +605,24 @@ def create_app(
         doc["entries"] = svc.archive.entries(check_video_id(video_id) if video_id else None, limit)
         return doc
 
+    @app.get("/v1/admin/videos/{video_id}/artifacts")
+    async def admin_artifacts(video_id: str, admin: UserConfig = Depends(admin_user)):
+        """What the backend keeps for one video: per kind rows, bytes and newest write."""
+        return svc.artifacts.inventory(check_video_id(video_id))
+
+    @app.delete("/v1/admin/videos/{video_id}/artifacts")
+    async def admin_artifacts_purge(
+        video_id: str,
+        kind: list[str] | None = Query(None),
+        admin: UserConfig = Depends(admin_user),
+    ):
+        """Remove cached artifacts of a video (all kinds but the media archive, or the named ones)."""
+        try:
+            removed = svc.artifacts.purge(check_video_id(video_id), kind)
+        except ValueError as exc:
+            raise HTTPException(400, f"kind must be one of: {', '.join(KIND_NAMES)}") from exc
+        return {"ok": True, "removed": removed}
+
     @app.delete("/v1/admin/archive/{video_id}")
     async def admin_archive_remove(video_id: str, admin: UserConfig = Depends(admin_user)):
         """The one admin cleanup: removes a video's archived files; nothing deletes by itself."""
@@ -887,6 +910,15 @@ def create_app(
             return svc.transcription.request(user.name, video_id, meta.as_dict())
         except TranscribeRefused as exc:
             raise HTTPException(exc.status, exc.message) from exc
+
+    @app.post("/v1/videos/{video_id}/retry")
+    async def retry(video_id: str, user: UserConfig = Depends(current_user)):
+        """The Retry action: forget every remembered failure of the video, keep stored successes.
+
+        The client asks again right after (summary, insight, verdict); nothing is generated here.
+        """
+        cleared = svc.artifacts.retry(check_video_id(video_id))
+        return {"ok": True, "cleared": cleared}
 
     @app.get("/v1/videos/{video_id}/transcript")
     async def transcript_status(

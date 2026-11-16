@@ -397,13 +397,13 @@ async def test_an_empty_parsed_track_is_delayed_with_a_short_hold_not_no_caption
     with pytest.raises(YoutubeDelayed) as info_:
         await rig.svc.get(VID)
     assert info_.value.reason == REASON_EMPTY_TRACK
-    assert info_.value.retry_after_s == rig.cfg.transcripts.empty_track_retry_s == 3600
+    assert info_.value.retry_after_s == rig.cfg.transcripts.empty_track_retry_s == 900
     assert not rig.svc.no_captions(VID) and rig.db.one("SELECT 1 FROM no_captions") is None
     assert rig.db.one("SELECT 1 FROM transcripts") is None
     assert rig.gate.healthy()
     with pytest.raises(YoutubeDelayed) as held:
         await rig.svc.get(VID)
-    assert held.value.reason == REASON_EMPTY_TRACK and 3500 < held.value.retry_after_s <= 3600
+    assert held.value.reason == REASON_EMPTY_TRACK and 800 < held.value.retry_after_s <= 900
     assert rig.extracts == 1
     rig.db.execute("UPDATE video_holds SET until=?", [time.time() - 1])
     rig.handler = lambda req: httpx.Response(200, text=CAPTIONS)
