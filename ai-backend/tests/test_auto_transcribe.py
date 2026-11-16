@@ -201,6 +201,58 @@ async def test_a_video_of_unknown_length_asks_first(env):
     assert body["status"] == "needs_transcript" and jobs(env) == []
 
 
+async def test_a_known_no_captions_video_without_a_length_is_measured_then_queued(env):
+    env.svc.db.execute(
+        "INSERT INTO no_captions(video_id,checked_at) VALUES(?,?)", [VID, time.time()]
+    )
+    body = await summary(env)
+    assert body["status"] == "pending" and body["transcript_status"] == "transcribing"
+    assert env.fetcher.meta_calls == [VID] and env.fetcher.calls == []
+    assert len(jobs(env)) == 1
+
+
+def mark_no_captions(env) -> None:
+    env.svc.db.execute(
+        "INSERT INTO no_captions(video_id,checked_at) VALUES(?,?)", [VID, time.time()]
+    )
+
+
+async def test_a_slow_length_request_does_not_hold_the_answer_past_wait_ms(env):
+    mark_no_captions(env)
+    release = asyncio.Event()
+    fast = env.svc.transcripts.meta_fetcher
+
+    async def slow(video_id: str):
+        await release.wait()
+        return await fast(video_id)
+
+    env.svc.transcripts.meta_fetcher = slow
+    started = time.monotonic()
+    body = await summary(env, wait_ms=100)
+    assert time.monotonic() - started < 2
+    assert body["status"] == "needs_transcript" and jobs(env) == []
+    # The request is still running: a second caller shares it instead of starting another.
+    again = await summary(env, wait_ms=50)
+    assert again["status"] == "needs_transcript" and env.fetcher.meta_calls == []
+    release.set()
+    await asyncio.gather(*env.svc.transcripts._length_tasks.values())
+    assert env.fetcher.meta_calls == [VID]
+    assert env.svc.transcripts.cached_meta(VID)["duration_s"] == 900
+    # The next poll finds the stored length and starts the job.
+    done = await summary(env, wait_ms=50)
+    assert done["status"] == "pending" and done["transcript_status"] == "transcribing"
+    assert len(jobs(env)) == 1
+
+
+async def test_an_unexpected_error_in_the_length_request_is_not_a_server_error(env):
+    mark_no_captions(env)
+    env.fetcher.meta_error = RuntimeError("yt-dlp broke")
+    resp = await env.client.get(f"/v1/videos/{VID}/summary", params={"wait_ms": 5000})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "needs_transcript" and jobs(env) == []
+    assert env.fetcher.meta_calls == [VID]
+
+
 @pytest.mark.parametrize("meta", [{"is_live": True}, {"duration_s": 4 * 3600}])
 async def test_live_and_too_long_videos_are_never_transcribed_automatically(env, meta):
     await policy(env, auto_transcribe_max_minutes=24 * 60)

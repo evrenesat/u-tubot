@@ -83,11 +83,11 @@ find out whether captions work again; no request of a user is ever used for that
 
 **Automatic transcription.** When a `summary`, `insight` or `ask` request finds no captions (or the captions are limited, see above), the user's policy decides whether the
 backend asks or just does it. `auto_transcribe` (`off`, `on_open`, `on_dwell`; default `on_open`) and `auto_transcribe_max_minutes`
-(default 30) are per-user settings. With `on_open` or `on_dwell` and a video of known length up to the maximum, the request itself queues
+(default 30) are per-user settings. With `on_open` or `on_dwell` and a video up to the maximum (a length the client did not send is looked up with one paced `metadata` request when that class is healthy), the request itself queues
 the transcription (no user prompt) and answers `status: "pending"`, `transcript_status: "transcribing"`, `progress`, `estimate_s`
 instead of `needs_transcript`; asking again returns the progress, then the real answer. The side panel's request (`summary?prompt=panel`)
 is passive: it starts a transcription only for `on_dwell`; the Summary view, `insight`, `ask` and ad-hoc summaries are explicit and start
-one for `on_open` as well as `on_dwell`. Everything else keeps `needs_transcript` (policy `off`, a longer or unknown-length video, a full
+one for `on_open` as well as `on_dwell`. Everything else keeps `needs_transcript` (policy `off`, a longer video or one whose length could not be learned, a full
 per-user queue, no engine for the language) and the app shows the question as before. Explicit requests run the job at interactive
 priority (claimed first, interactive engine use); a side-panel job is background work and is promoted when the user then opens the video.
 
