@@ -189,6 +189,14 @@ public class UtubotPanelModel {
 
         /** Where the transcript of a video stands */
         Observable<Transcript> transcriptObserve(String videoId);
+
+        /**
+         * The backend forgets what it remembers about a failure of the video, so the next request really tries again. A failure of this call
+         * does not stop the Retry: the request is asked anyway.
+         */
+        default Observable<Boolean> forgetFailuresObserve(String videoId) {
+            return Observable.just(true);
+        }
     }
 
     private final Source mSource;
@@ -291,18 +299,32 @@ public class UtubotPanelModel {
     }
 
     /**
-     * Asks again after a failure or a pending answer
+     * The Retry action of the user, after a failure or a pending answer: the backend forgets the failure first, then the request is asked again
      */
     public void retry() {
         if (mVideo == null) {
             return;
         }
 
-        if (mMode == Mode.VIEW && mPrompts.isEmpty()) {
-            loadPrompts();
-        } else {
-            loadSummary(requestKey());
-        }
+        long token = mGeneration.begin();
+
+        mActions.clear();
+        removeTimers();
+        publish(Phase.LOADING, null, null, null);
+        mActions.add(mSource.forgetFailuresObserve(mVideo.videoId)
+                .onErrorReturnItem(false)
+                .observeOn(mUiScheduler)
+                .subscribe(done -> {
+                    if (mVideo == null || !mGeneration.isCurrent(token)) {
+                        return;
+                    }
+
+                    if (mMode == Mode.VIEW && mPrompts.isEmpty()) {
+                        loadPrompts();
+                    } else {
+                        loadSummary(requestKey());
+                    }
+                }));
     }
 
     /**

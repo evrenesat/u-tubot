@@ -134,4 +134,61 @@ public class UtubotSummaryCacheTest {
         assertEquals(UtubotManager.MAX_POLLS, mRequests.get());
         assertNull(mManager.getCachedSummary(PENDING_ID, "panel"));
     }
+
+    private void answerHealth(String version) {
+        mServer.on("/v1/health", request -> new TinyHttpServer.Response(200, "{\"ok\":true,\"version\":\"" + version + "\"}"));
+    }
+
+    @Test
+    public void aReadySummarySurvivesARestartOfTheAppOnTheSameBackendVersion() {
+        answerHealth("1.0");
+        ask(READY_ID);
+        assertEquals(1, mRequests.get());
+
+        // A new session: what the app held in memory is gone, the disk is not
+        mManager.onConnectionChanged();
+        Summary again = ask(READY_ID);
+
+        assertEquals(1, mRequests.get());
+        assertEquals("- one", again.text);
+        assertEquals("asr", again.source);
+    }
+
+    @Test
+    public void aNewBackendVersionAsksAgain() {
+        answerHealth("1.0");
+        ask(READY_ID);
+
+        answerHealth("1.1");
+        mManager.onConnectionChanged();
+        ask(READY_ID);
+
+        assertEquals(2, mRequests.get());
+    }
+
+    @Test
+    public void aBackendThatDoesNotAnswerHealthKeepsNothingOnDisk() {
+        ask(READY_ID);
+        mManager.onConnectionChanged();
+        ask(READY_ID);
+
+        assertEquals(2, mRequests.get());
+    }
+
+    @Test
+    public void failuresAndTranscriptStatesAreNotOnDiskAfterARestart() {
+        answerHealth("1.0");
+        ask(NEEDS_ID);
+        ask(DELAYED_ID);
+        ask(BUSY_ID);
+        ask(PENDING_ID);
+        int before = mRequests.get();
+
+        mManager.onConnectionChanged();
+        ask(NEEDS_ID);
+        ask(DELAYED_ID);
+        ask(BUSY_ID);
+
+        assertEquals(before + 3, mRequests.get());
+    }
 }

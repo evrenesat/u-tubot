@@ -1,5 +1,15 @@
 # u·tubot devlog
 
+## 2026-11-24 (R2: disk cache of verdicts and summaries, Retry clears the backend's failure; issue 7)
+
+- Retry (Summary panel, Summary view, AI answer) calls `POST /v1/videos/{id}/retry` first, then asks again; the call failing does not
+  stop the request. The countdown of a `delayed` answer does not call it (the backend's own wait is respected). Docs: `ai/CONTRACT.md`.
+- `UtubotDiskCache`: ready verdicts and ready summaries survive a restart. Scope = hash of backend address, token and the backend's
+  version (`GET /v1/health`); another scope starts empty and the old scope's directory is removed. Entries expire after 3 days (a
+  change of the backend's settings does not change its version), at most 2000 verdicts and 300 summaries. Failures, pending jobs
+  and transcript states are never stored. Importing or refreshing prompts and setting the default prompt clear the summaries. Known
+  limit: a default prompt changed from another device is only noticed after the 3 days or a new backend version.
+
 ## 2026-11-24 (CI app job: Robolectric no longer downloads at test time)
 
 - Every Robolectric test class failed in CI since 23 Nov at `MavenArtifactFetcher` (an `IOException` while Robolectric fetched its
