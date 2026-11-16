@@ -164,6 +164,7 @@ class Transcription:
         video_id: str,
         hint: dict[str, Any] | None,
         passive: bool = False,
+        wait_s: float | None = None,
     ) -> dict[str, Any]:
         """Turn a `needs_transcript` answer into a started transcription when the policy allows.
 
@@ -173,6 +174,8 @@ class Transcription:
         When the policy would apply but the video's length is unknown (a client that sent no
         `duration_s`, and no metadata cached because captions were limited), one paced metadata
         request learns it first (`TranscriptService.ensure_length`, only while that class is healthy).
+        The caller waits for it at most `wait_s` seconds; past that the ask-first answer goes out
+        and the next call finds the stored length.
         """
         if user is None or fields.get("transcript_status") != NONE:
             return fields
@@ -182,7 +185,9 @@ class Transcription:
             return fields
         learned = False
         if not self._meta(video_id, hint).get("duration_s"):
-            await self.transcripts.ensure_length(video_id, BACKGROUND if passive else INTERACTIVE)
+            await self.transcripts.ensure_length(
+                video_id, BACKGROUND if passive else INTERACTIVE, wait_s
+            )
             known = self._meta(video_id, hint)
             learned = bool(known.get("duration_s") or known.get("is_live"))
         if not self.auto_allowed(policy, self._meta(video_id, hint), passive=passive):

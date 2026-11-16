@@ -34,6 +34,7 @@ from utubot.youtube import (
     YoutubeCooldown,
     YoutubeDelayed,
     YoutubeGate,
+    YoutubeOffline,
     YoutubeVideoError,
 )
 
@@ -350,6 +351,22 @@ async def test_the_length_request_is_skipped_while_metadata_cools_and_never_rais
     assert not rig.gate.healthy(CLASS_METADATA)
     await rig.svc.ensure_length(OTHER)
     assert rig.extracts == 1
+
+
+async def test_an_unexpected_error_in_the_length_request_is_swallowed_and_not_repeated(tmp_path):
+    rig = Rig(tmp_path, extract=lambda: ValueError("parser bug"))
+    await rig.svc.ensure_length(VID)
+    await rig.svc.ensure_length(VID)
+    assert rig.extracts == 1 and rig.svc.cached_meta(VID) is None
+    assert rig.gate.healthy(CLASS_METADATA)
+
+
+async def test_the_metadata_request_never_reaches_youtube_in_offline_mode(tmp_path):
+    rig = Rig(tmp_path)
+    rig.cfg.youtube.offline = True
+    with pytest.raises(YoutubeOffline):
+        await rig.svc.meta_fetcher(VID)
+    assert rig.extracts == 0
 
 
 async def test_an_incomplete_ytdlp_answer_is_delayed_and_never_cached_as_no_captions(tmp_path):

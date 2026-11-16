@@ -137,7 +137,13 @@
   caller's priority; stored with the video's metadata; never raises; not repeated within `transcripts.meta_retry_s` (in memory).
 - `Transcription.auto` is async: when the policy would apply it asks for the length first, then decides. If the length rules the audio
   out (live, too long) the answer is refreshed (`can_transcribe`, `estimate_s`, message) or, with captions limited, becomes `delayed`.
-- Tests: `test_audio_fallback.py`, `test_auto_transcribe.py`, `test_youtube_fetch.py`.
+- Review fixes (Opus, PR 46): the length request runs as its own task, one per video (shared by concurrent callers, promoted when an
+  interactive caller joins a background one), and the endpoint waits for it only up to the caller's `wait_ms` cap
+  (`Transcription.auto(wait_s=...)`); past that the ask-first answer goes out and the task still stores the length for the next poll.
+  `ensure_length` now really never raises (a last `except Exception` logs; the `_meta_tried` stamp stops a retry loop), and
+  `YoutubeFetcher.meta` refuses in `offline` mode like `__call__`.
+- Tests: `test_audio_fallback.py`, `test_auto_transcribe.py` (slow length request answers within `wait_ms`, unexpected error is not a
+  500), `test_youtube_fetch.py` (swallowed error, offline guard). Suite 759 passed, ruff clean.
 
 ## 2026-11-13 (media archive: keep every downloaded file, issue 34)
 
