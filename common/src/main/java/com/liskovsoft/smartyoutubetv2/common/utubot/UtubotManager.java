@@ -64,6 +64,9 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             return size() > MAX_CAPTIONS_CACHE;
         }
     };
+    private final UtubotDiskCache mDisk;
+    /** The scope of the disk cache for the connection of the settings, null until the backend told its version */
+    private volatile String mDiskScope;
     private String mSessionPrompt;
     private PromptList mPrompts;
     private UtubotCaptionsFollower mCaptionsFollower;
@@ -72,6 +75,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     private UtubotManager(Context context) {
         mContext = context.getApplicationContext();
         mSettings = UtubotSettings.instance(mContext);
+        mDisk = UtubotDiskCache.instance(mContext);
         mSettings.addConnectionListener(this::onConnectionChanged);
     }
 
@@ -94,7 +98,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     /**
      * Another backend or another token: the verdicts, summaries, captions and prompts of the old connection are not the new one's
      */
-    private void onConnectionChanged() {
+    void onConnectionChanged() {
         mVerdicts.clear();
 
         synchronized (mSummaries) {
@@ -104,6 +108,8 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
         synchronized (mCaptions) {
             mCaptions.clear();
         }
+
+        mDiskScope = null;
 
         UtubotCaptionsFollower follower;
         UtubotCutFollower cutsFollower;
@@ -175,15 +181,84 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
     private boolean assess(List<VideoMeta> metas, String section, int waitMs, int hardTimeoutMs) throws IOException {
         UtubotClient client = newClient();
-        List<Verdict> verdicts = client.assess(metas, section, waitMs, hardTimeoutMs);
+        List<VideoMeta> unknown = metas;
+
+        // The verdicts of earlier sessions come in with the scope: the videos they know are not asked again
+        if (useDiskCache(client)) {
+            unknown = new ArrayList<>();
+
+            for (VideoMeta meta : metas) {
+                if (mVerdicts.get(meta.videoId) == null) {
+                    unknown.add(meta);
+                }
+            }
+
+            if (unknown.isEmpty()) {
+                return true;
+            }
+        }
+
+        List<Verdict> verdicts = client.assess(unknown, section, waitMs, hardTimeoutMs);
 
         if (isCurrent(client)) {
             for (Verdict verdict : verdicts) {
                 mVerdicts.put(verdict);
             }
+
+            if (mDiskScope != null) {
+                mDisk.putVerdicts(verdicts);
+            }
         }
 
         return true;
+    }
+
+    /**
+     * Opens the disk cache for the connection of the client, once per connection: it asks the backend for its version (a new version
+     * starts with an empty cache) and puts the stored verdicts into the session's. Blocking: only on an io thread. A backend that does
+     * not answer leaves the cache closed for now (the next call tries again) and the request goes on without it.
+     *
+     * @return the disk cache is open for the connection of the client
+     */
+    private boolean useDiskCache(UtubotClient client) {
+        if (mDiskScope != null) {
+            return isCurrent(client);
+        }
+
+        try {
+            String scope = UtubotDiskCache.scopeOf(mSettings.getUrl(), mSettings.getToken(), client.serverVersion());
+
+            if (!isCurrent(client)) {
+                return false;
+            }
+
+            synchronized (mDisk) {
+                mDisk.useScope(scope);
+
+                for (Verdict verdict : mDisk.loadVerdicts()) {
+                    if (mVerdicts.get(verdict.videoId) == null) {
+                        mVerdicts.put(verdict);
+                    }
+                }
+            }
+
+            mDiskScope = scope;
+            return true;
+        } catch (IOException | RuntimeException error) {
+            Log.d(TAG, "The disk cache stays closed: %s", error.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * The default prompt or the prompt sets changed: no summary of before is the answer to the same request anymore
+     */
+    private void forgetSummaries() {
+        synchronized (mSummaries) {
+            mSummaries.clear();
+        }
+
+        mDisk.clearSummaries();
     }
 
     /**
@@ -318,6 +393,18 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
     private Summary pollSummary(UtubotClient client, String videoId, @Nullable String promptKey, @Nullable VideoMeta meta, String cacheKey)
             throws IOException {
+        if (useDiskCache(client)) {
+            Summary stored = mDisk.getSummary(videoId, promptKey);
+
+            if (stored != null) {
+                synchronized (mSummaries) {
+                    mSummaries.put(cacheKey, stored);
+                }
+
+                return stored;
+            }
+        }
+
         Summary summary = client.summary(videoId, promptKey, meta, SUMMARY_WAIT_MS);
 
         // A transcript state comes back at once: the view shows it and decides (it waits, retries, or asks the user)
@@ -328,6 +415,10 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
         if (summary.isReady() && !summary.isTransient() && isCurrent(client)) {
             synchronized (mSummaries) {
                 mSummaries.put(cacheKey, summary);
+            }
+
+            if (mDiskScope != null) {
+                mDisk.putSummary(promptKey, summary);
             }
         }
 
@@ -341,6 +432,14 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     public Observable<Transcript> transcribeObserve(Video video) {
         VideoMeta meta = UtubotMeta.from(video);
         return cancellable(client -> client.transcribe(video.videoId, meta));
+    }
+
+    @Override
+    public Observable<Boolean> forgetFailuresObserve(String videoId) {
+        return cancellable(client -> {
+            client.forgetFailures(videoId);
+            return true;
+        });
     }
 
     @Override
@@ -433,8 +532,13 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     /**
      * The list on the backend changed (or may have): the next request reads it again
      */
-    private synchronized void forgetPrompts() {
-        mPrompts = null;
+    private void forgetPrompts() {
+        synchronized (this) {
+            mPrompts = null;
+        }
+
+        // The default prompt may have changed: a stored summary is the answer to the old one
+        forgetSummaries();
     }
 
     //endregion

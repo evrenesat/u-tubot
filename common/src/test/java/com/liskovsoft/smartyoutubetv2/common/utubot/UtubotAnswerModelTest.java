@@ -30,12 +30,19 @@ public class UtubotAnswerModelTest {
     private final List<Transcript> mPollAnswers = new ArrayList<>();
     private final FakeScheduler mTimer = new FakeScheduler();
     private int mPolls;
+    private final List<String> mForgets = new ArrayList<>();
     private final UtubotAnswerModel mModel = new UtubotAnswerModel(new UtubotAnswerModel.Source() {
         @Override
         public Observable<Insight> insightObserve(Video video) {
             PublishSubject<Insight> subject = PublishSubject.create();
             mCalls.add(subject);
             return subject;
+        }
+
+        @Override
+        public Observable<Boolean> forgetFailuresObserve(String videoId) {
+            mForgets.add(videoId + "@" + mCalls.size());
+            return Observable.just(true);
         }
 
         @Override
@@ -78,6 +85,17 @@ public class UtubotAnswerModelTest {
         assertEquals("answer: yes", last().text);
         assertEquals("asr", last().source);
         assertFalse(last().isWorking());
+    }
+
+    @Test
+    public void theRetryOfTheUserMakesTheBackendForgetTheFailureFirst() {
+        mModel.show(video());
+        mCalls.get(0).onNext(insight("failed", null));
+
+        mModel.retry();
+
+        assertEquals(java.util.Collections.singletonList("aaaaaaaaaaa@1"), mForgets);
+        assertEquals(2, mCalls.size());
     }
 
     @Test

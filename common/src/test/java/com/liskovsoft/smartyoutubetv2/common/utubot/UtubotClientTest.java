@@ -192,6 +192,20 @@ public class UtubotClientTest {
     }
 
     @Test
+    public void forgetFailuresPostsToTheRetryRouteOfTheVideoWithTheToken() throws Exception {
+        mServer.on("/v1/videos/abc/retry", request -> {
+            mQuery.set(request.method + " " + request.path);
+            mAuth.set(request.headers.get("authorization"));
+            return new TinyHttpServer.Response(200, "{\"ok\":true,\"cleared\":{\"fetch\":2,\"tasks\":1,\"analysis\":0}}");
+        });
+
+        new UtubotClient(base(), TOKEN).forgetFailures("abc");
+
+        assertEquals("POST /v1/videos/abc/retry", mQuery.get());
+        assertEquals("Bearer " + TOKEN, mAuth.get());
+    }
+
+    @Test
     public void transcribeStartsTheJobWithAPostAndTheMetadata() throws Exception {
         mServer.on("/v1/videos/abc/transcribe", request -> {
             mQuery.set(request.method + " " + request.query);
