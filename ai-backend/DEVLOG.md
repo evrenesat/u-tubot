@@ -14,6 +14,20 @@
   a fresh request, and its state text ends in Retry. Web UI already had Retry on failed cards and the sheet.
 - Tests: `test_cuts_api.py` (failed then retried, changed limit, 98 % keep message, nothing removed), `test_cuts.py`
   (guard messages, upper guard off while lower stays on).
+## 2026-11-24 (R2: per-video artifact cache and non-sticky errors, issue 7)
+
+- Failure policy: a busy model is never remembered (`bg.is_remembered`; `TaskRegistry` skips `LLMBusyError`), other model failures
+  for `[summary] failure_cooldown_s` (30 s -> 120 s), a video that cannot be read for `[transcripts] video_failure_ttl_s` (1 h -> 15 min),
+  an empty caption track for `empty_track_retry_s` (1 h -> 15 min). "No captions" stays 3 days: it is a complete answer, not an error,
+  and re-asking YouTube is what the pacing rules avoid; Retry bypasses it.
+- `POST /v1/videos/{id}/retry` (`ArtifactCache.retry`, new `artifacts.py`) clears every remembered failure of a video (fetch holds, "no
+  captions", failed summary/insight/answer tasks, failed analysis) and keeps stored successes; `TaskRegistry.forget_video`,
+  `TranscriptService.clear_failures`.
+- Admin: `GET/DELETE /v1/admin/videos/{id}/artifacts` lists and purges the cached artifacts of one video by kind.
+- Media archive: opt-in `[archive] eviction = "lru"` (default `never`, the EVR-154 rule that the archive never deletes by itself still
+  holds unless the owner turns it on): least recently used entries go when a download would start at the quota, never an entry used
+  within `evict_protect_s` or the file just stored. New nullable column `media_archive.last_used_at`, stamped by `lookup`.
+- Summary cache key is unchanged (video, prompt key, content hash, language); the model is already part of the content hash.
 
 ## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
 

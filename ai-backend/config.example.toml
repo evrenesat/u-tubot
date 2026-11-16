@@ -249,12 +249,14 @@ js_runtime = "deno"                # deno (default), node, bun or quickjs
 # path = "/mnt/media/utubot-archive"   # example; unset: <data dir>/archive
 quota_bytes = 0                       # ceiling in bytes (0: no limit); a full archive refuses new downloads
 warn_frac = 0.9                       # log a warning from this fraction of the quota on
+# eviction = "lru"                    # default "never". "lru": a download past the quota first frees the least recently used files
+# evict_protect_s = 3600              # with lru: never evict a file used within this many seconds (a job may be reading it)
 
 [transcripts]
 cache_ttl_s = 2592000
 no_captions_ttl_s = 259200         # a "no captions" answer (from a complete yt-dlp answer) is remembered this long (3 days), then checked again
-video_failure_ttl_s = 3600         # a per-video failure (private, members-only, 403/410 on a caption or media URL) is remembered this long
-empty_track_retry_s = 3600         # a caption file that parses to nothing is "delayed" (not "no captions") and not re-fetched for this long
+video_failure_ttl_s = 900          # a per-video failure (private, members-only, 403/410 on a caption or media URL) is remembered this long
+empty_track_retry_s = 900          # a caption file that parses to nothing is "delayed" (not "no captions") and not re-fetched for this long
 meta_retry_s = 600                # a video whose length was asked for (automatic transcription) is not asked again for this long
 fetch_timeout_s = 60.0
 default_language = "en"
@@ -267,6 +269,7 @@ chunk_tokens = 8000                # map-reduce chunk size for longer transcript
 chars_per_token = 4
 strategy = "map_reduce"            # or "truncate" (keep head 60% + tail 40%)
 default_wait_ms = 20000
+failure_cooldown_s = 120           # a failed summary, insight or answer (not a busy model, never remembered) is replayed this long; Retry clears it
 wait_ms_cap = 60000
 adhoc_ttl_s = 3600
 max_summary_chars = 1200
