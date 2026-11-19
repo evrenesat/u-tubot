@@ -100,6 +100,10 @@ async def test_glance_prompt_text_and_budget():
         "takeaways",
         "worth-it",
         "eli-new",
+        "cut-no-filler",
+        "cut-answer",
+        "cut-demo",
+        "cut-highlights-5",
     }
 
 

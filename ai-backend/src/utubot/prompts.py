@@ -22,7 +22,8 @@ DEFAULT_PANEL_KEY = "builtin/glance"
 PANEL_ALIAS = "panel"
 TASK_SUMMARY = "summary"
 TASK_GLANCE = "glance"
-TASKS = (TASK_SUMMARY, TASK_GLANCE)
+TASK_CUTS = "cuts"
+TASKS = (TASK_SUMMARY, TASK_GLANCE, TASK_CUTS)
 SET_FORMAT_VERSION = 1
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 TEMPLATE_VARS = (
@@ -51,6 +52,63 @@ GLANCE_SYSTEM = (
     "start with 'This video'. Be concrete and faithful to the transcript, never invent details. "
     "Reply in {language}."
 )
+
+CUT_SYSTEM = (
+    "You build director's cuts of YouTube videos for a TV viewer: you choose which numbered "
+    "transcript units to keep so the video plays the way the task asks. Reply ONLY with JSON: "
+    '{"parts":[{"from":<int>,"to":<int>,"label":"<2-6 words>"}],'
+    '"summary":"<one line, at most 120 characters>","kept_s":<int>}. '
+    '"from" and "to" are the first and last unit id of one kept part. Ranges never overlap, ids '
+    "must exist, and parts stay in video order. Be faithful to the transcript; never invent "
+    "content and never add commentary."
+)
+
+# The built-in director's-cut presets. The instruction is sent to the cut model as the task; a
+# cut preset is never offered as a summary prompt (`PromptStore.describe` filters task=cut out).
+PRETTY_CUT_LABELS = {
+    "no-filler": "No filler",
+    "answer": "Just the answer",
+    "demo": "Only the demo",
+    "highlights-5": "Highlights in 5 min",
+}
+CUT_PRESET_INSTRUCTIONS = {
+    "no-filler": (
+        "Remove everything that is not the actual content of the video: intros, outros, channel "
+        "plugs, 'like and subscribe' asks, sponsor segments and ads read aloud, dead air, "
+        "repetition and small talk that adds nothing. Keep the substance from start to finish, "
+        "in the original order."
+    ),
+    "answer": (
+        "Keep only what directly answers what the title promises or asks — the reveal, the "
+        "result, the conclusion, including the few sentences of setup the answer needs to make "
+        "sense. Cut the long buildup, the tangents and everything after. If the video never "
+        "answers it, keep the closest thing to an answer."
+    ),
+    "demo": (
+        "Keep only the demonstration: the part where the thing itself is shown, used, tested, "
+        "built or performed, step by step, from start to finish. Cut talk about it, the intro, "
+        "the results discussion and everything else."
+    ),
+    "highlights-5": (
+        "Keep the highlights: the most interesting, useful or entertaining minutes, spread "
+        "across the whole video, in the original order, targeting about 5 minutes of kept time "
+        "(between 4 and 6 minutes). Prefer concrete, dense passages over filler. This cut is "
+        "fine however much it keeps, as long as it is the best of the video."
+    ),
+}
+
+
+def cut_preset_prompt(name: str) -> Prompt:
+    return Prompt(
+        id=f"cut-{name}",
+        label=PRETTY_CUT_LABELS[name],
+        system="",
+        template=CUT_PRESET_INSTRUCTIONS[name],
+        max_tokens=2500,
+        task=TASK_CUTS,
+    )
+
+
 GLANCE_TEMPLATE = (
     "Title: {title}\nChannel: {channel}\nDuration: {duration}\n"
     "Question the title poses (detected earlier, may be empty): {question}\n\n"
@@ -259,6 +317,10 @@ BUILTIN_SET = PromptSet(
             ),
             max_tokens=700,
         ),
+        cut_preset_prompt("no-filler"),
+        cut_preset_prompt("answer"),
+        cut_preset_prompt("demo"),
+        cut_preset_prompt("highlights-5"),
     ],
 )
 
@@ -336,15 +398,21 @@ class PromptStore:
         return True
 
     def set_default(self, user: str, key: str) -> None:
-        if not self.resolve(user, key):
+        prompt = self.resolve(user, key)
+        if prompt is None:
             raise PromptError(f"unknown prompt {key}")
+        if prompt.task == TASK_CUTS:
+            raise PromptError("a director's cut preset cannot be a summary default")
         self.db.execute(
             "INSERT OR REPLACE INTO user_default(user,prompt_key) VALUES(?,?)", [user, key]
         )
 
     def set_panel_default(self, user: str, key: str) -> None:
-        if not self.resolve(user, key):
+        prompt = self.resolve(user, key)
+        if prompt is None:
             raise PromptError(f"unknown prompt {key}")
+        if prompt.task == TASK_CUTS:
+            raise PromptError("a director's cut preset cannot be the panel prompt")
         self.db.execute(
             "INSERT OR REPLACE INTO user_panel_default(user,prompt_key) VALUES(?,?)", [user, key]
         )
@@ -439,7 +507,22 @@ class PromptStore:
                             "panel_default": f"{pset.id}/{p.id}" == panel,
                         }
                         for p in pset.prompts
+                        if p.task != TASK_CUTS
                     ],
                 }
             )
         return {"default": default, "panel_default": panel, "sets": sets}
+
+    def cut_prompts(self, user: str) -> list[Prompt]:
+        """Every director's-cut preset the user can pick: the built-ins plus their own sets.
+
+        A user set wins over the built-in of the same id, so an owner can tune a preset.
+        """
+        out: dict[str, Prompt] = {p.id: p for p in BUILTIN_SET.prompts if p.task == TASK_CUTS}
+        for pset, _url in reversed(self.list_sets(user)):
+            if pset.id == BUILTIN_SET_ID:
+                continue
+            for p in pset.prompts:
+                if p.task == TASK_CUTS:
+                    out[p.id] = p
+        return list(out.values())

@@ -28,6 +28,11 @@ class MockOpenAI:
         self.models = ["fast", "worker", "smart", "llama3.1:8b"]
         self.models_status = 200
         self.model_requests: list[dict[str, Any]] = []
+        # Cut answers: `cut_answers` entries are popped per cut call (a dict, or a callable that
+        # receives (system, user) and returns the parsed answer object); `cut_answer` is the default.
+        self.cut_answer: Any = None
+        self.cut_answers: list[Any] = []
+        self.cut_calls: list[str] = []
         self.app = self._build()
 
     def _build(self) -> FastAPI:
@@ -136,7 +141,25 @@ class MockOpenAI:
             return json.dumps([f"T:{t}" for t in json.loads(user)])
         if "answer a viewer's question" in system:
             return "ANSWER: forty-two"
+        if "director's cut" in system:
+            return self._wrap(json.dumps(self.cut_respond(system, user)))
         return f"SUMMARY[{body['model']}] " + user[-60:].replace("\n", " ")
+
+    def cut_respond(self, system: str, user: str) -> Any:
+        self.cut_calls.append(user)
+        if self.cut_answers:
+            answer = self.cut_answers.pop(0)
+        else:
+            answer = self.cut_answer
+        if callable(answer):
+            return answer(system, user)
+        if answer is not None:
+            return answer
+        return {
+            "parts": [{"from": 1, "to": 1, "label": "Part 1"}],
+            "summary": "Mock cut.",
+            "kept_s": 10,
+        }
 
     def _wrap(self, text: str) -> str:
         if self.bad_json_first > 0:

@@ -458,13 +458,18 @@ class JobQueue:
             self.events.deliver(job_id, via, client, user, **detail)
 
     def _claim(self) -> dict[str, Any] | None:
-        """Next queued job, interactive first; none while the media breaker is open (work waits)."""
+        """Next queued job, interactive first; none while the media breaker is open (work waits).
+
+        A running `cuts` job does not hold its video back: cuts are not media work, and their
+        report row must not block the transcript job a cut is itself waiting for.
+        """
         if not self.pipeline.gate.healthy(CLASS_MEDIA):
             return None
         row = self.db.one(
             "SELECT * FROM jobs WHERE status='queued' AND (not_before IS NULL OR not_before<=?)"
             " AND NOT EXISTS"
-            " (SELECT 1 FROM jobs r WHERE r.video_id=jobs.video_id AND r.status='running')"
+            " (SELECT 1 FROM jobs r WHERE r.video_id=jobs.video_id AND r.status='running'"
+            "  AND r.kind!='cuts')"
             " ORDER BY priority, created_at LIMIT 1",
             [self.pipeline.gate.now()],
         )

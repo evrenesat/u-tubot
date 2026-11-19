@@ -64,6 +64,7 @@ class LLMConfig(BaseModel):
     analysis: LLMTask = LLMTask(model="worker", max_tokens=900)
     captions: LLMTask = LLMTask(model="worker", max_tokens=2000)
     smart: LLMTask = LLMTask(model="smart", max_tokens=1500)
+    cuts: LLMTask | None = None
 
     def glance_task(self) -> LLMTask:
         """`[llm.glance]` when configured, else `[llm.summary]` with reasoning off."""
@@ -160,6 +161,34 @@ class SummaryConfig(BaseModel):
     panel_prompt: str = "builtin/glance"
     auto_long: bool = False
     auto_long_max_concurrent: int = 2
+
+
+class CutsConfig(BaseModel):
+    """Director's cuts: model-picked skip timelines built from the transcript.
+
+    The model behind them is `[llm.cuts]` (an explicit alias; without it every cuts route
+    reports "not configured"). Caption fragments are merged into sentence-like units before
+    the model sees them, its kept unit ranges are validated and repaired, and the result is
+    cached per (video, preset or prompt, model, transcript).
+    """
+
+    max_input_tokens: int = 24000
+    chars_per_token: int = 4
+    unit_max_pause_s: float = 0.6
+    unit_max_s: float = 15.0
+    merge_gap_s: float = 2.0
+    min_part_s: float = 4.0
+    pad_before_s: float = 0.3
+    pad_after_s: float = 0.5
+    min_keep_frac: float = 0.10
+    max_keep_frac: float = 0.95
+    max_active_per_user: int = 2
+    max_prompt_chars: int = 2000
+    default_wait_ms: int = 3000
+    wait_ms_cap: int = 20000
+    transcript_wait_s: float = 900.0
+    poll_s: float = 2.0
+    max_report_chars: int = 4000
 
 
 ASR_KIND_OPENAI = "openai"
@@ -485,6 +514,7 @@ class Config(BaseModel):
     archive: ArchiveConfig = Field(default_factory=ArchiveConfig)
     transcripts: TranscriptConfig = Field(default_factory=TranscriptConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
+    cuts: CutsConfig = Field(default_factory=CutsConfig)
     captions: CaptionsConfig = Field(default_factory=CaptionsConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)

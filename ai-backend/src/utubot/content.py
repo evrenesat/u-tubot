@@ -11,7 +11,15 @@ from .config import TASK_ANALYSIS, TASK_ANSWER, Config, UserPolicy
 from .db import Database
 from .errors import public_error
 from .llm import BACKGROUND, CUT_MARK, INTERACTIVE, ChatResult, LLMClient
-from .prompts import DEFAULT_SYSTEM, TASK_GLANCE, TASK_SUMMARY, Prompt, PromptStore, render
+from .prompts import (
+    DEFAULT_SYSTEM,
+    TASK_CUTS,
+    TASK_GLANCE,
+    TASK_SUMMARY,
+    Prompt,
+    PromptStore,
+    render,
+)
 from .transcribe import OK, Transcription
 from .transcripts import Transcript, TranscriptService, fmt_ts
 
@@ -343,8 +351,11 @@ class ContentService:
         """The prompt as this user runs it: its own `model`, else the user's choice for its task.
 
         The model is part of the prompt's content hash, so summaries made with different models are
-        cached apart.
+        cached apart. A director's cut preset never takes a user model: `[llm.cuts]` names the one
+        alias the cut engine was scored with.
         """
+        if prompt.task == TASK_CUTS:
+            return prompt
         task = TASK_GLANCE if prompt.task == TASK_GLANCE else TASK_SUMMARY
         chosen = policy.models.get(task)
         if prompt.model is None and chosen:

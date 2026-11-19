@@ -96,6 +96,18 @@ CREATE TABLE IF NOT EXISTS usage_daily(
 CREATE TABLE IF NOT EXISTS feedback(
   id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT NOT NULL, video_id TEXT NOT NULL,
   kind TEXT NOT NULL, correct INTEGER NOT NULL, note TEXT, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS cut_requests(
+  id TEXT PRIMARY KEY, user TEXT NOT NULL, video_id TEXT NOT NULL, source TEXT NOT NULL DEFAULT '',
+  preset_id TEXT, prompt TEXT, state TEXT NOT NULL, error TEXT,
+  cut_key TEXT, job_id TEXT, raw_answer TEXT, created_at REAL NOT NULL,
+  updated_at REAL NOT NULL, finished_at REAL);
+CREATE INDEX IF NOT EXISTS cut_requests_user ON cut_requests(user, created_at);
+CREATE INDEX IF NOT EXISTS cut_requests_video ON cut_requests(video_id);
+CREATE TABLE IF NOT EXISTS cuts(
+  cache_key TEXT PRIMARY KEY, video_id TEXT NOT NULL, version TEXT NOT NULL,
+  preset_id TEXT, prompt TEXT, model TEXT NOT NULL, transcript_hash TEXT NOT NULL,
+  json TEXT NOT NULL, duration_s REAL, kept_s REAL, created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS cuts_video ON cuts(video_id);
 """
 
 JOB_COLUMNS = {
