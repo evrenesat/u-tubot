@@ -828,8 +828,6 @@ class CutService:
                             " so no cut was built."
                         ) from exc2
                 model_stage.set(answer=json.dumps(data, ensure_ascii=False))
-            if self._dismissed(request_id):
-                return
             with events.stage(STAGE_CHECKING):
                 duration_s = meta.get("duration_s")
                 duration_s = float(duration_s) if duration_s else None
@@ -894,7 +892,11 @@ class CutService:
             self._inflight.pop(cache_key, None)
             if not leader.done():
                 leader.cancel()  # dismissed or gone without an answer: waiters build it themselves
-        self._finish(request_id, row, cache_key, doc)
+        # A dismissed request stops here (dismiss already marked it and its job), but the
+        # answer above was still checked, cached and handed to the waiters, so they do not
+        # have to call the model again.
+        if not self._dismissed(request_id):
+            self._finish(request_id, row, cache_key, doc)
 
     def _finish(
         self, request_id: str, row: dict[str, Any], cache_key: str, doc: dict[str, Any]

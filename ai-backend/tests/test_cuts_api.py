@@ -180,6 +180,59 @@ class TestCreateAndBuild:
         # rebuild produced an answer.
         assert len(cuts_env.llm.cut_calls) == 1
 
+    async def test_dismissed_leader_still_hands_its_answer_to_the_waiter(
+        self, cuts_env, monkeypatch
+    ):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Ok"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        cuts_env.llm.delay_s = 0.3
+        first = (await post_cut(cuts_env, preset="cut-demo")).json()
+        partner = httpx_client(cuts_env, OTHER_TOKEN)
+        second = await partner.post(f"/v1/videos/{VID}/cuts", json={"preset": "cut-demo"})
+        rid = second.json()["request_id"]
+
+        def model_events(request_id: str) -> list[dict]:
+            job = cuts_env.svc.cuts._row(request_id)["job_id"]
+            return cuts_env.svc.jobs.events.list(job)
+
+        # The leader is whichever request is still running its own model stage.
+        deadline = time.monotonic() + 5.0
+        leader = None
+        while time.monotonic() < deadline:
+            leader = next(
+                (
+                    r
+                    for r in (first["request_id"], rid)
+                    if any(
+                        e["stage"] == "model" and e["status"] == "running" for e in model_events(r)
+                    )
+                ),
+                None,
+            )
+            if leader is not None:
+                break
+            await asyncio.sleep(0.02)
+        assert leader is not None, "no request reached its own model stage"
+        # A dismissal lands in the window after the model answered but before the build
+        # finished: the row is marked dismissed without cancelling the task, so the
+        # waiter can only be saved by the leader's own answer.
+        monkeypatch.setattr(
+            cuts_env.svc.cuts,
+            "_dismissed",
+            lambda request_id: request_id == leader and bool(cuts_env.llm.cut_calls),
+        )
+        cuts_env.svc.cuts._set_state(leader, "dismissed", finished=True)
+        waiter = rid if leader == first["request_id"] else first["request_id"]
+        owner_of = {first["request_id"]: cuts_env.client, rid: partner}
+        r = await owner_of[waiter].get(f"/v1/cuts/{waiter}", params={"wait_ms": 5000})
+        assert r.json()["state"] == "ready"
+        # The leader's completed answer was reused: no second model round-trip.
+        assert len(cuts_env.llm.cut_calls) == 1
+
     async def test_presets_state_moves_none_to_ready(self, cuts_env):
         set_transcript(cuts_env.fetcher)
         cuts_env.llm.cut_answer = {
