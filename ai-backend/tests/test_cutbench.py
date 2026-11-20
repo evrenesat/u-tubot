@@ -108,6 +108,18 @@ class TestScorer:
         assert result.skip < 0.7  # only the sponsor range leaks; the marked intro/outro stay clean
         assert result.score < 0
 
+    def test_keeping_the_whole_video_is_diluted_by_the_budget(self):
+        transcript = TRANSCRIPTS[0]
+        request = transcript.requests[1]  # just-the-answer: a short budget
+        units = build_units(transcript.segments, CFG)
+        # keep every unit except a slice at the end (the 95% guard would refuse more)
+        result = score_request(
+            transcript, request, fake_model(answer([(1, len(units) - 2)])), "fake"
+        )
+        assert result.keep == 1.0 and result.skip == 1.0  # nothing marked leaked
+        assert result.excess > 0.3  # but nearly the whole video survived
+        assert result.score < 0
+
     def test_format_failure_after_repair_scores_zero(self):
         transcript = TRANSCRIPTS[0]
         request = transcript.requests[1]

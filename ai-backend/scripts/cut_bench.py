@@ -111,7 +111,8 @@ def main() -> int:
             )
             print(
                 f"--- {model}: keep {summary['mean_keep']:.2f} skip {summary['mean_skip']:.2f}"
-                f" score {summary['mean_score']:+.2f} refused {summary['refused']}"
+                f" excess {summary['mean_excess']:.2f} score {summary['mean_score']:+.2f}"
+                f" refused {summary['refused']}"
                 f" format {summary['format_errors']} wall {summary['mean_wall_s']}s/req"
             )
 
@@ -119,7 +120,8 @@ def main() -> int:
     for summary in sorted(summaries, key=lambda s: s["mean_score"], reverse=True):
         print(
             f"{summary['model']:<24} score {summary['mean_score']:+.3f}"
-            f" (keep {summary['mean_keep']:.3f} skip {summary['mean_skip']:.3f})"
+            f" (keep {summary['mean_keep']:.3f} skip {summary['mean_skip']:.3f}"
+            f" excess {summary['mean_excess']:.3f})"
             f" refused {summary['refused']} format {summary['format_errors']}"
             f" repairs {summary['repairs']} {summary['mean_wall_s']}s/req"
         )

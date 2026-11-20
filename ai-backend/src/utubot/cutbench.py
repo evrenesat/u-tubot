@@ -42,13 +42,18 @@ def preset_instruction(preset_id: str) -> str:
 
 @dataclass
 class BenchRequest:
-    """One request against one transcript: the instruction plus the hand-marked spans."""
+    """One request against one transcript: the instruction plus the hand-marked spans.
+
+    `budget_s` caps how much the cut may keep before the score is diluted: a cut that answers
+    "just the answer" but keeps half the video is a bad cut even when nothing marked leaked.
+    `None` means no budget (the default: one and a half times the marked keep time)."""
 
     name: str
     instruction: str
     preset_id: str | None
     keep: list[tuple[float, float]]
     skip: list[tuple[float, float]]
+    budget_s: float | None = None
 
 
 @dataclass
@@ -585,6 +590,7 @@ class RequestResult:
     repairs: int = 0
     parts: int = 0
     kept_s: float | None = None
+    excess: float = 0.0
     wall_s: float = 0.0
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -595,10 +601,11 @@ class RequestResult:
             if self.refused is None and self.format_error is None
             else (f"refused: {self.refused}" if self.refused else f"format: {self.format_error}")
         )
+        extra = f" excess {self.excess:.2f}" if self.excess else ""
         return (
             f"{self.transcript:<16} {self.request:<18} keep {self.keep:5.2f} "
             f"skip {self.skip:5.2f} score {self.score:+5.2f} parts {self.parts:<3}"
-            f" repairs {self.repairs} {state}"
+            f" repairs {self.repairs}{extra} {state}"
         )
 
 
@@ -660,7 +667,11 @@ def score_request(
     leaked = sum(_overlap_ms(span, kept) for span in request.skip)
     out.keep = round(min(1.0, covered / keep_ms), 4) if keep_ms else 1.0
     out.skip = round(max(0.0, 1.0 - leaked / skip_ms), 4) if skip_ms else 1.0
-    out.score = round(out.keep - (1.0 - out.skip), 4)
+    budget_s = request.budget_s if request.budget_s is not None else 1.5 * keep_ms / 1000.0
+    if kept_s := out.kept_s:
+        over = max(0.0, kept_s - budget_s)
+        out.excess = round(over / transcript.duration_s, 4)
+    out.score = round(out.keep - (1.0 - out.skip) - out.excess, 4)
     return out
 
 
@@ -710,6 +721,7 @@ def summarize(results: list[RequestResult]) -> dict[str, Any]:
         "requests": len(results),
         "mean_keep": round(sum(r.keep for r in results) / n, 4),
         "mean_skip": round(sum(r.skip for r in results) / n, 4),
+        "mean_excess": round(sum(r.excess for r in results) / n, 4),
         "mean_score": round(sum(r.score for r in results) / n, 4),
         "refused": sum(1 for r in results if r.refused),
         "format_errors": sum(1 for r in results if r.format_error),
