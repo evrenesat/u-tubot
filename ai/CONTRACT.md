@@ -386,6 +386,57 @@ Stored for later threshold tuning.
   `302` to the versioned APK of the latest release. `GET /app/info.json` returns the latest version,
   per-ABI file names, sizes, sha256 and the configured Downloader codes, for the landing page.
 
+## Director's cuts (addendum, 2026-11-20)
+
+A cut is a model-picked list of parts to keep; the TV skips the rest with its sponsor-skip
+engine. Cuts exist only when the backend config names an explicit model (`[llm.cuts]`); without
+it every cuts route answers `409 {"error":"Cuts are not configured on this server (no [llm.cuts]
+model)."}` and `GET /v1/me` features carries `"cuts": false`.
+
+- `GET /v1/videos/{id}/cuts` -> `{"configured":bool,"presets":[{"id","label","state",
+  "request_id"?,"error"?,"cut"?}]}`. State is `none` | `waiting` | `building` |
+  `needs_transcript` | `ready` | `failed` for this video; `ready` carries the cut document.
+- `POST /v1/videos/{id}/cuts` body `{"preset":"<preset id>"}` | `{"prompt":"<what to keep>"}` |
+  `{"await_prompt":true}` -> `{"request_id","state"}`. `preset`/`prompt` are mutually exclusive;
+  `await_prompt` creates a `waiting` request the phone fills (the TV's "Describe on phone…").
+  The caller's known video facts ride as query params (`title`, `channel`, `duration_s`,
+  `is_live`) so the phone queue can show them before the backend learns them itself.
+  Duplicate active requests (same video + preset/prompt/waiting) return the existing row.
+  A per-user cap on concurrent builds answers `429`.
+- `GET /v1/cuts/{request_id}?wait_ms=3000` long-polls (cap 20000 ms) while `waiting`/`building`
+  and returns the request document below.
+- `GET /v1/cut-requests` -> `{"requests":[...]}` newest first (max 100), the phone queue.
+- `PUT /v1/cut-requests/{id}` `{"prompt"}` fills a `waiting` request and starts the build
+  (`409` when it is not waiting any more). `DELETE /v1/cut-requests/{id}` dismisses a request
+  (a building one is stopped); dismissed requests leave the queue.
+- `GET /cuts/{request_id}` (no auth): `302` to `/#/cuts/{request_id}`, the QR target that opens
+  the request's cut sheet in the web UI.
+
+Request document (both the queue cards and the single request):
+`{"id","video_id","state","source","preset_id","prompt","error","created_at","updated_at",
+"title"?,"channel"?,"duration_s"?,"stage"?,"cut"?,"job_id"?,"instruction"?,"raw_answer"?}`.
+`stage` (`transcript`|`model`|`checking`) rides while building; `cut` once ready; `job_id`
+opens the build report in the jobs API; `raw_answer` is the model's answer, trimmed.
+
+The cut document (`cut`): `{"version","video_id","transcript_hash","duration_ms","label",
+"summary","parts":[{"label","start_ms","end_ms"}],"skip_ranges_ms":[[from,to]...],"kept_ms",
+"source","preset_id","model","built_at"}`. All times are milliseconds of the video the cut was
+built for (`duration_ms`); the TV does not apply a cut whose video length differs by more than
+2 s and checks `transcript_hash` against its own transcript. `skip_ranges_ms` is the sorted,
+non-overlapping complement of `parts`.
+
+Build rules (mirrored from the backend config, `[cuts]`): caption fragments are merged into
+numbered sentence-like units (new unit on a pause over 0.6 s or sentence punctuation, 15 s
+cap); the model answers JSON with kept unit id ranges (`from`/`to`), a label per part, a
+one-line summary and `kept_s`; ids are validated (must exist, sorted, never overlapping) with
+one repair round; boundaries are padded 0.3 s before and 0.5 s after, gaps under 2 s merged and
+parts under 4 s dropped; a cut keeping under 10 % ("this would remove almost everything") or
+over 95 % ("nothing to cut") of the video is refused instead of applied (the highlights preset
+accepts its real length). A missing timed transcript queues a transcript job
+(`needs_transcript`) and the build waits for it (10 min); live streams are refused. Builds run
+as their own async tasks (never in the caption worker's queue) with a per-user cap, and one
+finished cut is shared per (video, preset or prompt, model, transcript) cache key.
+
 ## Setup file (`GET /setup.json`)
 
 Public, rate limited like `/v1/health`. The app's "Import setup" fetches it so nothing is typed
