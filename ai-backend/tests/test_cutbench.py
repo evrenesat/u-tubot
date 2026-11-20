@@ -113,7 +113,9 @@ class TestScorer:
         request = transcript.requests[1]  # just-the-answer: a short budget
         units = build_units(transcript.segments, CFG)
         # keep every unit except a slice at the end (the 95% guard would refuse more)
-        result = score_request(transcript, request, fake_model(answer([(1, len(units) - 2)])), "fake")
+        result = score_request(
+            transcript, request, fake_model(answer([(1, len(units) - 2)])), "fake"
+        )
         assert result.keep == 1.0  # the marked verdict is covered
         assert result.excess > 0.3  # but nearly the whole video survived
         assert result.score < 0

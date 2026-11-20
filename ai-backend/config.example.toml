@@ -151,11 +151,12 @@ max_tokens = 2000
 
 # Director's cuts (skip timelines picked by a model) need an explicit alias here — there is no
 # default, and without this table every cuts route reports "not configured". Quality matters:
-# pick the alias with the best score from the offline test set (ai-backend/scripts/cut_bench.py).
+# pick the alias with the best score from the offline test set (ai-backend/scripts/cut_bench.py,
+# scores recorded in ai-backend/fixtures/cuts/).
 # [llm.cuts]
 # model = "worker"                 # the alias as the provider serves it
 # provider = "local"               # optional
-# fallback = ["openrouter:openai/gpt-4o-mini"]
+# fallback = ["fast-instruct"]     # optional: tried when the primary stays busy/unavailable
 # reasoning_effort = "none"
 # max_tokens = 2500
 

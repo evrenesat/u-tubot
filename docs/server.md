@@ -75,7 +75,7 @@ published in `/setup.json` and in APK download links), `users_file` (default `da
 summary; when absent the glance uses `[llm.summary]` with `reasoning_effort = "none"`, and when present `reasoning_effort` defaults
 to `"none"` and `max_tokens` to 160. `[llm.cuts]` (optional) is the model that builds director's cuts — an explicit alias, no
 default; without the table every cuts route reports "not configured". Pick it with the offline test set
-(`uv run python scripts/cut_bench.py --list`, [Director's cuts](#directors-cuts)). See [llm-providers.md](llm-providers.md).
+(`uv run python scripts/cut_bench.py`, [Director's cuts](#directors-cuts)). See [llm-providers.md](llm-providers.md).
 
 **`[assess]`**: `batch_size` (titles per triage call), `coalesce_ms`, `max_videos_per_request`, `wait_ms_cap`, `default_wait_ms`,
 `background_concurrency`, `tier2_daily_cap_per_user` (transcript-based deep analyses per user per UTC day, default `30`),
@@ -426,9 +426,12 @@ or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#direct
 feature stays off until an alias is named. Score the available aliases offline against the
 test set (5 hand-marked transcripts × 3 requests, must-keep/must-skip spans, no network):
 
-    cd ai-backend && uv run python scripts/cut_bench.py --list   # aliases found in the config
-    uv run python scripts/cut_bench.py --model <alias>           # score one alias
-    uv run python scripts/cut_bench.py                           # score all, pick the best
+    cd ai-backend && uv run python scripts/cut_bench.py --list --base-url http://gateway:8787/v1
+    uv run python scripts/cut_bench.py --model <alias> --base-url ... --api-key-env KEY_ENV
+    uv run python scripts/cut_bench.py                           # every alias the endpoint serves
+
+The key is read from the named environment variable and never logged. Past measurements live in
+`ai-backend/fixtures/cuts/` (the 2026-11-20 pick: `fast`, with `fast-instruct` as fallback).
 
 ## Reverse proxy and TLS
 

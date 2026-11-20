@@ -1,5 +1,26 @@
 # DEVLOG
 
+## 2026-11-20 (director's cuts checkpoint 1: engine, phone pages, test set)
+
+- Director's cuts backend (issue 36 / EVR-156): `cuts.py` cut engine (units, model answer
+  validation with one repair round, padding/merge/drop, 10%/95% guards, per-user build cap,
+  shared cache key), `cut_requests`/`cuts` tables, the routes behind `current_user`, the public
+  `GET /cuts/{id}` QR redirect, and cuts job report rows. Cuts run as their own async tasks; the
+  caption worker never claims a cuts job and its cancel/retry paths refuse them (a cut is
+  retried or dismissed from its cut sheet).
+- The phone pages: the Cuts tab (queue with thumbnails from the video id, states, parts list,
+  retry/dismiss) and the cut sheet (`#/cuts/{id}`) with preset chips, the description box and
+  the build stages. The web UI demo seeds a real build plus canned waiting/building/failed
+  requests; demo fresh videos report a meta length that matches their short transcript so the
+  keep guard measures the real thing. `scripts/webui_cuts_check.cjs` walks the whole life
+  through the UI (22 checks) and blocks i.ytimg.com so the check never contacts YouTube.
+- The offline test set (`utubot/cutbench.py`, five hand-marked transcripts x three requests,
+  invented content) and `scripts/cut_bench.py` (score aliases against an OpenAI-compatible
+  endpoint; one call per request, repair round included). Scores cover keep coverage, must-skip
+  leaks and an excess-keeping budget (a "just the answer" cut that keeps half the video is a bad
+  cut even when nothing marked leaked). Results: `fixtures/cuts/scores-2026-11-20.json`.
+- Contract addendum (`ai/CONTRACT.md`, Director's cuts) and docs/server.md section.
+
 ## 2026-11-13 (delivery pipeline hardening, issue 17)
 
 - `utubot app sync-github` now cross-checks each downloaded APK's own `AndroidManifest.xml` (`utubot/apkmanifest.py`, a small binary
