@@ -2,6 +2,14 @@
 
 ## 2026-11-20 (director's cuts checkpoint 1: engine, phone pages, test set)
 
+- Browser-check hygiene (the p100 crash of 2026-11-19 was ~9 orphaned headless Chromium
+  processes from killed `webui_cuts_check.cjs` runs filling root's task limit): both browser
+  scripts (`scripts/webui_cuts_check.cjs`, `docs/screenshots/webui/capture.cjs`) now close the
+  browser in a `finally`, turn SIGTERM/SIGINT into a browser-closing exit, cap every Playwright
+  wait at 10 s, and budget the whole run below the shell timeout (`BROWSER_BUDGET_MS`, default
+  90 s — run the shell with a longer timeout). The check also resets the demo's cut knobs at the
+  start and builds on per-run video ids, so a rerun after a killed run hits neither the demo's
+  cached video metadata nor the shared cut cache of that killed run.
 - Director's cuts backend (issue 36 / EVR-156): `cuts.py` cut engine (units, model answer
   validation with one repair round, padding/merge/drop, 10%/95% guards, per-user build cap,
   shared cache key), `cut_requests`/`cuts` tables, the routes behind `current_user`, the public

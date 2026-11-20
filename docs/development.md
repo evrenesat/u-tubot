@@ -66,6 +66,11 @@ without a real LLM or YouTube, run `uv run python tests/webui_demo.py temp/webui
 its first output line) and, for the screenshots in `docs/screenshots/webui/`,
 `NODE_PATH=<dir with playwright> node docs/screenshots/webui/capture.cjs http://127.0.0.1:8791 docs/screenshots/webui`
 (Playwright with Chromium; the script also fails on console errors and sideways scrolling at 360 px).
+Both browser scripts stop themselves: the whole run is budgeted below the shell timeout
+(`BROWSER_BUDGET_MS`, default 90 s — give the shell a longer timeout), and SIGTERM/SIGINT close the
+browser before exiting, so a killed run never leaves an orphaned headless Chromium behind.
+`scripts/webui_cuts_check.cjs` (the director's-cuts check) also resets the demo's cut knobs at the
+start and builds on per-run video ids, so it can be rerun after a killed run without a fresh demo.
 
 ## Android app
 
