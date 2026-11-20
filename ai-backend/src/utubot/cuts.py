@@ -881,7 +881,12 @@ class CutService:
                 ],
             )
             leader.set_result(doc)
-        except BaseException as exc:
+        except Exception as exc:
+            # A cancellation (the leader was dismissed) must NOT land on the future as an
+            # exception: `set_exception(CancelledError())` finishes it without cancelling it,
+            # and a waiting request would then re-raise and stay `building` forever. A
+            # CancelledError reaches `finally` instead, which cancels the future and frees
+            # the waiters to build the cut themselves.
             if not leader.done():
                 leader.set_exception(exc)  # a waiter fails with the same reason
             raise

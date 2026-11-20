@@ -140,9 +140,45 @@ class TestCreateAndBuild:
         partner = httpx_client(cuts_env, OTHER_TOKEN)
         second = await partner.post(f"/v1/videos/{VID}/cuts", json={"preset": "cut-demo"})
         rid = second.json()["request_id"]
-        await cuts_env.client.delete(f"/v1/cut-requests/{first['request_id']}")
-        r = await partner.get(f"/v1/cuts/{rid}", params={"wait_ms": 5000})
+
+        def model_events(request_id: str) -> list[dict]:
+            job = cuts_env.svc.cuts._row(request_id)["job_id"]
+            return cuts_env.svc.jobs.events.list(job)
+
+        def shared_build_event(request_id: str) -> dict | None:
+            return next(
+                (
+                    e
+                    for e in model_events(request_id)
+                    if e["stage"] == "model"
+                    and e["status"] == "skipped"
+                    and e["detail"].get("reason") == "shared build"
+                ),
+                None,
+            )
+
+        # Which request ends up the waiter depends on timing, so wait until one of them has
+        # really joined the other's in-flight build, then dismiss the leader (the other one).
+        deadline = time.monotonic() + 5.0
+        waiter = None
+        while time.monotonic() < deadline:
+            waiter = next(
+                (r for r in (first["request_id"], rid) if shared_build_event(r) is not None),
+                None,
+            )
+            if waiter is not None:
+                break
+            await asyncio.sleep(0.02)
+        assert waiter is not None, "the second request never joined the leader's build"
+        leader = rid if waiter == first["request_id"] else first["request_id"]
+        # Each request answers only to its own user, so dismiss and read through their clients.
+        owner_of = {first["request_id"]: cuts_env.client, rid: partner}
+        await owner_of[leader].delete(f"/v1/cut-requests/{leader}")
+        r = await owner_of[waiter].get(f"/v1/cuts/{waiter}", params={"wait_ms": 5000})
         assert r.json()["state"] == "ready"
+        # The leader's model call was cancelled inside the mock's delay, so only the
+        # rebuild produced an answer.
+        assert len(cuts_env.llm.cut_calls) == 1
 
     async def test_presets_state_moves_none_to_ready(self, cuts_env):
         set_transcript(cuts_env.fetcher)
