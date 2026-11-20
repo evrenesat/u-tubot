@@ -1,5 +1,24 @@
 # u·tubot devlog
 
+## 2026-11-20 (director's cuts on the TV, checkpoint 2)
+
+- The video menu gains "Director's cut…": the picker of the cut presets with their state (ready shows "kept of total", again = off),
+  a build request for a `none` preset, and "Describe on phone…" — a waiting request whose short address (`<backend>/cuts/<id>`) shows
+  as a QR sheet (`UtubotCutQrView`) over the playing video, made on the device; Back takes it away, the video is not paused. The
+  modern video-menu dialog cannot render QR categories (only the settings dialogs can), which is why the sheet is its own view.
+- While playing (`UtubotCutController`, next to `SponsorBlockController` in `PlaybackPresenter`, gated by `isBuiltIn()`): when a video
+  opens, `UtubotCutFollower` checks its cuts once (a ready cut is announced) and long-polls a waiting or building request (10 s polls,
+  30 min cap, 5 errors) until it is ready, then the cut applies from the current position. A cut of another video length (±2 s) is not
+  applied. Skips run through `UtubotCutSkipper`: only a crossing the playback made by itself skips (a seek of the user wins and
+  plays), and the jump extends past sponsor segments set to skip that overlap or touch the destination (`SponsorBlockController.
+  getActiveSegments()`), so the sponsor block's watcher finds nothing to jump at where the cut lands — one jump, not two. Every skip
+  shows a transparent "Skipped 1:20" dialog with a Back for 5 s. The skipped parts are dimmed on the seek bar: the sponsor block's
+  writes go through `UtubotCutSeekBar` now (its reset keeps a cut of the same video, its own markers are laid next to the cut's;
+  without a cut it behaves exactly as before).
+- The emulator check runs the real controllers against the mock backend's new cuts routes (`CutsHarnessActivity`; the mock's builds are
+  ready after `--cuts-delay`, `/__mock/cuts` sets a ready cut, the cut document skips 25–45 % and 70–85 % of the video).
+  Unit tests: `UtubotCutSkipperTest`, `UtubotCutFollowerTest`, `UtubotCutSeekBarTest`, `UtubotCutsParserTest`, `UtubotCutsClientTest`.
+
 ## 2026-11-13 (tests and agents never hit YouTube, issue 35)
 
 - Owner rule made enforceable end to end (backend work, see `ai-backend/DEVLOG.md`): recorded/replayed YouTube fixtures

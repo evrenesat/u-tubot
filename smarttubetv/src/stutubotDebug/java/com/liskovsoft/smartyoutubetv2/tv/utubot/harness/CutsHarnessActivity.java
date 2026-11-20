@@ -199,6 +199,7 @@ public class CutsHarnessActivity extends Activity {
 
         for (PlayerEventListener controller : controllers) {
             if (controller != null) {
+                controller.onInit();
                 controller.onNewVideo(mVideo);
                 controller.onEngineInitialized();
                 controller.onVideoLoaded(mVideo);

@@ -36,7 +36,9 @@ so the other flavors behave as before.
 | `app/models/data/VideoGroup.java` | `isHiddenByUtubot` in the add-filter chain | hides or marks a card from the cached verdict |
 | `misc/HiddenVideoResolver.java` | `UtubotManager.resolve(...)` zipped into the existing resolve | one assess call per row emission, bounded by wait_ms and a hard timeout; failures show the videos unfiltered. It emits on the main thread: the rows are shown from what the resolver emits, so a background thread here changed the grids' adapters off the UI thread (empty Modern screen) |
 | `app/presenters/SplashPresenter.java` | `UtubotPairing.promptIfNeeded` | first-launch pairing dialog when no token |
-| `app/presenters/dialogs/menu/VideoMenuPresenter.java` | `UtubotMenu.append` (two places) | AI answer, Summary panel toggle, Prepare HQ captions |
+| `app/presenters/dialogs/menu/VideoMenuPresenter.java` | `UtubotMenu.append` (two places) | AI answer, Summary panel toggle, Prepare HQ captions, Director's cut |
+| `app/presenters/PlaybackPresenter.java` | `UtubotCutController` registered after `SponsorBlockController`, gated by `UtubotSettings.isBuiltIn()` | the director's cut of the video that plays: a player controller like the sponsor block's |
+| `app/models/playback/controllers/SponsorBlockController.java` | `onNewVideo` wipes through `UtubotCutSeekBar.wipe` and its own seek-bar segments go through `UtubotCutSeekBar.setSponsor`; `getActiveSegments()` exposes the segments of the video that plays | the cut's dimmed skips stay on the seek bar (its reset for a new video keeps a cut of the same video, its own markers are laid next to the cut's), and the cut's jump goes past the sponsor segments that would jump after it: one jump, not two. Without a cut both writes behave exactly as before |
 | `misc/AppDataSourceManager.java` | Settings entry "u·tubot", with its own tile icon `R.drawable.settings_utubot` | settings screen; Content filtering keeps `settings_aislist` |
 | `common/src/main/res/drawable-nodpi/settings_utubot.png` | new: the symbol, white on transparent, 302x302 with the canvas and padding of `settings_about.png`; `assets/brand/render.py` draws it from `utubot-symbol-mono.svg` | tile of the u·tubot Settings entry |
 | `utils/SimpleEditDialog.java` | `showNumber` | numeric pairing code dialog |
@@ -133,6 +135,25 @@ so the other flavors behave as before.
   `UtubotSettings.setUrl` or `setToken` changes a value (applySetup, Advanced, pairing all go through them), and the prompt list
   also when a prompt is made default, imported or refreshed. A request in flight during a switch is not stored
   (`UtubotManager.isCurrent`). Clearing the backend in Advanced also removes the stored update address.
+- Director's cuts (checkpoint 2). The video menu gains "Director's cut…" (`UtubotMenu`): the picker lists the cut presets with their
+  state for the video (`GET /v1/videos/{id}/cuts` — ready "12:40 of 18:05", building, waiting, needs transcript, failed, none), a ready
+  row applies its cut (again = takes it off), a `none` row asks for the build (`POST {preset}`, then the request is followed), and the
+  last row "Describe on phone…" creates a waiting request (`POST {await_prompt:true}`) and shows `UtubotCutQrView`: a dimming sheet
+  over the playing video with the request's short address (`<backend>/cuts/<id>`) as a QR code (made on the device, `QrCodeEncoder`)
+  and in text. The video is not paused; Back (any key) takes the sheet away. Without a model on the backend the picker says so.
+- Director's cuts, while playing (`UtubotCutController`, a playback controller next to `SponsorBlockController`). When a video opens it
+  checks once where its cuts stand (`UtubotCutFollower`, like the captions follower): a ready cut is announced ("Director's cut ready:
+  No filler, 12:40"); a waiting or building request for the video is long-polled (`GET /v1/cuts/{id}?wait_ms=10000`, at most 30 min, 5
+  errors in a row) and applied from the current position when it becomes ready. A cut applies only to a video of its own length (±2 s,
+  `cut.duration_ms` against the player's). While a cut is on, its dropped ranges are skipped with the sponsor-skip machinery:
+  `UtubotCutSkipper` skips a drop when the playback crosses into its start by itself (a seek of the user wins and plays, backwards
+  moves too), the jump goes past every sponsor segment set to skip that overlaps or touches the destination (`SponsorBlockController.
+  getActiveSegments`, the same 3 s grouping the sponsor block uses itself), so there is one jump, not two. Each skip shows a
+  transparent dialog "Skipped 1:20" with a Back that returns to the skipped part for 5 s; nothing extra while another dialog is up.
+  The skipped parts are dimmed on the seek bar (`UtubotCutSeekBar`, see the SponsorBlockController row above). Picking the applied cut
+  in the picker again turns it off; a video change or an engine reset clears it (an engine re-init re-applies the cut of the same
+  video). The skip rules live in `UtubotCutSkipper` (unit-tested); the emulator check (`CutsHarnessActivity`) plays a local MP4
+  against the mock backend (docs/development.md, "Checking the director's cuts").
 - With the Summary view open the focus never rests on the screen under it: the first D-pad key, OK or Enter after the grid took
   the focus back restores the view's focus and is used (`UtubotKeys.actsOnFocus`).
 
@@ -183,6 +204,13 @@ No test or check of this layer may contact YouTube. Debug builds of the flavor c
 not in release builds): it plays a media file through the real `ExoPlayerController`, `TrackSelectorManager` and subtitle view, with the
 video id of your choice, so the captions of the mock backend can be checked on an emulator. `docs/development.md` ("Checking the HQ
 captions") has the recipe, including the network namespace that keeps the emulator away from the internet.
+
+## Checking the director's cuts without YouTube
+
+`CutsHarnessActivity` (same debug-only folder) plays a media file through the real engine AND the real playback controllers: the
+`PlaybackPresenter`'s `UtubotCutController` (and `SponsorBlockController`) get the video events, a cut request is created the way the
+menu does it (`--es request_preset`, or `--ez await_prompt true` for the QR sheet), and the mock backend's cuts routes stand in for the
+server. The recipe, with the keyevents of a seek and the log lines a check reads: docs/development.md, "Checking the director's cuts".
 
 ## End-to-end test without a device
 
