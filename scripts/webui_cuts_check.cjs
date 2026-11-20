@@ -57,6 +57,10 @@ function currentRequest(page, ctx) {
     hasTouch: true,
     isMobile: true,
   });
+  // Owner rule: the check never contacts YouTube. Card thumbnails come from i.ytimg.com; the
+  // browser must fail them locally instead of loading them (the demo has no network anyway).
+  const blockYouTubeThumbs = (ctx2) => ctx2.route("**://i.ytimg.com/**", (route) => route.abort());
+  blockYouTubeThumbs(ctx);
   const page = await ctx.newPage();
   page.on("console", (m) => {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) problems.push("console: " + m.text());
@@ -128,13 +132,19 @@ function currentRequest(page, ctx) {
   ok(await page.getByRole("button", { name: "Try again" }).isVisible(), "failed sheet offers Retry");
   await page.evaluate(() => fetch("/demo/cut/good", { method: "POST" }));
 
-  // Queue order: failed, ready; dismiss works from the sheet and the card.
+  // Queue order per the plan: waiting, building, ready, failed. The ready card from the first
+  // build must come before the failed one, and dismissing works from the card.
   await go(page, "cuts", 800);
   const states = await page.locator(".cut .pill").allTextContents();
-  ok(states[0] === "failed" && states.includes("ready"), "queue order failed-first: " + states.join(", "));
+  ok(states[0] === "ready" && states.includes("failed"), "ready before failed: " + states.join(", "));
+  ok(
+    states.indexOf("ready") < states.indexOf("failed"),
+    "the queue order is waiting, building, ready, failed",
+  );
   const bodyText = await page.locator("#view").textContent();
   ok(bodyText.includes("from the phone") || bodyText.includes("from Web UI"), "cards show their source");
-  await page.locator(".cut").first().getByRole("button", { name: "Dismiss" }).click();
+  const failedCard = page.locator(".cut").filter({ has: page.locator(".pill.bad") }).first();
+  await failedCard.getByRole("button", { name: "Dismiss" }).click();
   await page.waitForTimeout(900);
   ok(!(await page.locator("#view").textContent()).includes("failed"), "the dismissed card is gone");
 
@@ -148,6 +158,7 @@ function currentRequest(page, ctx) {
 
   // No sideways scrolling at 360 px.
   const narrow = await browser.newContext({ viewport: { width: 360, height: 740 } });
+  blockYouTubeThumbs(narrow);
   const npage = await narrow.newPage();
   npage.on("pageerror", (e) => problems.push("pageerror(narrow): " + e.message));
   await npage.goto(base + "/");

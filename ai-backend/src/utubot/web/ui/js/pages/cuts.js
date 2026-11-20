@@ -277,7 +277,7 @@ async function sheet(view, requestId) {
     await loadPresets(req.video_id);
     const kids = [
       h("a", { class: "back back-icon", href: "#/cuts" }, icon("back"), h("span", { text: "Cuts" })),
-      h("h1", { class: "page-title", text: req.title || "Director's cut" }),
+      h("h1", { class: "page-title", text: req.title || "Looking up the video…" }),
     ];
     const head = h(
       "div",

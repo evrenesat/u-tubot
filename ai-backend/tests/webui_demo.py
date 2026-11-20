@@ -84,7 +84,7 @@ class DemoLLM(MockOpenAI):
             return json.dumps(
                 {
                     "parts": [
-                        {"from": 1, "to": 3, "label": "The change"},
+                        {"from": 2, "to": 3, "label": "The change"},
                         {"from": 5, "to": 6, "label": "What to expect"},
                     ],
                     "summary": "The per-device channel scheduling and its effects.",
@@ -138,6 +138,10 @@ def build(data: Path):
     fetcher.segments = [
         (i * 20.0, i * 20.0 + 18, line[8:]) for i, line in enumerate(TRANSCRIPT_LINES)
     ]
+    # The demo's fresh videos report the length of that short transcript, so a cut's keep
+    # guard measures against the real thing (a 900 s meta with a 2 min transcript would
+    # refuse every cut as "removes almost everything").
+    fetcher.meta_extra = {"duration_s": 120}
 
     async def never_downloads(video_id, out_dir, started=None):
         await asyncio.sleep(3600)
