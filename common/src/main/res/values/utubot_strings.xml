@@ -110,4 +110,24 @@
     <string name="utubot_dont_ask_desc">You can still use Settings → u·tubot</string>
     <string name="utubot_pair_wrong_code">the code is wrong, used or expired</string>
     <string name="utubot_pair_failed">Pairing failed: %s</string>
+    <string name="utubot_cut">Director\'s cut</string>
+    <string name="utubot_cut_menu">Director\'s cut…</string>
+    <string name="utubot_cut_ready">Director\'s cut ready: %1$s%2$s</string>
+    <string name="utubot_cut_ready_length">, %s</string>
+    <string name="utubot_cut_skipped">Skipped %s</string>
+    <string name="utubot_cut_back">Back</string>
+    <string name="utubot_cut_other_length">This cut was built for a different length of the video</string>
+    <string name="utubot_cut_describe_on_phone">Describe on phone…</string>
+    <string name="utubot_cut_describe_hint">Scan this with your phone, or open the address on it, and describe the cut there. The video keeps playing.</string>
+    <string name="utubot_cut_describe_failed">The phone sheet could not be prepared: %s</string>
+    <string name="utubot_cut_state_none">Build this cut</string>
+    <string name="utubot_cut_state_waiting">Waiting for your description on the phone</string>
+    <string name="utubot_cut_state_building">Building…</string>
+    <string name="utubot_cut_state_needs_transcript">Needs a transcript</string>
+    <string name="utubot_cut_state_ready_length">%1$s of %2$s</string>
+    <string name="utubot_cut_state_ready_on">%s (on)</string>
+    <string name="utubot_cut_state_failed">Failed: %s</string>
+    <string name="utubot_cut_not_configured">The server has no model for cuts</string>
+    <string name="utubot_cut_loading">Loading the cuts…</string>
+    <string name="utubot_cut_failed">Director\'s cut failed: %s</string>
 </resources>

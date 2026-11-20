@@ -279,5 +279,102 @@ public final class UtubotModels {
         public boolean assess;
         public boolean insight;
         public boolean captions;
+        public boolean cuts;
     }
+
+    //region Director's cuts
+
+    /** The state of a preset for a video (the picker) and of a request (the queue and the follower) */
+    public static final class CutState {
+        public static final String NONE = "none";
+        public static final String WAITING = "waiting";
+        public static final String BUILDING = "building";
+        public static final String NEEDS_TRANSCRIPT = "needs_transcript";
+        public static final String READY = "ready";
+        public static final String FAILED = "failed";
+
+        private CutState() {
+        }
+    }
+
+    /** A kept part of a cut, for display */
+    public static final class CutPart {
+        public String label;
+        public long startMs;
+        public long endMs;
+    }
+
+    /**
+     * A cut the backend built: the parts to keep and, the other way round, the ranges the TV skips. Every time is a millisecond of
+     * the video the cut was built for (see ai/CONTRACT.md).
+     */
+    public static final class Cut {
+        public String videoId;
+        /** The length the cut was built for; the TV does not apply it to a video of another length */
+        public long durationMs = UNKNOWN;
+        public String label;
+        public String summary;
+        public List<CutPart> parts = Collections.emptyList();
+        /** The sorted, non-overlapping complement of {@link #parts}: [from, to] pairs */
+        public List<long[]> skipRangesMs = Collections.emptyList();
+        public long keptMs = UNKNOWN;
+        public String transcriptHash;
+        public String presetId;
+        public String model;
+        public String builtAt;
+    }
+
+    /** A row of the cut picker (`GET /v1/videos/{id}/cuts`): a preset and where its cut for this video stands */
+    public static final class CutPreset {
+        public String id;
+        public String label;
+        public String state = CutState.NONE;
+        @Nullable public String requestId;
+        @Nullable public String error;
+        @Nullable public Cut cut;
+
+        public boolean isReady() {
+            return CutState.READY.equals(state) && cut != null;
+        }
+    }
+
+    public static final class CutList {
+        public boolean configured;
+        public List<CutPreset> presets = Collections.emptyList();
+    }
+
+    /** A cut request (`GET /v1/cuts/{id}`): what the phone queue shows and the TV long-polls */
+    public static final class CutRequest {
+        public String id;
+        public String videoId;
+        public String state = CutState.WAITING;
+        public String source;
+        public String presetId;
+        public String prompt;
+        public String error;
+        public String title;
+        public String channel;
+        public long durationSec = UNKNOWN;
+        /** Where a building request stands: transcript, model or checking */
+        public String stage;
+        @Nullable public Cut cut;
+
+        public boolean isWaiting() {
+            return CutState.WAITING.equals(state);
+        }
+
+        public boolean isBuilding() {
+            return CutState.BUILDING.equals(state) || CutState.NEEDS_TRANSCRIPT.equals(state);
+        }
+
+        public boolean isDone() {
+            return CutState.READY.equals(state) || CutState.FAILED.equals(state) || "dismissed".equals(state);
+        }
+
+        public boolean isReady() {
+            return CutState.READY.equals(state) && cut != null;
+        }
+    }
+
+    //endregion
 }

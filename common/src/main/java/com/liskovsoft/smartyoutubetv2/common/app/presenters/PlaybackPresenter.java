@@ -32,6 +32,8 @@ import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils.ChainProcessor;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils.Processor;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutController;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.googlecommon.common.helpers.ServiceHelper;
 
 import java.lang.ref.WeakReference;
@@ -66,6 +68,9 @@ public class PlaybackPresenter extends BasePresenter<PlaybackView> implements Pl
         mEventListeners.add(new PlayerUIController());
         mEventListeners.add(new RemoteController(context));
         mEventListeners.add(new SponsorBlockController());
+        if (UtubotSettings.isBuiltIn()) {
+            mEventListeners.add(new UtubotCutController());
+        }
         mEventListeners.add(new CensoredWordsController());
         mEventListeners.add(new AutoFrameRateController());
         mEventListeners.add(new HQDialogController());

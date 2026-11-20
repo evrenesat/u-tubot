@@ -12,6 +12,9 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.data.BrowseSection;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.VideoGroup;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Captions;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Summary;
@@ -63,6 +66,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     private String mSessionPrompt;
     private PromptList mPrompts;
     private UtubotCaptionsFollower mCaptionsFollower;
+    private UtubotCutFollower mCutsFollower;
 
     private UtubotManager(Context context) {
         mContext = context.getApplicationContext();
@@ -101,15 +105,21 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
         }
 
         UtubotCaptionsFollower follower;
+        UtubotCutFollower cutsFollower;
 
         synchronized (this) {
             mPrompts = null;
             mSessionPrompt = null;
             follower = mCaptionsFollower;
+            cutsFollower = mCutsFollower;
         }
 
         if (follower != null) {
             follower.stop();
+        }
+
+        if (cutsFollower != null) {
+            cutsFollower.stop();
         }
     }
 
@@ -539,6 +549,114 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
     public Observable<String> prepareCaptionsObserve(String videoId) {
         return Observable.fromCallable(() -> newClient().prepareCaptions(videoId)).subscribeOn(Schedulers.io());
+    }
+
+    //endregion
+
+    //region Director's cuts
+
+    /**
+     * The video starts to play: where its cuts stand, and which request to follow while it waits or builds (see
+     * {@link UtubotCutFollower})
+     */
+    public void followCuts(String videoId, UtubotCutFollower.Listener listener) {
+        if (!mSettings.isConfigured() || videoId == null) {
+            return;
+        }
+
+        cutsFollower().follow(videoId, listener);
+    }
+
+    public void stopFollowingCuts(UtubotCutFollower.Listener listener) {
+        UtubotCutFollower follower;
+
+        synchronized (this) {
+            follower = mCutsFollower;
+        }
+
+        if (follower != null) {
+            follower.stop(listener);
+        }
+    }
+
+    /**
+     * The user asked for a cut of the video that plays (the menu) and the backend answered with this request
+     */
+    public void cutRequested(String videoId, @Nullable String requestId, @Nullable String state) {
+        if (!mSettings.isConfigured() || videoId == null) {
+            return;
+        }
+
+        cutsFollower().requested(videoId, requestId, state);
+    }
+
+    private synchronized UtubotCutFollower cutsFollower() {
+        if (mCutsFollower == null) {
+            mCutsFollower = new UtubotCutFollower(UtubotScheduler.mainThread(), new UtubotCutFollower.Fetcher() {
+                @Override
+                public void fetchCuts(String videoId, UtubotCutFollower.CutsCallback callback) {
+                    UtubotClient client = newClient();
+
+                    Observable.<CutList>fromCallable(() -> client.cuts(videoId))
+                            .subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
+                            .subscribe(cuts -> {
+                                if (isCurrent(client)) {
+                                    callback.onResult(cuts);
+                                }
+                            }, error -> {
+                                Log.d(TAG, "No cuts of %s: %s", videoId, error.getMessage());
+                                callback.onError(error);
+                            });
+                }
+
+                @Override
+                public void fetchRequest(String requestId, int waitMs, UtubotCutFollower.RequestCallback callback) {
+                    UtubotClient client = newClient();
+
+                    Observable.<CutRequest>fromCallable(() -> client.cut(requestId, waitMs))
+                            .subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
+                            .subscribe(request -> {
+                                if (isCurrent(client)) {
+                                    callback.onResult(request);
+                                }
+                            }, error -> {
+                                Log.d(TAG, "No cut request %s: %s", requestId, error.getMessage());
+                                callback.onError(error);
+                            });
+                }
+            }, System::currentTimeMillis);
+        }
+
+        return mCutsFollower;
+    }
+
+    /**
+     * The presets of a video and where their cuts stand, for the picker. Cancelled with the dialog.
+     */
+    public Observable<CutList> cutsObserve(String videoId) {
+        return cancellable(client -> client.cuts(videoId));
+    }
+
+    /**
+     * Asks for a cut: a preset, a typed prompt, or a waiting request the phone fills
+     */
+    public Observable<CutRequest> requestCutObserve(String videoId, @Nullable String presetId, @Nullable String prompt,
+                                                    boolean awaitPrompt, @Nullable VideoMeta meta) {
+        return cancellable(client -> client.requestCut(videoId, presetId, prompt, awaitPrompt, meta));
+    }
+
+    /**
+     * Where one cut request stands, once (the picker opened again)
+     */
+    public Observable<CutRequest> cutObserve(String requestId, int waitMs) {
+        return cancellable(client -> client.cut(requestId, waitMs));
+    }
+
+    /**
+     * The address a phone opens straight to a request's cut sheet
+     */
+    public String cutRequestUrl(String requestId) {
+        return newClient().cutRequestUrl(requestId);
     }
 
     //endregion

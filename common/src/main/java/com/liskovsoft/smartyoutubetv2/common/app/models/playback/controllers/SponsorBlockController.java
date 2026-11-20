@@ -19,6 +19,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.settings.SponsorBlockSettingsPresenter;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SponsorBlockData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutSeekBar;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 import com.liskovsoft.youtubeapi.service.YouTubeServiceManager;
@@ -93,7 +94,7 @@ public class SponsorBlockController extends BasePlayerController {
             mToggledVideoId = null;
         }
         if (getPlayer() != null) {
-            getPlayer().setSeekBarSegments(null); // reset colors
+            UtubotCutSeekBar.wipe(getPlayer(), item); // reset colors, keep a director's cut of the same video
         }
     }
 
@@ -213,7 +214,7 @@ public class SponsorBlockController extends BasePlayerController {
         mActiveSegments = new ArrayList<>(segments);
 
         if (getSponsorBlockData().isColorMarkersEnabled()) {
-            getPlayer().setSeekBarSegments(toSeekBarSegments(segments));
+            UtubotCutSeekBar.setSponsor(getPlayer(), toSeekBarSegments(segments));
         }
         if (getSponsorBlockData().isActionsEnabled()) {
             // Warn. Try to not access player object here.
@@ -232,6 +233,14 @@ public class SponsorBlockController extends BasePlayerController {
 
         // Reset previously found segment (fix no dialog popup)
         mLastSkipPosMs = 0;
+    }
+
+    /**
+     * The sponsor segments of the video that plays, for the layers that keep their skips to one jump with the sponsor block's (u·tubot
+     * director's cuts). Null while none are known.
+     */
+    public List<SponsorSegment> getActiveSegments() {
+        return mActiveSegments;
     }
 
     private void skipSegment(long interval) {
