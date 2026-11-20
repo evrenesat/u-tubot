@@ -22,6 +22,7 @@ log = logging.getLogger("utubot.jobs")
 ACTIVE = ("queued", "running")
 KIND_CAPTIONS = "captions"
 KIND_TRANSCRIPT = "transcript"
+KIND_CUTS = "cuts"
 LANG_AUTO = "auto"
 JOB_STATES = {
     "queued": "waiting",
@@ -350,6 +351,8 @@ class JobQueue:
         job = self.get(job_id)
         if job is None or job["user"] != user:
             raise JobRefused(404, "unknown job")
+        if job["kind"] == KIND_CUTS:
+            raise JobRefused(409, "a cut request is dismissed from its cut sheet, not here")
         if job["status"] != "queued":
             raise JobRefused(409, "only a waiting job can be cancelled")
         now = time.time()
@@ -378,6 +381,8 @@ class JobQueue:
         job = self.get(job_id)
         if job is None or job["user"] != user:
             raise JobRefused(404, "unknown job")
+        if job["kind"] == KIND_CUTS:
+            raise JobRefused(409, "a cut is retried from its cut sheet, not here")
         if job["status"] not in ("failed", "cancelled"):
             raise JobRefused(409, "only a failed or cancelled job can be retried")
         if job["kind"] == KIND_TRANSCRIPT:
@@ -460,13 +465,14 @@ class JobQueue:
     def _claim(self) -> dict[str, Any] | None:
         """Next queued job, interactive first; none while the media breaker is open (work waits).
 
-        A running `cuts` job does not hold its video back: cuts are not media work, and their
-        report row must not block the transcript job a cut is itself waiting for.
+        A `cuts` job is its own async task (the cut runner owns its row): the caption worker never
+        claims one, and a running cuts row does not hold its video's transcript job back either.
         """
         if not self.pipeline.gate.healthy(CLASS_MEDIA):
             return None
         row = self.db.one(
-            "SELECT * FROM jobs WHERE status='queued' AND (not_before IS NULL OR not_before<=?)"
+            "SELECT * FROM jobs WHERE status='queued' AND kind!='cuts'"
+            " AND (not_before IS NULL OR not_before<=?)"
             " AND NOT EXISTS"
             " (SELECT 1 FROM jobs r WHERE r.video_id=jobs.video_id AND r.status='running'"
             "  AND r.kind!='cuts')"

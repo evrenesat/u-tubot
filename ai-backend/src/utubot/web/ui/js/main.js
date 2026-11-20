@@ -3,6 +3,7 @@ import { h, icon, mount } from "./dom.js";
 import { errorText, failure, loading } from "./components.js";
 import * as account from "./pages/account.js";
 import * as admin from "./pages/admin.js";
+import * as cuts from "./pages/cuts.js";
 import * as devices from "./pages/devices.js";
 import * as filtering from "./pages/filtering.js";
 import * as home from "./pages/home.js";
@@ -19,6 +20,7 @@ import { applyTheme } from "./theme.js";
 // reached by links only and light up their `parent` in the bar.
 const ROUTES = [
   { path: "home", label: "Home", icon: "home", page: home, primary: true },
+  { path: "cuts", label: "Cuts", icon: "cuts", page: cuts, primary: true },
   { path: "models", label: "Models", icon: "models", page: models, primary: true },
   { path: "prompts", label: "Prompts", icon: "prompts", page: prompts, primary: true },
   { path: "filters", label: "Filters", icon: "filters", page: filtering, primary: true },

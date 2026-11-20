@@ -44,6 +44,7 @@ class JobReports:
         meta = self.transcripts.cached_meta(job["video_id"]) or {}
         state = JOB_STATES.get(job["status"], job["status"])
         owner = job["user"] == viewer
+        own_actions = job["kind"] != "cuts"  # a cut is retried or dismissed from its cut sheet
         return {
             "id": job_id,
             "kind": job["kind"],
@@ -59,8 +60,8 @@ class JobReports:
             "retry_after_s": self.jobs.retry_after(job, state),
             "detail_url": DETAIL_PAGE.format(job_id),
             "api_url": DETAIL_API.format(job_id),
-            "can_cancel": owner and job["status"] == "queued",
-            "can_retry": owner and job["status"] in ("failed", "cancelled"),
+            "can_cancel": owner and own_actions and job["status"] == "queued",
+            "can_retry": owner and own_actions and job["status"] in ("failed", "cancelled"),
             "inputs": self._inputs(job, meta, queued),
             "outputs": self._outputs(job),
             "delivery": self._delivery(log),
