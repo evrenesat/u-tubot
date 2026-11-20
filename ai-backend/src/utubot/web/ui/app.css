@@ -197,6 +197,18 @@ a.job-title { color: var(--text); text-decoration: none; border-bottom: 1px dott
 .menu-item { display: flex; align-items: center; gap: 14px; padding: 14px 16px; min-height: 64px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); text-decoration: none; }
 .menu-text { display: grid; }
 
+/* ---- cuts ---- */
+.cut { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.cut:last-child { border-bottom: none; padding-bottom: 0; }
+.cut:first-child { padding-top: 0; }
+.cut-head { display: grid; gap: 2px; min-width: 0; }
+.cut-title { overflow-wrap: anywhere; min-width: 0; font-weight: 600; color: var(--text); text-decoration: none; border-bottom: 1px dotted var(--muted); }
+.cut-text { min-width: 0; display: grid; gap: 2px; }
+.cut-text small { overflow-wrap: anywhere; }
+.thumb { width: 96px; height: 54px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); flex: none; align-self: start; }
+.parts li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.chip-btn { cursor: pointer; padding-right: 12px; font: inherit; color: var(--text); }
+
 .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.6; background: var(--surface2); border: 1px solid var(--border-strong); color: var(--muted); white-space: nowrap; }
 .pill.ok { color: var(--ok); border-color: var(--ok); }
 .pill.warn { color: var(--warn); border-color: var(--warn); }

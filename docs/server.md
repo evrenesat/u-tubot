@@ -73,7 +73,9 @@ published in `/setup.json` and in APK download links), `users_file` (default `da
 `reserved_interactive`, `json_mode`; per-task tables `[llm.triage]`, `[llm.summary]`, `[llm.glance]` (optional), `[llm.answer]`, `[llm.analysis]`, `[llm.captions]`, each with
 `model`, optional `provider`, `fallback`, `reasoning_effort`, `max_tokens`, `temperature`. `[llm.glance]` runs the short side-panel
 summary; when absent the glance uses `[llm.summary]` with `reasoning_effort = "none"`, and when present `reasoning_effort` defaults
-to `"none"` and `max_tokens` to 160. See [llm-providers.md](llm-providers.md).
+to `"none"` and `max_tokens` to 160. `[llm.cuts]` (optional) is the model that builds director's cuts — an explicit alias, no
+default; without the table every cuts route reports "not configured". Pick it with the offline test set
+(`uv run python scripts/cut_bench.py`, [Director's cuts](#directors-cuts)). See [llm-providers.md](llm-providers.md).
 
 **`[assess]`**: `batch_size` (titles per triage call), `coalesce_ms`, `max_videos_per_request`, `wait_ms_cap`, `default_wait_ms`,
 `background_concurrency`, `tier2_daily_cap_per_user` (transcript-based deep analyses per user per UTC day, default `30`),
@@ -393,6 +395,43 @@ Batches of the title triage are shared only between users with the same topics a
 `auto_transcribe_max_minutes` itself (a request that finds no captions starts the transcription, see
 [captions.md](captions.md#transcripts-for-videos-without-captions)); the TV reads the other settings (and `settings_version` from
 `GET /v1/me`) in a later app release.
+
+## Director's cuts
+
+A director's cut is a model-picked list of the parts of a video worth keeping; the TV app skips
+the rest with its sponsor-skip engine, and the phone can judge a cut from its parts list before
+the TV plays it. Requests start on the TV ("Director's cut…" in the video menu, or "Describe on
+phone…" which shows a QR code) or on the phone (the Cuts tab, paste a link, pick a preset chip
+or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#directors-cuts-addendum-2026-11-20).
+
+- Requests are rows in `cut_requests` (`waiting` → `building`/`needs_transcript` → `ready`/
+  `failed`, or `dismissed`); the phone queue is `GET /v1/cut-requests`, the TV long-polls
+  `GET /v1/cuts/{id}`. The QR target `GET /cuts/{id}` redirects into the web UI's cut sheet.
+- Builds are their own async tasks (never the caption worker's queue) with a per-user cap
+  (`[cuts] max_active_per_user`). A missing timed transcript queues a transcript job and the
+  build shows `needs_transcript` until it lands (10 min, then it fails with a plain reason).
+- The engine merges caption fragments into numbered sentence-like units (`[cuts]`
+  `unit_max_pause_s`/`unit_max_s`), sends them with title, chapters and duration to the
+  `[llm.cuts]` model, and validates its kept unit ranges: one repair round, then padding
+  (`pad_before_s`/`pad_after_s`), gap merging (`merge_gap_s`), short-part dropping
+  (`min_part_s`), and the keep guards (`min_keep_frac`/`max_keep_frac`: "would remove almost
+  everything" and "nothing to cut" are refused, not applied). One finished cut is shared per
+  (video, preset or prompt, model, transcript) cache key, so a second identical request is
+  instant; a changed transcript invalidates it.
+- The stages of a build are in its job report (kind `cuts`): `transcript` → `model` →
+  `checking`, with the model's raw answer trimmed into the row. Cut jobs never appear in the
+  caption worker's cancel/retry paths — a cut is retried or dismissed from its cut sheet.
+
+**Choosing the model**: `[llm.cuts]` has no default on purpose — quality matters and the
+feature stays off until an alias is named. Score the available aliases offline against the
+test set (5 hand-marked transcripts × 3 requests, must-keep/must-skip spans, no network):
+
+    cd ai-backend && uv run python scripts/cut_bench.py --list --base-url http://gateway:8787/v1
+    uv run python scripts/cut_bench.py --model <alias> --base-url ... --api-key-env KEY_ENV
+    uv run python scripts/cut_bench.py                           # every alias the endpoint serves
+
+The key is read from the named environment variable and never logged. Past measurements live in
+`ai-backend/fixtures/cuts/` (the 2026-11-20 pick: `fast`, with `fast-instruct` as fallback).
 
 ## Reverse proxy and TLS
 

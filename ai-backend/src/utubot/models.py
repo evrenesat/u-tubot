@@ -63,6 +63,21 @@ class CaptionsRequest(BaseModel):
     translate_to: str | None = None
 
 
+class CutCreateRequest(BaseModel):
+    """A director's cut request: a preset id, a prompt the owner typed, or an empty request
+    (`await_prompt`) the phone fills later."""
+
+    preset: str | None = Field(None, max_length=64)
+    prompt: str | None = Field(None, max_length=2000)
+    await_prompt: bool = False
+
+
+class CutPromptBody(BaseModel):
+    """The description a phone sends to fill a waiting cut request."""
+
+    prompt: str = Field(max_length=2000)
+
+
 class PairRequest(BaseModel):
     code: str = Field(max_length=16)
     device: str = Field(default="device", max_length=200)
@@ -95,6 +110,7 @@ class QueryMeta(BaseModel):
     title: str | None = None
     channel: str | None = None
     duration_s: int | None = None
+    is_live: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.model_dump().items() if v is not None}

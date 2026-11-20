@@ -22,6 +22,7 @@ log = logging.getLogger("utubot.jobs")
 ACTIVE = ("queued", "running")
 KIND_CAPTIONS = "captions"
 KIND_TRANSCRIPT = "transcript"
+KIND_CUTS = "cuts"
 LANG_AUTO = "auto"
 JOB_STATES = {
     "queued": "waiting",
@@ -65,9 +66,12 @@ class JobQueue:
             if removed:
                 log.info("removed %d orphaned media directories", removed)
         self.pipeline.archive.sweep_scratch()
-        interrupted = self.db.all("SELECT id FROM jobs WHERE status='running'")
+        # `cuts` rows are the cut runner's own (it resumes them in CutService.start()), so the
+        # caption queue neither requeues them nor logs a misleading "queued again" on them.
+        interrupted = self.db.all("SELECT id FROM jobs WHERE status='running' AND kind!='cuts'")
         self.db.execute(
-            "UPDATE jobs SET status='queued', progress=0, updated_at=? WHERE status='running'",
+            "UPDATE jobs SET status='queued', progress=0, updated_at=?"
+            " WHERE status='running' AND kind!='cuts'",
             [time.time()],
         )
         for row in interrupted:
@@ -350,6 +354,8 @@ class JobQueue:
         job = self.get(job_id)
         if job is None or job["user"] != user:
             raise JobRefused(404, "unknown job")
+        if job["kind"] == KIND_CUTS:
+            raise JobRefused(409, "a cut request is dismissed from its cut sheet, not here")
         if job["status"] != "queued":
             raise JobRefused(409, "only a waiting job can be cancelled")
         now = time.time()
@@ -378,6 +384,8 @@ class JobQueue:
         job = self.get(job_id)
         if job is None or job["user"] != user:
             raise JobRefused(404, "unknown job")
+        if job["kind"] == KIND_CUTS:
+            raise JobRefused(409, "a cut is retried from its cut sheet, not here")
         if job["status"] not in ("failed", "cancelled"):
             raise JobRefused(409, "only a failed or cancelled job can be retried")
         if job["kind"] == KIND_TRANSCRIPT:
@@ -458,13 +466,19 @@ class JobQueue:
             self.events.deliver(job_id, via, client, user, **detail)
 
     def _claim(self) -> dict[str, Any] | None:
-        """Next queued job, interactive first; none while the media breaker is open (work waits)."""
+        """Next queued job, interactive first; none while the media breaker is open (work waits).
+
+        A `cuts` job is its own async task (the cut runner owns its row): the caption worker never
+        claims one, and a running cuts row does not hold its video's transcript job back either.
+        """
         if not self.pipeline.gate.healthy(CLASS_MEDIA):
             return None
         row = self.db.one(
-            "SELECT * FROM jobs WHERE status='queued' AND (not_before IS NULL OR not_before<=?)"
+            "SELECT * FROM jobs WHERE status='queued' AND kind!='cuts'"
+            " AND (not_before IS NULL OR not_before<=?)"
             " AND NOT EXISTS"
-            " (SELECT 1 FROM jobs r WHERE r.video_id=jobs.video_id AND r.status='running')"
+            " (SELECT 1 FROM jobs r WHERE r.video_id=jobs.video_id AND r.status='running'"
+            "  AND r.kind!='cuts')"
             " ORDER BY priority, created_at LIMIT 1",
             [self.pipeline.gate.now()],
         )

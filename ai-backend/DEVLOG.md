@@ -1,5 +1,34 @@
 # DEVLOG
 
+## 2026-11-20 (director's cuts checkpoint 1: engine, phone pages, test set)
+
+- Browser-check hygiene (the p100 crash of 2026-11-19 was ~9 orphaned headless Chromium
+  processes from killed `webui_cuts_check.cjs` runs filling root's task limit): both browser
+  scripts (`scripts/webui_cuts_check.cjs`, `docs/screenshots/webui/capture.cjs`) now close the
+  browser in a `finally`, turn SIGTERM/SIGINT into a browser-closing exit, cap every Playwright
+  wait at 10 s, and budget the whole run below the shell timeout (`BROWSER_BUDGET_MS`, default
+  90 s — run the shell with a longer timeout). The check also resets the demo's cut knobs at the
+  start and builds on per-run video ids, so a rerun after a killed run hits neither the demo's
+  cached video metadata nor the shared cut cache of that killed run.
+- Director's cuts backend (issue 36 / EVR-156): `cuts.py` cut engine (units, model answer
+  validation with one repair round, padding/merge/drop, 10%/95% guards, per-user build cap,
+  shared cache key), `cut_requests`/`cuts` tables, the routes behind `current_user`, the public
+  `GET /cuts/{id}` QR redirect, and cuts job report rows. Cuts run as their own async tasks; the
+  caption worker never claims a cuts job and its cancel/retry paths refuse them (a cut is
+  retried or dismissed from its cut sheet).
+- The phone pages: the Cuts tab (queue with thumbnails from the video id, states, parts list,
+  retry/dismiss) and the cut sheet (`#/cuts/{id}`) with preset chips, the description box and
+  the build stages. The web UI demo seeds a real build plus canned waiting/building/failed
+  requests; demo fresh videos report a meta length that matches their short transcript so the
+  keep guard measures the real thing. `scripts/webui_cuts_check.cjs` walks the whole life
+  through the UI (22 checks) and blocks i.ytimg.com so the check never contacts YouTube.
+- The offline test set (`utubot/cutbench.py`, five hand-marked transcripts x three requests,
+  invented content) and `scripts/cut_bench.py` (score aliases against an OpenAI-compatible
+  endpoint; one call per request, repair round included). Scores cover keep coverage, must-skip
+  leaks and an excess-keeping budget (a "just the answer" cut that keeps half the video is a bad
+  cut even when nothing marked leaked). Results: `fixtures/cuts/scores-2026-11-20.json`.
+- Contract addendum (`ai/CONTRACT.md`, Director's cuts) and docs/server.md section.
+
 ## 2026-11-13 (delivery pipeline hardening, issue 17)
 
 - `utubot app sync-github` now cross-checks each downloaded APK's own `AndroidManifest.xml` (`utubot/apkmanifest.py`, a small binary

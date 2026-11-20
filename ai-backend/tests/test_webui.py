@@ -24,6 +24,7 @@ PUBLIC = {
     ("GET", "/app/{filename}"),
     ("POST", "/v1/auth/login"),
     ("POST", "/v1/auth/logout"),
+    ("GET", "/cuts/{request_id}"),
 }
 SEGMENT = re.compile(r"\{[^}]+\}")
 

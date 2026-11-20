@@ -37,6 +37,7 @@ from .config import (
     load_config,
 )
 from .content import ContentService
+from .cuts import CutRefused, CutService
 from .db import Database
 from .llm import LLMClient
 from .media_archive import ENTRY_LIMIT, MediaArchive
@@ -45,6 +46,8 @@ from .models import (
     AskRequest,
     AssessRequest,
     CaptionsRequest,
+    CutCreateRequest,
+    CutPromptBody,
     DefaultRequest,
     FeedbackRequest,
     ImportRequest,
@@ -54,7 +57,7 @@ from .models import (
     QueryMeta,
     SummaryAdhoc,
 )
-from .prompts import PANEL_ALIAS, Prompt, PromptError, PromptStore, validate_prompt_set
+from .prompts import PANEL_ALIAS, TASK_CUTS, Prompt, PromptError, PromptStore, validate_prompt_set
 from .security import (
     PROXY_SECRET_HEADER,
     BodyLimitMiddleware,
@@ -102,7 +105,8 @@ UI_TYPES = {
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 CSRF_HEADER = "x-csrf-token"
 CSP = (
-    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "default-src 'none'; script-src 'self'; style-src 'self';"
+    " img-src 'self' data: https://i.ytimg.com; "
     "connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; "
     "frame-ancestors 'none'"
 )
@@ -133,6 +137,7 @@ class Services:
     content: ContentService
     jobs: JobQueue
     reports: JobReports
+    cuts: CutService
     gate: YoutubeGate
     transcription: Transcription
     archive: MediaArchive
@@ -188,6 +193,7 @@ def build_services(
         content=ContentService(cfg, db, llm, transcripts, prompts, transcription),
         jobs=jobs,
         reports=reports,
+        cuts=CutService(cfg, db, llm, transcripts, prompts, jobs),
         gate=gate,
         transcription=transcription,
         archive=archive,
@@ -219,7 +225,9 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         svc.jobs.start()
+        svc.cuts.start()
         yield
+        await svc.cuts.stop()
         await svc.jobs.stop()
         await svc.assessor.drain()
         await svc.llm.aclose()
@@ -248,6 +256,10 @@ def create_app(
         resp = error(429, "rate limited")
         resp.headers["Retry-After"] = str(exc.retry_after)
         return resp
+
+    @app.exception_handler(CutRefused)
+    async def _cut_refused(_r: Request, exc: CutRefused):
+        return error(exc.status, exc.message)
 
     @app.exception_handler(SettingsError)
     async def _settings(_r: Request, exc: SettingsError):
@@ -424,9 +436,12 @@ def create_app(
     app.add_middleware(BodyLimitMiddleware, get_max_bytes=lambda: cfg.security.max_body_bytes)
 
     def qmeta(
-        title: str | None = None, channel: str | None = None, duration_s: int | None = None
+        title: str | None = None,
+        channel: str | None = None,
+        duration_s: int | None = None,
+        is_live: bool | None = Query(None),
     ) -> QueryMeta:
-        return QueryMeta(title=title, channel=channel, duration_s=duration_s)
+        return QueryMeta(title=title, channel=channel, duration_s=duration_s, is_live=is_live)
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
@@ -478,6 +493,7 @@ def create_app(
                 "insight": True,
                 "captions": True,
                 "transcribe": True,
+                "cuts": svc.cuts.configured,
             },
         }
 
@@ -715,6 +731,8 @@ def create_app(
         resolved = svc.prompts.resolve(user.name, key)
         if resolved is None:
             raise HTTPException(404, f"unknown prompt {key}")
+        if resolved.task == TASK_CUTS:
+            raise HTTPException(400, "a director's cut preset is not a summary prompt")
         resolved = svc.content.with_user_model(resolved, user.policy)
         result = await svc.content.summary(
             user.policy,
@@ -880,6 +898,70 @@ def create_app(
             bytes=len(row["vtt"].encode()),
         )
         return PlainTextResponse(row["vtt"], media_type="text/vtt")
+
+    # ---- director's cuts ------------------------------------------------------------------------
+
+    @app.get("/v1/videos/{video_id}/cuts")
+    async def cuts_presets(video_id: str, user: UserConfig = Depends(current_user)):
+        """The cut presets and their state for this video: what the picker on the TV shows."""
+        check_video_id(video_id)
+        return svc.cuts.presets_state(user.name, video_id)
+
+    @app.post("/v1/videos/{video_id}/cuts")
+    async def cuts_create(
+        request: Request,
+        video_id: str,
+        body: CutCreateRequest,
+        meta: QueryMeta = Depends(qmeta),
+        user: UserConfig = Depends(current_user),
+    ):
+        """Queue a cut: `{preset}`, `{prompt}` or `{await_prompt: true}` (the TV's "Describe on
+        phone…"). The video facts the caller knows are stored so the phone queue shows them."""
+        check_video_id(video_id)
+        mark_origin(request, user)
+        if meta.title or meta.channel or meta.duration_s is not None or meta.is_live is not None:
+            svc.transcripts.store_meta(video_id, meta.as_dict())
+        row = svc.cuts.create(
+            user.name,
+            video_id,
+            source=client_of(request),
+            preset=body.preset,
+            prompt=body.prompt,
+            await_prompt=body.await_prompt,
+        )
+        return {"request_id": row["id"], "state": row["state"]}
+
+    @app.get("/v1/cuts/{request_id}")
+    async def cuts_get(
+        request_id: str,
+        wait_ms: int | None = None,
+        user: UserConfig = Depends(current_user),
+    ):
+        """One cut request's state, long-polled with `wait_ms`; the cut rides along once ready."""
+        return await svc.cuts.get_wait(request_id, user.name, wait_ms)
+
+    @app.get("/v1/cut-requests")
+    async def cuts_queue(user: UserConfig = Depends(current_user)):
+        """The caller's cut queue, newest first (waiting and building first on the phone)."""
+        return {"requests": svc.cuts.queue(user.name)}
+
+    @app.put("/v1/cut-requests/{request_id}")
+    async def cuts_fill(
+        request_id: str, body: CutPromptBody, user: UserConfig = Depends(current_user)
+    ):
+        """Fill a waiting request with the typed (or spoken) description; the build starts."""
+        return svc.cuts.fill(request_id, user.name, body.prompt)
+
+    @app.delete("/v1/cut-requests/{request_id}")
+    async def cuts_dismiss(request_id: str, user: UserConfig = Depends(current_user)):
+        """Take a request off the phone queue (a building one is stopped)."""
+        svc.cuts.dismiss(request_id, user.name)
+        return {"ok": True}
+
+    @app.get("/cuts/{request_id}")
+    async def cuts_short_url(request_id: str):
+        """The QR target of a TV-created request: straight into the phone's cut sheet."""
+        return RedirectResponse(f"/#/cuts/{request_id}", status_code=302)
 
     @app.post("/v1/feedback")
     async def feedback(body: FeedbackRequest, user: UserConfig = Depends(current_user)):

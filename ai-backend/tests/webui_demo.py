@@ -27,7 +27,7 @@ from tests.conftest import FakeFetcher, block_youtube  # noqa: E402
 from tests.mock_openai import MockOpenAI  # noqa: E402
 from utubot.app import create_app  # noqa: E402
 from utubot.auth import hash_token  # noqa: E402
-from utubot.config import Config, UserConfig, UserPolicy  # noqa: E402
+from utubot.config import Config, LLMTask, UserConfig, UserPolicy  # noqa: E402
 from utubot.prompts import validate_prompt_set  # noqa: E402
 
 APP_PORT, LLM_PORT = 8791, 8792
@@ -64,9 +64,33 @@ RELEASES = [
 
 
 class DemoLLM(MockOpenAI):
+    def __init__(self):
+        super().__init__()
+        self.hold_cuts = False
+        self.cut_answer_mode = "good"
+
     def respond(self, body):
         system = body["messages"][0]["content"]
         user = body["messages"][-1]["content"]
+        if "director's cut" in system:
+            if self.hold_cuts:
+                time.sleep(
+                    3
+                )  # demo knob (POST /demo/cut/hold|release) so the check can see the building state
+            if self.cut_answer_mode == "bad":
+                # demo knob (POST /demo/cut/answer/bad): ids that never exist, so the cut fails
+                # after its repair round and the phone can show a plain failure.
+                return json.dumps({"parts": [{"from": 900, "to": 999}]})
+            return json.dumps(
+                {
+                    "parts": [
+                        {"from": 2, "to": 3, "label": "The change"},
+                        {"from": 5, "to": 6, "label": "What to expect"},
+                    ],
+                    "summary": "The per-device channel scheduling and its effects.",
+                    "kept_s": 92,
+                }
+            )
         if "glance card" in system:
             return GLANCE
         if "TL;DR" in user:
@@ -88,7 +112,11 @@ def build(data: Path):
     for task in (cfg.llm.summary, cfg.llm.answer, cfg.llm.analysis):
         task.model = "llama3.1:8b"
     cfg.llm.triage.model = "llama3.2:3b"
+    cfg.llm.cuts = LLMTask(model="llama3.1:8b")
     cfg.security.scrypt_n = 2**12
+    # The seeded "running" job parks its worker on the never-downloading fake; a second worker
+    # keeps the queue alive for the cut builds the pages show live.
+    cfg.captions.job_concurrency = 2
     cfg.app.github_repo = "example/u-tubot"
     cfg.users = [
         UserConfig(
@@ -107,6 +135,13 @@ def build(data: Path):
         "title": "How the new router firmware changes Wi-Fi",
         "channel": "Tech Notes",
     }
+    fetcher.segments = [
+        (i * 20.0, i * 20.0 + 18, line[8:]) for i, line in enumerate(TRANSCRIPT_LINES)
+    ]
+    # The demo's fresh videos report the length of that short transcript, so a cut's keep
+    # guard measures against the real thing (a 900 s meta with a 2 min transcript would
+    # refuse every cut as "removes almost everything").
+    fetcher.meta_extra = {"duration_s": 120}
 
     async def never_downloads(video_id, out_dir, started=None):
         await asyncio.sleep(3600)
@@ -129,6 +164,14 @@ def build(data: Path):
                 breaker.until, breaker.strikes = 0.0, 0
                 svc.gate._save(name)
         return {"gate": svc.gate.state()}
+
+    @app.post("/demo/cut/{state}")
+    async def cut_hold(state: str):
+        if state in ("hold", "release"):
+            mock.hold_cuts = state == "hold"
+        elif state in ("good", "bad"):
+            mock.cut_answer_mode = state
+        return {"hold_cuts": mock.hold_cuts, "cut_answer_mode": mock.cut_answer_mode}
 
     return mock, cfg, app
 
@@ -753,6 +796,172 @@ def seed_job_reports(svc, now: float) -> None:
     events.backfill()
 
 
+def seed_cuts(svc, client: httpx.Client, now: float) -> None:
+    """One cut built for real through the mock, plus canned waiting/building/failed requests."""
+    db = svc.db
+    # The ready cut: a real build against the demo model over the seeded ASR transcript.
+    r = client.post("/v1/videos/aaaaaaaaa07/cuts", json={"preset": "cut-no-filler"})
+    if r.status_code != 200:
+        raise RuntimeError("demo cut build failed: " + r.text)
+    rid = r.json()["request_id"]
+    for _ in range(100):
+        doc = client.get(f"/v1/cuts/{rid}").json()
+        if doc["state"] in ("ready", "failed"):
+            break
+        time.sleep(0.05)
+    if doc["state"] != "ready":
+        raise RuntimeError("demo cut did not go ready: " + json.dumps(doc))
+    db.execute(
+        "UPDATE cut_requests SET source='Living room TV', created_at=?, updated_at=? WHERE id=?",
+        [now - 2400, now - 2330, rid],
+    )
+    # The request the TV created and is waiting on (the QR opens its sheet).
+    db.execute(
+        "INSERT INTO video_meta(video_id,json,fetched_at) VALUES(?,?,?)",
+        [
+            "aaaaaaaaa08",
+            json.dumps(
+                {
+                    "title": "I tried the cheapest 4K projector so you don't have to",
+                    "channel": "Tech Notes",
+                    "duration_s": 1120,
+                }
+            ),
+            now - 300,
+        ],
+    )
+    db.execute(
+        "INSERT INTO jobs(id,user,video_id,lang,status,progress,created_at,updated_at,kind,priority)"
+        " VALUES('democut0009','owner','aaaaaaaaa08','','queued',0,?,?, 'cuts',0)",
+        [now - 280, now - 280],
+    )
+    db.execute(
+        "INSERT INTO cut_requests(id,user,video_id,source,state,job_id,created_at,updated_at)"
+        " VALUES('democut0008','owner','aaaaaaaaa08','Living room TV','waiting','democut0009',?,?)",
+        [now - 280, now - 280],
+    )
+    svc.jobs.events.record(
+        "democut0009",
+        "queued",
+        "ok",
+        {
+            "kind": "cuts",
+            "user": "owner",
+            "client": "Living room TV",
+            "endpoint": "POST /v1/videos/{video_id}/cuts",
+            "video_id": "aaaaaaaaa08",
+            "await_prompt": True,
+        },
+        ts=now - 280,
+    )
+    # One building (the model is choosing), one failed with a plain reason.
+    db.execute(
+        "INSERT INTO video_meta(video_id,json,fetched_at) VALUES(?,?,?)",
+        [
+            "aaaaaaaaa09",
+            json.dumps(
+                {
+                    "title": "Category theory in 20 minutes",
+                    "channel": "Chalkboard Maths",
+                    "duration_s": 1290,
+                }
+            ),
+            now - 200,
+        ],
+    )
+    db.execute(
+        "INSERT INTO jobs(id,user,video_id,lang,status,progress,created_at,updated_at,kind,priority)"
+        " VALUES('democut0011','owner','aaaaaaaaa09','','running',0.4,?,?, 'cuts',0)",
+        [now - 180, now - 120],
+    )
+    db.execute(
+        "INSERT INTO cut_requests(id,user,video_id,source,preset_id,state,job_id,created_at,updated_at)"
+        " VALUES('democut0010','owner','aaaaaaaaa09','Web UI','cut-highlights-5','building','democut0011',?,?)",
+        [now - 180, now - 120],
+    )
+    for offset, stage, status, detail in (
+        (
+            0,
+            "queued",
+            "ok",
+            {
+                "kind": "cuts",
+                "user": "owner",
+                "client": "Web UI",
+                "video_id": "aaaaaaaaa09",
+                "preset": "cut-highlights-5",
+            },
+        ),
+        (2.0, "started", "ok", {"kind": "cuts", "video_id": "aaaaaaaaa09"}),
+        (2.1, "transcript", "running", {"video_id": "aaaaaaaaa09"}),
+        (
+            3.4,
+            "transcript",
+            "ok",
+            {"source": "youtube_captions", "lang": "en", "units": 71, "chars": 9800},
+        ),
+        (3.5, "model", "running", {"model": "llama3.1:8b", "units": 71}),
+    ):
+        svc.jobs.events.record("democut0011", stage, status, detail, ts=now - 180 + offset)
+    db.execute(
+        "INSERT INTO video_meta(video_id,json,fetched_at) VALUES(?,?,?)",
+        [
+            "aaaaaaaaa10",
+            json.dumps(
+                {
+                    "title": "A day at the canal, unhurried",
+                    "channel": "Slow TV",
+                    "duration_s": 8 * 3600,
+                }
+            ),
+            now - 800,
+        ],
+    )
+    db.execute(
+        "INSERT INTO jobs(id,user,video_id,lang,status,error,created_at,updated_at,kind,finished_at,priority)"
+        " VALUES('democut0013','owner','aaaaaaaaa10','','failed','This video is too long to cut in one pass (no map/reduce yet).',?,?, 'cuts',?,0)",
+        [now - 700, now - 660, now - 660],
+    )
+    db.execute(
+        "INSERT INTO cut_requests(id,user,video_id,source,prompt,state,error,job_id,created_at,updated_at,finished_at)"
+        " VALUES('democut0012','owner','aaaaaaaaa10','Living room TV','Only the part with the lock operation','failed','This video is too long to cut in one pass (no map/reduce yet).','democut0013',?,?,?)",
+        [now - 700, now - 660, now - 660],
+    )
+    for offset, stage, status, detail in (
+        (
+            0,
+            "queued",
+            "ok",
+            {
+                "kind": "cuts",
+                "user": "owner",
+                "client": "Living room TV",
+                "video_id": "aaaaaaaaa10",
+                "prompt": "Only the part with the lock operation",
+            },
+        ),
+        (1.0, "started", "ok", {"kind": "cuts", "video_id": "aaaaaaaaa10"}),
+        (1.1, "transcript", "ok", {"source": "asr", "lang": "en", "units": 912, "chars": 121000}),
+        (
+            1.2,
+            "transcript",
+            "failed",
+            {
+                "seconds": 0.1,
+                "error_class": "CutRefused",
+                "technical": "This video is too long to cut in one pass (no map/reduce yet).",
+            },
+        ),
+        (
+            1.3,
+            "failed",
+            "failed",
+            {"message": "This video is too long to cut in one pass (no map/reduce yet)."},
+        ),
+    ):
+        svc.jobs.events.record("democut0013", stage, status, detail, ts=now - 700 + offset)
+
+
 def seed(cfg: Config, app, mock: MockOpenAI) -> None:
     svc = app.state.svc
     db, now = svc.db, time.time()
@@ -901,6 +1110,7 @@ def seed(cfg: Config, app, mock: MockOpenAI) -> None:
                 "allow_unlisted_models": True,
             },
         )
+        seed_cuts(svc, client, now)
 
 
 def main() -> None:
