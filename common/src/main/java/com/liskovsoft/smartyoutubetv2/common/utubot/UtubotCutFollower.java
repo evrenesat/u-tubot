@@ -244,10 +244,11 @@ public final class UtubotCutFollower {
 
         if (request.isReady()) {
             Listener listener = mListener;
+            boolean requested = mRequested;
             stop();
 
             if (listener != null) {
-                listener.onCutReady(videoId, request.cut, mRequested);
+                listener.onCutReady(videoId, request.cut, requested);
             }
         } else if (request.isDone()) {
             // failed or dismissed: the phone queue says why; the picker shows the state next time it opens

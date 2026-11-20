@@ -288,7 +288,9 @@ public final class UtubotParser {
     public static CutRequest parseCutRequest(String body) throws JSONException {
         JSONObject json = new JSONObject(body);
         CutRequest request = new CutRequest();
-        request.id = json.optString("id", null);
+        // the answer of a create is {"request_id", ...}, the request document carries "id"
+        request.id = optString(json, "request_id");
+        request.id = request.id != null ? request.id : json.optString("id", null);
         request.videoId = json.optString("video_id", null);
         request.state = json.optString("state", request.state);
         request.source = optString(json, "source");
