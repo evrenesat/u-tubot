@@ -127,6 +127,10 @@ class TestFinalize:
         parts, _kept = finalize_parts([Part("a", 10000, 20000)], CFG, guard=False, duration_s=None)
         assert (parts[0].start_ms, parts[0].end_ms) == (10000 - 300, 20000 + 500)
 
+    def test_the_last_part_never_pads_past_the_video_end(self):
+        parts, _ = finalize_parts([Part("a", 10000, 20000)], CFG, guard=False, duration_s=20.2)
+        assert parts[0].end_ms == 20_200  # clamped to the duration, not 20500
+
     def test_merges_small_gaps_and_drops_short_parts(self):
         parts, _ = finalize_parts(
             [Part("a", 0, 5000), Part("b", 6800, 30000), Part("c", 40000, 42000)],

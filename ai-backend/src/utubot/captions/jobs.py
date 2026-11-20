@@ -66,9 +66,12 @@ class JobQueue:
             if removed:
                 log.info("removed %d orphaned media directories", removed)
         self.pipeline.archive.sweep_scratch()
-        interrupted = self.db.all("SELECT id FROM jobs WHERE status='running'")
+        # `cuts` rows are the cut runner's own (it resumes them in CutService.start()), so the
+        # caption queue neither requeues them nor logs a misleading "queued again" on them.
+        interrupted = self.db.all("SELECT id FROM jobs WHERE status='running' AND kind!='cuts'")
         self.db.execute(
-            "UPDATE jobs SET status='queued', progress=0, updated_at=? WHERE status='running'",
+            "UPDATE jobs SET status='queued', progress=0, updated_at=?"
+            " WHERE status='running' AND kind!='cuts'",
             [time.time()],
         )
         for row in interrupted:

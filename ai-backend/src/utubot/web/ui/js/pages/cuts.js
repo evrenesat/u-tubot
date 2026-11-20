@@ -228,6 +228,10 @@ async function sheet(view, requestId) {
   let presets = null;
   let stopped = false;
   let pollStop = null;
+  // The description box lives across redraws: the poll redraws the sheet every 2.5 s, and a
+  // fresh empty textarea would erase what the owner is typing (and its focus).
+  let box = null;
+  let waitingSig = null;
 
   async function loadPresets(videoId) {
     if (presets || !videoId) return;
@@ -239,9 +243,10 @@ async function sheet(view, requestId) {
   }
 
   async function buildWithPreset(req, presetId) {
-    // A waiting request becomes a preset build: replace it with the real one.
-    await api("/v1/cut-requests/" + req.id, { method: "DELETE" }).catch(() => {});
+    // Start the preset build first; the waiting request is dismissed only once that worked,
+    // so a failed POST (a full per-user cap, say) cannot leave the QR code pointing at nothing.
     const r = await api("/v1/videos/" + req.video_id + "/cuts", { method: "POST", body: { preset: presetId } });
+    await api("/v1/cut-requests/" + req.id, { method: "DELETE" }).catch(() => {});
     location.hash = "#/cuts/" + r.request_id;
   }
 
@@ -294,12 +299,20 @@ async function sheet(view, requestId) {
     const yt = youtubeHref(req.video_id);
 
     if (req.state === "waiting") {
-      const box = h("textarea", { placeholder: "Describe the cut: what should stay, what should go…", maxlength: 2000 });
+      // Redraw only when something visible changed (metadata arriving); while it has not, keep
+      // the DOM as it is so typing and focus survive the poll. Even on a real redraw the same
+      // textarea element is reused, with focus and caret put back.
+      const sig = [req.title || "", req.channel || "", req.duration_s || 0].join("|");
+      if (box && sig === waitingSig) return;
+      waitingSig = sig;
+      if (!box) box = h("textarea", { placeholder: "Describe the cut: what should stay, what should go…", maxlength: 2000 });
+      const hadFocus = document.activeElement === box;
+      const caret = hadFocus ? [box.selectionStart, box.selectionEnd] : null;
       const chips = h(
         "div",
         { class: "chips" },
         ((presets && presets.presets) || []).map((p) =>
-          h("button", { type: "button", class: "chip chip-btn", onclick: () => buildWithPreset(req, p.id) }, h("span", { class: "chip-text", text: p.label })),
+          h("button", { type: "button", class: "chip chip-btn", onclick: () => buildWithPreset(req, p.id).catch((err) => toast(errorText(err))) }, h("span", { class: "chip-text", text: p.label })),
         ),
       );
       kids.push(
@@ -312,7 +325,16 @@ async function sheet(view, requestId) {
           sheetActions(req, button("Build cut", () => fill(req, box), { kind: "primary" })),
         ),
       );
-    } else if (req.state === "building" || req.state === "needs_transcript") {
+      mount(host, ...kids);
+      if (hadFocus) {
+        box.focus();
+        box.setSelectionRange(caret[0], caret[1]);
+      }
+      return;
+    }
+    box = null;
+    waitingSig = null;
+    if (req.state === "building" || req.state === "needs_transcript") {
       const stage = req.state === "needs_transcript" ? "needs a transcript" : STAGE_LABEL[req.stage] || req.stage || "working";
       kids.push(
         card(

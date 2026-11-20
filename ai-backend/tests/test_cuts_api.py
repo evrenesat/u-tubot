@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 
 import pytest
 
@@ -17,6 +19,7 @@ async def cuts_env(env):
     env.cfg.cuts.poll_s = 0.02
     env.cfg.cuts.transcript_wait_s = 5.0
     env.cfg.cuts.wait_ms_cap = 3000
+    env.cfg.cuts.default_wait_ms = 0
     env.cfg.captions.job_poll_s = 0.02
     return env
 
@@ -101,6 +104,45 @@ class TestCreateAndBuild:
         r = await partner.get(f"/v1/cuts/{rid}", params={"wait_ms": 5000})
         assert r.json()["state"] == "ready"
         assert len(cuts_env.llm.cut_calls) == calls
+
+    async def test_builds_in_flight_together_share_one_model_call(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 3, "label": "Start"}],
+            "summary": "s",
+            "kept_s": 15,
+        }
+        cuts_env.llm.delay_s = 0.3
+        first = (await post_cut(cuts_env, preset="cut-answer")).json()
+        partner = httpx_client(cuts_env, OTHER_TOKEN)
+        # The TV and the phone ask for the same cut while the first is still building.
+        second = await partner.post(f"/v1/videos/{VID}/cuts", json={"preset": "cut-answer"})
+        assert second.status_code == 200
+        rid = second.json()["request_id"]
+        assert rid != first["request_id"]
+        mine, theirs = await asyncio.gather(
+            wait_ready(cuts_env, first["request_id"]),
+            partner.get(f"/v1/cuts/{rid}", params={"wait_ms": 5000}),
+        )
+        assert mine["state"] == "ready" and theirs.json()["state"] == "ready"
+        assert mine["cut"]["parts"] == theirs.json()["cut"]["parts"]
+        assert len(cuts_env.llm.cut_calls) == 1
+
+    async def test_shared_build_survives_the_leader_being_dismissed(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Ok"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        cuts_env.llm.delay_s = 0.3
+        first = (await post_cut(cuts_env, preset="cut-demo")).json()
+        partner = httpx_client(cuts_env, OTHER_TOKEN)
+        second = await partner.post(f"/v1/videos/{VID}/cuts", json={"preset": "cut-demo"})
+        rid = second.json()["request_id"]
+        await cuts_env.client.delete(f"/v1/cut-requests/{first['request_id']}")
+        r = await partner.get(f"/v1/cuts/{rid}", params={"wait_ms": 5000})
+        assert r.json()["state"] == "ready"
 
     async def test_presets_state_moves_none_to_ready(self, cuts_env):
         set_transcript(cuts_env.fetcher)
@@ -195,6 +237,8 @@ class TestCreateAndBuild:
         assert r.status_code == 409
         r = await post_cut(cuts_env, preset="cut-demo", await_prompt=True)
         assert r.status_code == 409
+        r = await post_cut(cuts_env, preset="cut-demo", prompt="both at once")
+        assert r.status_code == 400
 
 
 class TestAwaitPrompt:
@@ -360,6 +404,23 @@ class TestCapsAndConfig:
         doc = await wait_ready(cuts_env, rid, wait_ms=100)
         assert doc["state"] == "building"
         await cuts_env.client.delete(f"/v1/cut-requests/{rid}")
+
+    async def test_wait_defaults_to_the_configured_wait(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.delay_s = 0.5
+        cuts_env.cfg.cuts.default_wait_ms = 400
+        rid = (await post_cut(cuts_env, preset="cut-demo")).json()["request_id"]
+        started = time.monotonic()
+        doc = (await cuts_env.client.get(f"/v1/cuts/{rid}")).json()
+        waited = time.monotonic() - started
+        assert doc["state"] == "building" and 0.3 < waited < 2.5
+        await cuts_env.client.delete(f"/v1/cut-requests/{rid}")
+
+    async def test_a_cut_preset_cannot_run_as_a_summary(self, cuts_env):
+        r = await cuts_env.client.get(
+            f"/v1/videos/{VID}/summary", params={"prompt": "builtin/cut-no-filler"}
+        )
+        assert r.status_code == 400 and "cut preset" in r.json()["error"]
 
 
 def httpx_client(env, token: str):

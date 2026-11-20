@@ -115,8 +115,12 @@ function currentRequest(page, ctx) {
     });
     // Owner rule: the check never contacts YouTube. Card thumbnails come from i.ytimg.com; the
     // browser must fail them locally instead of loading them (the demo has no network anyway).
-    const blockYouTubeThumbs = (ctx2) => ctx2.route("**://i.ytimg.com/**", (route) => route.abort());
-    blockYouTubeThumbs(ctx);
+    // Every origin but the demo host is aborted too, so nothing can sneak out while routes race.
+    const blockYouTubeThumbs = async (ctx2) => {
+      await ctx2.route("**://i.ytimg.com/**", (route) => route.abort());
+      await ctx2.route((url) => !url.href.startsWith(base + "/"), (route) => route.abort());
+    };
+    await blockYouTubeThumbs(ctx);
     const page = await ctx.newPage();
     page.setDefaultTimeout(WAIT_MS);
     page.setDefaultNavigationTimeout(WAIT_MS);
@@ -160,6 +164,11 @@ function currentRequest(page, ctx) {
 
     // Build: held model keeps it building with a stage line; releasing finishes it.
     await page.evaluate(() => fetch("/demo/cut/hold", { method: "POST" }));
+    // Typing must survive the sheet's poll redraw (every 2.5 s): the box keeps its text.
+    await box.fill("Keep ");
+    await page.waitForTimeout(3200);
+    ok((await box.inputValue()) === "Keep ", "typing survives the sheet redraw");
+    ok((await page.evaluate(() => document.activeElement && document.activeElement.tagName)) === "TEXTAREA", "the box keeps focus across redraws");
     await box.fill("Skip the intro and the gear list; keep the actual test.");
     await page.getByRole("button", { name: "Build cut" }).click();
     await page.waitForTimeout(1500);
@@ -223,7 +232,7 @@ function currentRequest(page, ctx) {
 
     // No sideways scrolling at 360 px.
     const narrow = await browser.newContext({ viewport: { width: 360, height: 740 } });
-    blockYouTubeThumbs(narrow);
+    await blockYouTubeThumbs(narrow);
     const npage = await narrow.newPage();
     npage.setDefaultTimeout(WAIT_MS);
     npage.setDefaultNavigationTimeout(WAIT_MS);

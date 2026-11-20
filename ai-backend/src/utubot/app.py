@@ -57,7 +57,7 @@ from .models import (
     QueryMeta,
     SummaryAdhoc,
 )
-from .prompts import PANEL_ALIAS, Prompt, PromptError, PromptStore, validate_prompt_set
+from .prompts import PANEL_ALIAS, TASK_CUTS, Prompt, PromptError, PromptStore, validate_prompt_set
 from .security import (
     PROXY_SECRET_HEADER,
     BodyLimitMiddleware,
@@ -731,6 +731,8 @@ def create_app(
         resolved = svc.prompts.resolve(user.name, key)
         if resolved is None:
             raise HTTPException(404, f"unknown prompt {key}")
+        if resolved.task == TASK_CUTS:
+            raise HTTPException(400, "a director's cut preset is not a summary prompt")
         resolved = svc.content.with_user_model(resolved, user.policy)
         result = await svc.content.summary(
             user.policy,

@@ -269,9 +269,12 @@ def finalize_parts(
     refused, unless `guard` is off (the highlights presets accept their real length).
     """
     merged: list[Part] = []
+    duration_ms = int(duration_s * 1000) if duration_s else None
     for part in parts:
         start = max(0, part.start_ms - int(cfg.pad_before_s * 1000))
         end = part.end_ms + int(cfg.pad_after_s * 1000)
+        if duration_ms is not None:
+            end = min(end, duration_ms)  # the last part must not pad past the video end
         if merged and (start - merged[-1].end_ms) < cfg.merge_gap_s * 1000:
             merged[-1] = Part(merged[-1].label, merged[-1].start_ms, end)
         else:
@@ -353,6 +356,9 @@ class CutService:
         self.cfg, self.db, self.llm = cfg, db, llm
         self.transcripts, self.prompts, self.jobs = transcripts, prompts, jobs
         self._tasks: dict[str, asyncio.Task] = {}
+        # One build in flight per cache key: a second request with the same key waits on the
+        # leader's future instead of calling the model again (shared builds, plan v2).
+        self._inflight: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
     # ---- configuration --------------------------------------------------------------------------
 
@@ -431,13 +437,13 @@ class CutService:
         if not self.configured:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
         prompt = self._validate_prompt(prompt)
-        if prompt is not None:
-            preset = None
-        elif preset is not None and not await_prompt:
+        if prompt is not None and preset is not None:
+            raise CutRefused("A cut takes a preset or a description, not both.", status=400)
+        if prompt is None and not await_prompt:
+            if preset is None:
+                raise CutRefused("A cut needs a preset or a description.")
             if not any(p.id == preset for p in self.presets(user)):
                 raise CutRefused(f"Unknown cut preset {preset}.")
-        elif not await_prompt:
-            raise CutRefused("A cut needs a preset or a description.")
         if await_prompt and preset is not None:
             raise CutRefused("A request that waits for a description cannot name a preset.")
         existing = self._active_same(user, video_id, preset, prompt, await_prompt)
@@ -630,7 +636,13 @@ class CutService:
         doc = self.get(request_id, user)
         if doc is None:
             raise CutRefused("No such cut request.", status=404)
-        wait_s = max(0.0, min(wait_ms if wait_ms is not None else 0, self.cfg.cuts.wait_ms_cap))
+        wait_s = max(
+            0.0,
+            min(
+                wait_ms if wait_ms is not None else self.cfg.cuts.default_wait_ms,
+                self.cfg.cuts.wait_ms_cap,
+            ),
+        )
         deadline = time.monotonic() + wait_s / 1000.0
         while doc["state"] in (*BUILDING_STATES, "waiting") and time.monotonic() < deadline:
             await asyncio.sleep(min(self.cfg.cuts.poll_s, max(0.05, deadline - time.monotonic())))
@@ -670,11 +682,13 @@ class CutService:
         return {"configured": self.configured, "presets": out}
 
     def _ready_cut(self, video_id: str, prompt: Prompt) -> dict[str, Any] | None:
-        """The stored cut for this preset, unless the transcript changed since it was built."""
+        """The stored cut for this preset, unless the transcript or the `[llm.cuts]` model
+        changed since it was built."""
+        model = self.cfg.llm.cuts.model if self.cfg.llm.cuts else ""
         row = self.db.one(
-            "SELECT json, transcript_hash FROM cuts WHERE video_id=? AND version=?"
+            "SELECT json, transcript_hash FROM cuts WHERE video_id=? AND version=? AND model=?"
             " ORDER BY created_at DESC LIMIT 1",
-            [video_id, self._version(prompt.id, prompt.template)],
+            [video_id, self._version(prompt.id, prompt.template), model],
         )
         if row is None:
             return None
@@ -782,72 +796,99 @@ class CutService:
             events.emit(STAGE_MODEL, events.SKIPPED, reason="cached")
             self._finish(request_id, row, cache_key, json.loads(hit["json"]))
             return
-        with events.stage(STAGE_MODEL, model=model, units=len(units)) as model_stage:
-            data = await self._ask(units, chapters, meta, instruction)
+        while True:
+            leader = self._inflight.get(cache_key)
+            if leader is None:
+                break
+            events.emit(STAGE_MODEL, events.SKIPPED, reason="shared build")
             try:
-                parts = parse_cut_answer(data, units)
-            except CutFormatError as exc:
-                trace.emit(STAGE_MODEL, events.WARN, problem=exc.problem, repair=1)
-                data = await self._ask(units, chapters, meta, instruction, problem=exc.problem)
+                doc = await asyncio.shield(leader)
+            except asyncio.CancelledError:
+                if self._dismissed(request_id) or not leader.cancelled():
+                    raise
+                continue  # the leader was dismissed; its cache key is free again
+            self._finish(request_id, row, cache_key, doc)
+            return
+        leader = asyncio.get_running_loop().create_future()
+        leader.add_done_callback(lambda f: None if f.cancelled() else f.exception())
+        self._inflight[cache_key] = leader
+        try:
+            with events.stage(STAGE_MODEL, model=model, units=len(units)) as model_stage:
+                data = await self._ask(units, chapters, meta, instruction)
                 try:
                     parts = parse_cut_answer(data, units)
-                except CutFormatError as exc2:
-                    raise CutRefused(
-                        f"The model's answer stayed unusable ({exc2.problem}), so no cut was built."
-                    ) from exc2
-            model_stage.set(answer=json.dumps(data, ensure_ascii=False))
-        if self._dismissed(request_id):
-            return
-        with events.stage(STAGE_CHECKING):
-            duration_s = meta.get("duration_s")
-            duration_s = float(duration_s) if duration_s else None
-            guard = not (preset_id or "").endswith("highlights-5")
-            parts, _kept_s = finalize_parts(
-                parts, self.cfg.cuts, guard=guard, duration_s=duration_s
+                except CutFormatError as exc:
+                    trace.emit(STAGE_MODEL, events.WARN, problem=exc.problem, repair=1)
+                    data = await self._ask(units, chapters, meta, instruction, problem=exc.problem)
+                    try:
+                        parts = parse_cut_answer(data, units)
+                    except CutFormatError as exc2:
+                        raise CutRefused(
+                            f"The model's answer stayed unusable ({exc2.problem}),"
+                            " so no cut was built."
+                        ) from exc2
+                model_stage.set(answer=json.dumps(data, ensure_ascii=False))
+            if self._dismissed(request_id):
+                return
+            with events.stage(STAGE_CHECKING):
+                duration_s = meta.get("duration_s")
+                duration_s = float(duration_s) if duration_s else None
+                guard = not (preset_id or "").endswith("highlights-5")
+                parts, _kept_s = finalize_parts(
+                    parts, self.cfg.cuts, guard=guard, duration_s=duration_s
+                )
+                doc = cut_document(
+                    video_id=video_id,
+                    thash=thash,
+                    model=model,
+                    parts=parts,
+                    summary=str(data.get("summary") or ""),
+                    label=self._label(preset_id, row),
+                    duration_s=duration_s,
+                    source=source,
+                    preset_id=preset_id,
+                )
+                events.emit(
+                    STAGE_CHECKING,
+                    events.OK,
+                    parts=len(parts),
+                    kept_s=doc["kept_ms"] / 1000.0,
+                    duration_s=duration_s,
+                )
+            self.db.execute(
+                "INSERT OR REPLACE INTO cuts(cache_key,video_id,version,preset_id,prompt,model,"
+                "transcript_hash,json,duration_s,kept_s,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    cache_key,
+                    video_id,
+                    version,
+                    preset_id,
+                    row["prompt"],
+                    model,
+                    thash,
+                    json.dumps(doc, ensure_ascii=False),
+                    duration_s,
+                    doc["kept_ms"] / 1000.0,
+                    time.time(),
+                ],
             )
-            doc = cut_document(
-                video_id=video_id,
-                thash=thash,
-                model=model,
-                parts=parts,
-                summary=str(data.get("summary") or ""),
-                label=self._label(preset_id, row),
-                duration_s=duration_s,
-                source=source,
-                preset_id=preset_id,
+            self.db.execute(
+                "UPDATE cut_requests SET raw_answer=?, updated_at=? WHERE id=?",
+                [
+                    json.dumps(data, ensure_ascii=False)[: self.cfg.cuts.max_report_chars],
+                    time.time(),
+                    request_id,
+                ],
             )
-            events.emit(
-                STAGE_CHECKING,
-                events.OK,
-                parts=len(parts),
-                kept_s=doc["kept_ms"] / 1000.0,
-                duration_s=duration_s,
-            )
-        self.db.execute(
-            "INSERT OR REPLACE INTO cuts(cache_key,video_id,version,preset_id,prompt,model,"
-            "transcript_hash,json,duration_s,kept_s,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            [
-                cache_key,
-                video_id,
-                version,
-                preset_id,
-                row["prompt"],
-                model,
-                thash,
-                json.dumps(doc, ensure_ascii=False),
-                duration_s,
-                doc["kept_ms"] / 1000.0,
-                time.time(),
-            ],
-        )
-        self.db.execute(
-            "UPDATE cut_requests SET raw_answer=?, updated_at=? WHERE id=?",
-            [
-                json.dumps(data, ensure_ascii=False)[: self.cfg.cuts.max_report_chars],
-                time.time(),
-                request_id,
-            ],
-        )
+            leader.set_result(doc)
+        except BaseException as exc:
+            if not leader.done():
+                leader.set_exception(exc)  # a waiter fails with the same reason
+            raise
+        finally:
+            self._inflight.pop(cache_key, None)
+            if not leader.done():
+                leader.cancel()  # dismissed or gone without an answer: waiters build it themselves
         self._finish(request_id, row, cache_key, doc)
 
     def _finish(
@@ -900,7 +941,9 @@ class CutService:
 
         A captions row without timings (an older fetch) is dropped so the queued transcript job
         really refetches them; an ASR row without timings is refused (speech recognition is not
-        free to repeat)."""
+        free to repeat). The dropped row is shared with summaries: if the refresh then fails,
+        summaries lose that cached text too and must refetch it themselves — accepted, because
+        a transcript without timings is useless for cuts."""
         video_id = row["video_id"]
         cached = self.transcripts.cached(video_id)
         if cached is not None and cached.segments:

@@ -390,21 +390,24 @@ Stored for later threshold tuning.
 
 A cut is a model-picked list of parts to keep; the TV skips the rest with its sponsor-skip
 engine. Cuts exist only when the backend config names an explicit model (`[llm.cuts]`); without
-it every cuts route answers `409 {"error":"Cuts are not configured on this server (no [llm.cuts]
-model)."}` and `GET /v1/me` features carries `"cuts": false`.
+it the build routes (`POST /v1/videos/{id}/cuts`, `PUT /v1/cut-requests/{id}`) answer
+`409 {"error":"Cuts are not configured on this server (no [llm.cuts] model)."}`, the read
+routes answer `200` with `"configured": false`, and `GET /v1/me` features carries `"cuts": false`.
 
 - `GET /v1/videos/{id}/cuts` -> `{"configured":bool,"presets":[{"id","label","state",
   "request_id"?,"error"?,"cut"?}]}`. State is `none` | `waiting` | `building` |
   `needs_transcript` | `ready` | `failed` for this video; `ready` carries the cut document.
 - `POST /v1/videos/{id}/cuts` body `{"preset":"<preset id>"}` | `{"prompt":"<what to keep>"}` |
-  `{"await_prompt":true}` -> `{"request_id","state"}`. `preset`/`prompt` are mutually exclusive;
-  `await_prompt` creates a `waiting` request the phone fills (the TV's "Describe on phone…").
+  `{"await_prompt":true}` -> `{"request_id","state"}`. `preset`/`prompt` are mutually exclusive
+  (sending both answers `400`); `await_prompt` creates a `waiting` request the phone fills (the
+  TV's "Describe on phone…").
   The caller's known video facts ride as query params (`title`, `channel`, `duration_s`,
   `is_live`) so the phone queue can show them before the backend learns them itself.
   Duplicate active requests (same video + preset/prompt/waiting) return the existing row.
   A per-user cap on concurrent builds answers `429`.
-- `GET /v1/cuts/{request_id}?wait_ms=3000` long-polls (cap 20000 ms) while `waiting`/`building`
-  and returns the request document below.
+- `GET /v1/cuts/{request_id}?wait_ms=3000` long-polls (default `cuts.default_wait_ms` 3000 ms,
+  cap 20000 ms, omit `wait_ms` to take the default) while `waiting`/`building` and returns the
+  request document below.
 - `GET /v1/cut-requests` -> `{"requests":[...]}` newest first (max 100), the phone queue.
 - `PUT /v1/cut-requests/{id}` `{"prompt"}` fills a `waiting` request and starts the build
   (`409` when it is not waiting any more). `DELETE /v1/cut-requests/{id}` dismisses a request
@@ -433,9 +436,10 @@ one repair round; boundaries are padded 0.3 s before and 0.5 s after, gaps under
 parts under 4 s dropped; a cut keeping under 10 % ("this would remove almost everything") or
 over 95 % ("nothing to cut") of the video is refused instead of applied (the highlights preset
 accepts its real length). A missing timed transcript queues a transcript job
-(`needs_transcript`) and the build waits for it (10 min); live streams are refused. Builds run
+(`needs_transcript`) and the build waits for it (15 min); live streams are refused. Builds run
 as their own async tasks (never in the caption worker's queue) with a per-user cap, and one
-finished cut is shared per (video, preset or prompt, model, transcript) cache key.
+finished cut is shared per (video, preset or prompt, model, transcript) cache key — two requests
+with the same key that are in flight together share the model call too.
 
 ## Setup file (`GET /setup.json`)
 
