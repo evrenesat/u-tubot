@@ -177,9 +177,14 @@ def enforce_timing(cues: list[Cue], cfg: CaptionsConfig) -> list[Cue]:
 
 
 def pad_cues(cues: list[Cue], cfg: CaptionsConfig) -> list[Cue]:
-    """Let each cue linger `cue_linger_s` past its end, never into the next cue or past `max_cue_s`."""
+    """Let each cue linger `cue_linger_s` past its last word, never into the next cue or past `max_cue_s`.
+
+    The linger counts from the last word's end (the cue's own end when it holds no words), so a cue
+    that already ends later (stretched to `min_cue_s`, snapped to a silence) is not pushed further.
+    """
     for i, cue in enumerate(cues):
-        limit = cue.end + cfg.cue_linger_s
+        anchor = cue.words[-1].end if cue.words else cue.end
+        limit = anchor + cfg.cue_linger_s
         if i + 1 < len(cues):
             limit = min(limit, cues[i + 1].start)
         limit = min(limit, cue.start + cfg.max_cue_s)

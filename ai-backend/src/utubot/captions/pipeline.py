@@ -37,10 +37,11 @@ from ..youtube import (
 from . import events
 from .align import (
     caption_cues,
-    cues_from_words,
     detect_silences,
+    finish_cues,
     merge_words_into_cues,
     snap_cues,
+    word_cues,
 )
 from .asr import (
     LANGUAGE_NAMES,
@@ -687,8 +688,6 @@ class CaptionPipeline:
             progress(0.9)
             with events.stage(events.CUES, announce=False) as st:
                 cues = build_cues(words, c)
-                if not legacy:
-                    cues = pad_cues(cues, c)
                 st.set(
                     cues=len(cues),
                     words=len(words),
@@ -714,6 +713,7 @@ class CaptionPipeline:
                     )
             timing = {}
             if not legacy:
+                cues = pad_cues(cues, c)
                 timing = self._timing_summary(
                     result, stats, "words", self._emit_sync_score(cues, silences or [], wav)
                 )
@@ -758,7 +758,7 @@ class CaptionPipeline:
         """HQ captions built on the video's own captions: better text, times from the audio.
 
         With real word times from the engine the cues are built from the words themselves
-        (`cues_from_words`; caption cues no word touches fill the wordless gaps) and snapped to the
+        (`word_cues`; caption cues no word touches fill the wordless gaps) and snapped to the
         audio's silences. When the engine only estimated its word times, the caption timing is kept
         and just the text is replaced (`merge_words_into_cues(retime=False)`). Without words the
         captions are proofread and stored as they are. `captions.timing_mode = "legacy"` restores
@@ -826,9 +826,7 @@ class CaptionPipeline:
                 mode = "words"
                 with events.stage(events.ALIGN, mode="words", words=len(words)) as st:
                     before = len(cues)
-                    cues, speech, fill_cues = await asyncio.to_thread(
-                        cues_from_words, words, cues, c
-                    )
+                    cues, speech, fill_cues = await asyncio.to_thread(word_cues, words, cues, c)
                     moved = 0
                     if c.align_silence and silences:
                         edges = [(cue.start, cue.end) for cue in cues]
@@ -838,6 +836,7 @@ class CaptionPipeline:
                             for a, cue in zip(edges, cues, strict=True)
                             if a != (cue.start, cue.end)
                         )
+                    cues = finish_cues(cues, c)
                     st.set(
                         cues=len(cues),
                         speech_cues=speech,

@@ -101,7 +101,9 @@ def self_check(
     """What the audio alone says about a finished set of cues.
 
     `speech_overlap`: share of cue time outside silences. `starts_in_silence`: share of cue starts
-    lying more than `sync_late_s` inside a silence. `silence_share`: silences over the audio's length
+    lying inside a silence, more than `sync_late_s` after it began (speech had ended) and more than
+    `sync_early_s` before it ends (the next speech is still far off); a start at either edge of a
+    silence is where a cue should start. `silence_share`: silences over the audio's length
     (it tells the reader whether the audio is informative at all). Empty when there are no silences
     to compare with.
     """
@@ -113,8 +115,11 @@ def self_check(
     for cue in cues:
         at = bisect.bisect_right(ends, cue.start)
         if at < len(silences):
-            silence_start = silences[at][0]
-            if silence_start <= cue.start and cue.start - silence_start > cfg.sync_late_s:
+            silence_start, silence_end = silences[at]
+            if (
+                cue.start - silence_start > cfg.sync_late_s
+                and silence_end - cue.start > cfg.sync_early_s
+            ):
                 late += 1
     return {
         "cues": len(cues),

@@ -16,7 +16,9 @@ export const STAGE_LABELS = {
   asr_fallback: "Engine fallback",
   stitching: "Stitching",
   separation: "Vocal separation",
+  word_timing: "Word timing",
   align: "Alignment",
+  sync_score: "Sync check",
   proofread: "Proofreading",
   proofread_batch: "Proofread batch",
   diarization: "Speaker labels",
@@ -51,6 +53,7 @@ const REASONS = {
   bad_shape: "answered an unexpected shape",
   not_installed: "not installed",
   language_mismatch: "audio outside its languages",
+  no_word_times: "no word times",
   restart: "the server restarted",
   requested: "requested by the owner",
   rate_limited: "YouTube rate limit",
@@ -124,8 +127,13 @@ function num(n) {
   return Number(n || 0).toLocaleString("en-US");
 }
 
+function pct(share) {
+  return Math.round(Number(share || 0) * 100) + "%";
+}
+
 export function triggerText(trigger) {
   if (!trigger || trigger.kind === "explicit") return "asked for explicitly";
+  if (trigger.via === "regen") return "queued again to rebuild its timing";
   if (trigger.kind === "auto") {
     const mode = TRIGGER_MODES[trigger.mode] || trigger.mode;
     const where = trigger.passive ? ", from the side panel" : "";
@@ -192,7 +200,8 @@ const DESCRIBERS = {
   asr_chunk(d, status) {
     const span = Math.round(d.start_s) + "-" + Math.round(d.end_s) + " s";
     if (status === "failed") return join([d.engine + " failed " + span, reasonText(d.error_class)]);
-    return join([d.engine + " " + span, num(d.chars) + " characters", d.language ? "language " + d.language : null]);
+    const wordTimes = d.word_timing ? "word times: " + (d.word_timing === "real" ? "real" : d.word_timing === "mixed" ? "partly estimated" : "estimated") : null;
+    return join([d.engine + " " + span, num(d.chars) + " characters", d.language ? "language " + d.language : null, wordTimes]);
   },
   asr_fallback(d) {
     const span = Math.round(d.start_s) + "-" + Math.round(d.end_s) + " s";
@@ -213,7 +222,24 @@ const DESCRIBERS = {
     if (status === "skipped") return "Skipped: " + (d.message || reasonText(d.reason));
     return join(["Vocals kept", d.bytes ? fmtBytes(d.bytes) : null, d.audio_s ? fmtClock(d.audio_s) + " of audio" : null]);
   },
-  align(d) {
+  word_timing(d, status) {
+    if (status === "skipped") return "No words to check";
+    const fixed = [num(d.stretched) + " stretched", num(d.zero_length) + " zero-length", num(d.squeezed) + " squeezed"];
+    if (status === "warn") return join([d.message, num(d.words) + " words, " + pct(d.real_share) + " with real times"]);
+    return join([num(d.words) + " words, " + pct(d.real_share) + " with real times", fixed.join(", ") + " fixed"]);
+  },
+  sync_score(d, status) {
+    if (status === "skipped") return "Not checked: " + (d.reason === "no_cues" ? "no cues" : "no audio silence data");
+    return join([pct(d.speech_overlap) + " of cue time over sound", pct(d.starts_in_silence) + " of cues start in silence"]);
+  },
+  align(d, status) {
+    if (d.mode === "words") {
+      return join([num(d.speech_cues) + " cues from word times", num(d.fill_cues) + " caption cues kept in gaps", num(d.moved) + " boundaries moved"]);
+    }
+    if (d.mode === "captions_timing") {
+      if (status === "skipped") return "No words to align; the caption timing is kept";
+      return join(["Caption timing kept (the word times are estimates)", num(d.from_asr) + " of " + num(d.cues) + " cues took their text from speech recognition"]);
+    }
     if (d.mode === "merge") {
       return join([num(d.from_asr) + " of " + num(d.cues) + " cues re-timed from speech recognition", d.margin_s ? "window " + d.margin_s + " s" : null]);
     }

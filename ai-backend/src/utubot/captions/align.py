@@ -115,14 +115,14 @@ def merge_words_into_cues(
     return enforce_timing(out, cfg), from_asr
 
 
-def cues_from_words(
+def word_cues(
     words: list[Word], captions: list[Cue], cfg: CaptionsConfig
 ) -> tuple[list[Cue], int, int]:
-    """Cues built from the words' own times; caption cues no word touches fill the gaps.
+    """Speech cues from the words' own times plus fill cues from the captions: `(cues, speech, fill)`.
 
-    Returns `(cues, speech_cues, fill_cues)`. A caption cue is a fill cue when no word midpoint lies
-    within `align_window_s` of it (a `[Music]` row, speech the engine missed); it is clipped to the
-    wordless gap between its neighbouring speech cues and dropped when under `min_cue_s` after that.
+    A caption cue is a fill cue when no word midpoint lies within `align_window_s` of it (a `[Music]`
+    row, speech the engine missed); it is clipped to the wordless gap between its neighbouring speech
+    cues and dropped when under `min_cue_s` after that. The cues are neither snapped nor padded yet.
     """
     speech = build_cues(words, cfg)
     margin = max(cfg.align_window_s, 0.0)
@@ -140,7 +140,29 @@ def cues_from_words(
         if end - start >= cfg.min_cue_s:
             fills.append(Cue(start, end, list(cue.lines), cue.speaker))
     merged = sorted([*speech, *fills], key=lambda cue: cue.start)
-    return enforce_timing(pad_cues(merged, cfg), cfg), len(speech), len(fills)
+    return merged, len(speech), len(fills)
+
+
+def finish_cues(cues: list[Cue], cfg: CaptionsConfig) -> list[Cue]:
+    """The last step of word-built cues: linger after the last word, then the timing limits."""
+    return enforce_timing(pad_cues(cues, cfg), cfg)
+
+
+def cues_from_words(
+    words: list[Word],
+    captions: list[Cue],
+    cfg: CaptionsConfig,
+    silences: list[tuple[float, float]] | None = None,
+) -> tuple[list[Cue], int, int]:
+    """Cues built from the words' own times; caption cues no word touches fill the gaps.
+
+    Returns `(cues, speech_cues, fill_cues)` (see `word_cues`). With `silences` the boundaries are
+    snapped to them before the linger is added, so a cue never ends far after its last word.
+    """
+    cues, speech, fill = word_cues(words, captions, cfg)
+    if silences:
+        cues = snap_cues(cues, silences, cfg)
+    return finish_cues(cues, cfg), speech, fill
 
 
 def _too_fast(text: str, start: float, end: float, cfg: CaptionsConfig) -> bool:

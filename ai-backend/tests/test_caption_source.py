@@ -375,3 +375,64 @@ def test_proofread_batch_must_be_at_least_one():
 
     with pytest.raises(ValidationError):
         CaptionsConfig(proofread_batch=0)
+
+
+def test_the_asr_cache_key_carries_a_version():
+    from utubot.captions.pipeline import ASR_CACHE_VERSION, asr_cache_key
+
+    assert asr_cache_key("sha", True, None, "off").startswith(f"v{ASR_CACHE_VERSION}:sha:1:auto")
+    assert ASR_CACHE_VERSION == 2
+
+
+async def test_an_old_cache_row_is_not_served(env):
+    env.fetcher.text = None
+    queued = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    await wait_state(env.client, queued["job_id"])
+    rows = env.svc.db.all("SELECT cache_key FROM stage_cache WHERE stage='asr'")
+    assert rows and all(r["cache_key"].startswith("v2:") for r in rows)
+    env.svc.db.execute("UPDATE stage_cache SET cache_key=substr(cache_key, 4) WHERE stage='asr'")
+    before = len(env.llm.audio_calls)
+    again = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    await wait_state(env.client, again["job_id"])
+    assert len(env.llm.audio_calls) > before  # the v1-keyed row was not read
+
+
+async def test_interpolated_results_are_not_cached(env):
+    env.fetcher.text = None
+    env.llm.audio_words = "none"
+    first = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    doc = await wait_state(env.client, first["job_id"])
+    assert doc["state"] == "ready", doc["events"]
+    asr = event(env, first["job_id"], "asr", "ok")["detail"]
+    assert asr["word_timing"] == "interpolated" and asr["cache"] == "not_stored_no_word_times"
+    assert asr["words_real"] == 0 and asr["words_interpolated"] > 0
+    assert event(env, first["job_id"], "word_timing", "warn")["detail"]["word_timing"] == (
+        "interpolated"
+    )
+    assert env.svc.db.one("SELECT COUNT(*) c FROM stage_cache WHERE stage='asr'")["c"] == 0
+    calls = len(env.llm.audio_calls)
+    second = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    await wait_state(env.client, second["job_id"])
+    assert len(env.llm.audio_calls) > calls  # the engine was asked again
+
+
+def test_cached_asr_keeps_timing_and_segment_metrics():
+    from utubot.captions.asr import ASRResult
+    from utubot.captions.pipeline import asr_from_cache, asr_to_cache
+    from utubot.captions.types import TIMING_REPAIRED, Segment, Word
+
+    result = ASRResult(
+        words=[Word(0.0, 0.5, "hi", prob=0.9), Word(0.5, 1.0, "there", timing=TIMING_REPAIRED)],
+        language="en",
+        segments=[Segment(0.0, 1.0, "hi there", 0.01, -0.2, 1.3)],
+        engine="mac",
+        model="m",
+        word_timing="real",
+        stats={"words_real": 2, "words_interpolated": 0},
+    )
+    back = asr_from_cache(asr_to_cache(result))
+    assert back == result
+    old = asr_from_cache(
+        {"words": [[0.0, 0.5, "hi"]], "segments": [[0.0, 1.0, "hi there"]], "language": "en"}
+    )
+    assert old.words == [Word(0.0, 0.5, "hi")] and old.segments == [Segment(0.0, 1.0, "hi there")]
