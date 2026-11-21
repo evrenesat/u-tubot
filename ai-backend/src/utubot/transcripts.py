@@ -43,6 +43,10 @@ SOURCE_CAPTIONS = "youtube_captions"
 SOURCE_ASR = "asr"
 VIDEO_URL = "https://www.youtube.com/watch?v={}"
 HTTP_ERROR_FLOOR = 400
+CAPTION_MANUAL = "manual"
+CAPTION_AUTO = "auto"
+MS_PER_S = 1000.0
+ROLLING_MIN_WORDS = 2  # a repeated run this long is a rolling repeat whatever its times
 HOLD_FAILED = "failed"
 HOLD_DELAYED = "delayed"
 TAG_RE = re.compile(r"<[^>]+>")
@@ -61,6 +65,10 @@ class Transcript:
     engine: str | None = None
     model: str | None = None
     segments: list[tuple[float, float, str]] | None = None
+    words: list[tuple[float, str]] | None = None  # YouTube's own word starts, when it gave offsets
+    caption_kind: str | None = (
+        None  # CAPTION_MANUAL / CAPTION_AUTO; None for a row stored before it was kept
+    )
 
 
 @dataclass
@@ -70,6 +78,8 @@ class FetchResult:
     lang: str | None
     answered: tuple[str, ...] | None = None
     segments: list[tuple[float, float, str]] | None = None
+    words: list[tuple[float, str]] | None = None
+    caption_kind: str | None = None
 
 
 # A complete yt-dlp answer that lists no caption track says the video has none: the caption class
@@ -148,6 +158,60 @@ def parse_json3(raw: str) -> list[tuple[float, float, str]]:
             duration = (event.get("dDurationMs") or 0) / 1000.0
             out.append((start, start + duration if duration > 0 else start, text))
     return out
+
+
+def parse_json3_words(raw: str) -> list[tuple[float, str]]:
+    """`(start, word)` pairs of a json3 answer whose segments carry `tOffsetMs`, else `[]`.
+
+    The start of a word is `tStartMs + tOffsetMs` (a segment without an offset starts with its
+    event). A track none of whose segments has an offset (manual tracks) gives nothing. Rolling
+    captions repeat the end of the previous event at the start of the next one: a prefix of an event
+    that equals the suffix of the one before (two or more words, or one at the same time) is dropped.
+    """
+    data = json.loads(raw)
+    out: list[tuple[float, str]] = []
+    offsets = False
+    previous: list[tuple[float, str]] = []
+    for event in data.get("events", []):
+        base = event.get("tStartMs", 0)
+        current: list[tuple[float, str]] = []
+        for seg in event.get("segs") or []:
+            text = (seg.get("utf8") or "").strip()
+            offsets = offsets or "tOffsetMs" in seg
+            if text:
+                current.append(((base + (seg.get("tOffsetMs") or 0)) / MS_PER_S, text))
+        skip = _repeated_prefix(previous, current)
+        out.extend(pair for pair in current[skip:] if not out or out[-1] != pair)
+        if current:
+            previous = current
+    return out if offsets else []
+
+
+def _repeated_prefix(previous: list[tuple[float, str]], current: list[tuple[float, str]]) -> int:
+    """How many leading words of `current` repeat the tail of `previous`."""
+    for k in range(min(len(previous), len(current)), 0, -1):
+        same = [a[1] for a in previous[-k:]] == [b[1] for b in current[:k]]
+        if same and (k >= ROLLING_MIN_WORDS or previous[-1][0] == current[0][0]):
+            return k
+    return 0
+
+
+def track_kind_of(info: dict[str, Any], name: str | None) -> str:
+    """Whether the picked track is an authored one (`subtitles`) or YouTube's automatic one."""
+    manual = {key.lower() for key in (info.get("subtitles") or {})}
+    return CAPTION_MANUAL if name and name.lower() in manual else CAPTION_AUTO
+
+
+def _load_words(raw: str | None) -> list[tuple[float, str]] | None:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, list):
+        return None
+    return [(float(row[0]), str(row[1])) for row in data if len(row) >= 2] or None
 
 
 def parse_vtt(raw: str) -> list[tuple[float, float, str]]:
@@ -331,10 +395,18 @@ class YoutubeFetcher:
             return FetchResult(meta, None, lang, answered=ANSWERED_NO_CAPTIONS)
         raw = await self._download_track(fmt["url"])
         segments = parse_json3(raw) if fmt["ext"] == "json3" else parse_vtt(raw)
+        words = parse_json3_words(raw) if fmt["ext"] == "json3" else []
         text = segments_to_text([(start, text) for start, _end, text in segments])
         if not text:
             raise YoutubeDelayed(REASON_EMPTY_TRACK, self.cfg.transcripts.empty_track_retry_s)
-        return FetchResult(meta, text, lang, segments=segments or None)
+        return FetchResult(
+            meta,
+            text,
+            lang,
+            segments=segments or None,
+            words=words or None,
+            caption_kind=track_kind_of(info, lang),
+        )
 
 
 class TranscriptService:
@@ -384,6 +456,8 @@ class TranscriptService:
             row["engine"],
             row["model"],
             segments=_load_segments(row["segments"]),
+            words=_load_words(row["words"]),
+            caption_kind=row["caption_kind"],
         )
 
     def no_captions(self, video_id: str) -> bool:
@@ -453,7 +527,8 @@ class TranscriptService:
             " VALUES(?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
             " text=excluded.text, fetched_at=excluded.fetched_at, engine=excluded.engine,"
-            " model=excluded.model, segments=excluded.segments, job_id=excluded.job_id"
+            " model=excluded.model, segments=excluded.segments, job_id=excluded.job_id,"
+            " words=NULL, caption_kind=NULL"
             " WHERE transcripts.source != ? OR transcripts.fetched_at < ?",
             [
                 video_id,
@@ -475,9 +550,17 @@ class TranscriptService:
         return bool(stored)
 
     async def get(
-        self, video_id: str, priority: int = INTERACTIVE, recheck: bool = False
+        self,
+        video_id: str,
+        priority: int = INTERACTIVE,
+        recheck: bool = False,
+        want_words: bool = False,
     ) -> Transcript:
         """The transcript, fetched at most once per TTL.
+
+        `want_words`: a captions row stored before the caption kind and word offsets were kept
+        (`caption_kind IS NULL`) counts as a miss and is fetched once more through the gate; when
+        YouTube does not answer (delayed, cooling down) that old row is returned as it is.
 
         Raises `NoCaptions` (cached for `no_captions_ttl_s`), `YoutubeVideoError` (this video cannot
         be read) or `YoutubeDelayed` (transient). Background callers wait while the breaker is open;
@@ -485,8 +568,24 @@ class TranscriptService:
         caller about to spend real effort on a video it believes has none.
         """
         hit = self.cached(video_id)
-        if hit:
+        if hit and not (want_words and self._lacks_kind(hit)):
             return hit
+        if hit is None:
+            return await self._get_fetched(video_id, priority, recheck)
+        # a stored row without words is good enough: the refetch is only tried while YouTube is
+        # healthy, and any failure of it leaves the row as it is (never the audio-only path)
+        if not self.gate.healthy(*FETCH_CLASSES):
+            return hit
+        try:
+            return await self._get_fetched(video_id, priority, recheck)
+        except (YoutubeError, NoCaptions):
+            return hit
+
+    @staticmethod
+    def _lacks_kind(found: Transcript) -> bool:
+        return found.source == SOURCE_CAPTIONS and found.caption_kind is None
+
+    async def _get_fetched(self, video_id: str, priority: int, recheck: bool) -> Transcript:
         held = self.hold(video_id)
         if held and not (recheck and self._audio_can_help(held)):
             raise self._hold_error(held)
@@ -616,10 +715,12 @@ class TranscriptService:
             )
             raise NoCaptions(video_id)
         stored = self.db.execute_rc(
-            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,segments) VALUES(?,?,?,?,?,?)"
+            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,segments,words,caption_kind)"
+            " VALUES(?,?,?,?,?,?,?,?)"
             " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
             " text=excluded.text, fetched_at=excluded.fetched_at, engine=NULL, model=NULL,"
-            " segments=excluded.segments, job_id=NULL WHERE transcripts.source != ?",
+            " segments=excluded.segments, words=excluded.words, caption_kind=excluded.caption_kind,"
+            " job_id=NULL WHERE transcripts.source != ?",
             [
                 video_id,
                 result.lang,
@@ -627,6 +728,8 @@ class TranscriptService:
                 result.text,
                 time.time(),
                 json.dumps(result.segments) if result.segments else None,
+                json.dumps(result.words) if result.words else None,
+                result.caption_kind,
                 SOURCE_ASR,
             ],
         )
@@ -642,4 +745,6 @@ class TranscriptService:
             SOURCE_CAPTIONS,
             self.cached_meta(video_id) or {},
             segments=result.segments,
+            words=result.words,
+            caption_kind=result.caption_kind,
         )

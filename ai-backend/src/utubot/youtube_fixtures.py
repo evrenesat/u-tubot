@@ -34,10 +34,12 @@ from .transcripts import (
     extract_meta,
     info_complete,
     parse_json3,
+    parse_json3_words,
     parse_vtt,
     pick_format,
     pick_track,
     segments_to_text,
+    track_kind_of,
 )
 from .youtube import (
     CLASS_CAPTIONS,
@@ -178,7 +180,15 @@ class OfflineYoutubeFetcher:
         text = segments_to_text([(start, seg_text) for start, _end, seg_text in segments])
         if not text:
             raise YoutubeOffline(CLASS_CAPTIONS)
-        return FetchResult(meta, text, track.get("lang"), segments=segments or None)
+        words = parse_json3_words(track["text"]) if track.get("ext") == "json3" else []
+        return FetchResult(
+            meta,
+            text,
+            track.get("lang"),
+            segments=segments or None,
+            words=words or None,
+            caption_kind=track_kind_of(info, track.get("lang")),
+        )
 
 
 async def record_cassette(

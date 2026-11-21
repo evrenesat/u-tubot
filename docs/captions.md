@@ -28,6 +28,22 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
    (`align_silence`) — outward only, so a cue never loses its first or last word to the snap — and each cue stays on screen
    `cue_linger_s` (0.2 s) after its last word when there is room. The job then logs a `sync_score` check of the finished cues
    against the audio.
+   **Gaps the engine did not hear.** Speech YouTube heard and the engine did not (caption rows no engine word overlaps) used to come
+   back as whole caption rows, which in rolling captions overlap and last 4 to 7 seconds. With YouTube's word starts and an automatic
+   track, the text of such a gap is built from the reference words inside it, moved by the job's measured offset (`ref_check` median) and cut
+   into cues like any words, so those cues carry words (`fill_from_words` in the `align` event; `captions.timing.reference` counts the words,
+   never mixed into `real_share`). Tags (`[Music]`) and every row of an authored (`manual`) track keep the row rule. A speech cue shorter than
+   `min_cue_s` is joined to a neighbour within `sentence_gap_s` when the join still wraps and stays within `max_cue_s`, `max_cps` and one
+   speaker (`merged_short`; the previous cue is preferred unless it ends a sentence and the next one follows without a pause).
+   Credit lines Whisper invents over music (`halluc_credits`, e.g. "Altyazı M.K.", "amara.org") are dropped from every chunk, not only re-listened ones, and from a cached answer when it is read (the ASR cache version is unchanged, so nothing is transcribed again). The drop is part of the chunk review: it is off when `asr_recheck = false` and for `captions-score` unless `--review`.
+   **Check against YouTube.** Captions jobs keep YouTube's own word starts (json3 `tOffsetMs`, stored in `transcripts.words`, with
+   `caption_kind` `manual|auto`; a transcript stored before this is fetched once more through the gate, and used as it is while YouTube
+   does not answer). The `ref_check` event matches the engine's words with them in blocks of `ref_block_s` (60 s) and reports how many
+   matched, the median offset (YouTube's rows lead speech by about a quarter of a second), the share within `ref_agree_s` (0.3 s) of it and
+   `regions`, stretches of at least `ref_region_min_anchors` (5) pairs whose offset differs from the median by more than `ref_region_off_s`
+   (0.6 s). Without word offsets the first token of each caption row is used (`source` `rows`); with fewer matches than
+   `ref_min_anchor_share` (0.2) of the reference, or another script than the engine's, the check is skipped. It changes no times: regions on
+   real videos are the evidence for ever building a time warp.
 7. **Proofreading.** The LLM (`[llm.captions]`) fixes punctuation, capitalisation, names and terms, using the video's title and
    description as context ([below](#proofreading)).
 8. **Translation.** The job targets English by default (`[captions] translate_to`, "en"): a track in another language is translated
@@ -93,6 +109,10 @@ cuts evenly spaced windows (or windows starting at each `--at`) of the *archived
 is to each phrase onset of that reference: `hit` (cue start within -`sync_early_s` .. +`sync_late_s`, 0.5 / 0.3 s), `loose` (within
 `sync_loose_s`, 1 s) and the median and spread of the error. `--lang` picks the track (default: the newest with a `timing_version`, else the newest); the output says which track was scored and gives
 its first cue start and longest cue. The reference is the engine's own answer: the chunk review below does not run on it unless `--review` is given. It never touches YouTube and refuses when the audio is not archived.
+The spoken language is the transcript's with a YouTube track suffix (`-orig`, `-auto`, `-asr`) removed (`hi-orig` is `hi`) and is *forced* on the reference; each window reports the
+language the engine answered in and the Latin share of its words, and `reference_language_ok` is false (the command prints a warning) when any window answered in another language:
+the onsets of such a reference say nothing about the speech. The JSON also has a `words` block (`null` without cached engine words): the video's cached raw engine words compared token by token with the
+windows' words (`matched`, `matched_share`, `median_s`, `p10_s`, `p90_s`, `within_s` within `sync_late_s`). It checks the engine against itself with different windowing (chunk seams, long-chunk drift), not a systematic bias.
 `utubot captions-regen [--video ID]... [--legacy] [--limit N] [--dry-run]` queues a background captions job for each stored track
 whose `timing_version` is missing or older than the current scheme (`--legacy`: only tracks that have none), at most
 `regen_limit_default` (20) per run unless `--limit` says otherwise; a track is not listed when a newer track of the video already has
@@ -116,7 +136,7 @@ keep their text and the stage warns. Corrected batches are cached per video, so 
 The goal is high-quality English captions for every requested video, whatever its source language (owner, 2026-11-13). The default
 translation target is English: `[captions] translate_to` is `"en"`, the API leaves `translate_to` unset by default, and the TV app's
 "prepare captions" request resolves to the same default. A track whose language differs is translated by the LLM (`translate_batch`, 40,
-cues at a time) and — so the quality bar holds for the English output — the translated text is proofread again with the title and
+cues at a time; a batch the LLM answers with the wrong number of strings is retried once with the exact count, then split in halves down to single cues, and a cue that still fails keeps its source text, flagged `warn` in the job details; the job fails only when more than `translate_max_untranslated_share`, 0.1, of the cues stay untranslated) and — so the quality bar holds for the English output — the translated text is proofread again with the title and
 description as context. A translated cue keeps the source cue's start, end and words; translated text that does not fit the line
 limits is split over the source words' boundaries the same way (proportionally, at the widest pause), never as one over-long line. Same-language captions stay available: pass `translate_to: "off"` (or "none") explicitly, or set
 `[captions] translate_to` to `"off"` to make that the default.

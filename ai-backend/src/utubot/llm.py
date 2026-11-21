@@ -52,6 +52,10 @@ class LLMError(RuntimeError):
         self.failover = failover
 
 
+class LLMBadJSONError(LLMError):
+    """The model kept answering with text that holds no JSON (after the JSON nudges)."""
+
+
 class LLMBusyError(LLMError):
     """The endpoint kept answering busy (429/503/connection errors) until the deadline."""
 
@@ -465,4 +469,4 @@ class LLMClient:
             if done.text and not truncated:
                 convo.append({"role": "assistant", "content": done.text})
             convo.append({"role": "user", "content": JSON_NUDGE})
-        raise LLMError(f"invalid JSON from model: {last}")
+        raise LLMBadJSONError(f"invalid JSON from model: {last}")

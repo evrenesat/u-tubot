@@ -325,6 +325,7 @@ class CaptionsConfig(BaseModel):
     audio_format: str = "bestaudio/best"
     asr_chunk_s: int = 600
     translate_batch: int = 40
+    translate_max_untranslated_share: float = Field(0.1, ge=0.0, le=1.0)
     job_events_max: int = 400
     delivery_coalesce_s: float = 300.0
     delivery_events_max: int = 50
@@ -349,6 +350,24 @@ class CaptionsConfig(BaseModel):
     sync_late_s: float = 0.3
     sync_early_s: float = 0.5
     sync_loose_s: float = 1.0
+    # check against YouTube's own word times (`captions/reference.py`): the audio is cut into blocks,
+    # tokens of both sides are matched inside a block, and a pair counts only when its two starts
+    # lie within ref_max_offset_s; a match of fewer tokens than ref_min_run needs a token unique on both sides
+    ref_block_s: float = Field(default=60.0, gt=0)
+    ref_block_overlap_s: float = Field(default=5.0, ge=0)
+    ref_min_run: int = Field(default=2, ge=1)
+    ref_max_offset_s: float = Field(default=3.0, gt=0)
+    ref_agree_s: float = Field(default=0.3, gt=0)  # "agrees" = within this of the median offset
+    ref_region_min_anchors: int = Field(
+        default=5, ge=2
+    )  # shortest run of anchors that makes a region
+    ref_region_off_s: float = Field(
+        default=0.6, gt=0
+    )  # a region's median differs from the global one by more
+    ref_min_anchor_share: float = Field(default=0.2, ge=0, le=1)  # below: too few anchors to judge
+    ref_script_gap_share: float = Field(
+        default=0.5, ge=0, le=1
+    )  # Latin-share gap that means another script
     # chunk review (`captions/sanity.py`): wrong-language and hallucinated chunks are re-listened to,
     # then the segments that are still not speech are dropped
     asr_recheck: bool = True
@@ -394,6 +413,15 @@ class CaptionsConfig(BaseModel):
             "you",
         ]
     )  # what Whisper makes up over silence or music
+    # credit lines Whisper invents over music: dropped in every chunk, whatever the rate
+    halluc_credits: list[str] = Field(
+        default_factory=lambda: [
+            "altyazı m.k.",
+            "altyazi m.k.",
+            "subtitles by the amara.org community",
+            "amara.org",
+        ]
+    )
     halluc_min_rate: float = 0.5  # words per second below which a phrase above is a phantom
     halluc_chunk_share: float = 0.3  # share of a chunk's seconds flagged that asks for a re-listen
     sparse_chunk_ratio: float = (

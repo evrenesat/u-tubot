@@ -12,6 +12,67 @@
 3. `tests/webui_demo.py` reads the optional PORT argument (`APP_PORT`, LLM port + 1) instead of
    hard-coding 8791.
 
+## 2026-11-21 (subtitle timing checkpoint 3 v2: honest scorer, YouTube word times as a check and for fill cues)
+
+Spec: `temp/sync-design/agent-plan-cp3-v2.md`. Replaces CP3 of `agent-plan.md`; the time warp and audio referee are not built.
+
+1. **Scorer** (commit 1). `normalize_language` strips a YouTube track suffix (`-orig`, `-auto`, `-asr`): `hi-orig` is `hi`, `pt-br` and `zh-hans`
+   as before. `captions-score` forces that language on the reference, reports per window `language` and `latin_share`, the document gets
+   `spoken_language`, `reference_language_ok` (the CLI prints a warning when false) and a `words` block (cached raw engine words against the
+   windows' words: `matched`, `matched_share`, `median_s`, `p10_s`, `p90_s`, `within_s`; `null` without a cached `v3:` row with words).
+2. **YouTube word offsets.** `parse_json3_words`, `track_kind_of`, `FetchResult`/`Transcript` `words` and `caption_kind`, additive columns
+   `transcripts.words`, `transcripts.caption_kind`. `TranscriptService.get(want_words=True)` treats a captions row with `caption_kind IS NULL` as a
+   miss (one gated fetch) and falls back to it on any `YoutubeDelayed` (cooldown included). `improve(ref_words=, caption_kind=)`; `caption_recheck` found carries both.
+3. **`ref_check`** (`captions/reference.py`, pure). Block-wise `SequenceMatcher` anchors (or caption-row first tokens), agreement, regions; stage
+   `ref_check` ok/warn/skipped (`no_reference|too_few_anchors|other_script`); `captions.timing.ref_check` has `anchors`, `median_s`, `within_s`, `regions`.
+   Changes no times. Config `ref_*` (config.py, config.example.toml).
+4. **Fill cues from YouTube words** (`align.word_cues`): unheard speech rows (stretches of overlapping rows) become cues built from the reference words
+   in the gap, moved by the job's median offset; manual tracks and tags keep the row rule. `align` detail `fill_from_words`; `timing.reference`
+   (words) and `timing.fill_from_words`; `real_share` is untouched.
+5. **Short cues and credits.** `segment.merge_short` (run by `finish_cues`, `merged_short`); `halluc_credits` dropped in every chunk (`sanity.FLAG_CREDIT`,
+   `AsrRouter._drop`); `TIMING_VERSION = 5` (3 stays unused, as CP4 noted). ASR cache version is NOT bumped (see review round 1). The CP1 first-cue gate [4.2, 4.9] is withdrawn (no evidence, see the spec); no `cue_lead_s`.
+
+Deviations from the spec:
+
+- `normalize_language`: only the suffix rule (tail in `TRACK_SUFFIXES`); the "head is a known base code" clause is not needed and would change `zh-hans`.
+- `halluc_credits` is its own list; the four lines were not also added to `halluc_phrases` (that list's rate rule would only re-drop them in a rechecked chunk). They are flagged `credit` (not `phantom`) and counted in `hallucination_drops`.
+- Fill stretches: the gap's reference words are taken from the span of the chain of overlapping unheard rows (clipped to the gap between speech cues), not from "every wordless gap"; a wordless gap that no unheard row touches gets nothing.
+- `agreement(pairs, total, cfg, source)` takes the reference token count (needed for `anchor_share`); `check()` is the entry the pipeline calls. The `ref_check` stage is emitted in words mode only (not for estimated or missing words).
+- Regions use a centred rolling median of `ref_region_min_anchors` pairs, extended to adjacent pairs that deviate on their own; the test finds exactly one region for a chunk shifted by 1.5 s.
+- Added config `ref_script_gap_share` (0.5): a Latin-share gap above it between reference and engine words is `other_script`.
+
+Review round 1 fixes:
+
+1. `TranscriptService.get(want_words=True)`: a legacy row is returned on any `YoutubeError` or `NoCaptions` from the refetch (never the audio-only path because words are missing).
+2. A legacy row is used at once when the caption/metadata classes are not healthy (breaker open or probing); no waiting.
+3. The credit drop belongs to the chunk review: skipped with `review=False` (`captions-score` default) and `asr_recheck = false`.
+4. `ASR_CACHE_VERSION` stays 3: `drop_cached_credits` removes credit lines when a cached answer is read (the engine drops them when it stores). Nothing in this change needs a new ASR cache, so no re-transcription on the Mac: only the first captions job per video refetches the YouTube track once.
+5. Tag tokens (`[Music]`, `(applause)`, notes, multi-token tags) are left out of the reference words of a fill cue.
+6. `parse_json3_words` drops a prefix of an event that repeats the suffix of the previous event (two or more words, or one word at the same time).
+7. A word-timed fill cue shorter than `min_cue_s` is stretched within the gap (to the next fill cue or the gap end) instead of dropped.
+8. `merge_short` also runs on the audio-only `run()` path (`timing.merged_short`); a join keeps the union of the words, and a cue without words joined to one with keeps those words with `words_match_text` False.
+9. Production steps below reordered.
+
+Production verification (coordinator, never from agents; commands run on the backend host), in this order:
+
+1. Deploy.
+2. Score the old tracks of `ti3gVlNnXoY`, `EQWLxadmae0`, `TCSgH7l2Isg`: `uv run utubot captions-score VIDEO --reference ENGINE --windows 12 --window-s 30 --json`. `reference_language_ok` must be true; the `words` block is expected to be a number where a cached `v3` answer exists (null otherwise). Record `words` and `overall` as baselines.
+3. `uv run utubot captions-regen --video ID` for each; read the job detail page: `ref_check`, `align` (`fill_from_words`, `merged_short`), `asr` `hallucination_drops`, `caption_recheck` found with `words` > 0, `captions.timing` (`reference`, `ref_check`). No "Altyazı M.K." cue in `EQWLxadmae0`.
+4. Re-score with the step 2 command; gates: Hindi `words.within_s >= 0.85`, `loose` not below the baseline, at most 2 cues under 0.7 s, `fill_from_words > 0`; `TCSgH7l2Isg` within 2 points of its baseline on the same engine (name the engine used in step 2 and in step 4; the Mac engine was full last time and the faster-whisper `small` fallback answered).
+5. When `ref_check` warns, listen to two of the listed regions (open the video at the region start) and record by ear whether the speech matches the engine's cues or YouTube's timing; that is the decision point for a time warp.
+6. Existing transcripts without `caption_kind` are refetched once on the next captions job.
+
+## 2026-11-21 (translation batch mismatch no longer fails the job)
+
+1. Production: one translate batch of a 228-cue episode returned the wrong number of strings and failed the whole captions job after ASR and
+   proofread had succeeded. `CaptionPipeline.translate` now retries such a batch (or a non-list / invalid JSON answer) once with a stricter
+   message ("Return exactly N strings"), then splits it in halves recursively; a single cue that still fails keeps its source text.
+2. The job fails (as before, "translation length mismatch") only when more than `[captions] translate_max_untranslated_share` (0.1) of the cues
+   stay untranslated. The `translate` stage detail carries `batches`, `retried`, `split`, `untranslated`; status `warn` when `untranslated > 0`.
+   `LLMBadJSONError` (subclass of `LLMError`) tells invalid JSON from other LLM failures. Job page text, docs and contract updated.
+3. CP4 behaviour (split stats, `Cue.words`, legacy path) untouched.
+4. Review fix: the job fails as soon as `untranslated` exceeds the share (checked per failed cue, so a model that always fails costs a few dozen calls, not ~150 per batch); an empty-string item for a non-empty source counts as a failed item (retry/split).
+
 ## 2026-11-21 (cold ASR engine: wait, do not fall through; issue 57)
 
 1. A server that is still loading its model (oMLX: HTTP 500 "Engine not started", also 500/502 saying not started, not loaded or model is loading, any 503,

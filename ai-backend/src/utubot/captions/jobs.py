@@ -541,6 +541,8 @@ class JobQueue:
                 job["translate_to"],
                 lambda f: self._set_progress(job["id"], f),
                 priority,
+                ref_words=found.words,
+                caption_kind=found.caption_kind,
             )
             return
         await self.pipeline.run(
@@ -566,7 +568,7 @@ class JobQueue:
             return round(time.monotonic() - began, 2)
 
         try:
-            found = await self.transcripts.get(video_id, priority, recheck=True)
+            found = await self.transcripts.get(video_id, priority, recheck=True, want_words=True)
         except NoCaptions:
             events.emit(events.CAPTION_RECHECK, events.OK, result="no_captions", seconds=took())
             return None
@@ -606,6 +608,8 @@ class JobQueue:
             source=found.source,
             lang=found.lang,
             timed=bool(found.segments),
+            words=len(found.words or []),
+            caption_kind=found.caption_kind,
             chars=len(found.text),
             seconds=took(),
         )

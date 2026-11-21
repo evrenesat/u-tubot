@@ -13,9 +13,9 @@ from typing import Any
 
 import yt_dlp
 
-from ..config import Config
+from ..config import CaptionsConfig, Config
 from ..db import Database
-from ..llm import BACKGROUND, LLMClient
+from ..llm import BACKGROUND, LLMBadJSONError, LLMClient
 from ..media_archive import (
     KIND_AUDIO,
     SHA_PREFIX,
@@ -23,7 +23,7 @@ from ..media_archive import (
     MediaArchiveError,
     MediaArchiveFull,
 )
-from ..transcripts import segments_to_text
+from ..transcripts import CAPTION_MANUAL, segments_to_text
 from ..youtube import (
     CLASS_MEDIA,
     MEDIA_CLASSES,
@@ -34,8 +34,9 @@ from ..youtube import (
     classify_failure,
     ytdlp_runtime_options,
 )
-from . import events
+from . import events, reference
 from .align import (
+    AlignStats,
     caption_cues,
     detect_silences,
     finish_cues,
@@ -56,7 +57,19 @@ from .asr import (
 from .diarize import Diarizer, assign_speakers, make_diarizer
 from .formats import audio_selector, track_kind
 from .proofread import Proofreader
-from .segment import SplitStats, build_cues, count_speakers, pad_cues, split_cue, to_vtt, wrap_lines
+from .reference import Check
+from .reference import check as check_reference
+from .sanity import FLAG_CREDIT, drop_flagged, flag_segments
+from .segment import (
+    SplitStats,
+    build_cues,
+    count_speakers,
+    merge_short,
+    pad_cues,
+    split_cue,
+    to_vtt,
+    wrap_lines,
+)
 from .separate import make_separator
 from .stages import StageCache
 from .syncscore import self_check
@@ -71,6 +84,10 @@ TRANSLATE_SYSTEM = (
     "same length and order as the input. Keep it short enough for subtitles."
 )
 
+TRANSLATE_STRICT = (
+    "Return exactly {n} strings: one translation per input string, same order, as a JSON array."
+)
+
 Started = Callable[[], None]
 Downloader = Callable[[str, Path, Started], Awaitable[Path]]
 Progress = Callable[[float], None]
@@ -78,7 +95,7 @@ ASR_CACHE_STAGE = "asr"
 
 
 ASR_CACHE_VERSION = 3  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review)
-TIMING_VERSION = 4  # the caption timing scheme of a stored track (`captions.timing_version`)
+TIMING_VERSION = 5  # the caption timing scheme of a stored track (`captions.timing_version`)
 SEGMENT_METRICS = 3  # no_speech_prob, avg_logprob, compression_ratio follow start, end, text
 
 
@@ -118,6 +135,20 @@ def _segment_from_row(row: list[Any]) -> Segment:
     metrics = row[3 : 3 + SEGMENT_METRICS]
     metrics += [None] * (SEGMENT_METRICS - len(metrics))
     return Segment(row[0], row[1], row[2], *metrics)
+
+
+def drop_cached_credits(result: ASRResult, cfg: CaptionsConfig) -> ASRResult:
+    """A cached answer without the credit lines Whisper makes up (answers cached before the rule)."""
+    if not cfg.asr_recheck or not result.segments:
+        return result
+    flags = [found & {FLAG_CREDIT} for found in flag_segments(result.segments, cfg)]
+    segments, words, dropped = drop_flagged(result.segments, result.words, flags)
+    if not dropped:
+        return result
+    result.segments, result.words = segments, words
+    result.stats["hallucination_drops"] = result.stats.get("hallucination_drops", 0) + len(dropped)
+    result.dropped = [*result.dropped, *([d.start, d.end, d.reason] for d in dropped)]
+    return result
 
 
 def asr_from_cache(payload: dict[str, Any]) -> ASRResult:
@@ -161,6 +192,19 @@ def asr_cache_key(audio_sha: str, want_words: bool, requested: str | None, separ
     language and the audio variant — separated vocals change what the engines hear, so the mode
     joins the key."""
     return f"v{ASR_CACHE_VERSION}:{audio_sha}:{int(want_words)}:{requested or 'auto'}:{separation}"
+
+
+def ref_check_summary(verdict: Check) -> dict[str, Any]:
+    """The `ref_check` entry of the stored `timing`: small, no word lists."""
+    if verdict.status == reference.STATUS_SKIPPED or verdict.agreement is None:
+        return {"skipped": verdict.reason}
+    agreement = verdict.agreement
+    return {
+        "anchors": agreement.anchors,
+        "median_s": round(agreement.median_s, 3),
+        "within_s": round(agreement.within_s, 3),
+        "regions": len(agreement.regions),
+    }
 
 
 def word_mode_suffix(asr: Any, language: str | None) -> str:
@@ -316,6 +360,24 @@ def _keep_for_archive(work: Path) -> bool:
     return isinstance(exc, MediaArchiveError) and exc.work == work
 
 
+@dataclass
+class TranslateStats:
+    """How the translation batches went: asked, retried once, split in halves, left as spoken."""
+
+    batches: int = 0
+    retried: int = 0
+    split: int = 0
+    untranslated: int = 0
+
+    def as_detail(self) -> dict[str, int]:
+        return {
+            "batches": self.batches,
+            "retried": self.retried,
+            "split": self.split,
+            "untranslated": self.untranslated,
+        }
+
+
 class CaptionPipeline:
     def __init__(
         self,
@@ -449,7 +511,7 @@ class CaptionPipeline:
         key = asr_cache_key(audio_sha, want_words, requested, c.separation)
         cached = self._cached_asr(video_id, key, want_words, requested)
         if cached is not None:
-            result = asr_from_cache(cached)
+            result = drop_cached_credits(asr_from_cache(cached), self.cfg.captions)
             with events.stage(events.ASR, requested_language=requested) as st:
                 _set_asr(st, result, cached=True)
             self._require_speech(result, want_words, optional_asr)
@@ -514,7 +576,7 @@ class CaptionPipeline:
         """One ASR step of `_recognise`, with its per-video cache. See `_recognise`."""
         cached = self._cached_asr(video_id, key, want_words, requested)
         if cached is not None:
-            result = asr_from_cache(cached)
+            result = drop_cached_credits(asr_from_cache(cached), self.cfg.captions)
             with events.stage(events.ASR, requested_language=requested) as st:
                 _set_asr(st, result, cached=True)
             self._require_speech(result, want_words, optional_asr)
@@ -761,9 +823,15 @@ class CaptionPipeline:
                     )
             timing = {}
             if not legacy:
+                align_stats = AlignStats()
+                cues, align_stats.merged_short = merge_short(cues, c)
                 cues = pad_cues(cues, c)
                 timing = self._timing_summary(
-                    result, stats, "words", self._emit_sync_score(cues, silences or [], wav)
+                    result,
+                    stats,
+                    "words",
+                    self._emit_sync_score(cues, silences or [], wav),
+                    fill_stats=align_stats,
                 )
             track_lang = result.language or normalize_language(requested) or "und"
             cues = await self._polish(video_id, cues, track_lang)
@@ -782,10 +850,12 @@ class CaptionPipeline:
         mode: str,
         check: dict[str, Any],
         fill_cues: int = 0,
+        ref_check: Check | None = None,
+        fill_stats: AlignStats | None = None,
     ) -> dict[str, Any]:
         """What a stored track's `timing` column says about how its times were made."""
         detail = stats.as_detail()
-        return {
+        summary = {
             "word_timing": result.word_timing,
             "real_share": detail["real_share"],
             "repaired": stats.stretched + stats.zero_length + stats.squeezed,
@@ -793,6 +863,39 @@ class CaptionPipeline:
             "mode": mode,
             "self_check": check,
         }
+        if fill_stats is not None:
+            # YouTube's words that fill what the engine did not hear: never counted as engine words
+            summary["reference"] = fill_stats.words
+            summary["fill_from_words"] = fill_stats.cues
+            summary["merged_short"] = fill_stats.merged_short
+        if ref_check is not None:
+            summary["ref_check"] = ref_check_summary(ref_check)
+        return summary
+
+    async def _ref_check(
+        self,
+        ref_words: list[tuple[float, str]] | None,
+        rows: list[tuple[float, float, str]],
+        words: list[Word],
+    ) -> Check:
+        """Compare the engine's word starts with YouTube's: log `ref_check`, change no times."""
+        c = self.cfg.captions
+        verdict = await asyncio.to_thread(check_reference, ref_words, rows, words, c)
+        detail: dict[str, Any] = {"reference_words": verdict.reference_words}
+        if verdict.agreement is not None:
+            detail.update(verdict.agreement.as_detail())
+        if verdict.status == reference.STATUS_SKIPPED:
+            events.emit(events.REF_CHECK, events.SKIPPED, reason=verdict.reason, **detail)
+        elif verdict.status == reference.STATUS_WARN:
+            events.emit(
+                events.REF_CHECK,
+                events.WARN,
+                message="The engine's word times differ from YouTube's in some stretches.",
+                **detail,
+            )
+        else:
+            events.emit(events.REF_CHECK, events.OK, **detail)
+        return verdict
 
     async def improve(
         self,
@@ -802,6 +905,8 @@ class CaptionPipeline:
         translate_to: str | None,
         progress: Progress,
         priority: int = BACKGROUND,
+        ref_words: list[tuple[float, str]] | None = None,
+        caption_kind: str | None = None,
     ) -> str:
         """HQ captions built on the video's own captions: better text, times from the audio.
 
@@ -853,6 +958,8 @@ class CaptionPipeline:
                 st.set(cues=len(cues))
             progress(0.9)
             mode, fill_cues = "legacy", 0
+            ref_check: Check | None = None
+            fill_stats = AlignStats()
             if legacy:
                 with events.stage(events.ALIGN, mode="merge", margin_s=c.align_window_s) as st:
                     # linear in cues and words, but hours of captions still take a moment: keep the
@@ -870,9 +977,20 @@ class CaptionPipeline:
                     st.skip(reason="word_times_estimated", cues=len(cues))
             else:
                 mode = "words"
+                ref_check = await self._ref_check(ref_words, segments, words)
                 with events.stage(events.ALIGN, mode="words", words=len(words)) as st:
                     before = len(cues)
-                    cues, speech, fill_cues = await asyncio.to_thread(word_cues, words, cues, c)
+                    fill_stats = AlignStats()
+                    cues, speech, fill_cues = await asyncio.to_thread(
+                        word_cues,
+                        words,
+                        cues,
+                        c,
+                        ref_words,
+                        ref_check.lead_s if ref_check else 0.0,
+                        caption_kind == CAPTION_MANUAL,
+                        fill_stats,
+                    )
                     moved = 0
                     if c.align_silence and silences:
                         edges = [(cue.start, cue.end) for cue in cues]
@@ -882,18 +1000,26 @@ class CaptionPipeline:
                             for a, cue in zip(edges, cues, strict=True)
                             if a != (cue.start, cue.end)
                         )
-                    cues = finish_cues(cues, c)
+                    cues = finish_cues(cues, c, fill_stats)
                     st.set(
                         cues=len(cues),
                         speech_cues=speech,
                         fill_cues=fill_cues,
+                        fill_from_words=fill_stats.cues,
+                        merged_short=fill_stats.merged_short,
                         caption_cues=before,
                         moved=moved,
                     )
             timing = {}
             if not legacy:
                 timing = self._timing_summary(
-                    result, stats, mode, self._emit_sync_score(cues, silences, wav), fill_cues
+                    result,
+                    stats,
+                    mode,
+                    self._emit_sync_score(cues, silences, wav),
+                    fill_cues,
+                    ref_check,
+                    fill_stats,
                 )
             track_lang = result.language or requested or base_hint or "und"
             track_lang = await self._finish(
@@ -925,8 +1051,13 @@ class CaptionPipeline:
         """
         if translate_to and translate_to != track_lang:
             with events.stage(events.TRANSLATE, source=track_lang, to=translate_to) as st:
-                split = SplitStats()
-                cues = await self.translate(cues, translate_to, split)
+                split, tstats = SplitStats(), TranslateStats()
+                try:
+                    cues = await self.translate(cues, translate_to, split, tstats)
+                finally:
+                    st.set(**tstats.as_detail())
+                if tstats.untranslated:
+                    st.status = events.WARN
                 st.set(cues=len(cues), **split.as_detail())
             track_lang = translate_to
             # the English output carries the quality bar: translated text is proofread too,
@@ -967,14 +1098,71 @@ class CaptionPipeline:
         progress(1.0)
         return track_lang
 
+    async def _ask_translation(
+        self, texts: list[str], target: str, strict: bool
+    ) -> list[str] | None:
+        """One LLM call; None when the answer is not a list of `len(texts)` strings."""
+        assert self.llm is not None
+        system = TRANSLATE_SYSTEM.format(lang=target)
+        if strict:
+            system += " " + TRANSLATE_STRICT.format(n=len(texts))
+        user = json.dumps(texts, ensure_ascii=False)
+        if strict:
+            user = TRANSLATE_STRICT.format(n=len(texts)) + "\n" + user
+        try:
+            data = await self.llm.chat_json(
+                self.cfg.llm.captions,
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            )
+        except LLMBadJSONError:
+            return None
+        if not isinstance(data, list) or len(data) != len(texts):
+            return None
+        if not all(
+            isinstance(item, str) and (item.strip() or not src.strip())
+            for item, src in zip(data, texts, strict=True)
+        ):
+            return None
+        return data
+
+    async def _translate_texts(
+        self, texts: list[str], target: str, stats: TranslateStats, limit: float
+    ) -> list[str | None]:
+        """Translate a batch; a bad answer is retried once, then the batch is split in halves.
+
+        A single cue that still fails comes back as None (the caller keeps its source text).
+        """
+        for attempt in range(2):
+            got = await self._ask_translation(texts, target, strict=attempt > 0)
+            if got is not None:
+                return list(got)
+            if attempt == 0:
+                stats.retried += 1
+        if len(texts) == 1:
+            stats.untranslated += 1
+            if stats.untranslated > limit:
+                raise PipelineError("translation length mismatch")
+            return [None]
+        stats.split += 1
+        mid = len(texts) // 2
+        left = await self._translate_texts(texts[:mid], target, stats, limit)
+        right = await self._translate_texts(texts[mid:], target, stats, limit)
+        return left + right
+
     async def translate(
-        self, cues: list[Cue], target: str, stats: SplitStats | None = None
+        self,
+        cues: list[Cue],
+        target: str,
+        stats: SplitStats | None = None,
+        tstats: TranslateStats | None = None,
     ) -> list[Cue]:
         if self.llm is None:
             raise PipelineError("translation needs an LLM client")
         batch = self.cfg.captions.translate_batch
         c = self.cfg.captions
         stats = stats if stats is not None else SplitStats()
+        tstats = tstats if tstats is not None else TranslateStats()
+        limit = c.translate_max_untranslated_share * len(cues)
         out: list[Cue] = []
         for i in range(0, len(cues), batch):
             part = cues[i : i + batch]
@@ -984,16 +1172,12 @@ class CaptionPipeline:
                 has = joined.startswith("[S")
                 prefixes.append(joined[:SPEAKER_PREFIX_LEN] if has else "")
                 texts.append(joined[SPEAKER_PREFIX_LEN:] if has else joined)
-            data = await self.llm.chat_json(
-                self.cfg.llm.captions,
-                [
-                    {"role": "system", "content": TRANSLATE_SYSTEM.format(lang=target)},
-                    {"role": "user", "content": json.dumps(texts, ensure_ascii=False)},
-                ],
-            )
-            if not isinstance(data, list) or len(data) != len(part):
-                raise PipelineError("translation length mismatch")
+            tstats.batches += 1
+            data = await self._translate_texts(texts, target, tstats, limit)
             for offset, (cue, prefix, text) in enumerate(zip(part, prefixes, data, strict=True)):
+                if text is None:
+                    out.append(cue)
+                    continue
                 full = f"{prefix}{text}".strip()
                 # the translation no longer maps onto the source words one to one, but its cue keeps
                 # the source cue's times and words so an overflow splits on a real pause

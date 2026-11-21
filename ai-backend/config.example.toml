@@ -305,6 +305,9 @@ silence_min_s = 0.25               # silences shorter than this do not count for
 translate_to = "en"                # default translation target of captions jobs: English whatever
                                    # the source language (owner, 2026-11-13). "off" keeps the source.
                                    # a language code, validated at startup
+translate_max_untranslated_share = 0.1  # a translation batch with the wrong number of strings is retried,
+                                   # then split in halves; cues that still fail keep their source text.
+                                   # The job fails only when more than this share of cues stays untranslated
 proofread = true                   # LLM proofreading pass ([llm.captions]): punctuation, capitalisation,
                                    # names and terms from the title/description; skipped without an LLM
                                    # also runs over translated text, so the English output is proofread
@@ -349,6 +352,15 @@ cue_linger_s = 0.2                 # a cue stays on screen this long after its l
 sync_late_s = 0.3                  # sync metric: a cue start up to this late after a phrase onset is a "hit"
 sync_early_s = 0.5                 # sync metric: ... and up to this early (cues may lead speech on purpose)
 sync_loose_s = 1.0                 # sync metric: a cue start within this of a phrase onset is "loose"
+ref_block_s = 60.0                 # check against YouTube's word times: tokens are matched inside blocks of this many seconds ...
+ref_block_overlap_s = 5.0          # ... that overlap by this much
+ref_min_run = 2                    # ... a match shorter than this many tokens counts only for a token that is unique on both sides
+ref_max_offset_s = 3.0             # ... and a pair counts only when the two starts are at most this far apart
+ref_agree_s = 0.3                  # a pair "agrees" when its offset is within this of the median offset
+ref_region_min_anchors = 5         # a stretch of at least this many consecutive pairs whose median offset differs is reported as a region
+ref_region_off_s = 0.6             # "differs" = by more than this from the global median offset
+ref_min_anchor_share = 0.2         # fewer matched tokens than this share of the reference: too few to judge (check skipped)
+ref_script_gap_share = 0.5         # reference and engine words whose Latin shares differ by more than this are in different scripts (check skipped)
 asr_recheck = true                 # re-listen to chunks heard in the wrong language, mostly hallucinated or far sparser than the rest, then drop what is still not speech
 asr_recheck_chunk_s = 120.0        # re-listen: the "smaller window" retry cuts the chunk into windows of this many seconds
 asr_expected_override_share = 0.5  # when more than this share of the audio is heard in another language than the video's metadata says, the heard one is trusted (the metadata may be wrong)
@@ -366,6 +378,7 @@ halluc_avg_logprob = -1.0          # see above; also what "low confidence" means
 halluc_compression_ratio = 2.4     # a segment with a higher compression ratio is repetitive text (counted toward a bad chunk, never dropped alone)
 halluc_repeat_min = 3              # this many consecutive segments with the same text are a repeat loop
 halluc_phrases = ["thank you", "thanks for watching", "thank you for watching", "you"]  # phrases made up over silence/music
+halluc_credits = ["altyazı m.k.", "altyazi m.k.", "subtitles by the amara.org community", "amara.org"]  # credit lines made up over music: dropped in every chunk, whatever the rate
 halluc_min_rate = 0.5              # a segment of one of these phrases with fewer words per second than this is a phantom
 halluc_chunk_share = 0.3           # share of a chunk's seconds flagged as above that makes the chunk be re-listened to
 sparse_chunk_ratio = 0.15          # a chunk with fewer characters per second than this share of the median chunk is re-listened to ...

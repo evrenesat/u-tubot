@@ -55,7 +55,7 @@ def phrase_onsets(starts_ends: list[tuple[float, float]], gap_s: float) -> list[
     return onsets
 
 
-def _percentile(sorted_values: list[float], fraction: float) -> float:
+def percentile(sorted_values: list[float], fraction: float) -> float:
     index = round(fraction * (len(sorted_values) - 1))
     return sorted_values[index]
 
@@ -78,8 +78,8 @@ def score_starts(cue_starts: list[float], onsets: list[float], cfg: CaptionsConf
         hit / len(errors),
         loose / len(errors),
         statistics.median(errors),
-        _percentile(ordered, PERCENTILE_LOW),
-        _percentile(ordered, PERCENTILE_HIGH),
+        percentile(ordered, PERCENTILE_LOW),
+        percentile(ordered, PERCENTILE_HIGH),
     )
 
 

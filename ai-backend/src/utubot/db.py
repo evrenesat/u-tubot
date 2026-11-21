@@ -119,7 +119,14 @@ JOB_COLUMNS = {
     "priority": "INTEGER NOT NULL DEFAULT 1",
 }
 POLICY_COLUMNS = {"version": "INTEGER NOT NULL DEFAULT 0", "updated_at": "REAL NOT NULL DEFAULT 0"}
-TRANSCRIPT_COLUMNS = {"engine": "TEXT", "model": "TEXT", "segments": "TEXT", "job_id": "TEXT"}
+TRANSCRIPT_COLUMNS = {
+    "engine": "TEXT",
+    "model": "TEXT",
+    "segments": "TEXT",
+    "job_id": "TEXT",
+    "words": "TEXT",
+    "caption_kind": "TEXT",
+}
 CAPTION_COLUMNS = {"job_id": "TEXT", "timing_version": "INTEGER", "timing": "TEXT"}
 METADATA_ONLY = "metadata_only"
 
