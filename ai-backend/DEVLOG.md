@@ -2,7 +2,7 @@
 
 ## 2026-11-21 (subtitle language setting)
 
-- New per-user setting `captions_translate_to` (settings section `transcripts`, web UI Transcripts card, "Subtitle language"):
+- New per-user setting `captions_translate_to` (settings section `transcripts`, web UI Captions page, "Subtitle language" (empty with the server default as placeholder)):
   the language u·tubot captions are translated into. Unset follows `[captions] translate_to` (`en`); `off`/`none`/empty
   keep the spoken language (stored as `off`); a captions request that names its own `translate_to` still wins.
   `config.check_translate_target` validates it and the server default the same way.
