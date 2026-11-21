@@ -88,11 +88,15 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
     @Override
     public void onEngineInitialized() {
-        // The seek bar was reset with the engine: a cut that stayed applied comes back on
-        if (mCut != null) {
-            mPendingCut = mCut;
-            mCut = null;
-            mSkipper = null;
+        // The seek bar was reset with the engine: a cut that stayed applied comes back on, and a cut that was still waiting for
+        // the length before the release is tried again
+        if (mCut != null || mPendingCut != null) {
+            if (mCut != null) {
+                mPendingCut = mCut;
+                mCut = null;
+                mSkipper = null;
+            }
+
             startPolling();
             tryApplyPending();
         }
@@ -110,8 +114,11 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     public void onEngineReleased() {
         // The engine is released for a format change, a restart at the fixer, or a home round trip: the video stays and a
         // VideoLoaderController load follows with no onNewVideo, so the cut's follower must stay too (the menu's next request is
-        // still followed). Its poll and the cut come back in onEngineInitialized or the next video's events; only onFinish ends it.
+        // still followed). A cut that was ready but still waiting for the length stays pending; onEngineInitialized re-arms the
+        // applied one, restarts the poll and tries the pending one. Only onFinish ends the follower.
+        Cut rearm = mPendingCut;
         stopSkipping();
+        mPendingCut = rearm;
     }
 
     @Override
