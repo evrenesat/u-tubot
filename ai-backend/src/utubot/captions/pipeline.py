@@ -993,16 +993,22 @@ class CaptionPipeline:
             )
             if not isinstance(data, list) or len(data) != len(part):
                 raise PipelineError("translation length mismatch")
-            for cue, prefix, text in zip(part, prefixes, data, strict=True):
+            for offset, (cue, prefix, text) in enumerate(zip(part, prefixes, data, strict=True)):
                 full = f"{prefix}{text}".strip()
                 # the translation no longer maps onto the source words one to one, but its cue keeps
                 # the source cue's times and words so an overflow splits on a real pause
-                source = replace(cue, words_match_text=False)
                 lines = wrap_lines(full, c.max_chars_per_line, c.max_lines)
+                if c.timing_mode == "legacy":
+                    # rollback switch: the old output, one cue per source cue, words dropped
+                    out.append(Cue(cue.start, cue.end, lines or [full], cue.speaker))
+                    continue
+                source = replace(cue, words_match_text=False)
                 if lines is not None:
                     out.append(replace(source, lines=lines))
                 else:
-                    out.extend(split_cue(source, full, c, stats))
+                    at = i + offset + 1
+                    room = cues[at].start if at < len(cues) else None
+                    out.extend(split_cue(source, full, c, stats, room))
         return out
 
 

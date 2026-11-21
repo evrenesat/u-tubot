@@ -337,3 +337,122 @@ async def test_translation_overflow_is_split_not_one_long_line(env):
     assert len(out) > 1
     assert all(len(line) <= 20 for piece in out for line in piece.lines)
     assert out[0].start == cue.start and out[-1].end == cue.end
+
+
+async def test_legacy_mode_keeps_the_old_overflow_output(env):
+    from tests.test_proofread import proofreader, respond_with_cues
+    from utubot.captions.types import Cue
+
+    text = "one two three four five six seven eight"
+    cue = _spoken_cue(text)
+    cue = Cue(cue.start, cue.end, [text], words=cue.words)
+    cfg = env.svc.jobs.pipeline.cfg.captions
+    cfg.timing_mode = "legacy"
+    cfg.max_chars_per_line, cfg.max_lines = 20, 1
+    out = await env.svc.jobs.pipeline.translate([cue], "tr")
+    assert [(c.start, c.end, c.lines) for c in out] == [
+        (cue.start, cue.end, ["T:one two three four five six seven eight"])
+    ]
+    assert out[0].words is None
+    respond_with_cues(env.llm, ["One two three four five six seven eight."])
+    polished = await proofreader(
+        env.llm, timing_mode="legacy", max_chars_per_line=20, max_lines=1
+    ).polish(VID, [cue], "English", {})
+    old = retime_split("One two three four five six seven eight.", cue.start, cue.end, cfg)
+    assert [(c.start, c.end, c.lines) for c in polished] == [(c.start, c.end, c.lines) for c in old]
+    assert all(c.words is None for c in polished)
+
+
+def test_split_cue_stretches_a_short_last_piece_up_to_the_next_cue():
+    from utubot.captions.segment import SplitStats, split_cue
+    from utubot.captions.types import Cue, Word
+
+    words = [
+        Word(i * 0.4, i * 0.4 + 0.2, w) for i, w in enumerate("aaaaaa bbbbbb cccccc dd".split())
+    ]
+    cue = Cue(0.0, 1.4, ["aaaaaa bbbbbb cccccc dd"], words=words)
+    cfg = _tight_cfg()
+    text = "aaaaaa bbbbbb cccccc dd"
+    open_end = split_cue(cue, text, cfg, SplitStats())
+    capped = split_cue(cue, text, cfg, SplitStats(), room_end=1.6)
+    assert open_end[-1].end == cue.end
+    assert capped[-1].end == 1.6 and capped[-1].end - capped[-1].start < cfg.min_cue_s
+
+
+def test_caption_row_splits_are_not_char_timed():
+    from utubot.captions.align import caption_cues
+
+    cues = caption_cues([(0.0, 6.0, " ".join(f"word{i}" for i in range(30)))], CFG)
+    assert len(cues) > 1 and not any(c.char_timed for c in cues)
+
+
+def test_split_cue_pieces_stay_inside_the_cue():
+    from utubot.captions.segment import SplitStats, split_cue
+    from utubot.captions.types import Cue, Word
+
+    names = "aaaaaa bbbbbb cccccc dddddd eeeeee ffffff".split()
+    words = [Word(i * 0.4, i * 0.4 + 0.3, w) for i, w in enumerate(names)]
+    cue = Cue(0.0, 1.0, [" ".join(names)], words=words)  # ends before its last words
+    cfg = _tight_cfg()
+    pieces = split_cue(cue, " ".join(names), cfg, SplitStats())
+    assert len(pieces) == 2
+    for piece in pieces:
+        assert cue.start <= piece.start and piece.end <= cue.end
+        assert piece.end - piece.start >= cfg.word_min_s
+    assert all(a.start < b.start for a, b in zip(pieces, pieces[1:], strict=False))
+    tiny = Cue(0.0, 0.05, cue.lines, words=words)
+    spread = split_cue(tiny, " ".join(names), cfg, SplitStats())
+    assert all(0.0 <= p.start < p.end <= 0.05 for p in spread)
+
+
+def test_exact_split_needs_the_same_tokens_not_just_the_count():
+    from utubot.captions.segment import SplitStats, split_cue, tokens_match
+
+    cue = _spoken_cue("alpha beta gamma delta epsilon zeta eta theta")
+    assert tokens_match("Alpha, beta gamma delta epsilon zeta eta theta.", cue.words)
+    changed = "Alpha beta gamma delta epsilon zeta eta thetas"  # same count, one token changed
+    changed = changed.replace("thetas", "iota")
+    assert not tokens_match(changed, cue.words)
+    stats = SplitStats()
+    pieces = split_cue(cue, changed + " kappa lambda", _tight_cfg(), stats)
+    assert stats.exact == 0 and stats.at_pause == 1
+    assert not any(p.words_match_text for p in pieces)
+    same_count = SplitStats()
+    split_cue(cue, changed, _tight_cfg(), same_count)
+    assert same_count.exact == 0 and same_count.at_pause == 1
+
+
+async def test_proofread_that_changes_tokens_stops_exact_matching(env):
+    from tests.test_proofread import proofreader, respond_with_cues
+    from utubot.captions.types import Cue
+
+    text = "alpha beta gamma delta"
+    cue = _spoken_cue(text)
+    cue = Cue(cue.start, cue.end, [text], words=cue.words)
+    respond_with_cues(env.llm, ["Alpha beta gamma delta iota"])
+    out = await proofreader(env.llm).polish(VID, [cue], "English", {})
+    assert out[0].words is cue.words and not out[0].words_match_text
+    respond_with_cues(env.llm, ["Alpha, beta gamma delta."])
+    out = await proofreader(env.llm).polish(VID, [cue], "English", {})
+    assert out[0].words_match_text
+
+
+async def test_legacy_proofread_counts_character_timed_overflow(env):
+    from tests.test_proofread import proofreader, respond_with_cues
+    from utubot.captions import events
+    from utubot.captions.events import JobEvents, JobTrace
+    from utubot.captions.types import Cue
+
+    text = "one two three four five six seven eight"
+    cue = _spoken_cue(text)
+    cue = Cue(cue.start, cue.end, [text], words=cue.words)
+    respond_with_cues(env.llm, ["One two three four five six seven eight."])
+    pr = proofreader(env.llm, timing_mode="legacy", max_chars_per_line=20, max_lines=1)
+    log = JobEvents(env.svc.db, pr.cfg)
+    token = events.bind(JobTrace("jl", log))
+    try:
+        await pr.polish(VID, [cue], "English", {})
+    finally:
+        events.unbind(token)
+    detail = [e for e in log.list("jl") if e["stage"] == "proofread"][-1]["detail"]
+    assert detail["split_by_chars"] == 1 and detail["split_exact"] == 0

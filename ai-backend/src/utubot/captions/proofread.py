@@ -26,7 +26,7 @@ from dataclasses import replace
 from ..config import CaptionsConfig, LLMTask
 from ..llm import LLMClient
 from . import events
-from .segment import SplitStats, split_cue, wrap_lines
+from .segment import SplitStats, retime_split, split_cue, tokens_match, wrap_lines
 from .stages import StageCache
 from .types import Cue
 
@@ -83,6 +83,7 @@ class Proofreader:
             out: list[Cue] = []
             corrected = warned = chars_in = chars_out = 0
             split = SplitStats()
+            legacy = cfg.timing_mode == "legacy"
             for i in range(0, len(cues), cfg.proofread_batch):
                 part = cues[i : i + cfg.proofread_batch]
                 texts = [" ".join(cue.lines) for cue in part]
@@ -112,14 +113,26 @@ class Proofreader:
                     chars_out += sum(len(text) for text in fixed)
                 else:
                     fixed = texts
-                for cue, text in zip(part, fixed, strict=True):
+                for offset, (cue, text) in enumerate(zip(part, fixed, strict=True)):
                     lines = wrap_lines(text, cfg.max_chars_per_line, cfg.max_lines)
-                    if lines is not None:
-                        out.append(replace(cue, lines=lines))
+                    if legacy:
+                        # rollback switch: the cue is rebuilt as before, words dropped
+                        if lines is not None:
+                            out.append(Cue(cue.start, cue.end, lines, cue.speaker))
+                        else:
+                            split.by_chars += 1
+                            out.extend(retime_split(text, cue.start, cue.end, cfg))
+                    elif lines is not None:
+                        match = cue.words_match_text and (
+                            not cue.words or tokens_match(text, cue.words)
+                        )
+                        out.append(replace(cue, lines=lines, words_match_text=match))
                     else:
                         # the corrected text no longer fits one cue: split it on the cue's own
                         # word boundaries instead of storing lines that break the limits
-                        out.extend(split_cue(cue, text, cfg, split))
+                        at = i + offset + 1
+                        room = cues[at].start if at < len(cues) else None
+                        out.extend(split_cue(cue, text, cfg, split, room))
             st.set(
                 corrected=corrected,
                 warned=warned,

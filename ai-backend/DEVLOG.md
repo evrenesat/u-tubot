@@ -1,5 +1,18 @@
 # DEVLOG
 
+## 2026-11-21 (CP4 review round 1 fixes)
+
+1. Legacy mode (`timing_mode = "legacy"`) again produces the old output: `Proofreader.polish` rebuilds cues without words and overflows through
+   `retime_split` (counted in `split_by_chars`); `translate` keeps one cue per source cue with `wrap_lines(...) or [full]`. Test compares with
+   the old result.
+2. `split_cue` clamps: every piece lies in the cue, starts increase by at least `word_min_s`, each piece lasts at least `word_min_s` (a cue
+   shorter than that is shared evenly); a cue ending before its last word no longer gives a zero-length piece or pieces past `cue.end`.
+3. Exact mapping compares normalised tokens (`chunking.bare`, case and punctuation stripped; `segment.tokens_match`), not counts. A mismatch
+   goes `at_pause`. Proofread sets `words_match_text` False when it changed tokens; pieces of an `at_pause` split are False too.
+4. A last piece shorter than `min_cue_s` stretches too, up to the next cue's start (`split_cue(room_end=)`, passed by proofread and translate).
+5. Caption-row splits from `caption_cues` / `merge_words_into_cues(retime=False)` are caption-timed and no longer count as `char_timed_cues`.
+6. TIMING_VERSION 3 is reserved for CP3; CP4 jumps to 4 on purpose.
+
 ## 2026-11-21 (subtitle timing checkpoint 4: proofread and translate keep real times)
 
 Plan: `temp/sync-design/agent-plan.md` (CP4). Before: a proofread text that overflowed a cue went through `retime_split` (character-count

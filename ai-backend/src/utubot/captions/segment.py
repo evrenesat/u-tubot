@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, replace
 
 from ..config import CaptionsConfig
+from .chunking import bare
 from .types import Cue, Word
 
 SENTENCE_END = (".", "!", "?", "…", "。", "！", "？")
@@ -141,11 +142,14 @@ def forced_lines(words: list[str], max_chars: int) -> list[str]:
     return lines
 
 
-def retime_split(text: str, start: float, end: float, cfg: CaptionsConfig) -> list[Cue]:
+def retime_split(
+    text: str, start: float, end: float, cfg: CaptionsConfig, *, char_timed: bool = True
+) -> list[Cue]:
     """Text too long for one cue, cut into timed cues: lines first, then cues of `max_lines`.
 
     Time is shared by character count, so a cue lasts as long as its text is long; the last cue
-    ends exactly at `end`.
+    ends exactly at `end`. `char_timed=False` for a caption row's own span (the times are the
+    caption's, only the cut between them is by characters).
     """
     tokens = text.split()
     if not tokens:
@@ -162,7 +166,7 @@ def retime_split(text: str, start: float, end: float, cfg: CaptionsConfig) -> li
             cue_end = max(end, cursor + 0.2)
         else:
             cue_end = min(cursor + max(span * weights[i] / total, 0.2), end)
-        out.append(Cue(cursor, cue_end, list(group), char_timed=True))
+        out.append(Cue(cursor, cue_end, list(group), char_timed=char_timed))
         cursor = cue_end
     return [c for c in out if c.lines]
 
@@ -183,6 +187,20 @@ class SplitStats:
             "split_by_chars": self.by_chars,
             "overlong": self.overlong,
         }
+
+
+def tokens_match(text: str, words: list[Word]) -> bool:
+    """Whether `text` (a speaker prefix token aside) is the words' own text, up to case and punctuation."""
+    tokens = text.split()
+    spoken = [w for w in words if w.text.strip()]
+    if (
+        tokens
+        and SPEAKER_TOKEN_RE.match(tokens[0])
+        and spoken
+        and spoken[0].text.strip() != tokens[0]
+    ):
+        tokens = tokens[1:]
+    return [bare(t) for t in tokens] == [bare(w.text) for w in spoken]
 
 
 def _group_lines(text: str, cfg: CaptionsConfig) -> tuple[list[str], list[list[str]]]:
@@ -236,7 +254,13 @@ def _boundaries_at_pause(weights: list[int], words: list[Word], cfg: CaptionsCon
     return out
 
 
-def split_cue(cue: Cue, text: str, cfg: CaptionsConfig, stats: SplitStats) -> list[Cue]:
+def split_cue(
+    cue: Cue,
+    text: str,
+    cfg: CaptionsConfig,
+    stats: SplitStats,
+    room_end: float | None = None,
+) -> list[Cue]:
     """`text` (a corrected or translated version of the cue) cut into cues that fit the limits.
 
     With the cue's words the cut lands on word boundaries: where the text still maps one token to
@@ -244,7 +268,8 @@ def split_cue(cue: Cue, text: str, cfg: CaptionsConfig, stats: SplitStats) -> li
     widest pause near the text's share of the cue's time (`at_pause`). A piece runs from its first
     word's start to its last word's end, lingers `cue_linger_s` and is stretched to `min_cue_s`
     only into the gap before the next piece; the first piece starts and the last ends where the cue
-    does. A cue without enough words is cut by character count (`by_chars`).
+    does; a last piece shorter than `min_cue_s` is stretched too, but only up to `room_end` (the next
+    cue's start; no stretch when unknown). A cue without enough words is cut by character count (`by_chars`).
     """
     tokens, groups = _group_lines(text, cfg)
     if not tokens:
@@ -262,7 +287,8 @@ def split_cue(cue: Cue, text: str, cfg: CaptionsConfig, stats: SplitStats) -> li
         ]
     counts = [sum(len(line.split()) for line in group) for group in groups]
     prefix = 1 if SPEAKER_TOKEN_RE.match(tokens[0]) and words[0].text.strip() != tokens[0] else 0
-    if cue.words_match_text and len(tokens) - prefix == len(words):
+    match = cue.words_match_text and tokens_match(text, words)
+    if match:
         cuts = _boundaries_exact(counts, prefix)
         stats.exact += 1
     else:
@@ -270,26 +296,49 @@ def split_cue(cue: Cue, text: str, cfg: CaptionsConfig, stats: SplitStats) -> li
         cuts = _boundaries_at_pause(weights, words, cfg)
         stats.at_pause += 1
     edges = [0, *cuts, len(words)]
+    n = len(groups)
+    starts = [cue.start, *(words[edges[i]].start for i in range(1, n))]
+    ends = [*(words[edges[i + 1] - 1].end for i in range(n - 1)), cue.end]
+    starts = _clamped_starts(starts, cue, cfg)
     pieces: list[Cue] = []
     for i, group in enumerate(groups):
-        part = words[edges[i] : edges[i + 1]]
-        start = cue.start if i == 0 else part[0].start
-        end = cue.end if i == len(groups) - 1 else part[-1].end
+        if i < n - 1:
+            room = starts[i + 1]
+            end = min(max(ends[i] + cfg.cue_linger_s, starts[i] + cfg.min_cue_s), room)
+            end = max(end, min(starts[i] + cfg.word_min_s, room))
+        else:
+            end = cue.end
         pieces.append(
             Cue(
-                start,
-                max(end, start),
+                starts[i],
+                max(end, starts[i]),
                 list(group),
                 cue.speaker,
-                words=part,
-                words_match_text=cue.words_match_text,
+                words=words[edges[i] : edges[i + 1]],
+                words_match_text=match,
                 char_timed=False,
             )
         )
-    for i, piece in enumerate(pieces[:-1]):
-        room = pieces[i + 1].start
-        piece.end = min(max(piece.end + cfg.cue_linger_s, piece.start + cfg.min_cue_s), room)
+    last = pieces[-1]
+    if room_end is not None and last.end - last.start < cfg.min_cue_s:
+        last.end = max(last.end, min(last.start + cfg.min_cue_s, room_end))
     return pieces
+
+
+def _clamped_starts(starts: list[float], cue: Cue, cfg: CaptionsConfig) -> list[float]:
+    """Piece starts inside the cue, increasing by at least `word_min_s` (shared evenly if it is too short)."""
+    n = len(starts)
+    span = cue.end - cue.start
+    if span < n * cfg.word_min_s:
+        return [cue.start + i * span / n for i in range(n)]
+    out: list[float] = []
+    for i, start in enumerate(starts):
+        low = cue.start + i * cfg.word_min_s
+        if out:
+            low = max(low, out[-1] + cfg.word_min_s)
+        high = cue.end - (n - i) * cfg.word_min_s
+        out.append(min(max(start, low), high))
+    return out
 
 
 def enforce_timing(cues: list[Cue], cfg: CaptionsConfig) -> list[Cue]:

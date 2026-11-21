@@ -104,7 +104,7 @@ def merge_words_into_cues(
             if lines is not None:
                 out.append(Cue(cue.start, cue.end, lines, cue.speaker))
             else:
-                out.extend(retime_split(text, cue.start, cue.end, cfg))
+                out.extend(retime_split(text, cue.start, cue.end, cfg, char_timed=False))
         elif lines is not None and not _too_fast(text, bucket[0].start, bucket[-1].end, cfg):
             out.append(
                 Cue(
@@ -218,7 +218,7 @@ def caption_cues(segments: list[tuple[float, float, str]], cfg: CaptionsConfig) 
         if lines is not None:
             cues.append(Cue(start, end, lines))
         else:
-            cues.extend(retime_split(text, start, end, cfg))
+            cues.extend(retime_split(text, start, end, cfg, char_timed=False))
     return enforce_timing(cues, cfg)
 
 
