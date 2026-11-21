@@ -102,6 +102,14 @@ ERROR_TEXT_CHARS = 200
 CONNECT_TIMEOUT_S = 10.0
 ENGINE_SEPARATOR = "+"
 MIN_SPEED_FACTOR = 0.01
+STATUS_SERVICE_UNAVAILABLE = 503
+STATUS_WARMUP_HINTED = frozenset({500, 502, 503})
+WARMUP_HINTS = ("not started", "not loaded", "model is loading")
+CODE_ENGINE_UNAVAILABLE = "engine_unavailable"
+WARMUP_BODY_CHARS = 1000
+WARMUP_READY = "ready"
+WARMUP_GAVE_UP = "gave_up"
+WARMUP_BACKOFF_FACTOR = 2.0
 
 
 class EngineError(ASRError):
@@ -120,11 +128,13 @@ class EngineError(ASRError):
         penalize: bool = True,
         isolated: bool = False,
         code: str | None = None,
+        transient: bool = False,
     ):
         super().__init__(message)
         self.penalize = penalize
         self.isolated = isolated
         self.code = code
+        self.transient = transient
 
 
 @dataclass
@@ -209,6 +219,14 @@ def parse_verbose_json(
             ]
         timing = classify(words, real_min_share)
     return ChunkResult(segments, words, normalize_language(data.get("language")), timing)
+
+
+def warmup_state(status: int, body: str) -> bool:
+    """An HTTP answer that says the server is still starting or loading its model."""
+    if status == STATUS_SERVICE_UNAVAILABLE:
+        return True
+    text = body.lower()
+    return status in STATUS_WARMUP_HINTED and any(hint in text for hint in WARMUP_HINTS)
 
 
 def transport_code(exc: httpx.HTTPError) -> str:
@@ -336,6 +354,7 @@ class OpenAIEngine:
                 f"asr transport error: {type(exc).__name__}",
                 isolated=not isinstance(exc, httpx.ConnectError | httpx.TimeoutException),
                 code=transport_code(exc),
+                transient=isinstance(exc, httpx.ConnectError),
             ) from None
         if resp.status_code >= HTTP_ERROR_FLOOR:
             raise EngineError(
@@ -343,6 +362,7 @@ class OpenAIEngine:
                 penalize=resp.status_code not in STATUS_INPUT_REJECTED,
                 isolated=resp.status_code >= HTTP_SERVER_ERROR_FLOOR,
                 code=f"http_{resp.status_code}",
+                transient=warmup_state(resp.status_code, resp.text[:WARMUP_BODY_CHARS]),
             )
         try:
             body = resp.json()
@@ -448,6 +468,14 @@ class FasterWhisperEngine:
 
 
 @dataclass
+class _Warmup:
+    """One engine's shared wait for a server that is starting; `outcome` is set when it ends."""
+
+    done: asyncio.Event = field(default_factory=asyncio.Event)
+    outcome: str | None = None
+
+
+@dataclass
 class RecheckBudget:
     """Extra engine requests a job may still spend on re-listening."""
 
@@ -523,8 +551,12 @@ class AsrRouter:
         engine_factory: EngineFactory | None = None,
         clock: Callable[[], float] = time.monotonic,
         enabled: Callable[[AsrEngineConfig], bool] = engine_enabled,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
         self.cfg = cfg
+        self._sleep = sleep
+        self._warmups: dict[str, _Warmup] = {}
+        self._gave_up_at: dict[str, float] = {}
         self._transport = transport
         self._factory = engine_factory or self._build
         self._clock = clock
@@ -673,6 +705,101 @@ class AsrRouter:
             for e in self.cfg.engines()
         ]
 
+    async def _transcribe(self, engine: AsrEngineConfig, wav: Path, job: _Job) -> ChunkResult:
+        """One request to the engine; a server that is still starting is waited for (`_warm`)."""
+        impl = self._engine(engine)
+        try:
+            return await impl.transcribe_chunk(wav, job.language, job.want_words)
+        except EngineError as exc:
+            if not exc.transient:
+                raise
+            return await self._warm(engine, wav, job)
+
+    async def _warm(self, engine: AsrEngineConfig, wav: Path, job: _Job) -> ChunkResult:
+        """Wait for a starting engine, once for all chunks that meet it: the first leads, the rest follow.
+
+        An engine that gave up within `asr_unhealthy_s` is not waited for again (raised at once). A
+        follower whose request meets a cold engine again after progress may lead a new wait; each
+        wait is bounded by `asr_warmup_wait_s`.
+        """
+        while True:
+            gave_up = self._gave_up_at.get(engine.name)
+            if gave_up is not None and self._clock() - gave_up < self.cfg.asr_unhealthy_s:
+                raise EngineError(
+                    f"asr engine {engine.name} is not available",
+                    penalize=False,
+                    code=CODE_ENGINE_UNAVAILABLE,
+                )
+            warm = self._warmups.get(engine.name)
+            if warm is None:
+                warm = self._warmups[engine.name] = _Warmup()
+                try:
+                    return await self._lead(engine, wav, job, warm)
+                finally:
+                    del self._warmups[engine.name]
+                    warm.done.set()
+            await warm.done.wait()
+            if warm.outcome == WARMUP_GAVE_UP:
+                raise EngineError(
+                    f"asr engine {engine.name} is not available",
+                    penalize=False,
+                    code=CODE_ENGINE_UNAVAILABLE,
+                ) from None
+            try:
+                return await self._engine(engine).transcribe_chunk(
+                    wav, job.language, job.want_words
+                )
+            except EngineError as exc:
+                if not exc.transient:
+                    raise
+
+    async def _lead(
+        self, engine: AsrEngineConfig, wav: Path, job: _Job, warm: _Warmup
+    ) -> ChunkResult:
+        budget = self.cfg.asr_warmup_wait_s
+        delay = self.cfg.asr_warmup_retry_s
+        began = self._clock()
+        waited = 0.0
+        attempts = 1
+        while waited < budget:
+            step = min(delay, self.cfg.asr_warmup_max_step_s, budget - waited)
+            await self._sleep(step)
+            waited = self._clock() - began
+            delay *= WARMUP_BACKOFF_FACTOR
+            attempts += 1
+            try:
+                result = await self._engine(engine).transcribe_chunk(
+                    wav, job.language, job.want_words
+                )
+            except EngineError as exc:
+                if exc.transient:
+                    continue
+                warm.outcome = WARMUP_READY
+                self._warmup_event(engine, waited, attempts, WARMUP_READY)
+                raise
+            warm.outcome = WARMUP_READY
+            self._gave_up_at.pop(engine.name, None)
+            self._warmup_event(engine, waited, attempts, WARMUP_READY)
+            return result
+        warm.outcome = WARMUP_GAVE_UP
+        self._gave_up_at[engine.name] = self._clock()
+        self._warmup_event(engine, waited, attempts, WARMUP_GAVE_UP)
+        raise EngineError(
+            f"asr engine {engine.name} did not become ready in {round(waited)} s",
+            code=CODE_ENGINE_UNAVAILABLE,
+        )
+
+    @staticmethod
+    def _warmup_event(engine: AsrEngineConfig, waited: float, attempts: int, outcome: str) -> None:
+        events.emit(
+            events.ASR_WAIT,
+            events.OK if outcome == WARMUP_READY else events.WARN,
+            engine=engine.name,
+            waited_s=round(waited, 1),
+            attempts=attempts,
+            outcome=outcome,
+        )
+
     async def _chunk_on(
         self, engine: AsrEngineConfig, span: Span, job: _Job, rest: list[AsrEngineConfig]
     ) -> ChunkResult:
@@ -685,16 +812,12 @@ class AsrRouter:
                     f"asr engine {engine.name} went unhealthy", penalize=False, code="unhealthy"
                 )
             if span.start <= 0 and span.end >= job.total_s:
-                result = await self._engine(engine).transcribe_chunk(
-                    job.wav, job.language, job.want_words
-                )
+                result = await self._transcribe(engine, job.wav, job)
             else:
                 part = job.scratch / f"{engine.name}-{span.index}-{int(span.start * 1000)}.wav"
                 await asyncio.to_thread(write_chunk, job.wav, span, part)
                 try:
-                    result = await self._engine(engine).transcribe_chunk(
-                        part, job.language, job.want_words
-                    )
+                    result = await self._transcribe(engine, part, job)
                 finally:
                     part.unlink(missing_ok=True)
         except EngineError as exc:

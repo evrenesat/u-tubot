@@ -1,5 +1,15 @@
 # DEVLOG
 
+## 2026-11-21 (cold ASR engine: wait, do not fall through; issue 57)
+
+1. A server that is still loading its model (oMLX: HTTP 500 "Engine not started", also 500/502 saying not started, not loaded or model is loading, any 503,
+   refused connections) is now `EngineError.transient` (`warmup_state`). `AsrRouter._transcribe` retries it on the same engine with backoff
+   (`asr_warmup_wait_s` 90, `asr_warmup_retry_s` 3, doubling, `asr_warmup_max_step_s` 20) before falling through; `sleep` is injectable.
+2. One wait per engine: the first chunk leads (`_lead`), the others wait on its event (`_warm`) and then retry their own request. The retry
+   runs outside `OpenAIEngine._resolve`'s lock (the exception releases it first), so a transient during the `auto` probe marks no mode.
+3. Events: `asr_wait` (engine, waited_s, attempts, outcome) and `asr_fallback` reason `engine_unavailable` on giving up (engine marked
+   unhealthy). Job page text, docs, contract updated. Timeouts, 4xx and other 500s are unchanged.
+
 ## 2026-11-21 (CP4 review round 1 fixes)
 
 1. Legacy mode (`timing_mode = "legacy"`) again produces the old output: `Proofreader.polish` rebuilds cues without words and overflows through

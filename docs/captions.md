@@ -169,7 +169,12 @@ failed: a connect or timeout failure, a 429 or a 401/403/404 mark it at once; a 
 file's fault and only counts once a second, *different* file has failed on that engine within `asr_failure_window_s` (600 s) with no success in between; a request rejected for its
 input (400, 413, 415, 422) never counts. A chunk that waited for an engine's `max_parallel` slot, or the next piece of a re-cut chunk, checks the engine
 again: if it became unhealthy meanwhile and a healthy engine remains later in the chain, the work moves on at once instead of waiting
-out another timeout. When every engine is unhealthy they are all tried again, so a single-engine setup recovers
+out another timeout. A server that is still starting (HTTP 503; an HTTP 500 or 502 whose body says *not started*, *not loaded* or *model is loading*;
+a refused connection) is not failed at once: the request is retried on the same engine with a growing pause (`asr_warmup_retry_s`
+3 s, doubling, at most `asr_warmup_max_step_s` 20 s) for up to `asr_warmup_wait_s` (90 s) in total. All chunks that meet the same cold engine share
+that one wait (the first leads, the rest wait for its outcome) and then continue on it; when the budget runs out the chunks fall through with
+reason `engine_unavailable` and the engine is marked unhealthy; for `asr_unhealthy_s` after that, later chunks fall through at once instead of waiting again. A timeout, a 4xx or any other 500 is not a warm-up and behaves as above.
+The job log shows the wait as an `asr_wait` event. When every engine is unhealthy they are all tried again, so a single-engine setup recovers
 by itself. The engines used and their models are stored with the transcript (`engine` is `mac+lan-cpu` when two shared the work).
 
 **Example: three engines** (placeholders; use your own hosts and variable names):
