@@ -31,6 +31,7 @@ public class UtubotCutSeekBarTest {
     @After
     public void tearDown() {
         UtubotCutSeekBar.setCut(null, null);
+        UtubotCutSeekBar.setSponsor(mPlayer, null); // the sponsor segments are remembered between the writes now
     }
 
     /**
@@ -111,6 +112,45 @@ public class UtubotCutSeekBarTest {
 
         UtubotCutSeekBar.setSponsor(mPlayer, sponsorSegments());
         assertSame(sponsorSegments().size(), mWritten.get(0).size());
+    }
+
+    @Test
+    public void aCutAppliedAfterTheSponsorWrite_isPaintedWithTheSponsorColours() {
+        UtubotCutSeekBar.setSponsor(mPlayer, sponsorSegments());
+        UtubotCutSeekBar.setCut("abc", cutSegments());
+        mWritten.clear();
+
+        UtubotCutSeekBar.paint(mPlayer);
+
+        List<SeekBarSegment> both = mWritten.get(0);
+        assertEquals(3, both.size());
+        assertEquals(10, Math.round(both.get(0).startProgress * 100));
+        assertEquals(70, Math.round(both.get(2).startProgress * 100));
+    }
+
+    @Test
+    public void turningTheCutOff_leavesOnlyTheSponsorColours() {
+        UtubotCutSeekBar.setSponsor(mPlayer, sponsorSegments());
+        UtubotCutSeekBar.setCut("abc", cutSegments());
+        UtubotCutSeekBar.setCut("abc", null);
+        mWritten.clear();
+
+        UtubotCutSeekBar.paint(mPlayer);
+
+        List<SeekBarSegment> sponsorOnly = mWritten.get(0);
+        assertEquals(1, sponsorOnly.size());
+        assertEquals(Color.GREEN, sponsorOnly.get(0).color);
+    }
+
+    @Test
+    public void theWipeOfAnotherVideo_forgetsTheSponsorColours() {
+        UtubotCutSeekBar.setSponsor(mPlayer, sponsorSegments());
+        UtubotCutSeekBar.wipe(mPlayer, video("xyz"));
+        mWritten.clear();
+
+        UtubotCutSeekBar.paint(mPlayer);
+
+        assertNull(mWritten.get(0));
     }
 
     private Video video(String id) {

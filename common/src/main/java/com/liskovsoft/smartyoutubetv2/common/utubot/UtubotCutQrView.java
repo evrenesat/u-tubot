@@ -23,7 +23,7 @@ import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 
 /**
  * The "Describe on phone…" sheet over the playing video: the waiting request's short address as a QR code, the address in text under
- * it. Nothing is paused: the video keeps playing behind the sheet. Back (any key) takes it away.
+ * it. Nothing is paused: the video keeps playing behind the sheet. Back takes it away; the volume keys stay with the system.
  */
 public final class UtubotCutQrView extends FrameLayout {
     private static final int SCRIM = 0xD0000000;
@@ -67,6 +67,13 @@ public final class UtubotCutQrView extends FrameLayout {
         setFocusable(true);
         setFocusableInTouchMode(true);
         setOnKeyListener((view, keyCode, event) -> {
+            switch (keyCode) {
+                case KeyEvent.KEYCODE_VOLUME_UP:
+                case KeyEvent.KEYCODE_VOLUME_DOWN:
+                case KeyEvent.KEYCODE_VOLUME_MUTE:
+                    return false; // the volume keys stay with the system: on a TV without CEC volume this is the only way to change it
+            }
+
             if (event.getAction() != KeyEvent.ACTION_DOWN) {
                 return true; // the rest of every press is this sheet's too
             }

@@ -243,9 +243,10 @@ public final class UtubotCutFollower {
         }
 
         if (request.isReady()) {
+            // The video still plays and a next request for it must be followed, so only the poll ends; the listener and the video stay
             Listener listener = mListener;
             boolean requested = mRequested;
-            stop();
+            stopPolling();
 
             if (listener != null) {
                 listener.onCutReady(videoId, request.cut, requested);
@@ -265,7 +266,28 @@ public final class UtubotCutFollower {
             return;
         }
 
-        scheduleNext();
+        mScheduler.remove(mPoll);
+
+        if (mClock.nowMs() - mStartedMs > MAX_FOLLOW_MS) {
+            stopPolling();
+            return;
+        }
+
+        mScheduler.postDelayed(mPoll, retryDelayMs());
+    }
+
+    /**
+     * A moment between the retries of a long poll: 1 s, 2 s, then 5 s, so a network drop does not burn the error budget at once
+     */
+    private long retryDelayMs() {
+        switch (mErrors) {
+            case 1:
+                return 1_000;
+            case 2:
+                return 2_000;
+            default:
+                return 5_000;
+        }
     }
 
     /**

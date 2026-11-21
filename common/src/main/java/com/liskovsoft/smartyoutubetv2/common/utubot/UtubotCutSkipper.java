@@ -106,6 +106,25 @@ public final class UtubotCutSkipper {
     }
 
     /**
+     * The moment a cut is applied: an explicit act, not a seek. When the playback is already inside a dropped range — an intro drop
+     * the video plays in, or a cut picked up mid-drop — it jumps once to the end of the drop, with the usual one-jump extension.
+     * A drop that starts at 0 cannot be crossed by the flowing playback at all, so this is the only way it is ever skipped.
+     */
+    public Decision onAppliedAt(long positionMs) {
+        mLastPositionMs = positionMs;
+
+        for (long[] range : mCut.skipRangesMs) {
+            if (positionMs >= range[0] && positionMs < range[1]) {
+                long destination = destination(range[1]);
+                mLastPositionMs = destination;
+                return Decision.jumpTo(destination);
+            }
+        }
+
+        return Decision.play();
+    }
+
+    /**
      * The end of a jump: past every sponsor segment set to skip that overlaps or touches the destination (and past a dropped range
      * that starts right there), so the sponsor skip's own watcher finds nothing to jump at where the jump lands.
      */

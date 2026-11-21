@@ -192,15 +192,17 @@ public final class UtubotMenu {
      * The state of the preset's cut for this video, under its label
      */
     private static String stateText(Context context, CutPreset preset, @Nullable UtubotCutController controller) {
-        switch (preset.state) {
-            case UtubotModels.CutState.READY:
-                String length = context.getString(R.string.utubot_cut_state_ready_length,
-                        UtubotCutController.formatLength(preset.cut.keptMs),
-                        UtubotCutController.formatLength(preset.cut.durationMs));
+        if (preset.isReady()) {
+            String length = context.getString(R.string.utubot_cut_state_ready_length,
+                    UtubotCutController.formatLength(preset.cut.keptMs),
+                    UtubotCutController.formatLength(preset.cut.durationMs));
 
-                return controller != null && controller.isApplied(preset.cut)
-                        ? context.getString(R.string.utubot_cut_state_ready_on, length)
-                        : length;
+            return controller != null && controller.isApplied(preset.cut)
+                    ? context.getString(R.string.utubot_cut_state_ready_on, length)
+                    : length;
+        }
+
+        switch (preset.state) {
             case UtubotModels.CutState.WAITING:
                 return context.getString(R.string.utubot_cut_state_waiting);
             case UtubotModels.CutState.BUILDING:
@@ -208,7 +210,9 @@ public final class UtubotMenu {
             case UtubotModels.CutState.NEEDS_TRANSCRIPT:
                 return context.getString(R.string.utubot_cut_state_needs_transcript);
             case UtubotModels.CutState.FAILED:
-                return context.getString(R.string.utubot_cut_state_failed, preset.error);
+                return preset.error != null
+                        ? context.getString(R.string.utubot_cut_state_failed, preset.error)
+                        : context.getString(R.string.utubot_cut_state_failed_plain);
             default:
                 return context.getString(R.string.utubot_cut_state_none);
         }
@@ -217,6 +221,7 @@ public final class UtubotMenu {
     private static void onPresetPicked(Context context, Video video, CutPreset preset, @Nullable UtubotCutController controller) {
         if (UtubotModels.CutState.READY.equals(preset.state) && preset.cut != null) {
             if (controller != null) {
+                AppDialogPresenter.instance(context).closeDialog(); // the state text is stale the moment the cut is toggled
                 controller.toggle(preset.cut);
             }
 

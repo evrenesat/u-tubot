@@ -20,6 +20,8 @@ public final class UtubotCutSeekBar {
     private static volatile List<SeekBarSegment> sCutSegments;
     @Nullable
     private static volatile String sCutVideoId;
+    @Nullable
+    private static volatile List<SeekBarSegment> sSponsorSegments;
 
     private UtubotCutSeekBar() {
     }
@@ -42,10 +44,10 @@ public final class UtubotCutSeekBar {
      */
     public static void wipe(PlayerUI player, @Nullable Video video) {
         if (video == null || !video.videoId.equals(sCutVideoId)) {
+            sSponsorSegments = null; // the sponsor colours belonged to the previous video
             player.setSeekBarSegments(null);
         } else {
-            List<SeekBarSegment> cut = sCutSegments;
-            player.setSeekBarSegments(cut != null ? new ArrayList<>(cut) : null);
+            paint(player); // the cut and the sponsor colours of this video stay
         }
     }
 
@@ -53,17 +55,26 @@ public final class UtubotCutSeekBar {
      * The sponsor block's own segments: shown next to the cut's, which stay under them.
      */
     public static void setSponsor(PlayerUI player, @Nullable List<SeekBarSegment> sponsorSegments) {
+        sSponsorSegments = sponsorSegments;
+        paint(player);
+    }
+
+    /**
+     * Writes what the seek bar shows now: the cut's dimmed skips over the sponsor block's colours. The cut controller calls it when a
+     * cut is applied or taken off, because the sponsor block's own writes do not reach the bar then.
+     */
+    public static void paint(PlayerUI player) {
         List<SeekBarSegment> cut = sCutSegments;
 
         if (cut == null || cut.isEmpty()) {
-            player.setSeekBarSegments(sponsorSegments);
+            player.setSeekBarSegments(sSponsorSegments);
             return;
         }
 
         List<SeekBarSegment> both = new ArrayList<>(cut);
 
-        if (sponsorSegments != null) {
-            both.addAll(sponsorSegments);
+        if (sSponsorSegments != null) {
+            both.addAll(sSponsorSegments);
         }
 
         player.setSeekBarSegments(both);

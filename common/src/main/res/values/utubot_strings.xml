@@ -127,6 +127,7 @@
     <string name="utubot_cut_state_ready_length">%1$s of %2$s</string>
     <string name="utubot_cut_state_ready_on">%s (on)</string>
     <string name="utubot_cut_state_failed">Failed: %s</string>
+    <string name="utubot_cut_state_failed_plain">Failed</string>
     <string name="utubot_cut_not_configured">The server has no model for cuts</string>
     <string name="utubot_cut_loading">Loading the cuts…</string>
     <string name="utubot_cut_failed">Director\'s cut failed: %s</string>

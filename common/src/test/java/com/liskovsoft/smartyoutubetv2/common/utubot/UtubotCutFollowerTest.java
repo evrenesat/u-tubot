@@ -10,6 +10,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
@@ -132,6 +133,28 @@ public class UtubotCutFollowerTest {
 
         assertEquals(Collections.singletonList(VIDEO), mReady);
         assertEquals(Collections.singletonList(true), mRequested);
+    }
+
+    @Test
+    public void aSecondRequestAfterAReadyOne_isFollowed() {
+        mCutsAnswers.add(cutsEmpty());
+        mFollower.follow(VIDEO, mListener);
+        mFollower.requested(VIDEO, "cut1", "building");
+        mRequestAnswers.add(request("ready"));
+
+        mScheduler.advance(DRAIN_MS);
+        assertEquals(Collections.singletonList(VIDEO), mReady);
+
+        // a second request for the video that still plays (the phone builds another cut of it)
+        mFollower.requested(VIDEO, "cut2", "building");
+        mRequestAnswers.add(request("cut2", "ready"));
+
+        mScheduler.advance(DRAIN_MS);
+
+        assertEquals(Arrays.asList(VIDEO, VIDEO), mReady);
+        assertEquals(Arrays.asList(true, true), mRequested);
+        assertEquals(Arrays.asList("cut1", "cut2"), mFetchedRequests);
+        assertEquals(0, mScheduler.pending());
     }
 
     @Test
@@ -272,8 +295,12 @@ public class UtubotCutFollowerTest {
     }
 
     private static CutRequest request(String state) {
+        return request(REQUEST, state);
+    }
+
+    private static CutRequest request(String id, String state) {
         CutRequest request = new CutRequest();
-        request.id = REQUEST;
+        request.id = id;
         request.videoId = VIDEO;
         request.state = state;
 

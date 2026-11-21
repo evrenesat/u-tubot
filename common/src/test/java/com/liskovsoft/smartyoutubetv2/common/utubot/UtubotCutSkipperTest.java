@@ -245,4 +245,58 @@ public class UtubotCutSkipperTest {
             assertFalse(mSkipper.onPosition(second * 1_000, 1f).isJump());
         }
     }
+
+    @Test
+    public void applyingInsideADrop_jumpsToItsEnd() {
+        mSkipper.onPosition(20_000, 1f); // the cut is picked up while the playback sits in the drop
+
+        UtubotCutSkipper.Decision decision = mSkipper.onAppliedAt(90_000);
+
+        assertTrue(decision.isJump());
+        assertEquals(SKIP_1_END, decision.jumpToMs);
+    }
+
+    @Test
+    public void applyingInsideAnIntroDropAtTheStart_jumpsPastIt() {
+        Cut cut = cut();
+        cut.skipRangesMs = Collections.singletonList(new long[]{0, 90_000});
+        UtubotCutSkipper intro = skipper(cut);
+
+        UtubotCutSkipper.Decision decision = intro.onAppliedAt(5_000);
+
+        assertTrue(decision.isJump());
+        assertEquals(90_000, decision.jumpToMs);
+    }
+
+    @Test
+    public void applyingOutsideEveryDrop_playsOn() {
+        assertFalse(mSkipper.onAppliedAt(120_000).isJump());
+    }
+
+    @Test
+    public void applyingExactlyAtADropEnd_playsOn() {
+        assertFalse(mSkipper.onAppliedAt(SKIP_1_END).isJump());
+    }
+
+    @Test
+    public void afterTheApplyJump_thePlaybackGoesOn() {
+        assertTrue(mSkipper.onAppliedAt(90_000).isJump()); // jumps to SKIP_1_END and remembers the destination
+
+        // at the destination: no drop crossed, and no seek flagged either
+        assertFalse(mSkipper.onPosition(SKIP_1_END, 1f).isJump());
+        // skipping still works afterwards: the next drop is crossed by the playback itself
+        assertFalse(mSkipper.onPosition(167_000, 1f).isJump());
+        assertTrue(mSkipper.onPosition(168_300, 1f).isJump());
+    }
+
+    @Test
+    public void theApplyJump_swallowsASponsorSegmentAtTheDestination() {
+        mSponsorSegments.add(sponsor(109_000, 130_000, "sponsor"));
+        mSkippedCategories.add("sponsor");
+        mSkipper = skipper(cut());
+
+        UtubotCutSkipper.Decision decision = mSkipper.onAppliedAt(90_000);
+
+        assertEquals(130_000, decision.jumpToMs);
+    }
 }

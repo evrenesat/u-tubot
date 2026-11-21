@@ -58,10 +58,15 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         if (item == null || mCut == null || !Helpers.equals(mCut.videoId, item.videoId)) {
             UtubotCutSeekBar.setCut(item == null ? null : item.videoId, null);
             mCut = null;
+        } else {
+            // The same video plays again (a reload, the playback queue): the skipper and the poll are gone with stopSkipping, so the
+            // cut is re-applied like a fresh one once the length is known
+            mPendingCut = mCut;
+            mCut = null;
+            startPolling();
         }
 
         mVideo = item;
-        mPendingCut = null;
 
         if (item != null && item.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
             UtubotManager.instance(getContext()).followCuts(item.videoId, this);
@@ -101,11 +106,13 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     @Override
     public void onEngineReleased() {
         stopSkipping();
+        stopFollowing();
     }
 
     @Override
     public void onFinish() {
         stopSkipping();
+        stopFollowing();
     }
 
     //region The follower's answers
@@ -160,6 +167,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     private void turnOff() {
         stopSkipping();
         UtubotCutSeekBar.setCut(mVideo != null ? mVideo.videoId : null, null);
+        UtubotCutSeekBar.paint(getPlayer());
         mCut = null;
     }
 
@@ -172,9 +180,18 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         mCut = cut;
         mSkipper = new UtubotCutSkipper(cut, activeSponsorSegments(), this::isSponsorSegmentSkipped);
-        mSkipper.onPosition(getPlayer().getPositionMs(), getSpeed());
         UtubotCutSeekBar.setCut(cut.videoId, toSeekBarSegments(cut, getPlayer().getDurationMs()));
+        UtubotCutSeekBar.paint(getPlayer());
         startPolling();
+
+        // Applying a cut is an explicit act, not a seek: when the playback is already inside a dropped range (an intro drop the video
+        // plays in, or a cut picked up mid-drop), it jumps once to the end of it, with the usual Skipped toast as the undo
+        long positionMs = getPlayer().getPositionMs();
+        UtubotCutSkipper.Decision decision = mSkipper.onAppliedAt(positionMs);
+
+        if (decision.isJump()) {
+            skipTo(decision.jumpToMs, positionMs);
+        }
     }
 
     /**
@@ -198,6 +215,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         if (!UtubotCutSkipper.matchesDuration(cut, durationMs)) {
             Log.d(TAG, "Not applying the cut of %s: built for %s ms, the video is %s ms", cut.videoId, cut.durationMs, durationMs);
             MessageHelpers.showLongMessage(getContext(), getContext().getString(R.string.utubot_cut_other_length));
+            UtubotCutSeekBar.setCut(cut.videoId, null); // a re-armed cut may have left its dims on the bar
+            UtubotCutSeekBar.paint(getPlayer());
             stopPolling();
             return;
         }
@@ -326,6 +345,15 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         stopPolling();
         mSkipper = null;
         mPendingCut = null;
+    }
+
+    /**
+     * The long poll of the player's request ends with the video: not kept running past the close until ready or the cap
+     */
+    private void stopFollowing() {
+        if (getContext() != null) {
+            UtubotManager.instance(getContext()).stopFollowingCuts(this);
+        }
     }
 
     private float getSpeed() {
