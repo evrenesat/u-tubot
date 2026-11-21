@@ -51,6 +51,9 @@ option. Highlights:
   update channel (`github_repo`, `signing_cert_sha256`, `apksigner_path`; `utubot app sync-github`, see `../docs/server.md`, Updates).
 - `[captions]` the ASR engine chain (`[[captions.asr_engines]]`: `openai`-compatible servers and local `faster_whisper`, picked by health,
   language and priority, chunked and run in parallel; or the single `asr_*` keys), diarization (`none` or `pyannote`).
+- `[llm.cuts]` and `[cuts]` director's cuts (an explicit model alias, no default; unit merging and validation) and `[speech]` the
+  phone's voice prompts: uploaded audio goes to modelgate `/v1/audio/transcriptions` with `[speech] alias`, its own 4 MiB upload cap
+  and a per-user rate limit; nothing is stored.
 - Environment: `UTUBOT_CONFIG`, `UTUBOT_LLM_API_KEY`, `UTUBOT_ASR_API_KEY` (and any variable an ASR engine names), `UTUBOT_HF_TOKEN`.
 
 ## Auth and pairing

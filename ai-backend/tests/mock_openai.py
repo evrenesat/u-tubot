@@ -12,6 +12,8 @@ class MockOpenAI:
         self.calls: list[dict[str, Any]] = []
         self.requests: list[dict[str, Any]] = []
         self.audio_calls: list[dict[str, Any]] = []
+        self.audio_status: int | None = None
+        self.audio_text: str = "Hello there. How are you doing today?"
         self.delay_s = 0.0
         self.bad_json_first = 0
         self.mode = "plain"
@@ -91,10 +93,14 @@ class MockOpenAI:
         async def transcriptions(request: Request):
             form = await request.form()
             self.audio_calls.append({k: v for k, v in form.items() if k != "file"})
+            if self.audio_status is not None:
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse({"error": "boom"}, status_code=self.audio_status)
             return {
                 "language": "english",
                 "duration": 4.0,
-                "text": "Hello there. How are you doing today?",
+                "text": self.audio_text,
                 "segments": [
                     {"start": 0.0, "end": 4.0, "text": " Hello there. How are you doing today?"}
                 ],

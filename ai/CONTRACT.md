@@ -441,6 +441,29 @@ as their own async tasks (never in the caption worker's queue) with a per-user c
 finished cut is shared per (video, preset or prompt, model, transcript) cache key — two requests
 with the same key that are in flight together share the model call too.
 
+## Voice prompts (addendum, 2026-11-21)
+
+The phone's spoken cut description becomes text through modelgate only: this backend posts the
+audio to modelgate `POST /v1/audio/transcriptions` (`[speech] alias`, EVR-464). The audio is not
+stored: no file, no transcript row, and the server log records only the client, alias, bytes and
+duration. Without `[speech] alias` the route answers `503 {"error":"Speech is not configured on
+this server; type the cut instead."}` and `GET /v1/me` features carries `"speech": false`.
+
+- `POST /v1/speech`: `multipart/form-data` with one recording in the field `audio` (the field
+  name `file` is accepted too). Authenticated like every `/v1` route. It has its own body cap,
+  `[speech] max_upload_bytes` (default 4 MiB) — `413 {"error":"request too large"}` before the
+  form is read; `security.max_body_bytes` (256 KiB) stays for every other route. A per-user
+  rate limit, `[speech] per_user_per_min` (default 10), answers `429 {"error":"rate limited"}`
+  with `Retry-After`.
+- `200 -> {"text":"<transcribed text>"}`. The text is returned as it came; the phone puts it in
+  the description box and keeps it editable, never sending it itself.
+- Plain errors: `"Speech service is busy, try again or type it."` (`429`/`503`/`504` upstream,
+  timeouts), `"Speech could not be transcribed, try again or type it."` (other upstream
+  refusals), `"The recording was empty; try again or type it."` (empty upload, `400`), `"The
+  recording is too long or too large; try again or type it."` (upstream `413`).
+- `GET /v1/me` features adds `"speech":bool` and `"speech_max_s":int` (default 120), the phone's
+  recording limit.
+
 ## Setup file (`GET /setup.json`)
 
 Public, rate limited like `/v1/health`. The app's "Import setup" fetches it so nothing is typed

@@ -20,6 +20,7 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
+from starlette.datastructures import UploadFile
 
 from . import __version__, appchannel
 from .assess import Assessor
@@ -68,6 +69,7 @@ from .security import (
     origin_allowed,
 )
 from .settings import SettingsError, SettingsService
+from .speech import SpeechError, SpeechService
 from .status import StatusService, UpdatesStatus
 from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
@@ -138,6 +140,7 @@ class Services:
     jobs: JobQueue
     reports: JobReports
     cuts: CutService
+    speech: SpeechService
     gate: YoutubeGate
     transcription: Transcription
     archive: MediaArchive
@@ -194,6 +197,7 @@ def build_services(
         jobs=jobs,
         reports=reports,
         cuts=CutService(cfg, db, llm, transcripts, prompts, jobs),
+        speech=SpeechService(cfg, transport=llm_transport),
         gate=gate,
         transcription=transcription,
         archive=archive,
@@ -230,6 +234,7 @@ def create_app(
         await svc.cuts.stop()
         await svc.jobs.stop()
         await svc.assessor.drain()
+        await svc.speech.aclose()
         await svc.llm.aclose()
         svc.db.close()
 
@@ -259,6 +264,10 @@ def create_app(
 
     @app.exception_handler(CutRefused)
     async def _cut_refused(_r: Request, exc: CutRefused):
+        return error(exc.status, exc.message)
+
+    @app.exception_handler(SpeechError)
+    async def _speech_error(_r: Request, exc: SpeechError):
         return error(exc.status, exc.message)
 
     @app.exception_handler(SettingsError)
@@ -433,7 +442,14 @@ def create_app(
             set_session_cookie(response, request, refresh)
         return response
 
-    app.add_middleware(BodyLimitMiddleware, get_max_bytes=lambda: cfg.security.max_body_bytes)
+    def max_bytes_for_path(path: str) -> int | None:
+        return cfg.speech.max_upload_bytes if path == "/v1/speech" else None
+
+    app.add_middleware(
+        BodyLimitMiddleware,
+        get_max_bytes=lambda: cfg.security.max_body_bytes,
+        get_max_bytes_for_path=max_bytes_for_path,
+    )
 
     def qmeta(
         title: str | None = None,
@@ -494,6 +510,8 @@ def create_app(
                 "captions": True,
                 "transcribe": True,
                 "cuts": svc.cuts.configured,
+                "speech": svc.speech.configured,
+                "speech_max_s": cfg.speech.max_record_s,
             },
         }
 
@@ -963,6 +981,27 @@ def create_app(
     async def cuts_short_url(request_id: str):
         """The QR target of a TV-created request: straight into the phone's cut sheet."""
         return RedirectResponse(f"/#/cuts/{request_id}", status_code=302)
+
+    @app.post("/v1/speech")
+    async def speech(request: Request, user: UserConfig = Depends(current_user)):
+        """One recording's text: the phone posts audio here, modelgate transcribes it, and
+        nothing is stored. Its own upload cap (the body-limit override) is `[speech]
+        max_upload_bytes`; the per-user rate limit keeps a phone from retrying in a loop."""
+        svc.limiter.check(f"speech:{user.name}", cfg.speech.per_user_per_min)
+        try:
+            form = await request.form(max_files=1, max_fields=4)
+        except Exception as exc:
+            raise HTTPException(400, "invalid or too large upload") from exc
+        upload = form.get("audio") or form.get("file")
+        if not isinstance(upload, UploadFile):
+            raise HTTPException(400, "no recording in the request")
+        audio = await upload.read()
+        text = await svc.speech.transcribe(
+            audio,
+            filename=upload.filename or "recording",
+            content_type=upload.content_type or "application/octet-stream",
+        )
+        return {"text": text}
 
     @app.post("/v1/feedback")
     async def feedback(body: FeedbackRequest, user: UserConfig = Depends(current_user)):
