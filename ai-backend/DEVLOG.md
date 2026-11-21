@@ -1,5 +1,17 @@
 # DEVLOG
 
+## 2026-11-21 (director's cuts checkpoint 4 review round 1)
+
+1. `save_set` refuses the reserved `cut-presets` prompt-set id unless `from_cut_store` (the
+   sheet's own save/delete paths), so `PUT /v1/prompts/sets/cut-presets` and prompt imports
+   answer 400 and cannot silently replace the owner's saved presets. Test added.
+2. `[speech] max_record_s` defaults to 50 and the phone's fallback matches: the live modelgate
+   route's oMLX whisper returns upstream 500 "Engine not started" over about 55 s (EVR-524), and
+   the phone sends one file. A longer description takes several Speak taps; each answer appends.
+   config.example.toml and docs/server.md carry the reason; the demo also uses 50.
+3. `tests/webui_demo.py` reads the optional PORT argument (`APP_PORT`, LLM port + 1) instead of
+   hard-coding 8791.
+
 ## 2026-11-21 (subtitle timing checkpoint 3 v2: honest scorer, YouTube word times as a check and for fill cues)
 
 Spec: `temp/sync-design/agent-plan-cp3-v2.md`. Replaces CP3 of `agent-plan.md`; the time warp and audio referee are not built.

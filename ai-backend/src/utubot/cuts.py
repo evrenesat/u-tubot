@@ -936,10 +936,12 @@ class CutService:
             raise CutRefused(f"Unknown cut preset {preset_id}.")
         return prompt.template, preset_id, "preset"
 
-    @staticmethod
-    def _label(preset_id: str | None, row: dict[str, Any]) -> str:
+    def _label(self, preset_id: str | None, row: dict[str, Any]) -> str:
         if row["prompt"]:
             return row["prompt"]
+        saved = next((p for p in self.presets(row["user"]) if p.id == preset_id), None)
+        if saved is not None:
+            return saved.label
         return PRESET_LABELS.get(preset_id or "", preset_id or "Cut")
 
     @staticmethod

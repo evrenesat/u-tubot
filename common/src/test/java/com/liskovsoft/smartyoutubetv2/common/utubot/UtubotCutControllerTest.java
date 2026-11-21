@@ -5,6 +5,7 @@ import android.content.Context;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPreset;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 
@@ -159,6 +160,26 @@ public class UtubotCutControllerTest {
 
         assertTrue(mFetchedRequests.size() >= 2);
         assertEquals(REQUEST, mFetchedRequests.get(mFetchedRequests.size() - 1));
+    }
+
+    @Test
+    public void aKeptPart_isOneLineWithItsTimesAndLabel() {
+        CutPart part = new CutPart();
+        part.label = "The demo";
+        part.startMs = 130_000;
+        part.endMs = 185_000;
+
+        assertEquals("2:10 - 3:05  The demo", UtubotCutController.formatPart(part));
+    }
+
+    @Test
+    public void aKeptPartWithoutALabel_isJustItsTimes() {
+        CutPart part = new CutPart();
+        part.startMs = 65_000;
+        part.endMs = 122_000;
+
+        assertEquals("1:05 - 2:02", UtubotCutController.formatPart(part));
+        assertEquals("", UtubotCutController.formatPart(null));
     }
 
     private static final class TestCutController extends UtubotCutController {

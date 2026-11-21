@@ -62,7 +62,7 @@ the E2E run at this backend instead of `scripts/emulator_mock_backend.py` when y
 the mock script stays the lighter stand-in for panel checks.
 
 The web UI (`ai-backend/src/utubot/web/`) is plain HTML, CSS and ES modules served as they are: edit, reload, no build. To look at it
-without a real LLM or YouTube, run `uv run python tests/webui_demo.py temp/webui-demo` (mock LLM, canned data, owner password in
+without a real LLM or YouTube, run `uv run python tests/webui_demo.py temp/webui-demo [PORT]` (mock LLM, canned data, owner password in
 its first output line) and, for the screenshots in `docs/screenshots/webui/`,
 `NODE_PATH=<dir with playwright> node docs/screenshots/webui/capture.cjs http://127.0.0.1:8791 docs/screenshots/webui`
 (Playwright with Chromium; the script also fails on console errors and sideways scrolling at 360 px).
@@ -78,7 +78,11 @@ forces a redraw mid-recording, then taps Build and leaves the sheet mid-recordin
 must release the fake track and send no `/v1/speech` POST. It also holds `getUserMedia` open (a slow
 permission prompt) to prove the acquisition window: the mic is disabled while it is open, cancelling
 before it resolves stops the late stream instead of recording it, and a double tap starts one
-acquisition.
+acquisition. It also saves a description as a preset (the sheet's chip and the Cuts tab's list, then
+Delete), and feeds the service worker a `POST /shared` carrying a YouTube link: the manifest's Share
+target, the worker's redirect and the waiting request that opens all have to line up. A held upload
+plus a failed Build covers the window where a cancelled recording must keep the mic disabled; the
+per-run nonce is five base36 digits so a rerun over a dirtied demo uses new video ids.
 
 ## Android app
 

@@ -208,10 +208,13 @@ class SpeechConfig(BaseModel):
     audio is far larger than the JSON bodies the global `security.max_body_bytes` covers.
     """
 
+    # The live modelgate route (oMLX whisper) refuses a chunk over about 55 s (upstream 500,
+    # "Engine not started"; EVR-524), so the sheet stops a single recording just below it. For
+    # a longer description, the owner taps Speak again: each answer appends to the same box.
     alias: str = ""
     provider: str | None = None
     max_upload_bytes: int = 4 * 1024 * 1024
-    max_record_s: int = 120
+    max_record_s: int = 50
     per_user_per_min: int = 10
     timeout_s: float = 60.0
     language: str | None = None

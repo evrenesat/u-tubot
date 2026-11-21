@@ -8,16 +8,21 @@ import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCategory;
+import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.PlaybackPresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPreset;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Verdict;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
@@ -181,6 +186,12 @@ public final class UtubotMenu {
         for (CutPreset preset : cuts.presets) {
             dialog.appendSingleButton(UiOptionItem.from(preset.label, stateText(context, preset, controller),
                     option -> onPresetPicked(context, video, preset, controller)));
+
+            // A ready cut shows its kept parts under the preset, so the owner can judge it on the
+            // TV before applying it (checkpoint 4; the phone sheet already does this).
+            if (preset.isReady() && !preset.cut.parts.isEmpty()) {
+                dialog.appendCategory(partsCategory(context, preset.cut));
+            }
         }
 
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_describe_on_phone),
@@ -216,6 +227,24 @@ public final class UtubotMenu {
             default:
                 return context.getString(R.string.utubot_cut_state_none);
         }
+    }
+
+    /**
+     * The kept parts of a ready cut, as a read-only list: each part's times and label, with the
+     * one-line summary above them.
+     */
+    private static OptionCategory partsCategory(Context context, Cut cut) {
+        List<OptionItem> parts = new ArrayList<>();
+
+        if (cut.summary != null && !cut.summary.trim().isEmpty()) {
+            parts.add(UiOptionItem.from(cut.summary.trim()));
+        }
+
+        for (CutPart part : cut.parts) {
+            parts.add(UiOptionItem.from(UtubotCutController.formatPart(part)));
+        }
+
+        return OptionCategory.stringList(context.getString(R.string.utubot_cut_parts, cut.label), parts);
     }
 
     private static void onPresetPicked(Context context, Video video, CutPreset preset, @Nullable UtubotCutController controller) {

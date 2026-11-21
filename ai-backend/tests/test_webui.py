@@ -15,6 +15,8 @@ WEB = Path(__file__).parents[1] / "src" / "utubot" / "web"
 PUBLIC = {
     ("GET", "/"),
     ("GET", "/ui/{path:path}"),
+    ("GET", "/manifest.webmanifest"),
+    ("GET", "/sw.js"),
     ("GET", "/v1/health"),
     ("GET", "/setup.json"),
     ("POST", "/v1/pair"),
@@ -91,6 +93,19 @@ def _resolve(base: Path, rel: str) -> str:
         elif part != ".":
             parts.append(part)
     return "/" + "/".join(parts)
+
+
+async def test_manifest_icons_are_served(env):
+    # Chrome's install (the WebAPK the Android Share target needs) wants raster icons; the SVG
+    # alone keeps it unreliable. Both PNG sizes are declared and served as image/png.
+    anon = anon_client(env)
+    manifest = (await anon.get("/manifest.webmanifest")).json()
+    png = {i["sizes"] for i in manifest["icons"] if i["type"] == "image/png"}
+    assert png == {"192x192", "512x512"}
+    for icon in manifest["icons"]:
+        res = await anon.get(icon["src"])
+        assert res.status_code == 200, icon["src"]
+        assert res.headers["content-type"].split(";")[0] == icon["type"]
 
 
 async def test_ui_paths_cannot_escape_the_ui_folder(env):
