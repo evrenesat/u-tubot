@@ -1,5 +1,12 @@
 # DEVLOG
 
+## 2026-11-21 (subtitle language setting)
+
+- New per-user setting `captions_translate_to` (settings section `transcripts`, web UI Transcripts card, "Subtitle language"):
+  the language u·tubot captions are translated into. Unset follows `[captions] translate_to` (`en`); `off`/`none`/empty
+  keep the spoken language (stored as `off`); a captions request that names its own `translate_to` still wins.
+  `config.check_translate_target` validates it and the server default the same way.
+
 ## 2026-11-20 (director's cuts checkpoint 1: engine, phone pages, test set)
 
 - Browser-check hygiene (the p100 crash of 2026-11-19 was ~9 orphaned headless Chromium

@@ -51,6 +51,8 @@ export function transcriptPolicyForm(settingsPath, doc, onUpdate) {
     hint: "Longer videos wait until you ask for them.",
     onChange: (v) => (draft.auto_transcribe_max_minutes = v),
   });
+  const target = textInput(draft.captions_translate_to, { maxlength: 40, placeholder: "en" });
+  target.addEventListener("input", () => (draft.captions_translate_to = target.value.trim().toLowerCase() || null));
   const msg = h("p", { class: "bad", text: "" });
   async function save() {
     msg.textContent = "";
@@ -73,6 +75,11 @@ export function transcriptPolicyForm(settingsPath, doc, onUpdate) {
     mode,
     help,
     minutes,
+    field(
+      "Subtitle language",
+      target,
+      "Subtitles are translated into this language code (en, tr, de...). \"off\" keeps the spoken language; empty follows the server default.",
+    ),
     msg,
     button("Save policy", save, { kind: "primary" }),
   );

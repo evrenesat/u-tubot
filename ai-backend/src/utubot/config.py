@@ -16,6 +16,15 @@ GLANCE_MAX_TOKENS = 160
 GLANCE_REASONING_EFFORT = "none"
 LANG_CODE_RE = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
 TRANSLATE_OFF_VALUES = frozenset({"", "off", "none"})
+TRANSLATE_OFF = "off"
+
+
+def check_translate_target(value: str, name: str) -> str:
+    """A captions translation target: a language code, or an opt-out value ("off", "none", "")."""
+    stripped = value.strip().lower()
+    if stripped not in TRANSLATE_OFF_VALUES and not LANG_CODE_RE.match(stripped):
+        raise ValueError(f"{name} must be a language code (e.g. 'en') or one of: off, none, ''")
+    return stripped
 
 
 class LLMTask(BaseModel):
@@ -293,12 +302,7 @@ class CaptionsConfig(BaseModel):
         Validated here so a bad config default (say `translate_to = "english"`) fails at startup
         instead of making every captions request answer 400.
         """
-        stripped = value.strip().lower()
-        if stripped not in TRANSLATE_OFF_VALUES and not LANG_CODE_RE.match(stripped):
-            raise ValueError(
-                "translate_to must be a language code (e.g. 'en') or one of: off, none, ''"
-            )
-        return stripped
+        return check_translate_target(value, "translate_to")
 
     def engines(self) -> list[AsrEngineConfig]:
         """The engine chain: `asr_engines`, or the legacy `asr_backend`/`asr_*` keys as one engine."""
@@ -344,7 +348,7 @@ class UserPolicy(BaseModel):
     Resolution, lowest to highest: these defaults, `[default_policy]`, the user's `[users.policy]`,
     then the runtime override row (`PUT /v1/me/settings`, `PUT /v1/me/policy`). A field left `None`
     follows its server-wide setting (`auto_long` -> `[summary]`, `mark_only`, `summary_panel`,
-    `auto_captions` -> `[setup.defaults]`); a task without a `models` entry follows `[llm.<task>]`.
+    `auto_captions` -> `[setup.defaults]`, `captions_translate_to` -> `[captions] translate_to`); a task without a `models` entry follows `[llm.<task>]`.
     """
 
     language: str = Field("en", min_length=1, max_length=MAX_LANGUAGE_CHARS)
@@ -365,7 +369,16 @@ class UserPolicy(BaseModel):
     summary_delay_ms: int = Field(700, ge=0, le=MAX_SUMMARY_DELAY_MS)
     summary_panel: bool | None = None
     auto_captions: bool | None = None
+    captions_translate_to: str | None = Field(None, max_length=MAX_LANGUAGE_CHARS)
     update_checks: bool = True
+
+    @field_validator("captions_translate_to")
+    @classmethod
+    def _captions_translate_to(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        clean = check_translate_target(v, "captions_translate_to")
+        return TRANSLATE_OFF if clean in TRANSLATE_OFF_VALUES else clean
 
     @field_validator("hide_topics", "mark_topics")
     @classmethod

@@ -313,6 +313,34 @@ async def test_the_config_default_is_the_translation_target(env):
     assert "T:" in stored_captions(env)  # the English audio was translated to German
 
 
+async def test_the_user_setting_is_the_translation_target(env):
+    env.fetcher.text = None
+    respond_with_cues(env.llm, ["Hello there, my friend.", "How are you doing today?"])
+    settings = {"transcripts": {"captions_translate_to": "DE"}}
+    r = await env.client.put("/v1/me/settings", json={"settings": settings})
+    assert r.json()["settings"]["transcripts"]["captions_translate_to"] == "de"
+    doc = await queue_captions(env)
+    row = env.svc.db.one("SELECT translate_to FROM jobs WHERE id=?", [doc["id"]])
+    assert row["translate_to"] == "de"
+    explicit = (
+        await env.client.post(f"/v1/videos/{VID}/captions", json={"translate_to": "fr"})
+    ).json()
+    row = env.svc.db.one("SELECT translate_to FROM jobs WHERE id=?", [explicit["job_id"]])
+    assert row["translate_to"] == "fr"  # a target named by the request still wins
+
+
+async def test_the_user_setting_off_keeps_the_source_language(env):
+    env.fetcher.text = None
+    respond_with_cues(env.llm, ["Hello there, my friend.", "How are you doing today?"])
+    for value in ("off", "none", ""):
+        settings = {"transcripts": {"captions_translate_to": value}}
+        r = await env.client.put("/v1/me/settings", json={"settings": settings})
+        assert r.json()["settings"]["transcripts"]["captions_translate_to"] == "off", value
+    queued = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    row = env.svc.db.one("SELECT translate_to FROM jobs WHERE id=?", [queued["job_id"]])
+    assert row["translate_to"] is None
+
+
 async def test_translate_to_off_keeps_the_source_language(env):
     env.fetcher.text = None
     respond_with_cues(env.llm, ["Hello there, my friend.", "How are you doing today?"])
