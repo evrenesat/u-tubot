@@ -9,6 +9,7 @@
    stay untranslated. The `translate` stage detail carries `batches`, `retried`, `split`, `untranslated`; status `warn` when `untranslated > 0`.
    `LLMBadJSONError` (subclass of `LLMError`) tells invalid JSON from other LLM failures. Job page text, docs and contract updated.
 3. CP4 behaviour (split stats, `Cue.words`, legacy path) untouched.
+4. Review fix: the job fails as soon as `untranslated` exceeds the share (checked per failed cue, so a model that always fails costs a few dozen calls, not ~150 per batch); an empty-string item for a non-empty source counts as a failed item (retry/split).
 
 ## 2026-11-21 (cold ASR engine: wait, do not fall through; issue 57)
 

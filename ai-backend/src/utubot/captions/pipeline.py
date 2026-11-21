@@ -1014,12 +1014,15 @@ class CaptionPipeline:
             return None
         if not isinstance(data, list) or len(data) != len(texts):
             return None
-        if not all(isinstance(item, str) for item in data):
+        if not all(
+            isinstance(item, str) and (item.strip() or not src.strip())
+            for item, src in zip(data, texts, strict=True)
+        ):
             return None
         return data
 
     async def _translate_texts(
-        self, texts: list[str], target: str, stats: TranslateStats
+        self, texts: list[str], target: str, stats: TranslateStats, limit: float
     ) -> list[str | None]:
         """Translate a batch; a bad answer is retried once, then the batch is split in halves.
 
@@ -1033,11 +1036,13 @@ class CaptionPipeline:
                 stats.retried += 1
         if len(texts) == 1:
             stats.untranslated += 1
+            if stats.untranslated > limit:
+                raise PipelineError("translation length mismatch")
             return [None]
         stats.split += 1
         mid = len(texts) // 2
-        left = await self._translate_texts(texts[:mid], target, stats)
-        right = await self._translate_texts(texts[mid:], target, stats)
+        left = await self._translate_texts(texts[:mid], target, stats, limit)
+        right = await self._translate_texts(texts[mid:], target, stats, limit)
         return left + right
 
     async def translate(
@@ -1053,6 +1058,7 @@ class CaptionPipeline:
         c = self.cfg.captions
         stats = stats if stats is not None else SplitStats()
         tstats = tstats if tstats is not None else TranslateStats()
+        limit = c.translate_max_untranslated_share * len(cues)
         out: list[Cue] = []
         for i in range(0, len(cues), batch):
             part = cues[i : i + batch]
@@ -1063,7 +1069,7 @@ class CaptionPipeline:
                 prefixes.append(joined[:SPEAKER_PREFIX_LEN] if has else "")
                 texts.append(joined[SPEAKER_PREFIX_LEN:] if has else joined)
             tstats.batches += 1
-            data = await self._translate_texts(texts, target, tstats)
+            data = await self._translate_texts(texts, target, tstats, limit)
             for offset, (cue, prefix, text) in enumerate(zip(part, prefixes, data, strict=True)):
                 if text is None:
                     out.append(cue)
@@ -1083,8 +1089,6 @@ class CaptionPipeline:
                     at = i + offset + 1
                     room = cues[at].start if at < len(cues) else None
                     out.extend(split_cue(source, full, c, stats, room))
-        if cues and tstats.untranslated > c.translate_max_untranslated_share * len(cues):
-            raise PipelineError("translation length mismatch")
         return out
 
 

@@ -540,3 +540,23 @@ async def test_translate_fails_above_the_untranslated_share(env):
     _translate_with(env, lambda texts, _strict: [])
     with pytest.raises(PipelineError, match="translation length mismatch"):
         await env.svc.jobs.pipeline.translate(_plain_cues(4), "en")
+
+
+async def test_translate_fails_fast_when_the_model_always_fails(env):
+    from utubot.captions.pipeline import PipelineError
+
+    seen = _translate_with(env, lambda texts, _strict: [])
+    with pytest.raises(PipelineError, match="translation length mismatch"):
+        await env.svc.jobs.pipeline.translate(_plain_cues(100), "en")
+    assert (
+        len(seen) < 60
+    )  # 11 single cues over the 10% share, not ~2 calls per cue of the whole job
+
+
+async def test_translate_empty_item_counts_as_failed(env):
+    def behave(texts, _strict):
+        return [f"T:{t}" if len(texts) == 1 else "" for t in texts]
+
+    _translate_with(env, behave)
+    ev = await _translated(env, _plain_cues(3))
+    assert ev["detail"]["split"] >= 1 and ev["detail"]["untranslated"] == 0
