@@ -360,7 +360,7 @@ open pages cannot overwrite each other; scripts using a bearer token may leave i
 | `prompts` | `default` (Summary view), `panel_default` (side panel) |
 | `filtering` | `hide_topics`, `mark_topics`, the five thresholds, `inflated_min_duration_s`, `answer_in_label`, `mark_only` |
 | `summaries` | `language`, `auto_long` |
-| `transcripts` | `auto_transcribe` (`off`, `on_dwell`, `on_open`, default `on_open`), `auto_transcribe_max_minutes` (default 30) |
+| `transcripts` | `auto_transcribe` (`off`, `on_dwell`, `on_open`, default `on_open`), `auto_transcribe_max_minutes` (default 30), `captions_translate_to` (subtitle language: a code such as `en`, or `off` to keep the spoken language; unset follows `[captions] translate_to`) |
 | `tv` | `summary_delay_ms`, `summary_panel`, `auto_captions`, `update_checks` |
 
 **Precedence**, for each setting, highest first:

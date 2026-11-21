@@ -87,7 +87,7 @@ TRANSLATE_OFF = TRANSLATE_OFF_VALUES
 def resolve_translate_to(requested: str | None, default: str) -> str | None:
     """The translation target of a captions job.
 
-    An unset target follows the configured default (`[captions] translate_to`, "en" by default);
+    An unset target follows the user's `captions_translate_to`, else `[captions] translate_to` ("en");
     "off"/"none" (or an empty value) keeps the source language instead of translating.
     """
     value = (default if requested is None else requested).strip().lower()
@@ -810,7 +810,8 @@ def create_app(
         body = body or CaptionsRequest()
         if body.lang and body.lang != "auto" and not LANG_RE.match(body.lang):
             raise HTTPException(400, "invalid language code")
-        translate_to = resolve_translate_to(body.translate_to, svc.cfg.captions.translate_to)
+        default_target = user.policy.captions_translate_to or svc.cfg.captions.translate_to
+        translate_to = resolve_translate_to(body.translate_to, default_target)
         if translate_to and not LANG_RE.match(translate_to):
             raise HTTPException(400, "invalid language code")
         job = svc.jobs.enqueue(user.name, video_id, body.lang, translate_to)

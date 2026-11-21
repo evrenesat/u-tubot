@@ -304,8 +304,8 @@ raises `count`. This is how to see whether a TV actually downloaded a track.
 
 ### `POST /v1/videos/{id}/captions`
 Queue high-quality captions. Body: `{"lang":"auto","translate_to":null}`. An unset `translate_to`
-follows `[captions] translate_to` (default `"en"`): captions come out in English whatever the
-source language; `"off"` keeps the source language instead.
+follows the user's `captions_translate_to` setting, which unset follows `[captions] translate_to` (default `"en"`):
+captions come out in English whatever the source language; `"off"` keeps the source language instead.
 → `{"status":"queued|running|ready|failed","job_id":"...","eta_s":null}`
 
 ### `GET /v1/videos/{id}/captions`
@@ -504,7 +504,7 @@ The phone web UI (`GET /`, static files under `/ui/`) uses the same API as the a
                 "hide_low_quality_above":0.9,"mark_low_quality_above":0.65,"mark_inflated_ratio_below":0.35,
                 "inflated_min_duration_s":300,"answer_in_label":false,"mark_only":false},
    "summaries":{"language":"en","auto_long":false},
-   "transcripts":{"auto_transcribe":"on_open","auto_transcribe_max_minutes":30},
+   "transcripts":{"auto_transcribe":"on_open","auto_transcribe_max_minutes":30,"captions_translate_to":"en"},
    "tv":{"summary_delay_ms":700,"summary_panel":false,"auto_captions":true,"update_checks":true}},
  "overrides":{"models":{"glance":"llama3.2:3b"}},
  "defaults":{ "...": "the same shape: what applies with no override" },

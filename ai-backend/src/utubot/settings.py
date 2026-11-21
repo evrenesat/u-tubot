@@ -17,7 +17,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from .auth import Auth, VersionConflict, build_policy, describe_validation
-from .config import MODEL_TASKS, Config, LLMTask, UserPolicy
+from .config import MODEL_TASKS, TRANSLATE_OFF, Config, LLMTask, UserPolicy
 from .modelcatalog import ModelCatalog, ModelNotListed
 from .prompts import DEFAULT_BUILTIN_KEY, PromptStore
 
@@ -35,7 +35,7 @@ SECTION_FIELDS: dict[str, tuple[str, ...]] = {
         "mark_only",
     ),
     "summaries": ("language", "auto_long"),
-    "transcripts": ("auto_transcribe", "auto_transcribe_max_minutes"),
+    "transcripts": ("auto_transcribe", "auto_transcribe_max_minutes", "captions_translate_to"),
     "tv": ("summary_delay_ms", "summary_panel", "auto_captions", "update_checks"),
 }
 PROMPT_KEYS = ("default", "panel_default")
@@ -76,6 +76,8 @@ def resolved_fields(cfg: Config, policy: UserPolicy) -> dict[str, Any]:
     for name in ("mark_only", "summary_panel", "auto_captions"):
         if values[name] is None:
             values[name] = getattr(setup, name)
+    if values["captions_translate_to"] is None:
+        values["captions_translate_to"] = cfg.captions.translate_to or TRANSLATE_OFF
     return values
 
 

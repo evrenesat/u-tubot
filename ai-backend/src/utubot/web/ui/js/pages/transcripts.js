@@ -34,7 +34,9 @@ const STATE_KIND = { ready: "ok", processing: "ok", waiting: "", failed: "bad", 
 
 // Automatic transcription policy; `settingsPath` is /v1/me/settings or /v1/users/NAME/settings.
 export function transcriptPolicyForm(settingsPath, doc, onUpdate) {
-  const current = doc.settings.transcripts;
+  // the subtitle language shows the user's own choice; the server default is the placeholder
+  const chosenTarget = (doc.overrides.transcripts || {}).captions_translate_to ?? null;
+  const current = { ...doc.settings.transcripts, captions_translate_to: chosenTarget };
   const draft = { ...current };
   const help = h("small", { class: "muted", text: MODE_HELP[draft.auto_transcribe] });
   const mode = segmented(MODES, draft.auto_transcribe, (v) => {
@@ -51,6 +53,11 @@ export function transcriptPolicyForm(settingsPath, doc, onUpdate) {
     hint: "Longer videos wait until you ask for them.",
     onChange: (v) => (draft.auto_transcribe_max_minutes = v),
   });
+  const target = textInput(draft.captions_translate_to, {
+    maxlength: 40,
+    placeholder: doc.defaults.transcripts.captions_translate_to + " (server default)",
+  });
+  target.addEventListener("input", () => (draft.captions_translate_to = target.value.trim().toLowerCase() || null));
   const msg = h("p", { class: "bad", text: "" });
   async function save() {
     msg.textContent = "";
@@ -73,6 +80,11 @@ export function transcriptPolicyForm(settingsPath, doc, onUpdate) {
     mode,
     help,
     minutes,
+    field(
+      "Subtitle language",
+      target,
+      "A language code (en, tr, de...) that subtitles are translated into, or \"off\" to keep the spoken language. Leave empty to follow the server default.",
+    ),
     msg,
     button("Save policy", save, { kind: "primary" }),
   );

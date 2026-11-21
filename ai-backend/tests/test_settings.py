@@ -27,7 +27,11 @@ async def test_document_shape_defaults_and_overrides(env):
     assert doc["user"] == "owner" and doc["version"] == 0 and doc["overrides"] == {}
     s = doc["settings"]
     assert set(s) == {"models", "prompts", "filtering", "summaries", "transcripts", "tv"}
-    assert s["transcripts"] == {"auto_transcribe": "on_open", "auto_transcribe_max_minutes": 30}
+    assert s["transcripts"] == {
+        "auto_transcribe": "on_open",
+        "auto_transcribe_max_minutes": 30,
+        "captions_translate_to": "en",
+    }
     assert s["models"] == {
         "glance": "worker",
         "summary": "worker",
@@ -90,6 +94,10 @@ async def test_null_resets_to_default(env):
     assert doc["settings"]["filtering"]["hide_topics"] == ["reaction videos"]
     assert doc["settings"]["tv"]["summary_panel"] is False
     assert doc["overrides"] == {}
+    await put(env, {"settings": {"transcripts": {"captions_translate_to": "tr"}}})
+    doc = (await put(env, {"settings": {"transcripts": {"captions_translate_to": None}}})).json()
+    assert doc["settings"]["transcripts"]["captions_translate_to"] == "en"
+    assert doc["overrides"] == {}
 
 
 async def test_validation_errors(env):
@@ -105,6 +113,9 @@ async def test_validation_errors(env):
         {"transcripts": {"auto_transcribe_max_minutes": 0}}
     )
     assert "summary_delay_ms" in await bad({"tv": {"summary_delay_ms": 999999}})
+    assert "captions_translate_to" in await bad(
+        {"transcripts": {"captions_translate_to": "english"}}
+    )
     assert "at most" in await bad({"filtering": {"mark_topics": [str(i) for i in range(60)]}})
     assert "unknown settings section" in await bad({"nope": {"a": 1}})
     assert "unknown setting filtering.nope" in await bad({"filtering": {"nope": 1}})
@@ -370,7 +381,11 @@ auto_transcribe = "on_dwell"
             headers={"Authorization": "Bearer utb_viewer"},
         )
         s = (await client.get("/v1/me/settings")).json()["settings"]
-        assert s["transcripts"] == {"auto_transcribe": "off", "auto_transcribe_max_minutes": 12}
+        assert s["transcripts"] == {
+            "auto_transcribe": "off",
+            "auto_transcribe_max_minutes": 12,
+            "captions_translate_to": "en",
+        }
         assert s["tv"] == {
             "summary_delay_ms": 1200,
             "summary_panel": True,

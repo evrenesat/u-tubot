@@ -412,6 +412,7 @@ answer_in_label = false
 # mark_only = false               # unset: follows [setup.defaults] mark_only (the TV's "mark only, never hide")
 auto_transcribe = "on_open"       # off | on_dwell | on_open: transcribe videos without captions by itself
 auto_transcribe_max_minutes = 30  # ... but only videos up to this long
+# captions_translate_to = "en"    # unset: follows [captions] translate_to; "off" keeps the spoken language
 summary_delay_ms = 700            # TV: how long a card stays focused before its summary is requested
 # summary_panel = false           # unset: follows [setup.defaults] summary_panel
 # auto_captions = true            # unset: follows [setup.defaults] auto_captions
