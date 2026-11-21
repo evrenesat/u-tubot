@@ -37,16 +37,42 @@ Deviations from the plan, all small:
 - `captions-regen --legacy` lists only tracks without any `timing_version`.
 - `auto` probe order follows the plan (both, granularities, flag); the "400 to both" test uses a server that gives words to the field.
 
+Review round 1 fixes:
+
+1. `auto` word-mode probing: an answer without any text (a silent or music-only chunk) is returned as it is, decides nothing and costs no
+   extra probes, the next chunk probes again; a 413, or a 400 that does not name the word fields, is raised instead of walking the forms.
+2. `improve()` with estimated word times keeps the caption cues, text and timing (nothing is merged in; `align` skipped with
+   `reason = "word_times_estimated"`); every caption token survives (tested on the 300 s talk).
+3. ASR cache: real and mixed answers share the plain `v2:` key; an answer without word times is stored under `...:wm-<engines and their word
+   modes>`, so a server that never gives words is not asked again but a new word mode misses. (The status of an engine whose config
+   changed no longer reports the old instance's resolved mode.)
+4. `word_cues`: a caption cue is covered only when words overlap at least `fill_cover_min_share` (0.3) of its span; `[Applause]` next to
+   speech survives, clipped to the gap.
+5. Fill cues are clipped against each other before the linger and snap.
+6. `captions-regen`: default limit `regen_limit_default` (20), skipped in legacy mode, and a track is not listed when a newer track of the
+   video already has the current `timing_version` (terminates when the regenerated language differs).
+7. `sync_score` is skipped with `reason = "no_silences"` when the audio has none; the report text shows null shares as n/a.
+8. Cached three-item word rows load as `interpolated`. 9. A zero-length word with no room is neither marked repaired nor counted in
+   `zero_length`. 10. Words still shorter than `word_min_s` after repair are marked `suspect` and counted in the new `unfixed`.
+11. `captions-score`: `--at SECONDS` (repeatable), `--lang` picks the track (default: newest with a `timing_version`, else newest), `--spoken`
+    for the audio language, output says which track was scored and gives `first_cue_start_s` and `max_cue_s`.
+12. The rollback note in `docs/captions.md` says a full return to the old requests also needs `word_timestamps = "granularities"`.
+
 Production steps (run by the coordinator after deploy; nothing here calls YouTube except the normal caption recheck of a regenerated job):
 
-0. Answer shape (checked 2026-11-21 before deploy): one request with BOTH `word_timestamps=true` and `timestamp_granularities[]=word,segment`
-   returns the words nested in `segments[].words` (keys `word`, `start`, `end`, `probability`), so `auto` resolves to `both`. If a later
-   engine does not, set `word_timestamps = "flag"` on it.
-1. Baseline with the old tracks, per video (the reference is the local faster-whisper engine; `<ref>` is its configured name):
+0. Answer shape (coordinator, 2026-11-21, before deploy): the production Mac endpoint was probed with BOTH `word_timestamps=true` and
+   `timestamp_granularities[]=word,segment` on a 60 s Hindi clip: 200, words nested in `segments[].words` with keys `word`, `start`, `end`,
+   `probability`. The production config pins `word_timestamps = "both"` on that engine (no probing); `auto` would also resolve to `both`.
+1. Baseline with the old tracks, per video (the reference is the local faster-whisper engine; `<ref>` is its configured name). The old
+   tracks have no `timing_version`, and `captions-score` falls back to the newest track then; it prints which track it scored:
+   `mkdir -p temp/sync-design/score` then
    `systemd-run --scope -p Nice=19 uv run utubot --config <config> captions-score ti3gVlNnXoY --reference <ref> --windows 4 --window-s 120 --json > temp/sync-design/score/before-ti3gVlNnXoY.json`
-   and the same for `TCSgH7l2Isg` and `EQWLxadmae0`.
+   and the same for `TCSgH7l2Isg`. For `EQWLxadmae0` target the windows of the gate:
+   `... captions-score EQWLxadmae0 --reference <ref> --at 1500 --at 2700 --window-s 120 --json > temp/sync-design/score/before-EQWLxadmae0.json`.
 2. `uv run utubot --config <config> captions-regen --video ti3gVlNnXoY --video TCSgH7l2Isg --video EQWLxadmae0` (add `--dry-run` to list
    first), wait for the jobs, then repeat step 1 into `after-<id>.json`.
+   The JSON has `track.first_cue_start_s` (gate: 4.2-4.9 s for the Hindi episode) and `track.max_cue_s` (gate: no cue longer than
+   `max_cue_s`, 7 s; fill cues are clipped by the same limit); pick the regenerated track with `--lang` if the video has several.
 3. Gates: Hindi episode: `word_timing` event `ok` with `real_share >= 0.99`; `loose >= 0.85`; `hit >= 0.60` and 20 points over the
    baseline; no speech cue over `max_cue_s`; first cue starts in 4.2-4.9 s. `TCSgH7l2Isg`: `hit` and `loose` within 2 points of the
    baseline. `EQWLxadmae0`: windows at 1500 s and 2700 s not worse (the first chunk stays broken until CP2). Record the `asr` stage

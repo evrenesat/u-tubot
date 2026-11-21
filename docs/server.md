@@ -307,7 +307,7 @@ waited), `gate_wait` (the YouTube class and how long the gate held the job), `ca
 squeezed, out of order — and the number of silences used; `warn` when the engine returned no word times and the cue times are estimates),
 `diarization` (only when `[captions] diarization` is enabled; ran, or skipped and why: no Hugging Face token, package missing), `cues`
 (count, longest line), `align` (`mode` `silence`: boundaries moved to silences; `words`: cues built from word times, with the speech and
-fill cue counts; `captions_timing`: caption timing kept, text replaced, or skipped without words; `merge`: the legacy rule),
+fill cue counts; `captions_timing`: skipped, the caption cues kept as they are (no words, or estimated word times); `merge`: the legacy rule),
 `sync_score` (after `align`: `speech_overlap`, `starts_in_silence`, `silence_share` of the finished cues against the audio), `proofread` (corrected
 cues, or skipped: off, no LLM; per-batch warnings hang under it as `proofread_batch`; runs once on the source text and once again on
 translated text, so the English output is proofread too), `text`, `translate` (the source and target language; skipped when the track

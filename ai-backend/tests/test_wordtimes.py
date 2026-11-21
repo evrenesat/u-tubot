@@ -118,3 +118,20 @@ def test_classify_real_mixed_interpolated():
     assert classify([fake, fake], 0.9) == "interpolated"
     assert classify([real] * 9 + [fake], 0.9) == "real"
     assert classify([real, fake], 0.9) == "mixed"
+
+
+def test_a_zero_length_word_with_no_room_is_not_counted_as_repaired():
+    out, stats = repair_words([w(1.0, 1.5, "ab"), w(1.5, 1.5, "cd"), w(1.5, 2.0, "ef")], [], CFG)
+    assert stats.zero_length == 0 and out[1].timing == TIMING_SUSPECT and stats.unfixed == 1
+
+
+def test_a_run_of_zero_length_words_at_one_timestamp_ends_up_repaired_or_suspect():
+    words = [w(5.0, 5.0, f"x{i}") for i in range(3)] + [w(5.0, 5.4, "end")]
+    out, stats = repair_words(words, [], CFG)
+    for word in out:
+        assert word.end - word.start >= CFG.word_min_s - 1e-9 or word.timing == TIMING_SUSPECT
+    assert stats.zero_length + stats.squeezed + stats.unfixed >= 3
+    four = [w(7.0, 7.0, f"y{i}") for i in range(5)] + [w(7.0, 7.1, "z")]
+    out, stats = repair_words(four, [], CFG)
+    assert all(x.end - x.start >= CFG.word_min_s - 1e-9 or x.timing == TIMING_SUSPECT for x in out)
+    assert stats.squeezed + stats.unfixed >= 5

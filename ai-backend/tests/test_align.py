@@ -229,3 +229,36 @@ def test_snapping_before_the_linger_keeps_cues_close_to_their_last_word():
     silences = [(0.9, 2.9)]
     cues, _s, _f = cues_from_words(words, [], CFG, silences)
     assert cues[0].end - cues[0].words[-1].end <= CFG.align_window_s + 1e-9
+
+
+def test_an_applause_cue_next_to_speech_survives_clipped_to_the_gap():
+    words = spoken(0.0, "one two three") + spoken(13.8, "four five six")
+    captions = [Cue(0.0, 2.0, ["one two three"]), Cue(0.3, 14.0, ["[Applause]"])]
+    cues, speech, fill = cues_from_words(words, captions, CFG)
+    applause = [cue for cue in cues if cue.lines == ["[Applause]"]]
+    assert fill == 1 and len(applause) == 1
+    assert applause[0].start >= speech_end(cues[0]) - 1e-9 and applause[0].end <= 13.8 + 1e-9
+
+
+def speech_end(cue: Cue) -> float:
+    return cue.words[-1].end if cue.words else cue.end
+
+
+def test_a_caption_with_a_stray_word_overlap_is_still_a_fill_cue():
+    # one short word inside a 10 s music row covers far less than the share: the row survives
+    words = spoken(0.0, "one two three") + [Word(5.0, 5.2, "oh")] + spoken(20.0, "four five six")
+    cues, _speech, fill = cues_from_words(words, [Cue(2.0, 12.0, ["[Music]"])], CFG)
+    assert fill == 1 and any(cue.lines == ["[Music]"] for cue in cues)
+    covered = cues_from_words(words, [Cue(0.0, 2.0, ["one two three"])], CFG)
+    assert covered[2] == 0
+
+
+def test_fill_cues_are_clipped_against_each_other():
+    words = spoken(0.0, "one two three") + spoken(30.0, "four five six")
+    rolling = [Cue(5.0, 15.0, ["[Music]"]), Cue(10.0, 24.0, ["[Music] again"])]
+    cues, _speech, fill = cues_from_words(words, rolling, CFG)
+    fills = [cue for cue in cues if not cue.words]
+    assert fill == 2 and len(fills) == 2
+    for before, after in zip(cues, cues[1:], strict=False):
+        assert before.end <= after.start + 1e-9
+    assert fills[1].start >= 15.0 - 1e-9

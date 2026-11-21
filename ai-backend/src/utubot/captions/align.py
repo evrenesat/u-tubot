@@ -120,25 +120,36 @@ def word_cues(
 ) -> tuple[list[Cue], int, int]:
     """Speech cues from the words' own times plus fill cues from the captions: `(cues, speech, fill)`.
 
-    A caption cue is a fill cue when no word midpoint lies within `align_window_s` of it (a `[Music]`
-    row, speech the engine missed); it is clipped to the wordless gap between its neighbouring speech
-    cues and dropped when under `min_cue_s` after that. The cues are neither snapped nor padded yet.
+    A caption cue is a fill cue (a `[Music]` or `[Applause]` row, speech the engine missed) unless
+    words overlap at least `fill_cover_min_share` of its span. Fill cues are clipped to the wordless
+    gap between their neighbouring speech cues and to each other, and dropped when under `min_cue_s`
+    after that. The cues are neither snapped nor padded yet.
     """
     speech = build_cues(words, cfg)
-    margin = max(cfg.align_window_s, 0.0)
-    mids = sorted(_midpoint(w) for w in words if w.text.strip())
-    starts = [cue.start for cue in speech]
+    timed = sorted((w for w in words if w.text.strip()), key=lambda w: w.start)
+    starts = [w.start for w in timed]
+    latest_end: list[float] = []
+    for word in timed:
+        latest_end.append(max(word.end, latest_end[-1] if latest_end else word.end))
+    speech_starts = [cue.start for cue in speech]
     fills: list[Cue] = []
-    for cue in captions:
-        first = bisect.bisect_left(mids, cue.start - margin - MIDPOINT_EPS)
-        if first < len(mids) and mids[first] <= cue.end + margin + MIDPOINT_EPS:
+    last_end = 0.0
+    for cue in sorted(captions, key=lambda c: c.start):
+        span = cue.end - cue.start
+        covered = 0.0
+        for j in range(bisect.bisect_right(latest_end, cue.start), len(timed)):
+            if starts[j] >= cue.end:
+                break
+            covered += max(min(timed[j].end, cue.end) - max(timed[j].start, cue.start), 0.0)
+        if span > 0 and covered / span >= cfg.fill_cover_min_share:
             continue
-        after = bisect.bisect_right(starts, cue.start)
-        low = speech[after - 1].end if after else 0.0
+        after = bisect.bisect_right(speech_starts, cue.start)
+        low = max(speech[after - 1].end if after else 0.0, last_end)
         high = speech[after].start if after < len(speech) else float("inf")
         start, end = max(cue.start, low), min(cue.end, high)
         if end - start >= cfg.min_cue_s:
             fills.append(Cue(start, end, list(cue.lines), cue.speaker))
+            last_end = end
     merged = sorted([*speech, *fills], key=lambda cue: cue.start)
     return merged, len(speech), len(fills)
 

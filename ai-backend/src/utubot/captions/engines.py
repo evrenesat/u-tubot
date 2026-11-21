@@ -54,6 +54,9 @@ log = logging.getLogger("utubot.asr")
 
 STATUS_INPUT_REJECTED = frozenset({400, 413, 415, 422})
 REJECTED_CODES = frozenset(f"http_{status}" for status in STATUS_INPUT_REJECTED)
+CODE_TOO_LARGE = "http_413"
+CODE_BAD_REQUEST = "http_400"
+MODE_ERROR_HINTS = ("word", "timestamp", "granularit")  # a 400 that names these is about the mode
 MODE_AUTO = "auto"
 MODE_BOTH = "both"
 MODE_GRANULARITIES = "granularities"
@@ -242,6 +245,10 @@ class OpenAIEngine:
         `both` first; a rejected request moves on to the next single form, a 200 without any word to
         the remaining single forms (flag, then granularities), on the same chunk. The first form
         that returns words is remembered; when none does the engine is remembered as wordless.
+        An answer without any text (a silent or music-only chunk) proves nothing about the server:
+        it is returned as it is, nothing is remembered and the next chunk probes again. A rejection
+        that is about the chunk, not the way words are asked for, is raised instead of walking the
+        other forms.
         """
         order = list(PROBE_FIRST)
         wordless: ChunkResult | None = None
@@ -251,12 +258,14 @@ class OpenAIEngine:
             try:
                 result = await self._ask(wav, language, mode, True)
             except EngineError as exc:
-                if exc.code not in REJECTED_CODES:
+                if not self._about_the_mode(exc):
                     raise
                 rejected = exc
                 continue
             if result.word_timing in ("real", "mixed"):
                 self._word_mode = mode
+                return result
+            if not result.segments:
                 return result
             if wordless is None:
                 wordless = result
@@ -266,6 +275,15 @@ class OpenAIEngine:
             raise rejected
         self._word_mode = MODE_NONE
         return wordless
+
+    @staticmethod
+    def _about_the_mode(exc: EngineError) -> bool:
+        """A rejection that may come from the word fields: not a 413, and a 400 only when it names them."""
+        if exc.code not in REJECTED_CODES or exc.code == CODE_TOO_LARGE:
+            return False
+        if exc.code == CODE_BAD_REQUEST:
+            return any(word in str(exc).lower() for word in MODE_ERROR_HINTS)
+        return True
 
     async def _ask(
         self, wav: Path, language: str | None, mode: str, want_words: bool
@@ -578,10 +596,16 @@ class AsrRouter:
         if engine.kind == ASR_KIND_FASTER_WHISPER:
             return "native"
         cached = self._engines.get(engine.name)
-        mode = getattr(cached[1], "word_mode", None) if cached else None
+        current = cached is not None and cached[0] == engine.model_dump_json()
+        mode = getattr(cached[1], "word_mode", None) if cached and current else None
         if mode is None and engine.word_timestamps != MODE_AUTO:
             mode = engine.word_timestamps
         return mode or "unknown"
+
+    def word_signature(self, language: str | None, priority: int = BACKGROUND) -> str:
+        """The engines that would take a job and how each is asked for word times, as a cache key part."""
+        chain = self.candidates(normalize_language(language), priority)
+        return "+".join(f"{e.name}={self._word_times(e)}" for e in chain) or "none"
 
     def status(self) -> list[dict[str, Any]]:
         now = self._clock()

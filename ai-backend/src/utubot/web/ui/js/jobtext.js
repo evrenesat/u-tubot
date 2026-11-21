@@ -128,7 +128,8 @@ function num(n) {
 }
 
 function pct(share) {
-  return Math.round(Number(share || 0) * 100) + "%";
+  if (share === null || share === undefined) return "n/a";
+  return Math.round(Number(share) * 100) + "%";
 }
 
 export function triggerText(trigger) {
@@ -229,7 +230,7 @@ const DESCRIBERS = {
     return join([num(d.words) + " words, " + pct(d.real_share) + " with real times", fixed.join(", ") + " fixed"]);
   },
   sync_score(d, status) {
-    if (status === "skipped") return "Not checked: " + (d.reason === "no_cues" ? "no cues" : "no audio silence data");
+    if (status === "skipped") return "Not checked: " + ({ no_cues: "no cues", no_silences: "the audio has no silences to compare with" }[d.reason] || "no audio silence data");
     return join([pct(d.speech_overlap) + " of cue time over sound", pct(d.starts_in_silence) + " of cues start in silence"]);
   },
   align(d, status) {

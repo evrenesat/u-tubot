@@ -286,10 +286,10 @@ a `running` event is followed by the `ok`/`failed`/`skipped` event of the same s
 `language`, `bytes`, `duration_s`, `source` = `downloaded|from_archive`), `media_archive` (`bytes`, `sha256` prefix; skipped when the audio
 came from the archive), `ffmpeg`, `separation` (skipped when off, the tool failed, or the ASR answer was cached), `chunking`, `asr`, `asr_chunk` (also `word_timing`, `words`, `word_mode`), `asr_fallback` (`reason` also `no_word_times`), `stitching`,
 `word_timing` (`word_timing` = `real|mixed|interpolated`, `words`, `real`, `interpolated`, `real_share`, `zero_length`, `stretched`, `squeezed`,
-`nonmonotonic`, `words_per_s`, `speech_s`, `silences`; `warn` with `message` when the times are estimates, `skipped` with `reason` = `no_words`),
+`nonmonotonic`, `unfixed`, `words_per_s`, `speech_s`, `silences`; `warn` with `message` when the times are estimates, `skipped` with `reason` = `no_words`),
 `diarization` (`reason` and `message` when skipped; only when diarization is configured), `cues`, `align` (`mode` = `silence|words|captions_timing|merge`; `words`:
-`speech_cues`, `fill_cues`, `caption_cues`, `moved`, `words`; boundaries snap to silences; `captions_timing` is skipped with `reason` = `no_words` when there are no words),
-`sync_score` (`cues`, `speech_overlap`, `starts_in_silence`, `silence_share`; skipped with `reason` = `no_cues|no_audio_check`),
+`speech_cues`, `fill_cues`, `caption_cues`, `moved`, `words`; boundaries snap to silences; `captions_timing` is skipped with `reason` = `no_words|word_times_estimated`: the caption cues are kept as they are),
+`sync_score` (`cues`, `speech_overlap`, `starts_in_silence`, `silence_share`; skipped with `reason` = `no_cues|no_audio_check|no_silences`),
 `proofread` (`corrected`, `warned`, `chars_in`/`chars_out`, `cached`; skipped with `reason` = `off|no_llm`), `proofread_batch` (a batch that
 kept its original text — length mismatch, empty text, growth or shrink beyond `proofread_max_ratio`), `text`, `translate`, `stored`, `retry`, `finished`, `failed` (`error_class`,
 `message`, `stage`, `technical`) and `delivered` (`via` = `captions_status|vtt|transcript_status|summary|summary_panel|insight|answer|transcript_txt`,

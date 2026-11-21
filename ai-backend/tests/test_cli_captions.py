@@ -168,6 +168,9 @@ async def test_captions_score_matches_a_track_to_the_reference_windows(tmp_path)
     assert len(doc["windows"]) == WINDOWS and engine.calls == WINDOWS
     assert doc["overall"]["onsets"] > 3 and doc["overall"]["hit"] >= HIT_FLOOR
     assert doc["reference"] == "ref" and doc["windows"][0]["word_timing"] == "real"
+    track = doc["track"]
+    assert track["lang"] == "en" and track["cues"] > 3 and track["max_cue_s"] > 0
+    assert track["first_cue_start_s"] == pytest.approx(truth[0].start, abs=0.01)
 
     engine.calls = 0
     db.execute("UPDATE captions SET vtt=?", [vtt_of(truth, shift=0.8)])
@@ -194,3 +197,61 @@ def test_captions_score_refuses_without_archived_audio(cfg_path, capsys, monkeyp
     )
     code = main(["--config", str(cfg_path), "captions-score", VID, "--reference", "ref"])
     assert code == 1 and "not archived" in capsys.readouterr().err
+
+
+def test_regen_default_limit_legacy_mode_and_termination(cfg_path, capsys):
+    cfg = load_config(cfg_path)
+    db = Database(cfg.db_path)
+    for i in range(cfg.captions.regen_limit_default + 5):
+        add_track(db, f"v{i:010d}", None)
+    # a video whose regenerated job stored another language: the newer current track ends the listing
+    db.execute(
+        "INSERT INTO captions(video_id,lang,label,speakers,vtt,created_at,timing_version)"
+        " VALUES('done0000000','tr','l',0,'WEBVTT',1.0,NULL)"
+    )
+    db.execute(
+        "INSERT INTO captions(video_id,lang,label,speakers,vtt,created_at,timing_version)"
+        " VALUES('done0000000','en','l',0,'WEBVTT',2.0,?)",
+        [TIMING_VERSION],
+    )
+    main(["--config", str(cfg_path), "captions-regen", "--dry-run"])
+    out = capsys.readouterr().out
+    assert f"{cfg.captions.regen_limit_default} track(s)" in out and "done0000000" not in out
+    main(["--config", str(cfg_path), "captions-regen", "--dry-run", "--limit", "3"])
+    assert "3 track(s)" in capsys.readouterr().out
+    cfg_path.write_text(cfg_path.read_text() + '[captions]\ntiming_mode = "legacy"\n')
+    assert main(["--config", str(cfg_path), "captions-regen", "--dry-run"]) == 0
+    assert "skipped" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg is not installed")
+async def test_captions_score_picks_the_track_and_the_window_starts(tmp_path):
+    truth = make_timeline(3, TRACK_S)
+    audio = tone_wav(tmp_path / "talk.wav", truth, TRACK_S)
+    cfg = Config()
+    cfg.server.data_dir = str(tmp_path / "data")
+    cfg.captions.asr_engines = [
+        AsrEngineConfig(name="ref", url="http://ref.example/v1/audio/transcriptions")
+    ]
+    db = Database(tmp_path / "t.sqlite")
+    for lang, version, created in (("en", 1, 1.0), ("tr", None, 2.0)):
+        db.execute(
+            "INSERT INTO captions(video_id,lang,label,speakers,vtt,created_at,timing_version)"
+            " VALUES(?,?,?,?,?,?,?)",
+            [VID, lang, "l", 0, vtt_of(truth), created, version],
+        )
+    MediaArchive(cfg, db).store(VID, audio, format_id="1", codec="pcm")
+    begins = [10.0, 50.0]
+    engine = WindowEngine(truth, begins)
+    doc = await score_track(
+        cfg, db, VID, reference="ref", at=begins, window_s=WINDOW_S,
+        engine_factory=lambda e: engine,
+    )  # fmt: skip
+    assert doc["track"]["lang"] == "en"  # the newer track has no timing version
+    assert [w["start_s"] for w in doc["windows"]] == begins
+    engine.calls = 0
+    other = await score_track(
+        cfg, db, VID, reference="ref", lang="tr", at=begins, window_s=WINDOW_S,
+        engine_factory=lambda e: engine,
+    )  # fmt: skip
+    assert other["track"]["lang"] == "tr" and other["track"]["timing_version"] is None

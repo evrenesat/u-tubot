@@ -43,6 +43,14 @@ def window_starts(total_s: float, windows: int, window_s: float) -> list[float]:
     return [round(room * (i + 0.5) / windows, 3) for i in range(windows)]
 
 
+def begins(total_s: float, at: list[float] | None, windows: int, window_s: float) -> list[float]:
+    """Window starts: the requested ones (kept inside the audio), else evenly spaced."""
+    if not at:
+        return window_starts(total_s, windows, window_s)
+    room = max(total_s - window_s, 0.0)
+    return [round(min(max(start, 0.0), room), 3) for start in at]
+
+
 def audio_duration(path: Path) -> float:
     proc = subprocess.run(
         [
@@ -79,34 +87,54 @@ async def score_track(
     *,
     reference: str,
     lang: str | None = None,
+    spoken: str | None = None,
+    at: list[float] | None = None,
     windows: int | None = None,
     window_s: float | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     engine_factory: EngineFactory | None = None,
 ) -> dict[str, Any]:
-    """The sync score of the stored track of `video_id` against windows transcribed by `reference`."""
+    """The sync score of a stored track of `video_id` against windows transcribed by `reference`.
+
+    `lang` picks the track; by default the newest one that has a `timing_version`, else the newest.
+    `spoken` is the audio's language (default: the transcript's). `at` lists window starts in
+    seconds instead of evenly spaced windows.
+    """
     c = cfg.captions
     if transport is None and engine_factory is None and _automated():
         raise ScoreError("captions-score reaches a speech engine; it does not run from tests or CI")
     windows = windows or c.score_windows
     window_s = window_s or c.score_window_s
     engine = reference_engine(cfg, reference)
-    row = db.one(
-        "SELECT lang,vtt FROM captions WHERE video_id=? ORDER BY created_at DESC LIMIT 1",
-        [video_id],
-    )
+    columns = "SELECT lang,vtt,timing_version,created_at FROM captions WHERE video_id=?"
+    if lang:
+        row = db.one(columns + " AND lang=? ORDER BY created_at DESC LIMIT 1", [video_id, lang])
+    else:
+        row = db.one(
+            columns + " ORDER BY (timing_version IS NOT NULL) DESC, created_at DESC LIMIT 1",
+            [video_id],
+        )
     if row is None:
         raise ScoreError("no stored captions for this video")
-    cue_starts = [start for start, _end, _text in parse_vtt(row["vtt"])]
+    cues = parse_vtt(row["vtt"])
+    cue_starts = [start for start, _end, _text in cues]
+    track = {
+        "lang": row["lang"],
+        "timing_version": row["timing_version"],
+        "created_at": row["created_at"],
+        "cues": len(cues),
+        "first_cue_start_s": round(min(cue_starts), 3) if cue_starts else None,
+        "max_cue_s": round(max((end - start for start, end, _t in cues), default=0.0), 3),
+    }
     archive = MediaArchive(cfg, db)
     entry = archive.lookup(video_id, KIND_AUDIO)
     if entry is None:
         raise ScoreError("the audio is not archived; nothing is downloaded by this command")
     source = archive.path_of(entry)
-    if lang is None:
+    if spoken is None:
         transcript = db.one("SELECT lang FROM transcripts WHERE video_id=?", [video_id])
-        lang = transcript["lang"] if transcript else None
-    language = normalize_language(lang)
+        spoken = transcript["lang"] if transcript else None
+    language = normalize_language(spoken)
     router = AsrRouter(
         c.model_copy(update={"asr_engines": [engine]}),
         transport=transport,
@@ -117,7 +145,7 @@ async def score_track(
     per_window: list[dict[str, Any]] = []
     cfg.media_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="score-", dir=cfg.media_dir) as scratch:
-        for begin in window_starts(total, windows, window_s):
+        for begin in begins(total, at, windows, window_s):
             length = min(window_s, total - begin)
             wav = Path(scratch) / f"w{int(begin)}.wav"
             await run_ffmpeg(
@@ -144,7 +172,7 @@ async def score_track(
             wav.unlink(missing_ok=True)
     return {
         "video_id": video_id,
-        "lang": row["lang"],
+        "track": track,
         "reference": reference,
         "window_s": window_s,
         "windows": per_window,

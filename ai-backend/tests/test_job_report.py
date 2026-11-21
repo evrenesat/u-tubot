@@ -249,8 +249,8 @@ async def test_a_captions_job_logs_the_cues_and_the_tv_download(env):
         "speech_s",
         "silences",
     } <= set(timing)
-    check = event(env, job_id, "sync_score")["detail"]
-    assert {"cues", "speech_overlap", "starts_in_silence", "silence_share"} <= set(check)
+    check = event(env, job_id, "sync_score")
+    assert check["status"] == "skipped" and check["detail"]["reason"] == "no_silences"
     track_row = env.svc.db.one("SELECT timing_version FROM captions WHERE video_id=?", [VID])
     assert track_row["timing_version"] == 1
     assert env.svc.jobs.status(VID)["tracks"][0]["timing_version"] == 1
@@ -972,6 +972,8 @@ def test_the_report_text_folds_running_events_and_reads_every_stage():
       score: describe({ stage: "sync_score", status: "ok", detail: { speech_overlap: 0.96, starts_in_silence: 0.02 } }),
       chunk: describe({ stage: "asr_chunk", status: "ok", detail: { engine: "mac", start_s: 0, end_s: 60, chars: 9, word_timing: "interpolated" } }),
       regen: triggerText({ via: "regen" }),
+      scoreNull: describe({ stage: "sync_score", status: "ok", detail: { speech_overlap: null, starts_in_silence: null } }),
+      scoreSkipped: describe({ stage: "sync_score", status: "skipped", detail: { reason: "no_silences" } }),
       reason: [reasonText("http_503"), reasonText("too_long"), fmtSecs(0.4), fmtSecs(125)],
       secs: rows[1].seconds,
     };
@@ -1016,6 +1018,8 @@ def test_the_report_text_folds_running_events_and_reads_every_stage():
     assert out["alignKept"] == "No words to align; the caption timing is kept"
     assert out["score"] == "96% of cue time over sound, 2% of cues start in silence"
     assert out["chunk"].endswith("word times: estimated")
+    assert "0%" not in out["scoreNull"] and "n/a" in out["scoreNull"]
+    assert out["scoreSkipped"] == "Not checked: the audio has no silences to compare with"
     assert out["regen"] == "queued again to rebuild its timing"
     assert out["reason"][:2] == ["HTTP 503", "the video is longer than the transcription limit"]
     assert out["reason"][2:] == ["400 ms", "2 min 5 s"]

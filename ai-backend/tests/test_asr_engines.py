@@ -925,7 +925,7 @@ async def test_auto_mode_sends_both_fields_and_reads_nested_words(tmp_path):
 async def test_auto_mode_retries_single_modes_when_both_is_rejected(tmp_path):
     def rules(fields):
         if asks_flag(fields) and asks_granularity(fields):
-            return 400, {"error": "unsupported"}
+            return 400, {"error": "word timestamps unsupported"}
         return 200, (nested_body() if asks_granularity(fields) else wordless_body())
 
     server = Recorder(rules)
@@ -941,7 +941,7 @@ async def test_auto_mode_retries_single_modes_when_both_is_rejected(tmp_path):
 async def test_auto_mode_moves_on_to_the_flag_when_the_field_gives_no_words(tmp_path):
     def rules(fields):
         if asks_flag(fields) and asks_granularity(fields):
-            return 400, {"error": "unsupported"}
+            return 400, {"error": "word timestamps unsupported"}
         return 200, (nested_body() if asks_flag(fields) else wordless_body())
 
     server = Recorder(rules)
@@ -1063,3 +1063,33 @@ async def test_the_word_mode_of_each_engine_is_in_the_status(tmp_path):
     assert [s["word_times"] for s in chain.status()] == ["unknown", "flag"]
     await chain.transcribe(make_wav(tmp_path / "a.wav", 5), None, lambda f: None, want_words=True)
     assert chain.status()[0]["word_times"] == "both"
+
+
+async def test_a_textless_first_chunk_does_not_decide_the_word_mode(tmp_path):
+    silent = {"language": "english", "text": "", "segments": []}
+
+    def rules(fields):
+        return (200, silent) if len(server.forms) == 1 else (200, nested_body())
+
+    server = Recorder(rules)
+    engine = OpenAIEngine(engine_cfg("mac"), serve(server))
+    wav = make_wav(tmp_path / "c.wav", 5)
+    first = await engine.transcribe_chunk(wav, None, want_words=True)
+    assert first.words == [] and len(server.forms) == 1  # no extra probes on a textless answer
+    assert engine.word_mode is None
+    second = await engine.transcribe_chunk(wav, None, want_words=True)
+    assert second.word_timing == "real" and second.word_mode == "both"
+    assert engine.word_mode == "both" and len(server.forms) == 2
+
+
+async def test_a_rejection_about_the_chunk_does_not_walk_the_modes(tmp_path):
+    server = Recorder(lambda fields: (413, {"error": "file too large"}))
+    engine = OpenAIEngine(engine_cfg("mac"), serve(server))
+    with pytest.raises(EngineError):
+        await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 5), None, want_words=True)
+    assert len(server.forms) == 1 and engine.word_mode is None
+    plain = Recorder(lambda fields: (400, {"error": "bad audio"}))
+    engine = OpenAIEngine(engine_cfg("mac"), serve(plain))
+    with pytest.raises(EngineError):
+        await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 5), None, want_words=True)
+    assert len(plain.forms) == 1

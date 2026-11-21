@@ -60,7 +60,7 @@ from .segment import build_cues, count_speakers, pad_cues, to_vtt, wrap_lines
 from .separate import make_separator
 from .stages import StageCache
 from .syncscore import self_check
-from .types import TIMING_REAL, Cue, Segment, Word
+from .types import TIMING_INTERPOLATED, Cue, Segment, Word
 from .wordtimes import WordStats, classify, count_kinds, repair_words
 
 log = logging.getLogger("utubot.captions")
@@ -110,7 +110,7 @@ def asr_to_cache(result: ASRResult) -> dict[str, Any]:
 
 def _word_from_row(row: list[Any]) -> Word:
     prob = row[3] if len(row) > 3 else None
-    timing = row[4] if len(row) > 4 else TIMING_REAL
+    timing = row[4] if len(row) > 4 else TIMING_INTERPOLATED
     return Word(row[0], row[1], row[2], prob=prob, timing=timing)
 
 
@@ -154,6 +154,16 @@ def asr_cache_key(audio_sha: str, want_words: bool, requested: str | None, separ
     language and the audio variant — separated vocals change what the engines hear, so the mode
     joins the key."""
     return f"v{ASR_CACHE_VERSION}:{audio_sha}:{int(want_words)}:{requested or 'auto'}:{separation}"
+
+
+def word_mode_suffix(asr: Any, language: str | None) -> str:
+    """The key part of an answer without word times: the engines and how each is asked for words.
+
+    A server that never gives words keeps answering the same way, so its answer is reusable only
+    while the engine configuration (and its resolved word mode) is the same one.
+    """
+    signature = getattr(asr, "word_signature", None)
+    return f":wm-{signature(language)}" if signature else ":wm-unknown"
 
 
 class PipelineError(RuntimeError):
@@ -430,7 +440,7 @@ class CaptionPipeline:
         # the ASR cache is keyed by the separation mode too: the answer depends on the audio that
         # went in, and a hit must skip the separation (demucs can take tens of minutes on CPU)
         key = asr_cache_key(audio_sha, want_words, requested, c.separation)
-        cached = self.cache.get(video_id, ASR_CACHE_STAGE, key)
+        cached = self._cached_asr(video_id, key, want_words, requested)
         if cached is not None:
             result = asr_from_cache(cached)
             with events.stage(events.ASR, requested_language=requested) as st:
@@ -495,7 +505,7 @@ class CaptionPipeline:
         key: str,
     ) -> ASRResult:
         """One ASR step of `_recognise`, with its per-video cache. See `_recognise`."""
-        cached = self.cache.get(video_id, ASR_CACHE_STAGE, key)
+        cached = self._cached_asr(video_id, key, want_words, requested)
         if cached is not None:
             result = asr_from_cache(cached)
             with events.stage(events.ASR, requested_language=requested) as st:
@@ -517,11 +527,11 @@ class CaptionPipeline:
                     )
                 _set_asr(st, result)
                 if not self._asr_empty(result, want_words):
-                    if want_words and result.word_timing != "real":
-                        # a fixed engine configuration must take effect on the next job
-                        st.set(cache="not_stored_no_word_times")
-                    else:
-                        self.cache.put(video_id, ASR_CACHE_STAGE, key, asr_to_cache(result))
+                    store = key
+                    if want_words and result.word_timing == "interpolated":
+                        # reusable only while the engines and their word modes stay as they are
+                        store = key + word_mode_suffix(self.asr, requested)
+                    self.cache.put(video_id, ASR_CACHE_STAGE, store, asr_to_cache(result))
         except ASRError as exc:
             if not optional_asr:
                 raise
@@ -536,6 +546,18 @@ class CaptionPipeline:
             return ASRResult(words=[], language=None, segments=[], engine=None, model=None)
         self._require_speech(result, want_words, optional_asr)
         return result
+
+    def _cached_asr(
+        self, video_id: str, key: str, want_words: bool, requested: str | None
+    ) -> dict[str, Any] | None:
+        """A cached answer: with real or mixed word times under `key`, without them under the
+        engine-and-word-mode variant of it."""
+        cached = self.cache.get(video_id, ASR_CACHE_STAGE, key)
+        if cached is None and want_words:
+            cached = self.cache.get(
+                video_id, ASR_CACHE_STAGE, key + word_mode_suffix(self.asr, requested)
+            )
+        return cached
 
     def _require_speech(self, result: ASRResult, want_words: bool, optional_asr: bool) -> None:
         """The audio path needs recognised speech; the captions-improvement path does not.
@@ -607,8 +629,14 @@ class CaptionPipeline:
     ) -> dict[str, Any]:
         """The audio's verdict on the finished cues, logged as `sync_score` and returned."""
         c = self.cfg.captions
-        if not self._silences_known(wav) or not cues:
-            reason = "no_cues" if not cues else "no_audio_check"
+        if not cues or not self._silences_known(wav) or not silences:
+            reason = (
+                "no_cues"
+                if not cues
+                else "no_audio_check"
+                if not self._silences_known(wav)
+                else "no_silences"
+            )
             events.emit(events.SYNC_SCORE, events.SKIPPED, reason=reason)
             return {}
         check = self_check(cues, silences, wav_duration(wav, c.sample_rate), c)
@@ -759,8 +787,8 @@ class CaptionPipeline:
 
         With real word times from the engine the cues are built from the words themselves
         (`word_cues`; caption cues no word touches fill the wordless gaps) and snapped to the
-        audio's silences. When the engine only estimated its word times, the caption timing is kept
-        and just the text is replaced (`merge_words_into_cues(retime=False)`). Without words the
+        audio's silences. When the engine only estimated its word times, the caption cues are kept as
+        they are, text and timing (no ASR text is merged in). Without words the
         captions are proofread and stored as they are. `captions.timing_mode = "legacy"` restores
         the older caption-window merge. The proofreading pass fixes punctuation, names and terms.
         """
@@ -816,12 +844,10 @@ class CaptionPipeline:
                 with events.stage(events.ALIGN, mode="captions_timing") as st:
                     st.skip(reason="no_words", cues=len(cues))
             elif result.word_timing == "interpolated":
+                # estimated word times cannot place ASR text: the captions stay as they are
                 mode = "captions_timing"
                 with events.stage(events.ALIGN, mode="captions_timing") as st:
-                    cues, from_asr = await asyncio.to_thread(
-                        merge_words_into_cues, cues, words, c, retime=False
-                    )
-                    st.set(cues=len(cues), from_asr=from_asr)
+                    st.skip(reason="word_times_estimated", cues=len(cues))
             else:
                 mode = "words"
                 with events.stage(events.ALIGN, mode="words", words=len(words)) as st:

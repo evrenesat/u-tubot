@@ -24,6 +24,7 @@ from .types import (
 SHARE_DIGITS = 3
 RATE_DIGITS = 2
 SECONDS_DIGITS = 1
+SHORT_EPS = 1e-9
 
 
 @dataclass
@@ -35,6 +36,7 @@ class WordStats:
     stretched: int = 0
     squeezed: int = 0
     nonmonotonic: int = 0
+    unfixed: int = 0  # words still shorter than `word_min_s` after every repair (marked suspect)
     words_per_s: float = 0.0  # words per second of speech (gaps over `sentence_gap_s` excluded)
     speech_s: float = 0.0
 
@@ -49,6 +51,7 @@ class WordStats:
             "stretched": self.stretched,
             "squeezed": self.squeezed,
             "nonmonotonic": self.nonmonotonic,
+            "unfixed": self.unfixed,
             "words_per_s": round(self.words_per_s, RATE_DIGITS),
             "speech_s": round(self.speech_s, SECONDS_DIGITS),
         }
@@ -113,7 +116,8 @@ def _fix_stretched(
         word.end = word.start + nominal
 
 
-def _fix_zero_length(out: list[Word], i: int, cfg: CaptionsConfig) -> None:
+def _fix_zero_length(out: list[Word], i: int, cfg: CaptionsConfig) -> bool:
+    """Give a zero-length word room from a neighbouring gap; False when there is none."""
     word = out[i]
     nominal = _nominal(word, cfg)
     nxt = out[i + 1] if i + 1 < len(out) else None
@@ -122,11 +126,13 @@ def _fix_zero_length(out: list[Word], i: int, cfg: CaptionsConfig) -> None:
     grown = min(word.start + nominal, limit)
     if grown - word.start >= cfg.word_min_s:
         word.end = grown
-        return
+        return True
     floor = prev.end if prev is not None else 0.0
     pulled = max(word.end - nominal, floor)
     if word.end - pulled >= cfg.word_min_s:
         word.start = pulled
+        return True
+    return False
 
 
 def _squeezed_runs(out: list[Word], skip: list[bool], cfg: CaptionsConfig) -> list[tuple[int, int]]:
@@ -213,9 +219,9 @@ def repair_words(
 
     for i, word in enumerate(out):
         if not skip[i] and word.end - word.start < cfg.word_min_s:
-            stats.zero_length += 1
-            _fix_zero_length(out, i, cfg)
-            word.timing = TIMING_REPAIRED
+            if _fix_zero_length(out, i, cfg):
+                stats.zero_length += 1
+                word.timing = TIMING_REPAIRED
 
     for lo, hi in _squeezed_runs(out, skip, cfg):
         _respread(out, lo, hi, cfg)
@@ -224,6 +230,11 @@ def repair_words(
     for i, word in enumerate(out[:-1]):
         if not skip[i] and word.end > out[i + 1].start:
             word.end = max(out[i + 1].start, word.start)
+
+    for i, word in enumerate(out):
+        if not skip[i] and word.end - word.start < cfg.word_min_s - SHORT_EPS:
+            word.timing = TIMING_SUSPECT
+            stats.unfixed += 1
 
     stats.speech_s, stats.words_per_s = _speech_stats(out, cfg)
     return out, stats

@@ -313,6 +313,10 @@ class CaptionsConfig(BaseModel):
     word_squeeze_min_words: int = Field(default=4, ge=2)  # shortest run counted as squeezed
     # "words": cues come from the words' own times; "legacy": the old caption-window merge
     timing_mode: Literal["words", "legacy"] = "words"
+    # a caption cue is "covered" (no fill cue) when words overlap at least this share of its span
+    fill_cover_min_share: float = Field(default=0.3, ge=0.0, le=1.0)
+    # `utubot captions-regen` queues at most this many tracks per run unless --limit says otherwise
+    regen_limit_default: int = Field(default=20, ge=1)
     cue_linger_s: float = 0.2  # a cue stays on screen this long after its last word (if room)
     # sync metric (`captions/syncscore.py`): a phrase onset is "hit" when the nearest cue start lies
     # within [-sync_early_s, +sync_late_s] of it, "loose" within sync_loose_s

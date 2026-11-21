@@ -324,6 +324,9 @@ word_rate_max = 7.0                # word repair: words per second above which a
 word_squeeze_min_words = 4         # word repair: shortest run of fast words treated as squeezed and re-spread
 timing_mode = "words"              # "words": cues come from the words' own times; "legacy": the old caption-window merge
                                    # (rollback switch, no redeploy needed)
+fill_cover_min_share = 0.3         # a caption cue is kept as a "fill" cue (e.g. [Music], [Applause]) unless words overlap at least
+                                   # this share of its span; fill cues are clipped to the wordless gap between speech cues
+regen_limit_default = 20           # `utubot captions-regen` queues at most this many tracks per run (--limit overrides)
 cue_linger_s = 0.2                 # a cue stays on screen this long after its last word, when there is room before the next cue
 sync_late_s = 0.3                  # sync metric: a cue start up to this late after a phrase onset is a "hit"
 sync_early_s = 0.5                 # sync metric: ... and up to this early (cues may lead speech on purpose)

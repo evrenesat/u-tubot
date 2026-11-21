@@ -160,16 +160,19 @@ async def test_segment_only_engine_is_reported_and_scores_low(harness):
     assert h.score().hit < SEGMENT_ONLY_HIT_CEILING
 
 
-async def test_segment_only_engine_keeps_caption_times_in_improve(harness):
+async def test_segment_only_engine_keeps_caption_text_and_times_in_improve(harness):
     h = harness("segments")
     rows = youtube_rows(h.truth)
     await h.run("improve", rows, "en", None)
-    align = h.event("align")["detail"]
-    assert align["mode"] == "captions_timing"
+    align = h.event("align")
+    assert align["detail"]["mode"] == "captions_timing"
+    assert align["detail"]["reason"] == "word_times_estimated" and align["status"] == "skipped"
     starts = [s for s, _e, _t in rows]
-    cue_starts = [s for s, _e, _t in h.cues()]
-    assert all(any(abs(s - r) < 0.002 for r in starts) for s in cue_starts)
-    assert len(cue_starts) >= len(rows) - 2
+    cues = h.cues()
+    assert all(any(abs(s - r) < 0.002 for r in starts) for s, _e, _t in cues)
+    text = " ".join(t for _s, _e, t in cues)
+    assert all(w.text in text for w in h.truth), "a caption token vanished"
+    assert len(cues) >= len(rows) - 2
 
 
 async def test_legacy_mode_keeps_the_old_path(harness):

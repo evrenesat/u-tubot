@@ -190,6 +190,8 @@ def cmd_captions_score(args: argparse.Namespace) -> int:
                 args.video_id,
                 reference=args.reference,
                 lang=args.lang,
+                spoken=args.spoken,
+                at=args.at,
                 windows=args.windows,
                 window_s=args.window_s,
             )
@@ -200,7 +202,18 @@ def cmd_captions_score(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(doc, indent=2))
         return 0
-    print(f"{doc['video_id']} ({doc['lang']}) against {doc['reference']}")
+    track = doc["track"]
+    version = (
+        "no timing version"
+        if track["timing_version"] is None
+        else f"timing v{track['timing_version']}"
+    )
+    print(
+        f"{doc['video_id']}: scored the {track['lang']} track ({version}, {track['cues']} cues) against {doc['reference']}"
+    )
+    print(
+        f"  first cue starts at {track['first_cue_start_s']} s, longest cue {track['max_cue_s']} s"
+    )
     for win in doc["windows"]:
         print(
             f"  {win['start_s']:>8.1f}s  onsets {win['onsets']:>3}  hit {win['hit']:.2f}"
@@ -219,6 +232,9 @@ def cmd_captions_regen(args: argparse.Namespace) -> int:
     from .captions.regen import print_items, regen
 
     cfg = load_config(args.config)
+    if cfg.captions.timing_mode == "legacy":
+        print('skipped: [captions] timing_mode is "legacy", a regenerated track would be the same')
+        return 0
     db = Database(cfg.db_path)
     items = regen(
         cfg,
@@ -326,7 +342,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     score.add_argument("video_id")
-    score.add_argument("--lang", help="spoken language (default: the transcript's)")
+    score.add_argument(
+        "--lang",
+        help="language of the track to score (default: the newest track with a timing version, else the newest)",
+    )
+    score.add_argument("--spoken", help="spoken language of the audio (default: the transcript's)")
+    score.add_argument(
+        "--at",
+        type=float,
+        action="append",
+        help="window start in seconds (repeatable; replaces --windows)",
+    )
     score.add_argument("--reference", required=True, help="name of the reference engine")
     score.add_argument(
         "--windows", type=int, help="number of windows (default: [captions] score_windows)"
@@ -344,7 +370,11 @@ def main(argv: list[str] | None = None) -> int:
     regen.add_argument(
         "--legacy", action="store_true", help="only tracks with no timing version at all"
     )
-    regen.add_argument("--limit", type=int, help="queue at most this many tracks")
+    regen.add_argument(
+        "--limit",
+        type=int,
+        help="queue at most this many tracks (default: [captions] regen_limit_default)",
+    )
     regen.add_argument("--dry-run", action="store_true", help="list the tracks, queue nothing")
     regen.set_defaults(func=cmd_captions_regen)
     args = parser.parse_args(argv)
