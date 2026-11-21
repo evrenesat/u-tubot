@@ -427,3 +427,10 @@ async def test_improve_shows_a_phrase_only_youtube_heard_from_its_word_times(har
     assert h.score().hit >= HIT_TARGET
     timing = json.loads(h.db.one("SELECT timing FROM captions")["timing"])
     assert timing["reference"] == len(group) and timing["real_share"] == 1.0
+
+
+async def test_the_audio_only_path_also_joins_short_cues(harness):
+    h = harness("flag")
+    await h.run("run", "auto", None)
+    timing = json.loads(h.db.one("SELECT timing FROM captions")["timing"])
+    assert "merged_short" in timing

@@ -132,6 +132,9 @@ def is_non_speech(cue: Cue) -> bool:
     return bool(text.strip()) and not any(ch.isalnum() for ch in rest)
 
 
+OPENERS = {"[": "]", "(": ")"}
+
+
 @dataclass
 class AlignStats:
     """What `word_cues` made of YouTube's word times: fill cues built from them, and their words."""
@@ -141,13 +144,32 @@ class AlignStats:
     merged_short: int = 0  # short cues joined to a neighbour (`segment.merge_short`)
 
 
+def _spoken(ref: list[tuple[float, str]]) -> list[tuple[float, str]]:
+    """The reference words that are speech: tags like `[Music]`, `(applause)` and notes are left out."""
+    out: list[tuple[float, str]] = []
+    closer = ""
+    for start, text in sorted(ref):
+        token = text.strip()
+        if closer:
+            if closer in token:
+                closer = ""
+            continue
+        if token[:1] in OPENERS:
+            if OPENERS[token[:1]] not in token:
+                closer = OPENERS[token[:1]]
+            continue
+        if token and any(ch.isalnum() for ch in token):
+            out.append((start, token))
+    return out
+
+
 def reference_words(ref: list[tuple[float, str]], lead_s: float, cfg: CaptionsConfig) -> list[Word]:
     """YouTube's `(start, text)` words as `Word`s on the engine's clock (`lead_s` added).
 
     A word ends where the next begins, at most `word_max_s` after its own start; the last one (and one
     before a long pause) lasts its nominal length.
     """
-    ordered = sorted((start + lead_s, text) for start, text in ref if text.strip())
+    ordered = sorted((start + lead_s, text) for start, text in _spoken(ref))
     out: list[Word] = []
     for i, (start, text) in enumerate(ordered):
         nominal = min(max(len(text) * cfg.word_char_s, cfg.word_nominal_min_s), cfg.word_max_s)
@@ -269,11 +291,12 @@ def _reference_fill(
     inside = [w for w in ref if low <= w.start < high and not heard(w.start)]
     if not inside:
         return []
+    built = build_cues(inside, cfg)
     out = []
-    for cue in build_cues(inside, cfg):
-        words = cue.words or []
-        cue.end = min(max(cue.end, cue.start), high)
-        if words and cue.end - cue.start >= cfg.min_cue_s:
+    for i, cue in enumerate(built):
+        room = built[i + 1].start if i + 1 < len(built) else high
+        cue.end = min(max(cue.end, cue.start + cfg.min_cue_s), room, high)
+        if cue.words and cue.end > cue.start:
             out.append(cue)
     return out
 

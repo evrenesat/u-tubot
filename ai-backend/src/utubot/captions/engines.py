@@ -1013,7 +1013,7 @@ class AsrRouter:
         spent = (
             self.cfg.asr_recheck_max_requests - job.recheck.left if job.recheck is not None else 0
         )
-        return self._merge(results, spans, spent)
+        return self._merge(results, spans, spent, review and self.cfg.asr_recheck)
 
     def _expected(
         self, results: list[SpanResult], job: _Job, expected_language: str | None
@@ -1252,7 +1252,11 @@ class AsrRouter:
         return best
 
     def _merge(
-        self, results: list[SpanResult], spans: list[Span], recheck_requests: int = 0
+        self,
+        results: list[SpanResult],
+        spans: list[Span],
+        recheck_requests: int = 0,
+        review: bool = True,
     ) -> ASRResult:
         stats = StitchStats()
         segments = stitch_segments([r.segments for r in results], spans, stats)
@@ -1272,7 +1276,9 @@ class AsrRouter:
         used = list(dict.fromkeys(e.name for r in results for e in r.engines))
         models = list(dict.fromkeys(e.model for r in results for e in r.engines))
         real, interpolated = count_kinds(words)
-        segments, words, dropped = self._drop(results, spans, segments, words)
+        segments, words, dropped = (
+            self._drop(results, spans, segments, words) if review else (segments, words, [])
+        )
         dropped_s = sum(d.end - d.start for d in dropped)
         if dropped:
             events.emit(

@@ -35,7 +35,7 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
    never mixed into `real_share`). Tags (`[Music]`) and every row of an authored (`manual`) track keep the row rule. A speech cue shorter than
    `min_cue_s` is joined to a neighbour within `sentence_gap_s` when the join still wraps and stays within `max_cue_s`, `max_cps` and one
    speaker (`merged_short`; the previous cue is preferred unless it ends a sentence and the next one follows without a pause).
-   Credit lines Whisper invents over music (`halluc_credits`, e.g. "Altyazı M.K.", "amara.org") are dropped from every chunk, not only re-listened ones.
+   Credit lines Whisper invents over music (`halluc_credits`, e.g. "Altyazı M.K.", "amara.org") are dropped from every chunk, not only re-listened ones, and from a cached answer when it is read (the ASR cache version is unchanged, so nothing is transcribed again). The drop is part of the chunk review: it is off when `asr_recheck = false` and for `captions-score` unless `--review`.
    **Check against YouTube.** Captions jobs keep YouTube's own word starts (json3 `tOffsetMs`, stored in `transcripts.words`, with
    `caption_kind` `manual|auto`; a transcript stored before this is fetched once more through the gate, and used as it is while YouTube
    does not answer). The `ref_check` event matches the engine's words with them in blocks of `ref_block_s` (60 s) and reports how many

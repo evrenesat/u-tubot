@@ -114,3 +114,50 @@ async def test_cassettes_give_words_only_with_offsets(tmp_path, text, has_words)
     save_cassette(tmp_path, VID, {"title": "T", "automatic_captions": {"en": []}}, track)
     result = await OfflineYoutubeFetcher(Config(), tmp_path)(VID)
     assert bool(result.words) is has_words and result.caption_kind == CAPTION_AUTO
+
+
+@pytest.mark.parametrize("failure", ["video", "nocaptions", "generic"])
+async def test_a_legacy_row_survives_any_failed_refetch(tmp_path, failure):
+    from utubot.transcripts import NoCaptions
+    from utubot.youtube import YoutubeError, YoutubeVideoError
+
+    rig = Rig(tmp_path)
+    _legacy_row(rig)
+    errors = {
+        "video": YoutubeVideoError("private"),
+        "nocaptions": NoCaptions(VID),
+        "generic": YoutubeError("boom"),
+    }
+
+    async def broken(video_id):
+        raise errors[failure]
+
+    rig.svc.fetcher = broken
+    found = await rig.svc.get(VID, want_words=True)
+    assert found.text == "[00:00] old" and found.caption_kind is None
+
+
+async def test_a_legacy_row_is_used_at_once_while_the_gate_is_not_healthy(tmp_path):
+    rig = Rig(tmp_path)
+    _legacy_row(rig)
+    rig.gate.healthy = lambda *classes: False
+    found = await rig.svc.get(VID, want_words=True)
+    assert found.text == "[00:00] old" and rig.extracts == 0 and not rig.http
+
+
+def test_rolling_json3_repeats_are_dropped_beyond_adjacent_pairs():
+    def seg(text, offset=None):
+        return {"utf8": text, **({} if offset is None else {"tOffsetMs": offset})}
+
+    rolling = json.dumps(
+        {
+            "events": [
+                {"tStartMs": 0, "segs": [seg("one", 0), seg(" two", 400), seg(" three", 800)]},
+                {"tStartMs": 1200, "segs": [seg("two", 0), seg(" three", 100), seg(" four", 500)]},
+                {"tStartMs": 2400, "segs": [seg("three", 0), seg(" four", 0), seg(" five", 300)]},
+            ]
+        }
+    )
+    got = parse_json3_words(rolling)
+    assert [t for _s, t in got] == ["one", "two", "three", "four", "five"]
+    assert got[3][0] == pytest.approx(1.7)

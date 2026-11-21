@@ -381,3 +381,40 @@ def test_a_join_that_breaks_a_limit_is_not_made():
     spoken = [Cue(0.0, 3.0, ["[S1] a b"], speaker="S1"), Cue(3.1, 3.4, ["[S2] c"], speaker="S2")]
     assert merge_short(spoken, CFG)[1] == 0
     assert merge_short([Cue(1.0, 3.0, ["[Music]"]), Cue(3.1, 3.4, ["x"])], CFG)[1] == 0
+
+
+def test_tags_never_enter_a_word_timed_fill_cue():
+    words = spoken(0.0, "one two three") + spoken(30.0, "four five six")
+    ref = [
+        (GAP_FROM_S, "she"),
+        (GAP_FROM_S + 0.4, "[Music]"),
+        (GAP_FROM_S + 0.8, "(soft"),
+        (GAP_FROM_S + 1.0, "applause)"),
+        (GAP_FROM_S + 1.2, "♪"),
+        (GAP_FROM_S + 1.6, "left"),
+    ]
+    row = Cue(GAP_FROM_S, GAP_FROM_S + 3.0, ["she left"])
+    cues, _s, fill = cues_from_words(words, [row], CFG, ref_words=ref)
+    text = " ".join(" ".join(c.lines) for c in cues)
+    assert (
+        fill >= 1 and "she left" in text and "[" not in text and "♪" not in text and "(" not in text
+    )
+
+
+def test_a_short_reference_fill_is_stretched_not_dropped():
+    words = spoken(0.0, "one two three") + spoken(30.0, "four five six")
+    row = Cue(GAP_FROM_S, GAP_FROM_S + 1.0, ["wow"])
+    cues, _s, fill = cues_from_words(words, [row], CFG, ref_words=[(GAP_FROM_S, "wow")])
+    (wow,) = [c for c in cues if c.lines == ["wow"]]
+    assert fill == 1 and wow.end - wow.start >= CFG.min_cue_s - 1e-9
+
+
+def test_joined_cues_keep_the_union_of_their_words():
+    first = Cue(0.0, 2.0, ["so we go"], words=[Word(0.0, 0.5, "so"), Word(0.5, 1.0, "we")])
+    short = Cue(2.1, 2.4, ["now"], words=[Word(2.1, 2.4, "now")])
+    (joined,), count = merge_short([first, short], CFG)
+    assert count == 1 and [w.text for w in joined.words] == ["so", "we", "now"]
+    assert joined.words_match_text
+    row = Cue(5.0, 5.3, ["ok"])
+    (mixed,), _ = merge_short([Cue(3.0, 5.0, ["fine"], words=[Word(3.0, 3.5, "fine")]), row], CFG)
+    assert [w.text for w in mixed.words] == ["fine"] and not mixed.words_match_text

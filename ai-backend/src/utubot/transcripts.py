@@ -46,6 +46,7 @@ HTTP_ERROR_FLOOR = 400
 CAPTION_MANUAL = "manual"
 CAPTION_AUTO = "auto"
 MS_PER_S = 1000.0
+ROLLING_MIN_WORDS = 2  # a repeated run this long is a rolling repeat whatever its times
 HOLD_FAILED = "failed"
 HOLD_DELAYED = "delayed"
 TAG_RE = re.compile(r"<[^>]+>")
@@ -163,21 +164,36 @@ def parse_json3_words(raw: str) -> list[tuple[float, str]]:
     """`(start, word)` pairs of a json3 answer whose segments carry `tOffsetMs`, else `[]`.
 
     The start of a word is `tStartMs + tOffsetMs` (a segment without an offset starts with its
-    event). A track none of whose segments has an offset (manual tracks) gives nothing.
+    event). A track none of whose segments has an offset (manual tracks) gives nothing. Rolling
+    captions repeat the end of the previous event at the start of the next one: a prefix of an event
+    that equals the suffix of the one before (two or more words, or one at the same time) is dropped.
     """
     data = json.loads(raw)
     out: list[tuple[float, str]] = []
     offsets = False
+    previous: list[tuple[float, str]] = []
     for event in data.get("events", []):
         base = event.get("tStartMs", 0)
+        current: list[tuple[float, str]] = []
         for seg in event.get("segs") or []:
             text = (seg.get("utf8") or "").strip()
             offsets = offsets or "tOffsetMs" in seg
             if text:
-                pair = ((base + (seg.get("tOffsetMs") or 0)) / MS_PER_S, text)
-                if not out or out[-1] != pair:
-                    out.append(pair)
+                current.append(((base + (seg.get("tOffsetMs") or 0)) / MS_PER_S, text))
+        skip = _repeated_prefix(previous, current)
+        out.extend(pair for pair in current[skip:] if not out or out[-1] != pair)
+        if current:
+            previous = current
     return out if offsets else []
+
+
+def _repeated_prefix(previous: list[tuple[float, str]], current: list[tuple[float, str]]) -> int:
+    """How many leading words of `current` repeat the tail of `previous`."""
+    for k in range(min(len(previous), len(current)), 0, -1):
+        same = [a[1] for a in previous[-k:]] == [b[1] for b in current[:k]]
+        if same and (k >= ROLLING_MIN_WORDS or previous[-1][0] == current[0][0]):
+            return k
+    return 0
 
 
 def track_kind_of(info: dict[str, Any], name: str | None) -> str:
@@ -556,9 +572,13 @@ class TranscriptService:
             return hit
         if hit is None:
             return await self._get_fetched(video_id, priority, recheck)
+        # a stored row without words is good enough: the refetch is only tried while YouTube is
+        # healthy, and any failure of it leaves the row as it is (never the audio-only path)
+        if not self.gate.healthy(*FETCH_CLASSES):
+            return hit
         try:
             return await self._get_fetched(video_id, priority, recheck)
-        except YoutubeDelayed:
+        except (YoutubeError, NoCaptions):
             return hit
 
     @staticmethod

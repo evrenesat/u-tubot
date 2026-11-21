@@ -13,7 +13,7 @@ from typing import Any
 
 import yt_dlp
 
-from ..config import Config
+from ..config import CaptionsConfig, Config
 from ..db import Database
 from ..llm import BACKGROUND, LLMBadJSONError, LLMClient
 from ..media_archive import (
@@ -59,7 +59,17 @@ from .formats import audio_selector, track_kind
 from .proofread import Proofreader
 from .reference import Check
 from .reference import check as check_reference
-from .segment import SplitStats, build_cues, count_speakers, pad_cues, split_cue, to_vtt, wrap_lines
+from .sanity import FLAG_CREDIT, drop_flagged, flag_segments
+from .segment import (
+    SplitStats,
+    build_cues,
+    count_speakers,
+    merge_short,
+    pad_cues,
+    split_cue,
+    to_vtt,
+    wrap_lines,
+)
 from .separate import make_separator
 from .stages import StageCache
 from .syncscore import self_check
@@ -84,7 +94,7 @@ Progress = Callable[[float], None]
 ASR_CACHE_STAGE = "asr"
 
 
-ASR_CACHE_VERSION = 4  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review, 4: credit lines dropped)
+ASR_CACHE_VERSION = 3  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review)
 TIMING_VERSION = 5  # the caption timing scheme of a stored track (`captions.timing_version`)
 SEGMENT_METRICS = 3  # no_speech_prob, avg_logprob, compression_ratio follow start, end, text
 
@@ -125,6 +135,20 @@ def _segment_from_row(row: list[Any]) -> Segment:
     metrics = row[3 : 3 + SEGMENT_METRICS]
     metrics += [None] * (SEGMENT_METRICS - len(metrics))
     return Segment(row[0], row[1], row[2], *metrics)
+
+
+def drop_cached_credits(result: ASRResult, cfg: CaptionsConfig) -> ASRResult:
+    """A cached answer without the credit lines Whisper makes up (answers cached before the rule)."""
+    if not cfg.asr_recheck or not result.segments:
+        return result
+    flags = [found & {FLAG_CREDIT} for found in flag_segments(result.segments, cfg)]
+    segments, words, dropped = drop_flagged(result.segments, result.words, flags)
+    if not dropped:
+        return result
+    result.segments, result.words = segments, words
+    result.stats["hallucination_drops"] = result.stats.get("hallucination_drops", 0) + len(dropped)
+    result.dropped = [*result.dropped, *([d.start, d.end, d.reason] for d in dropped)]
+    return result
 
 
 def asr_from_cache(payload: dict[str, Any]) -> ASRResult:
@@ -487,7 +511,7 @@ class CaptionPipeline:
         key = asr_cache_key(audio_sha, want_words, requested, c.separation)
         cached = self._cached_asr(video_id, key, want_words, requested)
         if cached is not None:
-            result = asr_from_cache(cached)
+            result = drop_cached_credits(asr_from_cache(cached), self.cfg.captions)
             with events.stage(events.ASR, requested_language=requested) as st:
                 _set_asr(st, result, cached=True)
             self._require_speech(result, want_words, optional_asr)
@@ -552,7 +576,7 @@ class CaptionPipeline:
         """One ASR step of `_recognise`, with its per-video cache. See `_recognise`."""
         cached = self._cached_asr(video_id, key, want_words, requested)
         if cached is not None:
-            result = asr_from_cache(cached)
+            result = drop_cached_credits(asr_from_cache(cached), self.cfg.captions)
             with events.stage(events.ASR, requested_language=requested) as st:
                 _set_asr(st, result, cached=True)
             self._require_speech(result, want_words, optional_asr)
@@ -799,9 +823,15 @@ class CaptionPipeline:
                     )
             timing = {}
             if not legacy:
+                align_stats = AlignStats()
+                cues, align_stats.merged_short = merge_short(cues, c)
                 cues = pad_cues(cues, c)
                 timing = self._timing_summary(
-                    result, stats, "words", self._emit_sync_score(cues, silences or [], wav)
+                    result,
+                    stats,
+                    "words",
+                    self._emit_sync_score(cues, silences or [], wav),
+                    fill_stats=align_stats,
                 )
             track_lang = result.language or normalize_language(requested) or "und"
             cues = await self._polish(video_id, cues, track_lang)
@@ -837,6 +867,7 @@ class CaptionPipeline:
             # YouTube's words that fill what the engine did not hear: never counted as engine words
             summary["reference"] = fill_stats.words
             summary["fill_from_words"] = fill_stats.cues
+            summary["merged_short"] = fill_stats.merged_short
         if ref_check is not None:
             summary["ref_check"] = ref_check_summary(ref_check)
         return summary

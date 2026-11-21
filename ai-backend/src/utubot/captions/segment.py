@@ -365,8 +365,15 @@ def _joined(first: Cue, second: Cue, cfg: CaptionsConfig) -> Cue | None:
         return None
     if cfg.max_cps > 0 and len(text) / max(end - start, 0.1) > cfg.max_cps:
         return None
-    words = [*first.words, *second.words] if first.words and second.words else None
-    return Cue(start, end, lines, first.speaker, words=words)
+    if first.words and second.words:
+        words, exact = (
+            [*first.words, *second.words],
+            first.words_match_text and second.words_match_text,
+        )
+    else:
+        # a cue without words (a caption row) joined to one with: the words stay, the text no longer maps onto them
+        words, exact = first.words or second.words, False
+    return Cue(start, end, lines, first.speaker, words=words, words_match_text=exact)
 
 
 def merge_short(cues: list[Cue], cfg: CaptionsConfig) -> tuple[list[Cue], int]:
