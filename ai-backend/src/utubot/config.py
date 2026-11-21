@@ -339,6 +339,8 @@ class CaptionsConfig(BaseModel):
     asr_recheck_min_chars_ratio: float = Field(
         default=0.5, ge=0
     )  # at least this share of the characters
+    # without avg_logprob on either side the new answer must hold this share of the first one's characters
+    asr_recheck_min_chars_ratio_no_logprob: float = Field(default=0.8, ge=0)
     asr_recheck_logprob_slack: float = Field(
         default=0.3, ge=0
     )  # avg_logprob of its speech not lower by more

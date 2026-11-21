@@ -217,6 +217,7 @@ async def test_a_failing_retry_keeps_the_first_answer(tmp_path):
     result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
     assert {e["detail"]["outcome"] for e in rechecks if "outcome" in e["detail"]} == {"failed"}
     assert result.stats["hallucination_drops"] == LOOP_SEGMENTS
+    assert result.stats["unresolved_chunks"] == 1  # every rung failed with an engine error
 
 
 async def test_a_sparse_chunk_is_listened_to_again(tmp_path):
@@ -368,10 +369,14 @@ async def test_forced_languages_only_for_a_language_mismatch(tmp_path):
 
 async def test_a_repeated_chant_that_the_relisten_hears_again_is_kept(tmp_path):
     def chant(start, duration):
+        confident = duration <= SMALL_WINDOW_S + 1  # the windowed pass hears it with confidence
+        logprob, compression = (-0.3, 1.1) if confident else (-1.3, 2.7)
         steps = int(duration // LOOP_STEP_S)
         return ChunkResult(
             [
-                Segment(i * LOOP_STEP_S, (i + 1) * LOOP_STEP_S, "la la la", 0.02, -1.3, 2.7)
+                Segment(
+                    i * LOOP_STEP_S, (i + 1) * LOOP_STEP_S, "la la la", 0.02, logprob, compression
+                )
                 for i in range(steps)
             ],
             [],
@@ -418,7 +423,7 @@ async def test_the_recheck_budget_takes_the_worst_chunks_and_reports_the_rest(tm
     skipped = [e for e in rechecks if e["status"] == "skipped"]
     assert len(skipped) == 2 and {e["detail"]["skipped"] for e in skipped} == {"budget"}
     assert result.stats["rechecked_chunks"] == 1 and result.stats["skipped_chunks"] == 2
-    assert result.stats["unresolved_chunks"] == 2
+    assert result.stats["unresolved_chunks"] == 0  # a budget skip is deterministic: cached
     assert 0 < result.stats["recheck_requests"] <= 12
 
 
@@ -431,7 +436,7 @@ async def test_the_request_cap_stops_further_rungs(tmp_path):
     result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
     assert result.stats["recheck_requests"] == 1
     assert [e["detail"]["skipped"] for e in rechecks if e["status"] == "skipped"] == ["requests"]
-    assert result.stats["unresolved_chunks"] == 1
+    assert result.stats["unresolved_chunks"] == 0 and result.stats["skipped_chunks"] == 1
     assert len(fake.asked) == 3 + 1
 
 
@@ -509,3 +514,44 @@ async def test_dropped_spans_and_chunk_languages_are_reported(tmp_path):
     result, _ = await transcribe(router, wav, want_words=True, expected_language="tr")
     assert result.dropped and all(len(row) == 3 and row[2] for row in result.dropped)
     assert len(result.chunks) == 3
+
+
+async def test_a_deterministic_engine_loop_is_dropped_though_the_windows_repeat_it(tmp_path):
+    def loop(duration):
+        return ChunkResult(
+            [
+                Segment(i * LOOP_STEP_S, (i + 1) * LOOP_STEP_S, "Altyazı M.K.", 0.02, -1.3, 2.7)
+                for i in range(int(duration // LOOP_STEP_S))
+            ],
+            [],
+            "tr",
+        )
+
+    fake = ByChunk(lambda i, s, d, language: loop(d) if i == 1 else talk(s, d, "tr"))
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    result, _ = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert not [seg for seg in result.segments if "Altyaz" in seg.text]
+    assert result.stats["hallucination_drops"] >= 15
+
+
+async def test_without_avg_logprob_a_forced_language_must_keep_most_of_the_text(tmp_path):
+    def answer_with(ratio):
+        def answer(index, start, duration, language):
+            result = speech(start, duration)
+            result.language = language or ("en" if index == 1 else "tr")
+            if index == 1 and language:
+                result.segments = result.segments[: int(len(result.segments) * ratio)]
+            return result
+
+        return answer
+
+    outcomes = {}
+    for ratio in (0.6, 0.9):
+        router = build(
+            [engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": ByChunk(answer_with(ratio))}
+        )
+        wav = make_wav(tmp_path / f"{ratio}.wav", LONG_S)
+        _r, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
+        outcomes[ratio] = rechecks_of(rechecks, "outcome")[0]
+    assert outcomes == {0.6: "kept", 0.9: "replaced"}

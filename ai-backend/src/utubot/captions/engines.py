@@ -480,7 +480,7 @@ class SpanResult:
     engines: list[AsrEngineConfig]
     health: ChunkHealth | None = None
     rechecked: bool = False
-    unresolved: bool = False  # a re-listen was wanted but could not be done (budget, failures)
+    unresolved: bool = False  # every re-listen rung failed with an engine error (not cached)
     skipped: bool = False
     reproduced: set[str] = field(default_factory=set)  # texts a smaller-window pass said again
 
@@ -970,7 +970,6 @@ class AsrRouter:
         chosen: list[int] = []
         for i in pending:
             if chosen and used + spans[i].duration > allowed:
-                results[i].unresolved = True
                 results[i].skipped = True
                 events.emit(
                     events.ASR_RECHECK,
@@ -1024,11 +1023,10 @@ class AsrRouter:
             return False
         if round(attempt.flagged_share, 2) > round(first.flagged_share, 2):
             return False
-        return not (
-            first.avg_logprob is not None
-            and attempt.avg_logprob is not None
-            and attempt.avg_logprob < first.avg_logprob - c.asr_recheck_logprob_slack
-        )
+        if first.avg_logprob is None or attempt.avg_logprob is None:
+            # no confidence to compare: the new answer must hold nearly as much text
+            return attempt.chars >= c.asr_recheck_min_chars_ratio_no_logprob * first.chars
+        return attempt.avg_logprob >= first.avg_logprob - c.asr_recheck_logprob_slack
 
     async def _recheck(
         self,
@@ -1081,7 +1079,7 @@ class AsrRouter:
             }
             cost = self._cost(rung_chain, span, chunk_s)
             if job.recheck is None or not job.recheck.take(cost):
-                first.unresolved = True
+                first.skipped = True
                 events.emit(
                     events.ASR_RECHECK,
                     events.SKIPPED,
@@ -1125,7 +1123,7 @@ class AsrRouter:
 
         best.health = best_health
         best.rechecked = attempts > 0
-        best.unresolved = first.unresolved or (attempts > 0 and failed == attempts)
+        best.unresolved = attempts > 0 and failed == attempts
         best.reproduced = first.reproduced
         return best
 

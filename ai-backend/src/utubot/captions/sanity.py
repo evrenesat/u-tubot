@@ -79,11 +79,19 @@ def flag_segments(segments: list[Segment], cfg: CaptionsConfig) -> list[set[str]
 
 
 def repeated_texts(segments: list[Segment], cfg: CaptionsConfig) -> set[str]:
-    """The texts a transcript says at least `halluc_repeat_min` times (a re-listen "reproduced" them)."""
+    """The texts a re-listen says at least `halluc_repeat_min` times with confidence.
+
+    Segments the engine doubts (low `avg_logprob`, high compression ratio) do not count: a loop the
+    engine makes up again in every window is not speech heard twice.
+    """
     counts: dict[str, int] = {}
     for seg in segments:
         key = bare(seg.text)
-        if key:
+        doubted = (seg.avg_logprob is not None and seg.avg_logprob < cfg.halluc_avg_logprob) or (
+            seg.compression_ratio is not None
+            and seg.compression_ratio > cfg.halluc_compression_ratio
+        )
+        if key and not doubted:
             counts[key] = counts.get(key, 0) + 1
     return {key for key, count in counts.items() if count >= cfg.halluc_repeat_min}
 

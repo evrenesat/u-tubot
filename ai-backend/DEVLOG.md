@@ -47,6 +47,12 @@ Review round 1 fixes:
 7. `ASRResult.dropped` ([start, end, reasons]) and `.chunks` ([start, end, language]) are in the v3 cache payload (additive; v3 was never deployed).
 8. A rung only runs on engines that serve its language. 9. The `asr_recheck` text shows `detected_after` and the skipped cases. 10. Tests: short tail never sparse, a drop spanning a seam.
 
+Review round 2 fixes:
+
+1. `repeated_texts` ignores doubted segments (low `avg_logprob`, high compression ratio): a deterministic loop ("Altyazi M.K.") the engine makes up again in the windowed pass is still dropped; a repeat confirmed with confidence is kept. Tests in `test_sanity` and `test_asr_recheck`.
+2. Budget and request-cap skips are deterministic: those results are cached (`skipped_chunks` in the stats). Only a chunk whose every rung failed with an engine error is `unresolved` and keeps the result out of the cache.
+3. `_acceptable` without an `avg_logprob` on either side requires chars >= `asr_recheck_min_chars_ratio_no_logprob` (0.8) of the first answer (test: 0.6 kept, 0.9 replaced).
+
 Production steps for CP2 (coordinator, after deploy; `<config>`, `<ref>` as in CP1):
 
 1. Regenerate the video: `uv run utubot --config <config> captions-regen --video EQWLxadmae0` (all three videos regenerate anyway: `TIMING_VERSION` is 2 now).

@@ -625,3 +625,33 @@ async def test_a_result_with_unresolved_rechecks_is_not_cached(tmp_path):
     result = await asr.transcribe(None, None, None)
     back = asr_from_cache(asr_to_cache(result))
     assert back.dropped == [[3.0, 9.0, "phantom"]] and back.chunks == [[0.0, 600.0, "en"]]
+
+
+async def test_a_budget_skipped_result_is_cached(tmp_path):
+    from utubot.captions.asr import ASRResult
+    from utubot.captions.pipeline import CaptionPipeline
+    from utubot.captions.types import Segment, Word
+    from utubot.config import Config
+    from utubot.db import Database
+
+    class Skipped:
+        async def transcribe(
+            self, wav, language, progress, *, priority=1, want_words=True, expected_language=None
+        ):
+            return ASRResult(
+                words=[Word(0.0, 0.5, "a")],
+                language="en",
+                segments=[Segment(0.0, 1.0, "a")],
+                word_timing="real",
+                stats={"unresolved_chunks": 0, "skipped_chunks": 2},
+            )
+
+    cfg = Config()
+    cfg.server.data_dir = str(tmp_path)
+    db = Database(tmp_path / "t.sqlite")
+    pipe = CaptionPipeline(cfg, db, Skipped())
+    await pipe._asr_stage(
+        VID, tmp_path / "x.wav", None, lambda f: None,
+        priority=1, want_words=True, optional_asr=False, key="v3:sha:1:auto:off",
+    )  # fmt: skip
+    assert len(db.all("SELECT 1 FROM stage_cache WHERE stage='asr'")) == 1

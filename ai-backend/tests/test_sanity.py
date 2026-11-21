@@ -180,3 +180,14 @@ def test_a_language_mismatch_with_another_reason_still_counts_in_a_bilingual_vid
     sparse = chunk_health([Segment(0, 5, "x" * 5, 0.01, -0.2, 1.0)], 100.0, "en", "tr", CFG)
     chunks = [healthy(1500), healthy(1500), sparse]
     assert review(chunks, CFG)[2] == [REASON_LANGUAGE, REASON_SPARSE]
+
+
+def test_a_doubted_segment_does_not_count_as_a_reproduced_text():
+    from utubot.captions.sanity import repeated_texts
+
+    loop_again = [
+        Segment(i * 5.0, i * 5.0 + 4.0, "Altyazı M.K.", 0.02, -1.3, 2.7) for i in range(5)
+    ]
+    assert repeated_texts(loop_again, CFG) == set()
+    compressed = [Segment(i * 5.0, i * 5.0 + 4.0, "la la", 0.02, -0.3, 3.0) for i in range(5)]
+    assert repeated_texts(compressed, CFG) == set()
