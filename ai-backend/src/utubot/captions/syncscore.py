@@ -104,7 +104,8 @@ def self_check(
     lying inside a silence, more than `sync_late_s` after it began (speech had ended) and more than
     `sync_early_s` before it ends (the next speech is still far off); a start at either edge of a
     silence is where a cue should start. `silence_share`: silences over the audio's length
-    (it tells the reader whether the audio is informative at all). Empty when there are no silences
+    (it tells the reader whether the audio is informative at all). `char_timed_cues`: cues whose times
+    were shared over their text by character count. Empty when there are no silences
     to compare with.
     """
     silences = sorted(silences)
@@ -125,6 +126,7 @@ def self_check(
         "cues": len(cues),
         "speech_overlap": round(1 - inside / cue_time, SHARE_DIGITS) if cue_time > 0 else None,
         "starts_in_silence": round(late / len(cues), SHARE_DIGITS) if cues else None,
+        "char_timed_cues": sum(1 for cue in cues if cue.char_timed),
         "silence_share": round(sum(e - s for s, e in silences) / audio_s, SHARE_DIGITS)
         if audio_s > 0
         else None,

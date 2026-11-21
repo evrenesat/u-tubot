@@ -308,9 +308,9 @@ squeezed, out of order — and the number of silences used; `warn` when the engi
 `diarization` (only when `[captions] diarization` is enabled; ran, or skipped and why: no Hugging Face token, package missing), `cues`
 (count, longest line), `align` (`mode` `silence`: boundaries moved to silences; `words`: cues built from word times, with the speech and
 fill cue counts; `captions_timing`: skipped, the caption cues kept as they are (no words, or estimated word times); `merge`: the legacy rule),
-`sync_score` (after `align`: `speech_overlap`, `starts_in_silence`, `silence_share` of the finished cues against the audio), `proofread` (corrected
-cues, or skipped: off, no LLM; per-batch warnings hang under it as `proofread_batch`; runs once on the source text and once again on
-translated text, so the English output is proofread too), `text`, `translate` (the source and target language; skipped when the track
+`sync_score` (after `align`: `speech_overlap`, `starts_in_silence`, `silence_share` of the finished cues against the audio, and `char_timed_cues`: cues whose times were shared over their text by character count, not taken from words), `proofread` (corrected
+cues and how overflowing text was split: `split_exact`, `split_at_pause`, `split_by_chars` (no word times, so the time is by character count), `overlong`; or skipped: off, no LLM; per-batch warnings hang under it as `proofread_batch`; runs once on the source text and once again on
+translated text, so the English output is proofread too), `text`, `translate` (the source and target language, and the same split counts for translated text that does not fit a cue; skipped when the track
 already is in the target language), `stored` (what was saved and
 how big), `retry`, `finished`, `failed` (cause class, human message, stage) and `delivered`. A `delivered` row is added by the routes clients use (`GET /v1/videos/ID/captions`, the
 `.vtt`, `GET /v1/videos/ID/transcript`, summary, insight and ask built from a transcript the audio made); the same client fetching the

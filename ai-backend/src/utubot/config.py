@@ -279,6 +279,9 @@ class CaptionsConfig(BaseModel):
     proofread_batch: int = Field(default=40, ge=1)
     proofread_max_ratio: float = 1.6
     proofread_context_chars: int = 600
+    # `segment.split_cue`: a split point may move this share of the cue's time from the character
+    # proportion to reach a wider pause between words
+    split_search_frac: float = Field(default=0.2, ge=0, le=1)
     separation: Literal["off", "demucs"] = "off"
     separation_cmd: list[str] = Field(default_factory=lambda: ["demucs", "--two-stems", "vocals"])
     separation_timeout_s: float = 3600.0

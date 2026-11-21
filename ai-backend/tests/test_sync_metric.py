@@ -8,11 +8,14 @@ with `syncscore` the same way `utubot captions-score` scores a real track.
 from __future__ import annotations
 
 import bisect
+import json
 import wave
 from pathlib import Path
 
+import httpx
 import pytest
 
+from tests.mock_openai import MockOpenAI
 from tests.synth_speech import (
     ScriptedEngine,
     long_pause,
@@ -30,6 +33,7 @@ from utubot.captions.pipeline import TIMING_VERSION, CaptionPipeline
 from utubot.captions.syncscore import phrase_onsets, score_starts
 from utubot.config import AsrEngineConfig, Config
 from utubot.db import Database
+from utubot.llm import LLMClient
 from utubot.transcripts import parse_vtt
 
 pytestmark = pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg is not installed")
@@ -43,6 +47,7 @@ LATE_END_SHARE = 0.05
 SEGMENT_ONLY_HIT_CEILING = 0.7
 SEED = 7
 SPEECH_OVERLAP_FLOOR = 0.85
+TRANSLATED_HIT_TOLERANCE = 0.02
 
 
 PHANTOM = "Thank you."
@@ -97,7 +102,12 @@ class HallucinatingEngine(ScriptedEngine):
 
 class Harness:
     def __init__(
-        self, tmp_path: Path, mode: str, chunk_s: int = CHUNK_S, hallucinate: bool = False
+        self,
+        tmp_path: Path,
+        mode: str,
+        chunk_s: int = CHUNK_S,
+        hallucinate: bool = False,
+        llm: MockOpenAI | None = None,
     ):
         self.truth = make_timeline(SEED, DURATION_S)
         self.audio = tone_wav(tmp_path / "talk.wav", self.truth, DURATION_S)
@@ -125,7 +135,14 @@ class Harness:
         router = AsrRouter(
             self.cfg.captions, engine_factory=lambda e: self.engine, enabled=lambda e: True
         )
-        self.pipeline = CaptionPipeline(self.cfg, self.db, router, downloader=self.download)
+        client = None
+        if llm is not None:
+            conf = Config()
+            conf.llm.providers["default"].base_url = "http://mock/v1"
+            client = LLMClient(conf, transport=httpx.ASGITransport(app=llm.app))
+        self.pipeline = CaptionPipeline(
+            self.cfg, self.db, router, llm=client, downloader=self.download
+        )
         self.log = JobEvents(self.db, self.cfg.captions)
 
     async def download(self, video_id, out_dir, started):
@@ -275,3 +292,30 @@ async def test_hallucinated_chunk_recovers(harness):
     assert score.hit >= HIT_TARGET and score.loose == 1.0, score
     asr = h.event("asr", "ok")["detail"]
     assert asr["rechecked_chunks"] == 1 and asr["hallucination_drops"] == 0
+
+
+class DoublingTranslator(MockOpenAI):
+    """A mock LLM whose translation is twice as long as the source line."""
+
+    def respond(self, body):
+        system = body["messages"][0]["content"]
+        if "Translate each subtitle" in system:
+            lines = json.loads(body["messages"][-1]["content"])
+            return json.dumps([f"{line} {line}" for line in lines])
+        return super().respond(body)
+
+
+async def test_translated_track_keeps_the_sync_score(harness, tmp_path):
+    plain = harness("flag")
+    await plain.run("run", "tr", None)
+    (tmp_path / "translated").mkdir()
+    doubled = Harness(tmp_path / "translated", "flag", llm=DoublingTranslator())
+    await doubled.run("run", "tr", "de")
+    assert abs(doubled.score().hit - plain.score().hit) <= TRANSLATED_HIT_TOLERANCE
+    translate = doubled.event("translate")["detail"]
+    assert translate["split_by_chars"] == 0 and translate["split_at_pause"] > 0
+    limit = doubled.cfg.captions.max_chars_per_line
+    row = doubled.db.one("SELECT timing, vtt FROM captions WHERE video_id=?", [VID])
+    text_lines = [ln for ln in row["vtt"].splitlines() if ln and "-->" not in ln]
+    assert all(len(line) <= limit for line in text_lines if not line.isdigit() and line != "WEBVTT")
+    assert json.loads(row["timing"])["char_timed_cues"] == 0

@@ -295,6 +295,9 @@ proofread_batch = 40               # cues sent to the LLM at once (1 or more)
 proofread_max_ratio = 1.6          # a batch whose proofread text is longer or shorter than this factor
                                    # is kept as it was (a sign the model invented or dropped text)
 proofread_context_chars = 600      # title/description characters sent to the LLM as context
+split_search_frac = 0.2            # text that no longer fits one cue is split on word boundaries: a
+                                   # split point may sit this share of the cue's time (0-1) away from
+                                   # the text proportion, to land on the widest pause between words
 separation = "off"                 # "off" or "demucs": separate the vocals from the music before ASR
                                    # (needs `demucs` on the PATH, e.g. `uv tool install demucs`);
                                    # a job whose ASR answer is cached skips it
