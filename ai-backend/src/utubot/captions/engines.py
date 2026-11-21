@@ -24,6 +24,7 @@ import httpx
 from ..config import (
     ASR_KIND_FASTER_WHISPER,
     ASR_KIND_OPENAI,
+    WORDS_REAL_MIN_SHARE,
     AsrEngineConfig,
     CaptionsConfig,
 )
@@ -46,11 +47,28 @@ from .chunking import (
     stitch_words,
     write_chunk,
 )
-from .types import Segment, Word
+from .types import TIMING_REAL, Segment, Word
+from .wordtimes import classify, count_kinds
 
 log = logging.getLogger("utubot.asr")
 
 STATUS_INPUT_REJECTED = frozenset({400, 413, 415, 422})
+REJECTED_CODES = frozenset(f"http_{status}" for status in STATUS_INPUT_REJECTED)
+MODE_AUTO = "auto"
+MODE_BOTH = "both"
+MODE_GRANULARITIES = "granularities"
+MODE_FLAG = "flag"
+MODE_NONE = "none"
+# how a server is asked for word times (OpenAI field, mlx-audio style flag, or both at once)
+WORD_FORMS: dict[str, dict[str, Any]] = {
+    MODE_GRANULARITIES: {"timestamp_granularities[]": ["word", "segment"]},
+    MODE_FLAG: {"word_timestamps": "true"},
+    MODE_BOTH: {"timestamp_granularities[]": ["word", "segment"], "word_timestamps": "true"},
+    MODE_NONE: {"timestamp_granularities[]": ["segment"]},
+}
+# `auto`: the first probe, and where to go on after a 200 without any word
+PROBE_FIRST = (MODE_BOTH, MODE_GRANULARITIES, MODE_FLAG)
+PROBE_AFTER_WORDLESS = (MODE_FLAG, MODE_GRANULARITIES)
 HTTP_ERROR_FLOOR = 400
 HTTP_SERVER_ERROR_FLOOR = 500
 ISOLATED_FAILURES_TO_PENALIZE = 2
@@ -90,6 +108,8 @@ class ChunkResult:
     segments: list[Segment] = field(default_factory=list)
     words: list[Word] = field(default_factory=list)
     language: str | None = None
+    word_timing: str | None = None  # "real" | "mixed" | "interpolated" (None: no words wanted)
+    word_mode: str | None = None  # how the server was asked for word times
 
 
 class AsrEngine(Protocol):
@@ -101,27 +121,68 @@ class AsrEngine(Protocol):
 EngineFactory = Callable[[AsrEngineConfig], AsrEngine]
 
 
-def parse_verbose_json(data: dict[str, Any], duration_s: float, want_words: bool) -> ChunkResult:
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _parse_words(entries: list[Any]) -> list[Word]:
+    words: list[Word] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        start, end = _number(entry.get("start")), _number(entry.get("end"))
+        text = str(entry.get("word", entry.get("text", ""))).strip()
+        if start is None or end is None or not text:
+            continue
+        words.append(
+            Word(start, end, text, prob=_number(entry.get("probability")), timing=TIMING_REAL)
+        )
+    return words
+
+
+def parse_verbose_json(
+    data: dict[str, Any],
+    duration_s: float,
+    want_words: bool,
+    real_min_share: float = WORDS_REAL_MIN_SHARE,
+) -> ChunkResult:
     """OpenAI `verbose_json` into segments and words.
 
-    A bare `text` becomes one segment spanning the chunk; when words are wanted but the server sent
-    none, they are spread over each segment.
+    Words come from the top-level `words` or, when that is empty, from each segment's own `words`
+    (mlx-audio nests them). A bare `text` becomes one segment spanning the chunk; when words are
+    wanted but the server sent none, they are spread over each segment and flagged
+    `TIMING_INTERPOLATED`. Segments keep the numeric quality metrics Whisper reports.
     """
+    raw_segments = [seg for seg in data.get("segments") or [] if str(seg.get("text", "")).strip()]
     segments = [
-        Segment(float(seg["start"]), float(seg["end"]), str(seg.get("text", "")).strip())
-        for seg in data.get("segments") or []
-        if str(seg.get("text", "")).strip()
+        Segment(
+            float(seg["start"]),
+            float(seg["end"]),
+            str(seg.get("text", "")).strip(),
+            no_speech_prob=_number(seg.get("no_speech_prob")),
+            avg_logprob=_number(seg.get("avg_logprob")),
+            compression_ratio=_number(seg.get("compression_ratio")),
+        )
+        for seg in raw_segments
     ]
     text = str(data.get("text") or "").strip()
     if not segments and text:
         segments = [Segment(0.0, duration_s, text)]
-    words = [
-        Word(float(w["start"]), float(w["end"]), str(w.get("word", w.get("text", ""))).strip())
-        for w in data.get("words") or []
-    ]
-    if want_words and not words:
-        words = [w for seg in segments for w in words_from_segment(seg.start, seg.end, seg.text)]
-    return ChunkResult(segments, words, normalize_language(data.get("language")))
+    words = _parse_words(data.get("words") or [])
+    if not words:
+        words = _parse_words(
+            [w for seg in data.get("segments") or [] for w in seg.get("words") or []]
+        )
+    timing = None
+    if want_words:
+        if not words:
+            words = [
+                w for seg in segments for w in words_from_segment(seg.start, seg.end, seg.text)
+            ]
+        timing = classify(words, real_min_share)
+    return ChunkResult(segments, words, normalize_language(data.get("language")), timing)
 
 
 def transport_code(exc: httpx.HTTPError) -> str:
@@ -133,11 +194,32 @@ def transport_code(exc: httpx.HTTPError) -> str:
 
 
 class OpenAIEngine:
-    """Any server with `POST /v1/audio/transcriptions` (OpenAI, mlx-audio, whisper.cpp, vLLM ...)."""
+    """Any server with `POST /v1/audio/transcriptions` (OpenAI, mlx-audio, whisper.cpp, vLLM ...).
 
-    def __init__(self, cfg: AsrEngineConfig, transport: httpx.AsyncBaseTransport | None = None):
+    Servers differ in how they are asked for word times: the OpenAI field
+    `timestamp_granularities[]`, or a `word_timestamps=true` flag (mlx-audio). `word_timestamps`
+    in the engine config names the way; `auto` probes on the first chunk that wants words (`both`
+    first) and remembers what worked, once per process.
+    """
+
+    def __init__(
+        self,
+        cfg: AsrEngineConfig,
+        transport: httpx.AsyncBaseTransport | None = None,
+        real_min_share: float = WORDS_REAL_MIN_SHARE,
+    ):
         self.cfg = cfg
         self._transport = transport
+        self._real_min_share = real_min_share
+        self._word_mode: str | None = (
+            None if cfg.word_timestamps == MODE_AUTO else cfg.word_timestamps
+        )
+        self._resolving = asyncio.Lock()
+
+    @property
+    def word_mode(self) -> str | None:
+        """The way word times are asked for; None while `auto` has not resolved yet."""
+        return self._word_mode
 
     def _headers(self) -> dict[str, str]:
         key = os.environ.get(self.cfg.api_key_env or "")
@@ -146,10 +228,53 @@ class OpenAIEngine:
     async def transcribe_chunk(
         self, wav: Path, language: str | None, want_words: bool
     ) -> ChunkResult:
+        if not want_words:
+            return await self._ask(wav, language, MODE_NONE, False)
+        if self._word_mode is None:
+            async with self._resolving:
+                if self._word_mode is None:
+                    return await self._resolve(wav, language)
+        return await self._ask(wav, language, self._word_mode or MODE_NONE, True)
+
+    async def _resolve(self, wav: Path, language: str | None) -> ChunkResult:
+        """Find the form that makes this server return word times (`word_timestamps = "auto"`).
+
+        `both` first; a rejected request moves on to the next single form, a 200 without any word to
+        the remaining single forms (flag, then granularities), on the same chunk. The first form
+        that returns words is remembered; when none does the engine is remembered as wordless.
+        """
+        order = list(PROBE_FIRST)
+        wordless: ChunkResult | None = None
+        rejected: EngineError | None = None
+        while order:
+            mode = order.pop(0)
+            try:
+                result = await self._ask(wav, language, mode, True)
+            except EngineError as exc:
+                if exc.code not in REJECTED_CODES:
+                    raise
+                rejected = exc
+                continue
+            if result.word_timing in ("real", "mixed"):
+                self._word_mode = mode
+                return result
+            if wordless is None:
+                wordless = result
+                order = [m for m in PROBE_AFTER_WORDLESS if m != mode]
+        if wordless is None:
+            assert rejected is not None
+            raise rejected
+        self._word_mode = MODE_NONE
+        return wordless
+
+    async def _ask(
+        self, wav: Path, language: str | None, mode: str, want_words: bool
+    ) -> ChunkResult:
         data: dict[str, Any] = {
+            **self.cfg.extra_form,
             "model": self.cfg.model,
             "response_format": "verbose_json",
-            "timestamp_granularities[]": ["word", "segment"] if want_words else ["segment"],
+            **WORD_FORMS[mode],
         }
         if language:
             data["language"] = language
@@ -186,18 +311,27 @@ class OpenAIEngine:
             ) from None
         duration = wav_duration(wav)
         try:
-            return parse_verbose_json(body, duration, want_words)
+            result = parse_verbose_json(body, duration, want_words, self._real_min_share)
         except (ValueError, KeyError, TypeError, AttributeError):
             raise EngineError(
                 "asr answered an unexpected transcript shape", isolated=True, code="bad_shape"
             ) from None
+        result.word_mode = mode if want_words else None
+        return result
 
 
 class FasterWhisperEngine:
     """Local CPU faster-whisper (`uv sync --extra asr`); the model loads on first use."""
 
-    def __init__(self, cfg: AsrEngineConfig, default_compute_type: str, default_threads: int):
+    def __init__(
+        self,
+        cfg: AsrEngineConfig,
+        default_compute_type: str,
+        default_threads: int,
+        real_min_share: float = WORDS_REAL_MIN_SHARE,
+    ):
         self.cfg = cfg
+        self._real_min_share = real_min_share
         self._compute_type = cfg.compute_type or default_compute_type
         self._threads = cfg.threads or default_threads
         self._model: Any = None
@@ -223,18 +357,47 @@ class FasterWhisperEngine:
         segments_out: list[Segment] = []
         words_out: list[Word] = []
         stream, info = self._load().transcribe(
-            str(wav), language=language, word_timestamps=want_words, vad_filter=True
+            str(wav),
+            language=language,
+            word_timestamps=want_words,
+            vad_filter=True,
+            condition_on_previous_text=self.cfg.condition_on_previous_text,
         )
         for seg in stream:
             text = seg.text.strip()
             if text:
-                segments_out.append(Segment(seg.start, seg.end, text))
+                segments_out.append(
+                    Segment(
+                        seg.start,
+                        seg.end,
+                        text,
+                        no_speech_prob=_number(getattr(seg, "no_speech_prob", None)),
+                        avg_logprob=_number(getattr(seg, "avg_logprob", None)),
+                        compression_ratio=_number(getattr(seg, "compression_ratio", None)),
+                    )
+                )
             if want_words:
                 if seg.words:
-                    words_out.extend(Word(w.start, w.end, w.word.strip()) for w in seg.words)
+                    words_out.extend(
+                        Word(
+                            w.start,
+                            w.end,
+                            w.word.strip(),
+                            prob=_number(getattr(w, "probability", None)),
+                            timing=TIMING_REAL,
+                        )
+                        for w in seg.words
+                    )
                 else:
                     words_out.extend(words_from_segment(seg.start, seg.end, seg.text))
-        return ChunkResult(segments_out, words_out, normalize_language(info.language))
+        timing = classify(words_out, self._real_min_share) if want_words else None
+        return ChunkResult(
+            segments_out,
+            words_out,
+            normalize_language(info.language),
+            timing,
+            "faster_whisper" if want_words else None,
+        )
 
     async def transcribe_chunk(
         self, wav: Path, language: str | None, want_words: bool
@@ -313,8 +476,13 @@ class AsrRouter:
 
     def _build(self, engine: AsrEngineConfig) -> AsrEngine:
         if engine.kind == ASR_KIND_OPENAI:
-            return OpenAIEngine(engine, self._transport)
-        return FasterWhisperEngine(engine, self.cfg.whisper_compute_type, self.cfg.whisper_threads)
+            return OpenAIEngine(engine, self._transport, self.cfg.words_real_min_share)
+        return FasterWhisperEngine(
+            engine,
+            self.cfg.whisper_compute_type,
+            self.cfg.whisper_threads,
+            self.cfg.words_real_min_share,
+        )
 
     def _engine(self, engine: AsrEngineConfig) -> AsrEngine:
         fingerprint = engine.model_dump_json()
@@ -405,6 +573,16 @@ class AsrRouter:
             max(engine.speed_factor, MIN_SPEED_FACTOR) * parallel
         )
 
+    def _word_times(self, engine: AsrEngineConfig) -> str:
+        """How the engine is asked for word times, or "unknown" while `auto` has not resolved."""
+        if engine.kind == ASR_KIND_FASTER_WHISPER:
+            return "native"
+        cached = self._engines.get(engine.name)
+        mode = getattr(cached[1], "word_mode", None) if cached else None
+        if mode is None and engine.word_timestamps != MODE_AUTO:
+            mode = engine.word_timestamps
+        return mode or "unknown"
+
     def status(self) -> list[dict[str, Any]]:
         now = self._clock()
         return [
@@ -419,6 +597,7 @@ class AsrRouter:
                 "priority": e.priority,
                 "max_parallel": e.max_parallel,
                 "background_only": e.background_only,
+                "word_times": self._word_times(e),
             }
             for e in self.cfg.engines()
         ]
@@ -466,8 +645,15 @@ class AsrRouter:
             chars=sum(len(seg.text) for seg in result.segments),
             segments=len(result.segments),
             language=result.language,
+            **self._word_detail(result, job.want_words),
         )
         return result
+
+    def _word_detail(self, result: ChunkResult, want_words: bool) -> dict[str, Any]:
+        if not want_words:
+            return {}
+        timing = result.word_timing or classify(result.words, self.cfg.words_real_min_share)
+        return {"word_timing": timing, "words": len(result.words), "word_mode": result.word_mode}
 
     @staticmethod
     def _chunk_detail(engine: AsrEngineConfig, span: Span, began: float) -> dict[str, Any]:
@@ -542,6 +728,15 @@ class AsrRouter:
                 log.warning("asr engine %s failed a chunk: %s", engine.name, exc)
                 self._fell_through(engine, rest, events.error_class(exc), span)
                 continue
+            if (
+                job.want_words
+                and self.cfg.asr_words_required
+                and rest
+                and classify(result.words, self.cfg.words_real_min_share) == "interpolated"
+            ):
+                self._fell_through(engine, rest, "no_word_times", span)
+                misfit = misfit or result
+                continue
             found = dominant_language(result.languages)
             if job.language is None and found and not serves(engine, found):
                 if any(serves(e, found) for e in rest):
@@ -597,8 +792,7 @@ class AsrRouter:
             results = await gather_all([run(span, job) for span in spans])
         return self._merge(results, spans)
 
-    @staticmethod
-    def _merge(results: list[SpanResult], spans: list[Span]) -> ASRResult:
+    def _merge(self, results: list[SpanResult], spans: list[Span]) -> ASRResult:
         stats = StitchStats()
         segments = stitch_segments([r.segments for r in results], spans, stats)
         words = stitch_words([r.words for r in results], spans)
@@ -616,12 +810,15 @@ class AsrRouter:
         language = dominant_language([item for r in results for item in r.languages])
         used = list(dict.fromkeys(e.name for r in results for e in r.engines))
         models = list(dict.fromkeys(e.model for r in results for e in r.engines))
+        real, interpolated = count_kinds(words)
         return ASRResult(
             words=words,
             language=language,
             segments=segments,
             engine=ENGINE_SEPARATOR.join(used) or None,
             model=ENGINE_SEPARATOR.join(models) or None,
+            word_timing=classify(words, self.cfg.words_real_min_share),
+            stats={"words_real": real, "words_interpolated": interpolated},
         )
 
 

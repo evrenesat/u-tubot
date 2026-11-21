@@ -1,10 +1,13 @@
 """Alignment: YouTube caption timing, ASR words and silence, combined into good cues.
 
-Two jobs:
-- `merge_words_into_cues`: the video had captions, so their timing is kept and each cue's text is
-  replaced by the ASR words that fall inside its window (better transcription); a cue the ASR heard
-  nothing in keeps the caption text. Cue boundaries move to the words they now hold, and the text
-  is wrapped or re-split so every produced cue respects the line, duration and cps limits.
+Three jobs:
+- `cues_from_words`: the video had captions and the engine gave real word times. The cues are built
+  from the words' own times (no word is dropped for lying outside a caption window); caption cues
+  no word touches (`[Music]`, speech the engine missed) fill the wordless gaps.
+- `merge_words_into_cues`: the older caption-window merge. Each cue's text is replaced by the ASR
+  words that fall inside its window; a cue the ASR heard nothing in keeps the caption text. With
+  `retime=True` cue boundaries move to the words they hold (legacy mode); with `retime=False` the
+  caption timing is kept (the words' times are only estimates).
 - `snap_cues`: cue boundaries are nudged outward to the middle of a nearby silence (ffmpeg
   silencedetect), so a cue does not cut into a word; a light stand-in for a full forced alignment.
 
@@ -19,7 +22,7 @@ import re
 import subprocess
 
 from ..config import CaptionsConfig
-from .segment import build_cues, enforce_timing, retime_split, wrap_lines
+from .segment import build_cues, enforce_timing, pad_cues, retime_split, wrap_lines
 from .types import Cue, Word
 
 MIDPOINT_EPS = 1e-9
@@ -39,20 +42,14 @@ def _cue_text(cue: Cue) -> str:
     return " ".join(cue.lines).strip()
 
 
-def merge_words_into_cues(
-    cues: list[Cue], words: list[Word], cfg: CaptionsConfig
-) -> tuple[list[Cue], int]:
-    """Replace cue text with the ASR words inside each cue window (plus `align_window_s` margin).
+def _bucket_words(cues: list[Cue], words: list[Word], margin: float) -> list[list[Word]]:
+    """Each word in the bucket of the one cue whose window its midpoint is closest to.
 
-    Every word goes to at most one cue: the one whose window its midpoint is closest to, and only
-    when that distance is within the margin. Words outside every window are dropped. The cues are
-    expected sorted by start (as `caption_cues` and `build_cues` leave them), so each word finds
-    its cue around one `bisect` position instead of scanning every cue. A cue that took ASR words
-    is re-wrapped to the line limits; text that does not fit — or runs faster than `max_cps` — is
-    re-split into several cues over the words' own timings (`build_cues`). Returns the new cues
-    and how many cues took their text from the ASR.
+    Only a cue whose `[start-margin, end+margin]` holds the midpoint is a candidate. The cues are
+    expected sorted and non-overlapping, so their ends are sorted too and the candidates form one
+    contiguous run around the `bisect` position: no scan of every cue. Words outside every window
+    land in no bucket.
     """
-    margin = max(cfg.align_window_s, 0.0)
     starts = [cue.start for cue in cues]
     buckets: list[list[Word]] = [[] for _ in cues]
     for word in words:
@@ -60,9 +57,6 @@ def merge_words_into_cues(
             continue
         mid = _midpoint(word)
         best, best_dist = None, margin + MIDPOINT_EPS
-        # exact candidate window: the cues whose `[start-margin, end+margin]` holds the midpoint.
-        # The cues are sorted and non-overlapping, so their ends are sorted too and the candidates
-        # form one contiguous run around the bisect position — no scan of every cue.
         j_hi = bisect.bisect_right(starts, mid)
         while j_hi < len(cues) and cues[j_hi].start - margin <= mid:
             j_hi += 1
@@ -75,29 +69,78 @@ def merge_words_into_cues(
                 best, best_dist = j, dist
         if best is not None:
             buckets[best].append(word)
+    return buckets
+
+
+def merge_words_into_cues(
+    cues: list[Cue], words: list[Word], cfg: CaptionsConfig, *, retime: bool = True
+) -> tuple[list[Cue], int]:
+    """Replace cue text with the ASR words inside each cue window (plus `align_window_s` margin).
+
+    Every word goes to at most one cue: the one whose window its midpoint is closest to, and only
+    when that distance is within the margin. Words outside every window are dropped. A cue that took
+    ASR words is re-wrapped to the line limits; text that does not fit — or runs faster than
+    `max_cps` — is re-split into several cues over the words' own timings (`build_cues`). Returns the
+    new cues and how many cues took their text from the ASR.
+
+    With `retime=False` (the words' times are only estimates) a cue keeps its caption `start` and
+    `end` and takes just the text; text that does not fit goes through `retime_split` over the
+    caption's own span. Legacy path and estimated-times path only: real word times go through
+    `cues_from_words`.
+    """
+    margin = max(cfg.align_window_s, 0.0)
+    buckets = _bucket_words(cues, words, margin)
     out: list[Cue] = []
     from_asr = 0
     for cue, bucket in zip(cues, buckets, strict=True):
-        if bucket:
-            from_asr += 1
-            text = " ".join(w.text.strip() for w in bucket)
-            lines = wrap_lines(text, cfg.max_chars_per_line, cfg.max_lines)
-            if lines is not None and not _too_fast(text, bucket[0].start, bucket[-1].end, cfg):
-                out.append(
-                    Cue(
-                        bucket[0].start,
-                        max(bucket[-1].end, bucket[0].start),
-                        lines,
-                        cue.speaker,
-                    )
-                )
-            else:
-                # does not fit one cue: let the words' own timings re-split it, so line, duration
-                # and cps limits all hold
-                out.extend(build_cues(bucket, cfg))
-        else:
+        if not bucket:
             out.append(Cue(cue.start, cue.end, list(cue.lines), cue.speaker))
+            continue
+        from_asr += 1
+        text = " ".join(w.text.strip() for w in bucket)
+        lines = wrap_lines(text, cfg.max_chars_per_line, cfg.max_lines)
+        if not retime:
+            if lines is not None:
+                out.append(Cue(cue.start, cue.end, lines, cue.speaker))
+            else:
+                out.extend(retime_split(text, cue.start, cue.end, cfg))
+        elif lines is not None and not _too_fast(text, bucket[0].start, bucket[-1].end, cfg):
+            out.append(
+                Cue(bucket[0].start, max(bucket[-1].end, bucket[0].start), lines, cue.speaker)
+            )
+        else:
+            # does not fit one cue: let the words' own timings re-split it, so line, duration
+            # and cps limits all hold
+            out.extend(build_cues(bucket, cfg))
     return enforce_timing(out, cfg), from_asr
+
+
+def cues_from_words(
+    words: list[Word], captions: list[Cue], cfg: CaptionsConfig
+) -> tuple[list[Cue], int, int]:
+    """Cues built from the words' own times; caption cues no word touches fill the gaps.
+
+    Returns `(cues, speech_cues, fill_cues)`. A caption cue is a fill cue when no word midpoint lies
+    within `align_window_s` of it (a `[Music]` row, speech the engine missed); it is clipped to the
+    wordless gap between its neighbouring speech cues and dropped when under `min_cue_s` after that.
+    """
+    speech = build_cues(words, cfg)
+    margin = max(cfg.align_window_s, 0.0)
+    mids = sorted(_midpoint(w) for w in words if w.text.strip())
+    starts = [cue.start for cue in speech]
+    fills: list[Cue] = []
+    for cue in captions:
+        first = bisect.bisect_left(mids, cue.start - margin - MIDPOINT_EPS)
+        if first < len(mids) and mids[first] <= cue.end + margin + MIDPOINT_EPS:
+            continue
+        after = bisect.bisect_right(starts, cue.start)
+        low = speech[after - 1].end if after else 0.0
+        high = speech[after].start if after < len(speech) else float("inf")
+        start, end = max(cue.start, low), min(cue.end, high)
+        if end - start >= cfg.min_cue_s:
+            fills.append(Cue(start, end, list(cue.lines), cue.speaker))
+    merged = sorted([*speech, *fills], key=lambda cue: cue.start)
+    return enforce_timing(pad_cues(merged, cfg), cfg), len(speech), len(fills)
 
 
 def _too_fast(text: str, start: float, end: float, cfg: CaptionsConfig) -> bool:

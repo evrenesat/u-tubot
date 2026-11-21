@@ -35,7 +35,13 @@ from ..youtube import (
     ytdlp_runtime_options,
 )
 from . import events
-from .align import caption_cues, detect_silences, merge_words_into_cues, snap_cues
+from .align import (
+    caption_cues,
+    cues_from_words,
+    detect_silences,
+    merge_words_into_cues,
+    snap_cues,
+)
 from .asr import (
     LANGUAGE_NAMES,
     ASRBackend,
@@ -49,10 +55,12 @@ from .asr import (
 from .diarize import Diarizer, assign_speakers, make_diarizer
 from .formats import audio_selector, track_kind
 from .proofread import Proofreader
-from .segment import build_cues, count_speakers, to_vtt, wrap_lines
+from .segment import build_cues, count_speakers, pad_cues, to_vtt, wrap_lines
 from .separate import make_separator
 from .stages import StageCache
-from .types import Cue, Segment, Word
+from .syncscore import self_check
+from .types import TIMING_REAL, Cue, Segment, Word
+from .wordtimes import WordStats, classify, count_kinds, repair_words
 
 log = logging.getLogger("utubot.captions")
 VIDEO_URL = "https://www.youtube.com/watch?v={}"
@@ -68,27 +76,64 @@ Progress = Callable[[float], None]
 ASR_CACHE_STAGE = "asr"
 
 
+ASR_CACHE_VERSION = (
+    2  # the layout and meaning of a cached ASR answer: a new value ignores older rows
+)
+TIMING_VERSION = 1  # the caption timing scheme of a stored track (`captions.timing_version`)
+SEGMENT_METRICS = 3  # no_speech_prob, avg_logprob, compression_ratio follow start, end, text
+
+
 def asr_to_cache(result: ASRResult) -> dict[str, Any]:
+    """The engine's answer as stored: its words as the engine gave them, before `repair_words`."""
     return {
+        "v": ASR_CACHE_VERSION,
         "language": result.language,
         "engine": result.engine,
         "model": result.model,
-        "segments": [[seg.start, seg.end, seg.text] for seg in result.segments],
-        "words": [[w.start, w.end, w.text] for w in result.words],
+        "word_timing": result.word_timing,
+        "stats": result.stats,
+        "segments": [
+            [
+                seg.start,
+                seg.end,
+                seg.text,
+                seg.no_speech_prob,
+                seg.avg_logprob,
+                seg.compression_ratio,
+            ]
+            for seg in result.segments
+        ],
+        "words": [[w.start, w.end, w.text, w.prob, w.timing] for w in result.words],
     }
 
 
+def _word_from_row(row: list[Any]) -> Word:
+    prob = row[3] if len(row) > 3 else None
+    timing = row[4] if len(row) > 4 else TIMING_REAL
+    return Word(row[0], row[1], row[2], prob=prob, timing=timing)
+
+
+def _segment_from_row(row: list[Any]) -> Segment:
+    metrics = row[3 : 3 + SEGMENT_METRICS]
+    metrics += [None] * (SEGMENT_METRICS - len(metrics))
+    return Segment(row[0], row[1], row[2], *metrics)
+
+
 def asr_from_cache(payload: dict[str, Any]) -> ASRResult:
+    """An `asr_to_cache` payload back; rows of the older three-item layout load as well."""
     return ASRResult(
-        words=[Word(*word) for word in payload.get("words") or []],
+        words=[_word_from_row(row) for row in payload.get("words") or []],
         language=payload.get("language"),
-        segments=[Segment(seg[0], seg[1], seg[2]) for seg in payload.get("segments") or []],
+        segments=[_segment_from_row(row) for row in payload.get("segments") or []],
         engine=payload.get("engine"),
         model=payload.get("model"),
+        word_timing=payload.get("word_timing"),
+        stats=dict(payload.get("stats") or {}),
     )
 
 
 def _set_asr(st, result: ASRResult, cached: bool = False) -> None:
+    real, interpolated = count_kinds(result.words)
     st.set(
         cached=cached or None,
         engine=result.engine,
@@ -97,13 +142,17 @@ def _set_asr(st, result: ASRResult, cached: bool = False) -> None:
         segments=len(result.segments),
         words=len(result.words),
         chars=sum(len(seg.text) for seg in result.segments),
+        word_timing=result.word_timing,
+        words_real=real,
+        words_interpolated=interpolated,
     )
 
 
 def asr_cache_key(audio_sha: str, want_words: bool, requested: str | None, separation: str) -> str:
-    """The ASR stage-cache key: the audio bytes, the answer shape, the language and the audio
-    variant — separated vocals change what the engines hear, so the mode joins the key."""
-    return f"{audio_sha}:{int(want_words)}:{requested or 'auto'}:{separation}"
+    """The ASR stage-cache key: the cache layout version, the audio bytes, the answer shape, the
+    language and the audio variant — separated vocals change what the engines hear, so the mode
+    joins the key."""
+    return f"v{ASR_CACHE_VERSION}:{audio_sha}:{int(want_words)}:{requested or 'auto'}:{separation}"
 
 
 class PipelineError(RuntimeError):
@@ -461,9 +510,17 @@ class CaptionPipeline:
                     priority=priority,
                     want_words=want_words,
                 )
+                if want_words and result.word_timing is None:
+                    result.word_timing = classify(
+                        result.words, self.cfg.captions.words_real_min_share
+                    )
                 _set_asr(st, result)
                 if not self._asr_empty(result, want_words):
-                    self.cache.put(video_id, ASR_CACHE_STAGE, key, asr_to_cache(result))
+                    if want_words and result.word_timing != "real":
+                        # a fixed engine configuration must take effect on the next job
+                        st.set(cache="not_stored_no_word_times")
+                    else:
+                        self.cache.put(video_id, ASR_CACHE_STAGE, key, asr_to_cache(result))
         except ASRError as exc:
             if not optional_asr:
                 raise
@@ -499,6 +556,63 @@ class CaptionPipeline:
     @staticmethod
     def _asr_empty(result: ASRResult, want_words: bool) -> bool:
         return not (result.words if want_words else result.segments)
+
+    async def _verify_words(
+        self, result: ASRResult, wav: Path | None
+    ) -> tuple[list[Word], list[tuple[float, float]], WordStats]:
+        """Silences of the audio (once), the engine's words repaired against them, and a log event.
+
+        The silences are `[]` when there is no audio or `align_silence` is off; callers that need to
+        tell "unknown" from "none" use `self._silences_known`.
+        """
+        c = self.cfg.captions
+        silences: list[tuple[float, float]] = []
+        if self._silences_known(wav):
+            silences = await asyncio.to_thread(detect_silences, wav, c.silence_min_s)
+        words, stats = repair_words(result.words, silences, c)
+        if result.word_timing is None:
+            result.word_timing = classify(result.words, c.words_real_min_share)
+        if not words:
+            events.emit(events.WORD_TIMING, events.SKIPPED, reason="no_words")
+        elif result.word_timing == "real":
+            events.emit(
+                events.WORD_TIMING,
+                events.OK,
+                word_timing=result.word_timing,
+                **stats.as_detail(),
+                silences=len(silences),
+            )
+        else:
+            events.emit(
+                events.WORD_TIMING,
+                events.WARN,
+                word_timing=result.word_timing,
+                **stats.as_detail(),
+                silences=len(silences),
+                message="This engine returned no word times; cue times are estimates."
+                if result.word_timing == "interpolated"
+                else "Some words have no engine times; their cue times are estimates.",
+            )
+        return words, silences, stats
+
+    def _silences_known(self, wav: Path | None) -> bool:
+        return wav is not None and self.cfg.captions.align_silence
+
+    def _emit_sync_score(
+        self,
+        cues: list[Cue],
+        silences: list[tuple[float, float]],
+        wav: Path | None,
+    ) -> dict[str, Any]:
+        """The audio's verdict on the finished cues, logged as `sync_score` and returned."""
+        c = self.cfg.captions
+        if not self._silences_known(wav) or not cues:
+            reason = "no_cues" if not cues else "no_audio_check"
+            events.emit(events.SYNC_SCORE, events.SKIPPED, reason=reason)
+            return {}
+        check = self_check(cues, silences, wav_duration(wav, c.sample_rate), c)
+        events.emit(events.SYNC_SCORE, events.OK, **check)
+        return check
 
     async def _polish(self, video_id: str, cues: list[Cue], lang: str) -> list[Cue]:
         """The proofreading pass, with the video's title and description as context."""
@@ -549,6 +663,7 @@ class CaptionPipeline:
     ) -> str:
         """HQ captions from the audio (no usable captions on YouTube, or fetching is limited)."""
         c = self.cfg.captions
+        legacy = c.timing_mode == "legacy"
         work = self.cfg.media_dir / video_id
         work.mkdir(parents=True, exist_ok=True)
         try:
@@ -556,6 +671,10 @@ class CaptionPipeline:
             result, wav = await self._recognise(
                 video_id, requested, work, progress, priority=priority
             )
+            silences: list[tuple[float, float]] | None = None
+            words, stats = result.words, WordStats()
+            if not legacy:
+                words, silences, stats = await self._verify_words(result, wav)
             if c.diarization != "none":
                 with events.stage(events.DIARIZATION) as st:
                     turns = await self.diarizer.diarize(wav)
@@ -564,13 +683,15 @@ class CaptionPipeline:
                         st.skip(reason=notes["skip"], message=notes.get("message"))
                     else:
                         st.set(turns=len(turns), speakers=len({turn[2] for turn in turns}))
-                assign_speakers(result.words, turns)
+                assign_speakers(words, turns)
             progress(0.9)
             with events.stage(events.CUES, announce=False) as st:
-                cues = build_cues(result.words, c)
+                cues = build_cues(words, c)
+                if not legacy:
+                    cues = pad_cues(cues, c)
                 st.set(
                     cues=len(cues),
-                    words=len(result.words),
+                    words=len(words),
                     max_line_chars=max((len(ln) for cue in cues for ln in cue.lines), default=0),
                     max_lines=max((len(cue.lines) for cue in cues), default=0),
                     limit_line_chars=c.max_chars_per_line,
@@ -580,7 +701,8 @@ class CaptionPipeline:
                     st.skip(reason="off")
                 else:
                     before = [(cue.start, cue.end) for cue in cues]
-                    silences = await asyncio.to_thread(detect_silences, wav, c.silence_min_s)
+                    if silences is None:
+                        silences = await asyncio.to_thread(detect_silences, wav, c.silence_min_s)
                     cues = snap_cues(cues, silences, c)
                     st.set(
                         silences=len(silences),
@@ -590,13 +712,39 @@ class CaptionPipeline:
                             if a != (cue.start, cue.end)
                         ),
                     )
+            timing = {}
+            if not legacy:
+                timing = self._timing_summary(
+                    result, stats, "words", self._emit_sync_score(cues, silences or [], wav)
+                )
             track_lang = result.language or normalize_language(requested) or "und"
             cues = await self._polish(video_id, cues, track_lang)
-            track_lang = await self._finish(video_id, cues, track_lang, translate_to, progress)
+            track_lang = await self._finish(
+                video_id, cues, track_lang, translate_to, progress, timing
+            )
             return track_lang
         finally:
             if not c.keep_media and not _keep_for_archive(work):
                 shutil.rmtree(work, ignore_errors=True)
+
+    @staticmethod
+    def _timing_summary(
+        result: ASRResult,
+        stats: WordStats,
+        mode: str,
+        check: dict[str, Any],
+        fill_cues: int = 0,
+    ) -> dict[str, Any]:
+        """What a stored track's `timing` column says about how its times were made."""
+        detail = stats.as_detail()
+        return {
+            "word_timing": result.word_timing,
+            "real_share": detail["real_share"],
+            "repaired": stats.stretched + stats.zero_length + stats.squeezed,
+            "fill_cues": fill_cues,
+            "mode": mode,
+            "self_check": check,
+        }
 
     async def improve(
         self,
@@ -607,21 +755,25 @@ class CaptionPipeline:
         progress: Progress,
         priority: int = BACKGROUND,
     ) -> str:
-        """HQ captions built on the video's own captions: their timing, better text.
+        """HQ captions built on the video's own captions: better text, times from the audio.
 
-        The caption track provides the cue timing; the ASR words that fall inside each cue window
-        (alignment) replace its text, and the proofreading pass fixes punctuation, names and terms.
-        Cues the ASR heard nothing in keep the caption text. When no engine can transcribe, the
-        captions are proofread and stored as they are.
+        With real word times from the engine the cues are built from the words themselves
+        (`cues_from_words`; caption cues no word touches fill the wordless gaps) and snapped to the
+        audio's silences. When the engine only estimated its word times, the caption timing is kept
+        and just the text is replaced (`merge_words_into_cues(retime=False)`). Without words the
+        captions are proofread and stored as they are. `captions.timing_mode = "legacy"` restores
+        the older caption-window merge. The proofreading pass fixes punctuation, names and terms.
         """
         c = self.cfg.captions
+        legacy = c.timing_mode == "legacy"
         work = self.cfg.media_dir / video_id
         work.mkdir(parents=True, exist_ok=True)
         try:
             base_hint = (lang_hint or "").split("-")[0] or None
             requested = normalize_language(base_hint)
+            wav: Path | None = None
             try:
-                result, _wav = await self._recognise(
+                result, wav = await self._recognise(
                     video_id,
                     requested,
                     work,
@@ -642,19 +794,62 @@ class CaptionPipeline:
                     message="The audio could not be fetched; the caption text is kept as it is.",
                 )
                 result = ASRResult(words=[], language=None, segments=[], engine=None, model=None)
+            silences: list[tuple[float, float]] = []
+            words, stats = result.words, WordStats()
+            if not legacy:
+                words, silences, stats = await self._verify_words(result, wav)
             with events.stage(events.CUES, announce=False, source="captions") as st:
                 cues = caption_cues(segments, c)
                 if not cues:
                     raise PipelineError("the caption track had no usable cues")
                 st.set(cues=len(cues))
             progress(0.9)
-            with events.stage(events.ALIGN, mode="merge", margin_s=c.align_window_s) as st:
-                # linear in cues and words, but hours of captions still take a moment: keep the
-                # API responsive the way `detect_silences` already does
-                cues, from_asr = await asyncio.to_thread(
-                    merge_words_into_cues, cues, result.words, c
+            mode, fill_cues = "legacy", 0
+            if legacy:
+                with events.stage(events.ALIGN, mode="merge", margin_s=c.align_window_s) as st:
+                    # linear in cues and words, but hours of captions still take a moment: keep the
+                    # API responsive the way `detect_silences` already does
+                    cues, from_asr = await asyncio.to_thread(merge_words_into_cues, cues, words, c)
+                    st.set(cues=len(cues), from_asr=from_asr)
+            elif not words:
+                mode = "captions_only"
+                with events.stage(events.ALIGN, mode="captions_timing") as st:
+                    st.skip(reason="no_words", cues=len(cues))
+            elif result.word_timing == "interpolated":
+                mode = "captions_timing"
+                with events.stage(events.ALIGN, mode="captions_timing") as st:
+                    cues, from_asr = await asyncio.to_thread(
+                        merge_words_into_cues, cues, words, c, retime=False
+                    )
+                    st.set(cues=len(cues), from_asr=from_asr)
+            else:
+                mode = "words"
+                with events.stage(events.ALIGN, mode="words", words=len(words)) as st:
+                    before = len(cues)
+                    cues, speech, fill_cues = await asyncio.to_thread(
+                        cues_from_words, words, cues, c
+                    )
+                    moved = 0
+                    if c.align_silence and silences:
+                        edges = [(cue.start, cue.end) for cue in cues]
+                        cues = snap_cues(cues, silences, c)
+                        moved = sum(
+                            1
+                            for a, cue in zip(edges, cues, strict=True)
+                            if a != (cue.start, cue.end)
+                        )
+                    st.set(
+                        cues=len(cues),
+                        speech_cues=speech,
+                        fill_cues=fill_cues,
+                        caption_cues=before,
+                        moved=moved,
+                    )
+            timing = {}
+            if not legacy:
+                timing = self._timing_summary(
+                    result, stats, mode, self._emit_sync_score(cues, silences, wav), fill_cues
                 )
-                st.set(cues=len(cues), from_asr=from_asr)
             track_lang = result.language or requested or base_hint or "und"
             track_lang = await self._finish(
                 video_id,
@@ -662,6 +857,7 @@ class CaptionPipeline:
                 track_lang,
                 translate_to,
                 progress,
+                timing,
             )
             return track_lang
         finally:
@@ -675,8 +871,13 @@ class CaptionPipeline:
         track_lang: str,
         translate_to: str | None,
         progress: Progress,
+        timing: dict[str, Any] | None = None,
     ) -> str:
-        """Proofread (done by the caller), optionally translate, then store the track."""
+        """Proofread (done by the caller), optionally translate, then store the track.
+
+        `timing` says how the cue times were made (stored in the `timing` column with
+        `TIMING_VERSION`); a track made in legacy mode passes none and stays `timing_version` NULL.
+        """
         if translate_to and translate_to != track_lang:
             with events.stage(events.TRANSLATE, source=track_lang, to=translate_to) as st:
                 cues = await self.translate(cues, translate_to)
@@ -690,9 +891,20 @@ class CaptionPipeline:
         speakers = count_speakers(cues)
         label = track_label(track_lang, speakers)
         self.db.execute(
-            "INSERT OR REPLACE INTO captions(video_id,lang,label,speakers,vtt,created_at,job_id)"
-            " VALUES(?,?,?,?,?,?,?)",
-            [video_id, track_lang, label, speakers, vtt, time.time(), events.job_id()],
+            "INSERT OR REPLACE INTO captions"
+            "(video_id,lang,label,speakers,vtt,created_at,job_id,timing_version,timing)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            [
+                video_id,
+                track_lang,
+                label,
+                speakers,
+                vtt,
+                time.time(),
+                events.job_id(),
+                TIMING_VERSION if timing else None,
+                json.dumps(timing) if timing else None,
+            ],
         )
         events.emit(
             events.STORED,

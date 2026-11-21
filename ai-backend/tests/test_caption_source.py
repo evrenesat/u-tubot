@@ -49,15 +49,18 @@ async def test_a_captions_job_improves_the_video_s_own_captions(env):
     recheck = event(env, doc["id"], "caption_recheck")["detail"]
     assert recheck["result"] == "found" and recheck["timed"] is True
     align = event(env, doc["id"], "align")["detail"]
-    assert align["mode"] == "merge" and align["from_asr"] == 1 and align["cues"] == 2
+    assert align["mode"] == "words" and align["speech_cues"] == 2 and align["cues"] == 2
+    assert align["fill_cues"] == 0
+    word_timing = event(env, doc["id"], "word_timing")["detail"]
+    assert word_timing["word_timing"] == "real" and word_timing["real_share"] == 1.0
+    assert event(env, doc["id"], "sync_score")["status"] == "ok"
     proofread = event(env, doc["id"], "proofread")["detail"]
-    assert proofread["corrected"] == 2 and proofread["warned"] == 0
+    assert proofread["corrected"] == 1 and proofread["warned"] == 0
     vtt = stored_captions(env)
     assert "Hello there, my friend." in vtt and "How are you doing today?" in vtt
-    # the cue timing comes from the ASR words inside each caption window; the second cue
-    # (the ASR heard nothing there) keeps the caption timing and its corrected text
-    assert "00:00:00.000 --> 00:00:04.000" in vtt
-    assert "00:00:04.000 --> 00:00:08.000" in vtt
+    # the cue timing comes from the ASR words themselves (the mock hears two phrases around a pause)
+    assert "00:00:00.000 --> 00:00:01.400" in vtt
+    assert "00:00:02.000 --> 00:00:04.200" in vtt
     # the caption recheck fetched the track once; no ASR engine work was wasted
     assert len(env.fetcher.calls) == 1
 
@@ -105,7 +108,7 @@ async def test_a_captions_job_keeps_the_caption_text_when_the_asr_fails(env):
     asr = event(env, doc["id"], "asr", "warn")["detail"]
     assert asr["reason"] == "engines_unavailable"
     align = event(env, doc["id"], "align")["detail"]
-    assert align["mode"] == "merge" and align["from_asr"] == 0
+    assert align["mode"] == "captions_timing" and align["reason"] == "no_words"
     assert "Hello there, my friend." in stored_captions(env)
 
 
@@ -137,7 +140,7 @@ async def test_a_captions_job_keeps_the_caption_text_when_the_audio_has_no_speec
     asr = event(env, doc["id"], "asr", "warn")["detail"]
     assert asr["reason"] == "no_speech"
     align = event(env, doc["id"], "align")["detail"]
-    assert align["mode"] == "merge" and align["from_asr"] == 0
+    assert align["mode"] == "captions_timing" and align["reason"] == "no_words"
     assert "Hello there, my friend." in stored_captions(env)
 
 
@@ -156,7 +159,7 @@ async def test_a_captions_job_keeps_the_caption_text_when_the_audio_cannot_be_fe
     asr = event(env, doc["id"], "asr", "warn")["detail"]
     assert asr["reason"] == "audio_unavailable"
     align = event(env, doc["id"], "align")["detail"]
-    assert align["mode"] == "merge" and align["from_asr"] == 0
+    assert align["mode"] == "captions_timing" and align["reason"] == "no_words"
     assert "Hello there, my friend." in stored_captions(env)
 
 
@@ -188,8 +191,8 @@ async def test_the_improve_path_stores_cues_within_the_line_and_cps_limits(env):
     env.svc.jobs.pipeline.asr = asr
     doc = await queue_captions(env)
     align = event(env, doc["id"], "align")["detail"]
-    assert align["mode"] == "merge" and align["from_asr"] == 1
-    assert align["cues"] > 1  # the bucket was re-split instead of stored as one long cue
+    assert align["mode"] == "words" and align["speech_cues"] > 1
+    assert align["cues"] > 1  # the words were cut into several cues, none over the limits
     vtt = stored_captions(env)
     lines = [
         line

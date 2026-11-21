@@ -80,6 +80,7 @@ def build_cues(words: list[Word], cfg: CaptionsConfig) -> list[Cue]:
                 max(current[-1].end, current[0].start),
                 lines,
                 speaker_label(raw, order),
+                words=list(current),
             )
         )
         cue_speakers.append(raw)
@@ -173,6 +174,17 @@ def enforce_timing(cues: list[Cue], cfg: CaptionsConfig) -> list[Cue]:
         if next_start is not None and cue.end > next_start:
             cue.end = next_start
     return [c for c in cues if c.end > c.start]
+
+
+def pad_cues(cues: list[Cue], cfg: CaptionsConfig) -> list[Cue]:
+    """Let each cue linger `cue_linger_s` past its end, never into the next cue or past `max_cue_s`."""
+    for i, cue in enumerate(cues):
+        limit = cue.end + cfg.cue_linger_s
+        if i + 1 < len(cues):
+            limit = min(limit, cues[i + 1].start)
+        limit = min(limit, cue.start + cfg.max_cue_s)
+        cue.end = max(cue.end, limit)
+    return cues
 
 
 def fmt_vtt_time(seconds: float) -> str:

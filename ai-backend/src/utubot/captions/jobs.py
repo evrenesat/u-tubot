@@ -246,9 +246,11 @@ class JobQueue:
                 "label": r["label"],
                 "url": f"/v1/videos/{video_id}/captions/{r['lang']}.vtt",
                 "speakers": r["speakers"],
+                "timing_version": r["timing_version"],
             }
             for r in self.db.all(
-                "SELECT lang,label,speakers FROM captions WHERE video_id=? ORDER BY lang",
+                "SELECT lang,label,speakers,timing_version FROM captions WHERE video_id=?"
+                " ORDER BY lang",
                 [video_id],
             )
         ]
