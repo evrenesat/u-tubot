@@ -53,15 +53,18 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
     @Override
     public void onNewVideo(Video item) {
+        // A cut that waits to be applied is re-armed too: stopSkipping clears it, and a reload of the same video comes before the length
+        // is known sometimes
+        Cut rearm = mCut != null ? mCut : mPendingCut;
         stopSkipping();
 
-        if (item == null || mCut == null || !Helpers.equals(mCut.videoId, item.videoId)) {
+        if (item == null || rearm == null || !Helpers.equals(rearm.videoId, item.videoId)) {
             UtubotCutSeekBar.setCut(item == null ? null : item.videoId, null);
             mCut = null;
         } else {
             // The same video plays again (a reload, the playback queue): the skipper and the poll are gone with stopSkipping, so the
             // cut is re-applied like a fresh one once the length is known
-            mPendingCut = mCut;
+            mPendingCut = rearm;
             mCut = null;
             startPolling();
         }
@@ -105,8 +108,10 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
     @Override
     public void onEngineReleased() {
+        // The engine is released for a format change, a restart at the fixer, or a home round trip: the video stays and a
+        // VideoLoaderController load follows with no onNewVideo, so the cut's follower must stay too (the menu's next request is
+        // still followed). Its poll and the cut come back in onEngineInitialized or the next video's events; only onFinish ends it.
         stopSkipping();
-        stopFollowing();
     }
 
     @Override

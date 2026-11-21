@@ -38,7 +38,7 @@ so the other flavors behave as before.
 | `app/presenters/SplashPresenter.java` | `UtubotPairing.promptIfNeeded` | first-launch pairing dialog when no token |
 | `app/presenters/dialogs/menu/VideoMenuPresenter.java` | `UtubotMenu.append` (two places) | AI answer, Summary panel toggle, Prepare HQ captions, Director's cut |
 | `app/presenters/PlaybackPresenter.java` | `UtubotCutController` registered after `SponsorBlockController`, gated by `UtubotSettings.isBuiltIn()` | the director's cut of the video that plays: a player controller like the sponsor block's |
-| `app/models/playback/controllers/SponsorBlockController.java` | `onNewVideo` wipes through `UtubotCutSeekBar.wipe` and its own seek-bar segments go through `UtubotCutSeekBar.setSponsor`; `getActiveSegments()` exposes the segments of the video that plays | the cut's dimmed skips stay on the seek bar (its reset for a new video keeps a cut of the same video, its own markers are laid next to the cut's), and the cut's jump goes past the sponsor segments that would jump after it: one jump, not two. Without a cut both writes behave exactly as before |
+| `app/models/playback/controllers/SponsorBlockController.java` | `onNewVideo` wipes through `UtubotCutSeekBar.wipe` and its own seek-bar segments go through `UtubotCutSeekBar.setSponsor`; `getActiveSegments()` exposes the segments of the video that plays | the cut's dimmed skips stay on the seek bar (its reset for a new video keeps a cut of the same video, its own markers are laid next to the cut's), and the cut's jump goes past the sponsor segments that would jump after it: one jump, not two. Without a cut both writes behave exactly as before. Known for the real-device pass (u-tubot#1): chapter markers still write straight to the seek bar, so their order against `onMetadata` can hide the dims on a chaptered video (recorded in the DEVLOG) |
 | `misc/AppDataSourceManager.java` | Settings entry "u·tubot", with its own tile icon `R.drawable.settings_utubot` | settings screen; Content filtering keeps `settings_aislist` |
 | `common/src/main/res/drawable-nodpi/settings_utubot.png` | new: the symbol, white on transparent, 302x302 with the canvas and padding of `settings_about.png`; `assets/brand/render.py` draws it from `utubot-symbol-mono.svg` | tile of the u·tubot Settings entry |
 | `utils/SimpleEditDialog.java` | `showNumber` | numeric pairing code dialog |
@@ -151,8 +151,9 @@ so the other flavors behave as before.
   getActiveSegments`, the same 3 s grouping the sponsor block uses itself), so there is one jump, not two. Each skip shows a
   transparent dialog "Skipped 1:20" with a Back that returns to the skipped part for 5 s; nothing extra while another dialog is up.
   The skipped parts are dimmed on the seek bar (`UtubotCutSeekBar`, see the SponsorBlockController row above). Picking the applied cut
-  in the picker again turns it off; a video change or an engine reset clears it (an engine re-init re-applies the cut of the same
-  video). The skip rules live in `UtubotCutSkipper` (unit-tested); the emulator check (`CutsHarnessActivity`) plays a local MP4
+  in the picker again turns it off; a video change clears it. An engine release keeps the follower and the cut (only a finish ends
+  the follower), and an engine re-init re-applies the cut of the same video; a same-video reload re-arms a cut that was still waiting
+  for the length. The skip rules live in `UtubotCutSkipper` (unit-tested); the emulator check (`CutsHarnessActivity`) plays a local MP4
   against the mock backend (docs/development.md, "Checking the director's cuts").
 - With the Summary view open the focus never rests on the screen under it: the first D-pad key, OK or Enter after the grid took
   the focus back restores the view's focus and is used (`UtubotKeys.actsOnFocus`).

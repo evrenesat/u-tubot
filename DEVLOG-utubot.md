@@ -1,5 +1,19 @@
 # u·tubot devlog
 
+## 2026-11-21 (director's cuts on the TV, second review round)
+
+- An engine release no longer ends the follower of the video that stays: the HQ dialog's format change, the fixer's restart and the
+  Home round trip release and initialize the engine and load the same video with no `onNewVideo`. `UtubotCutController.onEngineReleased`
+  now only stops the skipper and the poll; the follower stays (`onFinish` ends it), so a request waiting or building through the
+  restart is still followed, and the menu's next request is followed too (the follower keeps its video id). A new controller test
+  covers both (the follower is injected into `UtubotManager`; the release path fetches a request that the old code dropped).
+- A reload of the same video re-arms a cut that was still waiting for the video length: `onNewVideo` remembers `mCut` or `mPendingCut`
+  before `stopSkipping` clears them, and only then wipes or re-arms.
+- Known for the real-device pass (u-tubot#1): chapter markers still write straight to the seek bar
+  (`SuggestionsController.addChapterMarkersIfNeeded`), so on a chaptered video the order of the `onMetadata` calls may hide the cut's
+  dims (or replace the chapters); the sponsor colours race with chapters upstream too. Route them through `UtubotCutSeekBar` or check
+  the order on the device.
+
 ## 2026-11-20 (director's cuts on the TV, checkpoint 2)
 
 - The video menu gains "Director's cut…": the picker of the cut presets with their state (ready shows "kept of total", again = off),
