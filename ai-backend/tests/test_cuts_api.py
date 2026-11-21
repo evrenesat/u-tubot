@@ -17,7 +17,9 @@ VID = "abcdefghijk"
 async def cuts_env(env):
     env.cfg.llm.cuts = LLMTask(model="cutmodel")
     env.cfg.cuts.poll_s = 0.02
-    env.cfg.cuts.transcript_wait_s = 5.0
+    # Generous: the wait returns the moment the transcript lands, and on a loaded host the
+    # real-ffmpeg ASR chain has taken longer than a tight cap, failing the request outright.
+    env.cfg.cuts.transcript_wait_s = 60.0
     env.cfg.cuts.wait_ms_cap = 3000
     env.cfg.cuts.default_wait_ms = 0
     env.cfg.captions.job_poll_s = 0.02
@@ -180,6 +182,60 @@ class TestCreateAndBuild:
         # rebuild produced an answer.
         assert len(cuts_env.llm.cut_calls) == 1
 
+    async def test_stop_does_not_let_a_cancelled_waiter_start_a_model_call(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Ok"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        cuts_env.llm.delay_s = 0.3
+        first = (await post_cut(cuts_env, preset="cut-demo")).json()
+        partner = httpx_client(cuts_env, OTHER_TOKEN)
+        second = await partner.post(f"/v1/videos/{VID}/cuts", json={"preset": "cut-demo"})
+        rid = second.json()["request_id"]
+
+        def shared_build(request_id: str) -> bool:
+            job = cuts_env.svc.cuts._row(request_id)["job_id"]
+            return any(
+                e["stage"] == "model"
+                and e["status"] == "skipped"
+                and e["detail"].get("reason") == "shared build"
+                for e in cuts_env.svc.jobs.events.list(job)
+            )
+
+        # One of the two joins the other's build; wait until that really happened.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if shared_build(first["request_id"]) or shared_build(rid):
+                break
+            await asyncio.sleep(0.02)
+        else:
+            pytest.fail("the second request never joined the leader's build")
+        waiter = rid if shared_build(rid) else first["request_id"]
+        leader = rid if waiter == first["request_id"] else first["request_id"]
+
+        # The dangerous shutdown interleaving: the leader's task finishes its cancellation
+        # first (its `finally` cancels the shared future), and only then the waiter's own
+        # cancellation is delivered. A waiter that cannot tell its own cancellation from the
+        # leader's dismissal used to rebuild here — a real model call while the server stops.
+        # (`stop()` cancels every task at once; this orders the same two cancellations.)
+        tasks = cuts_env.svc.cuts._tasks
+        tasks[leader].cancel()
+        for _ in range(1000):
+            if not cuts_env.svc.cuts._inflight:
+                break
+            await asyncio.sleep(0)
+        assert not cuts_env.svc.cuts._inflight, "the leader never freed the cache key"
+        # ... while the waiter's wake-up from the cancelled future is still queued
+        tasks[waiter].cancel()
+        await asyncio.gather(tasks[waiter], return_exceptions=True)
+        assert cuts_env.llm.cut_calls == []
+
+    # The dismissal window this test injects (the leader is marked dismissed after the model
+    # answered but before its own _finish) does not exist on a real DELETE: a real dismissal
+    # cancels the leader's task mid-`_ask`, before any answer. The monkeypatched `_dismissed`
+    # is the only way to land in that window deterministically.
     async def test_dismissed_leader_still_hands_its_answer_to_the_waiter(
         self, cuts_env, monkeypatch
     ):
@@ -406,7 +462,12 @@ class TestTranscriptPath:
         rid = r.json()["request_id"]
         doc = (await cuts_env.client.get(f"/v1/cuts/{rid}")).json()
         assert doc["state"] in ("needs_transcript", "building")
-        doc = await wait_ready(cuts_env, rid, wait_ms=15000)
+        # The ASR chain (a real ffmpeg spawn) is slow on a loaded host; the long poll caps at
+        # wait_ms_cap, so poll again until the build ends instead of assuming one call is enough.
+        for _ in range(30):
+            doc = await wait_ready(cuts_env, rid, wait_ms=15000)
+            if doc["state"] in ("ready", "failed"):
+                break
         assert doc["state"] == "ready"
         # The ASR transcript arrived through the transcript job; its unit came from the audio.
         assert doc["cut"]["transcript_hash"]

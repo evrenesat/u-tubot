@@ -144,6 +144,44 @@ After the first run the captions are in the app's storage (`files/utubot_caption
 without a backend. Screenshots of such a run: `docs/screenshots/captions/`. The harness is not the app's screens: the saved subtitle
 choice is applied by `VideoStateController`, which only the unit tests (`UtubotCaptionsRestoreTest`) run.
 
+### Checking the director's cuts
+
+`CutsHarnessActivity` (debug builds, next to `CaptionsHarnessActivity`) plays a media file through the real engine AND the real playback
+controllers: the `PlaybackPresenter`'s `UtubotCutController` (and `SponsorBlockController`) get the video events, so a cut of the mock
+backend is applied with the app's own skip logic. The mock backend knows the cuts routes (ai/CONTRACT.md "Director's cuts"): builds are
+ready after `--cuts-delay` seconds, `{"await_prompt":true}` waits for the phone, and `/__mock/cuts?video=ID&state=ready|none|failed`
+sets a cut that is ready when the video opens. The mock cut of a 240 s video skips 60–108 s and 168–204 s.
+
+```sh
+ffmpeg -f lavfi -i testsrc=size=640x360:rate=25 -f lavfi -i sine=frequency=440 -t 240 -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart temp/media/test.mp4
+unshare -n sleep 14400 &  NS="nsenter -t $! -n"; $NS ip link set lo up     # no internet for the emulator
+$NS python3 scripts/emulator_mock_backend.py --port 18790 --cuts-delay 6 --media temp/media &
+$NS emulator -avd tv -port 5554 -no-window -no-audio -memory 2048 -cores 2 &
+ADB="$NS adb -P 5038 -s emulator-5554"      # never the shared adb server on 5037
+$ADB install -r smarttubetv/build/outputs/apk/stutubot/debug/u-tubot_<ver>_x86.apk       # prefs as above (url, token)
+$ADB logcat -c
+# A cut that is built while the video plays, applied when ready: the TV asks for it like the picker does
+$ADB shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CutsHarnessActivity \
+    --es video_id harnessCutA --es url http://10.0.2.2:18790/media/test.mp4 \
+    --ei start_ms 55000 --es request_preset cut-no-filler
+$ADB logcat -d -s UtubotCutsHarness       # position=… lines; ~6 s after the start the position jumps 60 -> 108 s
+# A seek into a skipped part wins and plays: Right seeks +30 s (Left -30 s)
+$ADB shell input keyevent KEYCODE_DPAD_RIGHT ; $ADB shell input keyevent KEYCODE_DPAD_RIGHT
+# "Describe on phone…": the QR sheet over the playing video (Back takes it away)
+$ADB shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CutsHarnessActivity \
+    --es video_id harnessCutA --es url http://10.0.2.2:18790/media/test.mp4 --ez await_prompt true
+$ADB exec-out screencap -p > cuts-qr-sheet.png
+# A cut that is ready when the video opens is only announced ("Director's cut ready: …"), not applied
+$NS curl "localhost:18790/__mock/cuts?video=harnessCutA&state=ready"
+$ADB shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CutsHarnessActivity \
+    --es video_id harnessCutA --es url http://10.0.2.2:18790/media/test.mp4
+```
+
+The skip rules themselves are unit-tested (`UtubotCutSkipperTest`: one jump past a sponsor segment, the seek of the user wins, the
+length check); the harness shows the real engine, the toast with Back and the announce of a ready cut. What the harness cannot show:
+the video menu's picker and the dimmed seek bar of the real skins — check those on a device or with the emulator of the app's screens
+(the section above), with the mock backend's cuts routes answering.
+
 ### Private builds with a baked backend
 
 A build for your own devices may carry defaults: `-PutubotUrl=https://utubot.example.com -PutubotToken=...` or a gitignored

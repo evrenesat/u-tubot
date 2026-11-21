@@ -4,6 +4,8 @@ import androidx.annotation.Nullable;
 
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Captions;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Me;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptSet;
@@ -280,6 +282,90 @@ public class UtubotClient {
     public Captions captions(String videoId) throws IOException {
         return parse(() -> UtubotParser.parseCaptions(send(builder("/videos/" + videoId + "/captions", true), 0)));
     }
+
+    //region Director's cuts
+
+    /**
+     * The presets of a video and where their cuts stand (`GET /v1/videos/{id}/cuts`): cheap, it starts nothing
+     */
+    public CutList cuts(String videoId) throws IOException {
+        return parse(() -> UtubotParser.parseCuts(send(builder("/videos/" + videoId + "/cuts", true), 0)));
+    }
+
+    /**
+     * Asks for a cut (`POST /v1/videos/{id}/cuts`): a preset, a typed prompt, or a waiting request the phone fills. The video facts
+     * the caller knows ride along, so the phone queue can show them at once.
+     *
+     * @param presetId the preset to build, or null
+     * @param prompt what to keep, or null (a preset and a prompt are mutually exclusive)
+     * @param awaitPrompt true creates a waiting request for the phone instead of building now
+     */
+    public CutRequest requestCut(String videoId, @Nullable String presetId, @Nullable String prompt, boolean awaitPrompt,
+                                 @Nullable VideoMeta meta) throws IOException {
+        return parse(() -> {
+            JSONObject body = new JSONObject();
+
+            if (awaitPrompt) {
+                body.put("await_prompt", true);
+            } else if (presetId != null) {
+                body.put("preset", presetId);
+            } else if (prompt != null) {
+                body.put("prompt", prompt);
+            } else {
+                throw new IOException("A cut needs a preset, a prompt or a waiting request");
+            }
+
+            return UtubotParser.parseCutRequest(send(authorized(cutUrl(videoId, meta)).post(json(body)), 0));
+        });
+    }
+
+    /**
+     * One cut request, long-polling while it waits or builds (`GET /v1/cuts/{id}`)
+     *
+     * @param waitMs how long the backend may hold the answer, 0 for its default
+     */
+    public CutRequest cut(String requestId, int waitMs) throws IOException {
+        HttpUrl.Builder url = urlBuilder("/cuts/" + requestId);
+
+        if (waitMs > 0) {
+            url.addQueryParameter("wait_ms", String.valueOf(waitMs));
+        }
+
+        return parse(() -> UtubotParser.parseCutRequest(send(authorized(url), waitMs + LONG_POLL_SLACK_MS)));
+    }
+
+    /**
+     * The short address a phone opens straight to a request's cut sheet (`GET /cuts/{id}`, no auth, the backend redirects)
+     */
+    public String cutRequestUrl(String requestId) {
+        return mBaseUrl + "/cuts/" + requestId;
+    }
+
+    private HttpUrl.Builder cutUrl(String videoId, @Nullable VideoMeta meta) throws IOException {
+        HttpUrl.Builder url = urlBuilder("/videos/" + videoId + "/cuts");
+
+        if (meta != null) {
+            if (meta.title != null) {
+                url.addQueryParameter("title", meta.title);
+            }
+
+            if (meta.channel != null) {
+                url.addQueryParameter("channel", meta.channel);
+            }
+
+            if (meta.durationSec > 0) {
+                url.addQueryParameter("duration_s", String.valueOf(meta.durationSec));
+            }
+
+            if (meta.isLive) {
+                url.addQueryParameter("is_live", "true");
+            }
+        }
+
+        return url;
+    }
+
+    //endregion
 
     /**
      * @return the status of the queued job: queued, running, ready or failed

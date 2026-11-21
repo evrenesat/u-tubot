@@ -7,6 +7,11 @@
             android:name="com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CaptionsHarnessActivity"
             android:exported="true"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+        <!-- The same, with the app's playback controllers: the director's cuts check (docs/development.md) -->
+        <activity
+            android:name="com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CutsHarnessActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
     </application>
 
 </manifest>

@@ -1,5 +1,38 @@
 # u·tubot devlog
 
+## 2026-11-21 (director's cuts on the TV, second review round)
+
+- An engine release no longer ends the follower of the video that stays: the HQ dialog's format change, the fixer's restart and the
+  Home round trip release and initialize the engine and load the same video with no `onNewVideo`. `UtubotCutController.onEngineReleased`
+  now only stops the skipper and the poll; the follower stays (`onFinish` ends it), so a request waiting or building through the
+  restart is still followed, and the menu's next request is followed too (the follower keeps its video id). A new controller test
+  covers both (the follower is injected into `UtubotManager`; the release path fetches a request that the old code dropped).
+- A reload of the same video re-arms a cut that was still waiting for the video length: `onNewVideo` remembers `mCut` or `mPendingCut`
+  before `stopSkipping` clears them, and only then wipes or re-arms.
+- Known for the real-device pass (u-tubot#1): chapter markers still write straight to the seek bar
+  (`SuggestionsController.addChapterMarkersIfNeeded`), so on a chaptered video the order of the `onMetadata` calls may hide the cut's
+  dims (or replace the chapters); the sponsor colours race with chapters upstream too. Route them through `UtubotCutSeekBar` or check
+  the order on the device.
+
+## 2026-11-20 (director's cuts on the TV, checkpoint 2)
+
+- The video menu gains "Director's cut…": the picker of the cut presets with their state (ready shows "kept of total", again = off),
+  a build request for a `none` preset, and "Describe on phone…" — a waiting request whose short address (`<backend>/cuts/<id>`) shows
+  as a QR sheet (`UtubotCutQrView`) over the playing video, made on the device; Back takes it away, the video is not paused. The
+  modern video-menu dialog cannot render QR categories (only the settings dialogs can), which is why the sheet is its own view.
+- While playing (`UtubotCutController`, next to `SponsorBlockController` in `PlaybackPresenter`, gated by `isBuiltIn()`): when a video
+  opens, `UtubotCutFollower` checks its cuts once (a ready cut is announced) and long-polls a waiting or building request (10 s polls,
+  30 min cap, 5 errors) until it is ready, then the cut applies from the current position. A cut of another video length (±2 s) is not
+  applied. Skips run through `UtubotCutSkipper`: only a crossing the playback made by itself skips (a seek of the user wins and
+  plays), and the jump extends past sponsor segments set to skip that overlap or touch the destination (`SponsorBlockController.
+  getActiveSegments()`), so the sponsor block's watcher finds nothing to jump at where the cut lands — one jump, not two. Every skip
+  shows a transparent "Skipped 1:20" dialog with a Back for 5 s. The skipped parts are dimmed on the seek bar: the sponsor block's
+  writes go through `UtubotCutSeekBar` now (its reset keeps a cut of the same video, its own markers are laid next to the cut's;
+  without a cut it behaves exactly as before).
+- The emulator check runs the real controllers against the mock backend's new cuts routes (`CutsHarnessActivity`; the mock's builds are
+  ready after `--cuts-delay`, `/__mock/cuts` sets a ready cut, the cut document skips 25–45 % and 70–85 % of the video).
+  Unit tests: `UtubotCutSkipperTest`, `UtubotCutFollowerTest`, `UtubotCutSeekBarTest`, `UtubotCutsParserTest`, `UtubotCutsClientTest`.
+
 ## 2026-11-13 (tests and agents never hit YouTube, issue 35)
 
 - Owner rule made enforceable end to end (backend work, see `ai-backend/DEVLOG.md`): recorded/replayed YouTube fixtures

@@ -804,7 +804,15 @@ class CutService:
             try:
                 doc = await asyncio.shield(leader)
             except asyncio.CancelledError:
-                if self._dismissed(request_id) or not leader.cancelled():
+                # A cancellation of this request itself (the service stopping, the task being
+                # cancelled) must not be swallowed into another build: without this check a
+                # waiter would catch its own CancelledError, take the leader-dismissed branch
+                # below and start a real model call while the server is shutting down.
+                if (
+                    asyncio.current_task().cancelling()
+                    or self._dismissed(request_id)
+                    or not leader.cancelled()
+                ):
                     raise
                 continue  # the leader was dismissed; its cache key is free again
             self._finish(request_id, row, cache_key, doc)

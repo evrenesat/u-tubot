@@ -7,6 +7,11 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Captions;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Flag;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Inflation;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Answer;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPreset;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Me;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Prompt;
@@ -21,6 +26,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -236,10 +242,133 @@ public final class UtubotParser {
             me.assess = features.optBoolean("assess");
             me.insight = features.optBoolean("insight");
             me.captions = features.optBoolean("captions");
+            me.cuts = features.optBoolean("cuts");
         }
 
         return me;
     }
+
+    //region Director's cuts
+
+    public static CutList parseCuts(String body) throws JSONException {
+        JSONObject json = new JSONObject(body);
+        CutList list = new CutList();
+        list.configured = json.optBoolean("configured");
+        JSONArray presets = json.optJSONArray("presets");
+
+        if (presets != null) {
+            List<CutPreset> parsed = new ArrayList<>();
+
+            for (int i = 0; i < presets.length(); i++) {
+                JSONObject presetJson = presets.optJSONObject(i);
+
+                if (presetJson == null) {
+                    continue;
+                }
+
+                CutPreset preset = new CutPreset();
+                preset.id = presetJson.optString("id", null);
+                preset.label = presetJson.optString("label", preset.id);
+                preset.state = presetJson.optString("state", UtubotModels.CutState.NONE);
+                preset.requestId = optString(presetJson, "request_id");
+                preset.error = optString(presetJson, "error");
+                preset.cut = parseCut(presetJson.optJSONObject("cut"));
+
+                if (preset.id != null) {
+                    parsed.add(preset);
+                }
+            }
+
+            list.presets = parsed;
+        }
+
+        return list;
+    }
+
+    public static CutRequest parseCutRequest(String body) throws JSONException {
+        JSONObject json = new JSONObject(body);
+        CutRequest request = new CutRequest();
+        // the answer of a create is {"request_id", ...}, the request document carries "id"
+        request.id = optString(json, "request_id");
+        request.id = request.id != null ? request.id : json.optString("id", null);
+        request.videoId = json.optString("video_id", null);
+        request.state = json.optString("state", request.state);
+        request.source = optString(json, "source");
+        request.presetId = optString(json, "preset_id");
+        request.prompt = optString(json, "prompt");
+        request.error = optString(json, "error");
+        request.title = optString(json, "title");
+        request.channel = optString(json, "channel");
+        request.durationSec = optSeconds(json, "duration_s") == UtubotModels.UNKNOWN ? UtubotModels.UNKNOWN : json.optLong("duration_s", UtubotModels.UNKNOWN);
+        request.stage = optString(json, "stage");
+        request.cut = parseCut(json.optJSONObject("cut"));
+        return request;
+    }
+
+    @Nullable
+    public static Cut parseCut(@Nullable JSONObject json) {
+        if (json == null) {
+            return null;
+        }
+
+        Cut cut = new Cut();
+        cut.videoId = json.optString("video_id", null);
+        cut.durationMs = json.optLong("duration_ms", UtubotModels.UNKNOWN);
+        cut.label = optString(json, "label");
+        cut.summary = optString(json, "summary");
+        cut.keptMs = json.optLong("kept_ms", UtubotModels.UNKNOWN);
+        cut.transcriptHash = optString(json, "transcript_hash");
+        cut.presetId = optString(json, "preset_id");
+        cut.model = optString(json, "model");
+        cut.builtAt = optString(json, "built_at");
+        cut.parts = parseParts(json.optJSONArray("parts"));
+        cut.skipRangesMs = parseSkipRanges(json.optJSONArray("skip_ranges_ms"));
+        return cut;
+    }
+
+    private static List<CutPart> parseParts(@Nullable JSONArray array) {
+        if (array == null) {
+            return Collections.emptyList();
+        }
+
+        List<CutPart> parts = new ArrayList<>();
+
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject partJson = array.optJSONObject(i);
+
+            if (partJson == null) {
+                continue;
+            }
+
+            CutPart part = new CutPart();
+            part.label = optString(partJson, "label");
+            part.startMs = partJson.optLong("start_ms", 0);
+            part.endMs = partJson.optLong("end_ms", 0);
+            parts.add(part);
+        }
+
+        return parts;
+    }
+
+    private static List<long[]> parseSkipRanges(@Nullable JSONArray array) {
+        if (array == null) {
+            return Collections.emptyList();
+        }
+
+        List<long[]> ranges = new ArrayList<>();
+
+        for (int i = 0; i < array.length(); i++) {
+            JSONArray range = array.optJSONArray(i);
+
+            if (range != null && range.length() >= 2) {
+                ranges.add(new long[]{range.optLong(0), range.optLong(1)});
+            }
+        }
+
+        return ranges;
+    }
+
+    //endregion
 
     @Nullable
     private static String optString(JSONObject json, String key) {
