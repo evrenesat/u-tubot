@@ -15,7 +15,7 @@ import os
 import tempfile
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -47,6 +47,17 @@ from .chunking import (
     stitch_words,
     write_chunk,
 )
+from .sanity import (
+    REASON_LANGUAGE,
+    ChunkHealth,
+    base_code,
+    chunk_health,
+    drop_flagged,
+    flag_segments,
+    median_rate,
+    recheck_reasons,
+    review,
+)
 from .types import TIMING_REAL, Segment, Word
 from .wordtimes import classify, count_kinds
 
@@ -75,6 +86,13 @@ PROBE_FIRST = (MODE_BOTH, MODE_GRANULARITIES, MODE_FLAG)
 PROBE_AFTER_WORDLESS = (MODE_FLAG, MODE_GRANULARITIES)
 HTTP_ERROR_FLOOR = 400
 HTTP_SERVER_ERROR_FLOOR = 500
+ACTION_FORCED = "forced_language"
+ACTION_SMALLER = "smaller_window"
+ACTION_NEXT = "next_engine"
+ACTION_DROPPED = "dropped"
+OUTCOME_REPLACED = "replaced"
+OUTCOME_KEPT = "kept"
+OUTCOME_FAILED = "failed"
 ISOLATED_FAILURES_TO_PENALIZE = 2
 ERROR_TEXT_CHARS = 200
 CONNECT_TIMEOUT_S = 10.0
@@ -442,6 +460,9 @@ class SpanResult:
     words: list[Word]
     languages: list[tuple[str | None, float]]
     engines: list[AsrEngineConfig]
+    health: ChunkHealth | None = None
+    rechecked: bool = False
+    dropped: list[Segment] = field(default_factory=list)
 
 
 def _base(code: str | None) -> str | None:
@@ -696,9 +717,17 @@ class AsrRouter:
         }
 
     async def _span_on(
-        self, engine: AsrEngineConfig, span: Span, job: _Job, rest: list[AsrEngineConfig]
+        self,
+        engine: AsrEngineConfig,
+        span: Span,
+        job: _Job,
+        rest: list[AsrEngineConfig],
+        chunk_s: float | None = None,
     ) -> SpanResult:
-        subspans = plan_chunks(span.duration, engine.max_chunk_s, self.cfg.asr_chunk_overlap_s)
+        limit = engine.max_chunk_s
+        if chunk_s is not None:
+            limit = min(limit, chunk_s) if limit > 0 else chunk_s
+        subspans = plan_chunks(span.duration, limit, self.cfg.asr_chunk_overlap_s)
         segments: list[list[Segment]] = []
         words: list[list[Word]] = []
         languages: list[tuple[str | None, float]] = []
@@ -738,7 +767,13 @@ class AsrRouter:
             **detail,
         )
 
-    async def _span(self, chain: list[AsrEngineConfig], span: Span, job: _Job) -> SpanResult:
+    async def _span(
+        self,
+        chain: list[AsrEngineConfig],
+        span: Span,
+        job: _Job,
+        chunk_s: float | None = None,
+    ) -> SpanResult:
         failure: EngineError | None = None
         misfit: SpanResult | None = None
         detected: str | None = None
@@ -751,7 +786,7 @@ class AsrRouter:
                 self._fell_through(engine, rest, "unhealthy", span)
                 continue
             try:
-                result = await self._span_on(engine, span, job, rest)
+                result = await self._span_on(engine, span, job, rest, chunk_s)
             except EngineError as exc:
                 failure = exc
                 self._record_failure(engine, exc, job.source)
@@ -789,8 +824,17 @@ class AsrRouter:
         *,
         priority: int = BACKGROUND,
         want_words: bool = True,
+        expected_language: str | None = None,
+        review: bool = True,
     ) -> ASRResult:
+        """Transcribe `wav` through the chain.
+
+        `expected_language` is a hint (the video's metadata language), never forced on the first
+        pass; a chunk heard as another language is re-listened to with it forced. `review=False`
+        returns the engines' answer untouched (reference transcripts for `captions-score`).
+        """
         language = normalize_language(language)
+        expected_language = normalize_language(expected_language)
         chain = self.candidates(language, priority)
         if not chain:
             raise ASRError(
@@ -820,7 +864,149 @@ class AsrRouter:
         with tempfile.TemporaryDirectory(prefix="asr-", dir=wav.parent) as scratch:
             job = _Job(wav, language, want_words, priority, Path(scratch), total, str(wav))
             results = await gather_all([run(span, job) for span in spans])
+            if review and self.cfg.asr_recheck:
+                results = await self._review(chain, spans, results, job, expected_language)
         return self._merge(results, spans)
+
+    def _expected(
+        self,
+        results: list[SpanResult],
+        job: _Job,
+        expected_language: str | None,
+    ) -> str | None:
+        """The language the audio should be in: the job's, else the hint, else what most of it was heard as.
+
+        A hint (the video's metadata language) yields to the audio when more than
+        `asr_expected_override_share` of it was heard as one other language: the metadata may be wrong.
+        """
+        heard = [item for r in results for item in r.languages]
+        majority = dominant_language(heard)
+        if job.language:
+            return job.language
+        if not expected_language:
+            return majority
+        if majority and base_code(majority) != base_code(expected_language):
+            seconds = sum(s for code, s in heard if base_code(code) == base_code(majority))
+            total = sum(s for _code, s in heard) or 1.0
+            if seconds / total > self.cfg.asr_expected_override_share:
+                return majority
+        return expected_language
+
+    def _health(self, result: SpanResult, span: Span, expected: str | None) -> ChunkHealth:
+        return chunk_health(
+            result.segments,
+            span.duration,
+            dominant_language(result.languages),
+            expected,
+            self.cfg,
+        )
+
+    async def _review(
+        self,
+        chain: list[AsrEngineConfig],
+        spans: list[Span],
+        results: list[SpanResult],
+        job: _Job,
+        expected_language: str | None,
+    ) -> list[SpanResult]:
+        """Re-listen to the chunks that look wrong, then drop what is still not speech in them.
+
+        Runs after every first answer is in, so no retry waits on an engine's first-request lock.
+        """
+        expected = self._expected(results, job, expected_language)
+        # a language the engine was told says nothing about the audio: only a detected one is checked
+        heard_as = None if job.language else expected
+        healths = [self._health(r, sp, heard_as) for r, sp in zip(results, spans, strict=True)]
+        for result, health in zip(results, healths, strict=True):
+            result.health = health
+        reasons = review(healths, self.cfg)
+        median = median_rate(healths)
+        pending = [i for i, why in enumerate(reasons) if why]
+        if not pending:
+            return results
+        redone = await gather_all(
+            [
+                self._recheck(
+                    chain, spans[i], results[i], reasons[i], job, expected, median, len(spans)
+                )
+                for i in pending
+            ]
+        )
+        for i, result in zip(pending, redone, strict=True):
+            results[i] = result
+        return results
+
+    async def _recheck(
+        self,
+        chain: list[AsrEngineConfig],
+        span: Span,
+        first: SpanResult,
+        reasons: list[str],
+        job: _Job,
+        expected: str | None,
+        median: float,
+        chunks: int,
+    ) -> SpanResult:
+        """The ladder for one chunk: language forced, smaller windows, the next engine."""
+        assert first.health is not None
+        best, best_health = first, first.health
+        before = round(first.health.flagged_share, 2)
+        forced = replace(job, language=expected) if expected else job
+        attempts: list[tuple[str, Callable[[], Awaitable[SpanResult]]]] = []
+        if REASON_LANGUAGE in reasons and job.language is None and expected:
+            attempts.append((ACTION_FORCED, lambda: self._span(chain, span, forced)))
+        attempts.append(
+            (ACTION_SMALLER, lambda: self._span(chain, span, forced, self.cfg.asr_recheck_chunk_s))
+        )
+        others = [e for e in chain[1:] if serves(e, expected)]
+        if others:
+            attempts.append((ACTION_NEXT, lambda: self._span(others, span, forced)))
+        for action, attempt in attempts:
+            detail = {
+                "start_s": round(span.start, 1),
+                "end_s": round(span.end, 1),
+                "reason": ",".join(reasons),
+                "action": action,
+                "detected": best_health.language,
+                "expected": expected,
+                "flagged_share_before": before,
+            }
+            try:
+                result = await attempt()
+            except ASRError as exc:
+                events.emit(
+                    events.ASR_RECHECK,
+                    events.WARN,
+                    **detail,
+                    outcome=OUTCOME_FAILED,
+                    error_class=events.error_class(exc),
+                )
+                continue
+            health = self._health(result, span, expected)
+            left = recheck_reasons(health, median, chunks, self.cfg)
+            better = not left or health.rank() > best_health.rank()
+            if better:
+                best, best_health = result, health
+            events.emit(
+                events.ASR_RECHECK,
+                events.OK if better else events.WARN,
+                **detail,
+                detected_after=health.language,
+                outcome=OUTCOME_REPLACED if better else OUTCOME_KEPT,
+                flagged_share_after=round(health.flagged_share, 2),
+            )
+            if not left:
+                break
+        flags = flag_segments(best.segments, self.cfg)
+        segments, words, dropped = drop_flagged(best.segments, best.words, flags)
+        return replace(
+            best,
+            segments=segments,
+            words=words,
+            dropped=dropped,
+            rechecked=True,
+            health=best_health,
+        )
 
     def _merge(self, results: list[SpanResult], spans: list[Span]) -> ASRResult:
         stats = StitchStats()
@@ -841,6 +1027,18 @@ class AsrRouter:
         used = list(dict.fromkeys(e.name for r in results for e in r.engines))
         models = list(dict.fromkeys(e.model for r in results for e in r.engines))
         real, interpolated = count_kinds(words)
+        dropped = sum(len(r.dropped) for r in results)
+        dropped_s = sum(seg.end - seg.start for r in results for seg in r.dropped)
+        if dropped:
+            events.emit(
+                events.ASR_RECHECK,
+                events.WARN,
+                action=ACTION_DROPPED,
+                dropped_segments=dropped,
+                dropped_s=round(dropped_s, 1),
+                chunks=sum(1 for r in results if r.dropped),
+                message="Text that is not speech was removed; captions fill those stretches if there are any.",
+            )
         return ASRResult(
             words=words,
             language=language,
@@ -848,7 +1046,13 @@ class AsrRouter:
             engine=ENGINE_SEPARATOR.join(used) or None,
             model=ENGINE_SEPARATOR.join(models) or None,
             word_timing=classify(words, self.cfg.words_real_min_share),
-            stats={"words_real": real, "words_interpolated": interpolated},
+            stats={
+                "words_real": real,
+                "words_interpolated": interpolated,
+                "rechecked_chunks": sum(1 for r in results if r.rechecked),
+                "hallucination_drops": dropped,
+                "dropped_s": round(dropped_s, 1),
+            },
         )
 
 

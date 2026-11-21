@@ -252,8 +252,8 @@ async def test_a_captions_job_logs_the_cues_and_the_tv_download(env):
     check = event(env, job_id, "sync_score")
     assert check["status"] == "skipped" and check["detail"]["reason"] == "no_silences"
     track_row = env.svc.db.one("SELECT timing_version FROM captions WHERE video_id=?", [VID])
-    assert track_row["timing_version"] == 1
-    assert env.svc.jobs.status(VID)["tracks"][0]["timing_version"] == 1
+    assert track_row["timing_version"] == pipeline_mod.TIMING_VERSION
+    assert env.svc.jobs.status(VID)["tracks"][0]["timing_version"] == pipeline_mod.TIMING_VERSION
     asked = event(env, job_id, "queued")["detail"]
     assert asked["client"] == "Living room TV" and asked["priority"] == "background"
     recheck = event(env, job_id, "caption_recheck")["detail"]
@@ -535,7 +535,9 @@ def test_format_track_and_language_come_from_the_chosen_yt_dlp_format(tmp_path, 
 
 
 class StubAsr:
-    async def transcribe(self, wav, language, progress, *, priority=1, want_words=True):
+    async def transcribe(
+        self, wav, language, progress, *, priority=1, want_words=True, expected_language=None
+    ):
         progress(1.0)
         return ASRResult(
             words=[],

@@ -321,6 +321,34 @@ class CaptionsConfig(BaseModel):
     sync_late_s: float = 0.3
     sync_early_s: float = 0.5
     sync_loose_s: float = 1.0
+    # chunk review (`captions/sanity.py`): wrong-language and hallucinated chunks are re-listened to,
+    # then the segments that are still not speech are dropped
+    asr_recheck: bool = True
+    asr_recheck_chunk_s: float = Field(default=120.0, gt=0)  # window of the "smaller window" retry
+    asr_expected_override_share: float = Field(
+        default=0.5, ge=0, le=1
+    )  # audio share above which the
+    # detected language beats the video's metadata language as the expected one
+    halluc_no_speech_prob: float = 0.6  # a segment above this ...
+    halluc_avg_logprob: float = -1.0  # ... and below this is not speech (Whisper's own rule)
+    halluc_compression_ratio: float = 2.4  # above this a segment counts as repetitive text
+    halluc_repeat_min: int = Field(default=3, ge=2)  # consecutive equal segments that make a loop
+    halluc_phrases: list[str] = Field(
+        default_factory=lambda: [
+            "thank you",
+            "thanks for watching",
+            "thank you for watching",
+            "you",
+        ]
+    )  # what Whisper makes up over silence or music
+    halluc_min_rate: float = 0.5  # words per second below which a phrase above is a phantom
+    halluc_chunk_share: float = 0.3  # share of a chunk's seconds flagged that asks for a re-listen
+    sparse_chunk_ratio: float = (
+        0.15  # a chunk with under this share of the median characters per second
+    )
+    sparse_min_chunks: int = Field(
+        default=3, ge=1
+    )  # ... counts only with at least this many chunks
     # `utubot captions-score` defaults
     score_windows: int = Field(default=4, ge=1)
     score_window_s: float = Field(default=120.0, gt=0)

@@ -82,6 +82,7 @@ class ASRBackend(Protocol):
         *,
         priority: int = ...,
         want_words: bool = ...,
+        expected_language: str | None = ...,
     ) -> ASRResult: ...
 
 

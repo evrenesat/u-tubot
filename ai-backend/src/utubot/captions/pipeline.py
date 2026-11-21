@@ -77,10 +77,8 @@ Progress = Callable[[float], None]
 ASR_CACHE_STAGE = "asr"
 
 
-ASR_CACHE_VERSION = (
-    2  # the layout and meaning of a cached ASR answer: a new value ignores older rows
-)
-TIMING_VERSION = 1  # the caption timing scheme of a stored track (`captions.timing_version`)
+ASR_CACHE_VERSION = 3  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review)
+TIMING_VERSION = 2  # the caption timing scheme of a stored track (`captions.timing_version`)
 SEGMENT_METRICS = 3  # no_speech_prob, avg_logprob, compression_ratio follow start, end, text
 
 
@@ -146,6 +144,9 @@ def _set_asr(st, result: ASRResult, cached: bool = False) -> None:
         word_timing=result.word_timing,
         words_real=real,
         words_interpolated=interpolated,
+        rechecked_chunks=result.stats.get("rechecked_chunks"),
+        hallucination_drops=result.stats.get("hallucination_drops"),
+        dropped_s=result.stats.get("dropped_s"),
     )
 
 
@@ -520,6 +521,7 @@ class CaptionPipeline:
                     lambda f: progress(0.25 + 0.6 * f),
                     priority=priority,
                     want_words=want_words,
+                    expected_language=self._expected_language(video_id, requested),
                 )
                 if want_words and result.word_timing is None:
                     result.word_timing = classify(
@@ -546,6 +548,13 @@ class CaptionPipeline:
             return ASRResult(words=[], language=None, segments=[], engine=None, model=None)
         self._require_speech(result, want_words, optional_asr)
         return result
+
+    def _expected_language(self, video_id: str, requested: str | None) -> str | None:
+        """The language the audio should be in: the requested one, else the video metadata's."""
+        if requested:
+            return requested
+        meta = self.db.get_json("video_meta", "video_id=?", [video_id]) or {}
+        return normalize_language(str(meta.get("language") or "")) or None
 
     def _cached_asr(
         self, video_id: str, key: str, want_words: bool, requested: str | None

@@ -194,6 +194,7 @@ def cmd_captions_score(args: argparse.Namespace) -> int:
                 at=args.at,
                 windows=args.windows,
                 window_s=args.window_s,
+                review=args.review,
             )
         )
     except ScoreError as exc:
@@ -359,6 +360,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     score.add_argument(
         "--window-s", type=float, help="seconds per window (default: [captions] score_window_s)"
+    )
+    score.add_argument(
+        "--review",
+        action="store_true",
+        help="also run the chunk review (re-listen, drop hallucinated text) on the reference; off by default so the reference is the engine's own answer",
     )
     score.add_argument("--json", action="store_true", help="print JSON")
     score.set_defaults(func=cmd_captions_score)

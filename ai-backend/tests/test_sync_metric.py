@@ -24,7 +24,7 @@ from utubot.captions import events
 from utubot.captions.asr import ffmpeg_available
 from utubot.captions.engines import AsrRouter
 from utubot.captions.events import JobEvents, JobTrace
-from utubot.captions.pipeline import CaptionPipeline
+from utubot.captions.pipeline import TIMING_VERSION, CaptionPipeline
 from utubot.captions.syncscore import phrase_onsets, score_starts
 from utubot.config import AsrEngineConfig, Config
 from utubot.db import Database
@@ -133,7 +133,7 @@ async def test_real_words_reach_the_sync_target(harness):
     check = h.event("sync_score")["detail"]
     assert check["speech_overlap"] > SPEECH_OVERLAP_FLOOR and check["starts_in_silence"] < 0.1
     row = h.db.one("SELECT timing_version, timing FROM captions WHERE video_id=?", [VID])
-    assert row["timing_version"] == 1 and '"word_timing": "real"' in row["timing"]
+    assert row["timing_version"] == TIMING_VERSION and '"word_timing": "real"' in row["timing"]
 
 
 async def test_improve_with_real_words_reaches_the_sync_target(harness):
