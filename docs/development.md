@@ -78,7 +78,11 @@ forces a redraw mid-recording, then taps Build and leaves the sheet mid-recordin
 must release the fake track and send no `/v1/speech` POST. It also holds `getUserMedia` open (a slow
 permission prompt) to prove the acquisition window: the mic is disabled while it is open, cancelling
 before it resolves stops the late stream instead of recording it, and a double tap starts one
-acquisition.
+acquisition. It also saves a description as a preset (the sheet's chip and the Cuts tab's list, then
+Delete), and feeds the service worker a `POST /shared` carrying a YouTube link: the manifest's Share
+target, the worker's redirect and the waiting request that opens all have to line up. A held upload
+plus a failed Build covers the window where a cancelled recording must keep the mic disabled; the
+per-run nonce is five base36 digits so a rerun over a dirtied demo uses new video ids.
 
 ## Android app
 

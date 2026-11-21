@@ -475,6 +475,39 @@ and `GET /v1/me` features carries `"speech": false`.
 - `GET /v1/me` features adds `"speech":bool` and `"speech_max_s":int` (default 120), the phone's
   recording limit.
 
+## Saved cut presets and the phone share target (addendum, 2026-11-21)
+
+The owner can save a description from the cut sheet as his own preset. Saved presets are rows of
+the user's prompt set `cut-presets` (`task:"cuts"`), so `GET /v1/videos/{id}/cuts` lists them
+beside the built-ins and a save/delete changes both views. That set never appears in
+`GET /v1/prompts` (summary defaults and the prompt pickers exclude cut tasks); managing saved
+presets is phone-only in v1. A saved preset's id is `cut-mine-<12 hex>` (a hash of its name and
+description), so saving the same name and description replaces the earlier copy. A built-in
+preset cannot be deleted from this list, and a user may keep at most 20 saved presets. A built
+cut carries the saved label (`label` in the cut document), not the id.
+
+- `GET /v1/cut-presets` -> `{"presets":[{"id","label"}]}` in saved order, the owner's own only.
+- `POST /v1/cut-presets` `{"label","prompt"}` -> `{"preset":{"id","label"}}`. The label is 1..60
+  characters, the description 1..2000 (the same cap as a typed prompt); empty or too long
+  answers `400 {"error":"<plain reason>"}`. The description becomes the preset's task text.
+- `DELETE /v1/cut-presets/{preset_id}` -> `{"ok":true}`; `404` for an unknown id (a built-in id
+  is unknown here). The last saved preset deletes the set.
+
+The web UI is a PWA (manifest at `/manifest.webmanifest`, icon, standalone) and takes Android's
+Share target: YouTube -> Share -> u·tubot. Nothing on the server receives the shared POST.
+
+- The manifest's `share_target` is `{"action":"/shared","method":"POST",
+  "enctype":"multipart/form-data","params":{"title":"title","text":"text","url":"url"}}`.
+- `/sw.js` (public static, `Service-Worker-Allowed: /`) handles `POST /shared`: it keeps the
+  newest shared `url` (else `text`) in the Cache API under `/__shared-item` with its timestamp,
+  then answers `303` to `/#/cuts`. Items older than 10 minutes are dropped when taken.
+- The Cuts page asks the worker for the item once (`take-share`), deletes it, and starts a
+  `{"await_prompt":true}` request for the URL's video id; the sheet opens. A shared item without
+  a YouTube link says "paste the link in New cut" and starts nothing.
+- `/manifest.webmanifest` and `/sw.js` are public like `/` and `/ui`; CSP allows `manifest-src
+  'self'` and the site's own worker, and `Permissions-Policy` allows the microphone for self
+  (the Speak button), with camera and geolocation still off.
+
 ## Setup file (`GET /setup.json`)
 
 Public, rate limited like `/v1/health`. The app's "Import setup" fetches it so nothing is typed

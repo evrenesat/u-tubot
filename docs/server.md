@@ -425,6 +425,16 @@ or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#direct
 - The stages of a build are in its job report (kind `cuts`): `transcript` → `model` →
   `checking`, with the model's raw answer trimmed into the row. Cut jobs never appear in the
   caption worker's cancel/retry paths — a cut is retried or dismissed from its cut sheet.
+- A description typed on the cut sheet can be saved as the owner's own preset (phone only in
+  v1): `POST /v1/cut-presets` stores it in the user's `cut-presets` prompt set, so it becomes a
+  chip on later sheets and a row of the TV picker; `GET` lists them and `DELETE` removes one.
+  The same name and description replace the earlier copy; at most 20; built-ins cannot be
+  deleted here. The set stays out of the summary prompt pickers.
+- The web UI is installable (manifest `/manifest.webmanifest`, icon `/ui/icon.svg`) and takes
+  Android's YouTube Share button: the manifest's `share_target` is `/shared`, and `/sw.js`
+  keeps the shared link in the Cache API before redirecting to the Cuts tab, which turns it
+  into a waiting request. The server never receives the shared POST; manifest and worker are
+  public static files.
 
 **Choosing the model**: `[llm.cuts]` has no default on purpose — quality matters and the
 feature stays off until an alias is named. Score the available aliases offline against the
@@ -458,6 +468,8 @@ bytes and duration, never the audio or the words. Wire details:
   content type when the client sent a bare filename (STT servers often pick the decoder by it).
 - The text lands in the description box and stays editable; the phone never sends it itself.
   `[speech] max_record_s` (120 default) is the recording limit the sheet reads from `GET /v1/me`.
+- The page's `Permissions-Policy` allows the microphone for its own origin (`microphone=(self)`);
+  camera and geolocation stay off. The microphone is requested only when the owner taps Speak.
 - ffmpeg is needed on the modelgate host when the phone's webm/opus cannot be passed through
   (EVR-464 documents the format matrix).
 

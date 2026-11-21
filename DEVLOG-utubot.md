@@ -1,5 +1,28 @@
 # u·tubot devlog
 
+## 2026-11-21 (director's cuts: saved presets, TV parts, Share target, checkpoint 4)
+
+- The cut sheet saves a description as the owner's own preset: a name field and "Save as preset"
+  write the user's `cut-presets` prompt set (`POST /v1/cut-presets`), so it becomes a chip on
+  later sheets and a row of the TV picker. The Cuts tab lists saved presets with Delete
+  (`GET`/`DELETE /v1/cut-presets`); the same name and description replace the earlier copy, and
+  the set never shows in the summary prompt pickers. A built cut carries the saved label.
+- A ready cut now shows its kept parts on the TV too: under each ready preset the picker lists a
+  read-only "Kept parts" category (one line per part, "2:10 - 3:05  The demo", with the summary
+  above them), so the owner can judge a cut before applying it (`UtubotMenu.partsCategory`,
+  `UtubotCutController.formatPart`).
+- The phone web UI is a PWA and takes Android's YouTube Share button: `/manifest.webmanifest`
+  declares `/shared`, `/sw.js` keeps the newest shared link in the Cache API and redirects to the
+  Cuts tab, and the page takes it once and starts a waiting request for that video's sheet. The
+  manifest and the worker are public static files; CSP gained `manifest-src 'self'`.
+- EVR-514's follow-ups are closed: the check's nonce is five base36 digits (every millisecond
+  differs) instead of ten values; the mic keeps an `uploading` gate and a per-attempt counter, so
+  a cancel during an upload cannot re-enable Speak for a second stream and a late `stop` event
+  from the abandoned recording cannot upload or wipe the new one.
+- The site's `Permissions-Policy` now allows the microphone for its own origin
+  (`microphone=(self)`); camera and geolocation stay off. The old `microphone=()` would have
+  refused a real phone's Speak tap (the browser check's fake stream hides that on a desktop).
+
 ## 2026-11-21 (director's cuts on the TV, second review round)
 
 - An engine release no longer ends the follower of the video that stays: the HQ dialog's format change, the fixer's restart and the

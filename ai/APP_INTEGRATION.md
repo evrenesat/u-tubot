@@ -141,6 +141,10 @@ so the other flavors behave as before.
   last row "Describe on phone…" creates a waiting request (`POST {await_prompt:true}`) and shows `UtubotCutQrView`: a dimming sheet
   over the playing video with the request's short address (`<backend>/cuts/<id>`) as a QR code (made on the device, `QrCodeEncoder`)
   and in text. The video is not paused; Back (any key) takes the sheet away. Without a model on the backend the picker says so.
+- Director's cuts (checkpoint 4): a ready preset also appends a read-only "Kept parts" category under the preset row: the cut's
+  summary and one line per kept part ("2:10 - 3:05  The demo", `UtubotCutController.formatPart`), so the owner judges the cut on
+  the TV before applying it (the phone sheet's parts list is the same information). Saved presets and the Android Share target are
+  phone-only in v1 (the saved presets become rows of this same picker).
 - Director's cuts, while playing (`UtubotCutController`, a playback controller next to `SponsorBlockController`). When a video opens it
   checks once where its cuts stand (`UtubotCutFollower`, like the captions follower): a ready cut is announced ("Director's cut ready:
   No filler, 12:40"); a waiting or building request for the video is long-polled (`GET /v1/cuts/{id}?wait_ms=10000`, at most 30 min, 5
