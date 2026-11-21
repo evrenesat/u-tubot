@@ -120,7 +120,7 @@ JOB_COLUMNS = {
 }
 POLICY_COLUMNS = {"version": "INTEGER NOT NULL DEFAULT 0", "updated_at": "REAL NOT NULL DEFAULT 0"}
 TRANSCRIPT_COLUMNS = {"engine": "TEXT", "model": "TEXT", "segments": "TEXT", "job_id": "TEXT"}
-CAPTION_COLUMNS = {"job_id": "TEXT"}
+CAPTION_COLUMNS = {"job_id": "TEXT", "timing_version": "INTEGER", "timing": "TEXT"}
 METADATA_ONLY = "metadata_only"
 
 

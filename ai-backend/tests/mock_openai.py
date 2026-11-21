@@ -12,6 +12,10 @@ class MockOpenAI:
         self.calls: list[dict[str, Any]] = []
         self.requests: list[dict[str, Any]] = []
         self.audio_calls: list[dict[str, Any]] = []
+        # How the transcription endpoint hands out word times: "top" (a top-level `words` list, the
+        # OpenAI shape), "flag_nested" (words nested in each segment, and only when the form carries
+        # `word_timestamps=true`, as the production mlx-audio server does) or "none".
+        self.audio_words = "top"
         self.delay_s = 0.0
         self.bad_json_first = 0
         self.mode = "plain"
@@ -91,23 +95,29 @@ class MockOpenAI:
         async def transcriptions(request: Request):
             form = await request.form()
             self.audio_calls.append({k: v for k, v in form.items() if k != "file"})
-            return {
+            words = [
+                {"word": "Hello", "start": 0.0, "end": 0.5},
+                {"word": "there.", "start": 0.5, "end": 1.2},
+                {"word": "How", "start": 2.0, "end": 2.3},
+                {"word": "are", "start": 2.3, "end": 2.5},
+                {"word": "you", "start": 2.5, "end": 2.8},
+                {"word": "doing", "start": 2.8, "end": 3.3},
+                {"word": "today?", "start": 3.3, "end": 4.0},
+            ]
+            segments = [
+                {"start": 0.0, "end": 4.0, "text": " Hello there. How are you doing today?"}
+            ]
+            body: dict[str, Any] = {
                 "language": "english",
                 "duration": 4.0,
                 "text": "Hello there. How are you doing today?",
-                "segments": [
-                    {"start": 0.0, "end": 4.0, "text": " Hello there. How are you doing today?"}
-                ],
-                "words": [
-                    {"word": "Hello", "start": 0.0, "end": 0.5},
-                    {"word": "there.", "start": 0.5, "end": 1.2},
-                    {"word": "How", "start": 2.0, "end": 2.3},
-                    {"word": "are", "start": 2.3, "end": 2.5},
-                    {"word": "you", "start": 2.5, "end": 2.8},
-                    {"word": "doing", "start": 2.8, "end": 3.3},
-                    {"word": "today?", "start": 3.3, "end": 4.0},
-                ],
+                "segments": segments,
             }
+            if self.audio_words == "top":
+                body["words"] = words
+            elif self.audio_words == "flag_nested" and form.get("word_timestamps") == "true":
+                segments[0]["words"] = words
+            return body
 
         return app
 

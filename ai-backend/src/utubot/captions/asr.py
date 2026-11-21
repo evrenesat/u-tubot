@@ -6,10 +6,10 @@ import wave
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..config import CaptionsConfig
-from .types import Segment, Word
+from .types import TIMING_INTERPOLATED, Segment, Word
 
 if TYPE_CHECKING:
     import httpx
@@ -62,6 +62,9 @@ class ASRResult:
     segments: list[Segment] = field(default_factory=list)
     engine: str | None = None
     model: str | None = None
+    # "real" | "mixed" | "interpolated"; None when words were not wanted (or the backend does not say)
+    word_timing: str | None = None
+    stats: dict[str, Any] = field(default_factory=dict)
 
 
 class ASRBackend(Protocol):
@@ -99,7 +102,7 @@ def words_from_segment(start: float, end: float, text: str) -> list[Word]:
     cursor = start
     for tok in tokens:
         dur = span * len(tok) / total
-        out.append(Word(cursor, cursor + dur, tok))
+        out.append(Word(cursor, cursor + dur, tok, timing=TIMING_INTERPOLATED))
         cursor += dur
     return out
 

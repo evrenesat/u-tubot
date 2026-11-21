@@ -301,10 +301,14 @@ running job shows its progress and a crashed one shows where it stopped. Stages:
 waited), `gate_wait` (the YouTube class and how long the gate held the job), `caption_recheck` (found, none, delayed or skipped and why),
 `audio_download` (format id, original/dubbed/unmarked track, language, bytes, length, seconds, and `source`: `downloaded` or `from_archive`),
 `media_archive` (bytes and the sha256 prefix of what was kept; skipped when the audio came from the archive), `ffmpeg`, `chunking` (chunks and their sizes), `asr` and `asr_chunk` (engine, model, seconds, characters, detected language per chunk),
-`asr_fallback` (an engine gave up on a chunk, and why: `http_503`, `transport_timeout`, `unhealthy`, `language_mismatch` ...), `stitching`
+`asr_fallback` (an engine gave up on a chunk, and why: `http_503`, `transport_timeout`, `unhealthy`, `language_mismatch`, `no_word_times` ...; `asr_chunk` also carries `word_timing`, `words` and `word_mode`), `stitching`
 (seams, segments cut at overlaps, repeated words dropped), `separation` (the optional vocal separation before ASR, or skipped and why),
+`word_timing` (after `asr`: whether the engine's word times were real, with the counts of words repaired — stretched, zero-length,
+squeezed, out of order — and the number of silences used; `warn` when the engine returned no word times and the cue times are estimates),
 `diarization` (only when `[captions] diarization` is enabled; ran, or skipped and why: no Hugging Face token, package missing), `cues`
-(count, longest line), `align` (cue boundaries moved to silences, or caption cues re-timed from the ASR words), `proofread` (corrected
+(count, longest line), `align` (`mode` `silence`: boundaries moved to silences; `words`: cues built from word times, with the speech and
+fill cue counts; `captions_timing`: skipped, the caption cues kept as they are (no words, or estimated word times); `merge`: the legacy rule),
+`sync_score` (after `align`: `speech_overlap`, `starts_in_silence`, `silence_share` of the finished cues against the audio), `proofread` (corrected
 cues, or skipped: off, no LLM; per-batch warnings hang under it as `proofread_batch`; runs once on the source text and once again on
 translated text, so the English output is proofread too), `text`, `translate` (the source and target language; skipped when the track
 already is in the target language), `stored` (what was saved and

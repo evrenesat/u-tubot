@@ -200,6 +200,7 @@ class CutsConfig(BaseModel):
     max_report_chars: int = 4000
 
 
+WORDS_REAL_MIN_SHARE = 0.9
 ASR_KIND_OPENAI = "openai"
 ASR_KIND_FASTER_WHISPER = "faster_whisper"
 LEGACY_ENGINE_NAME = "default"
@@ -226,6 +227,12 @@ class AsrEngineConfig(BaseModel):
     overhead_s: float = 2.0
     compute_type: str | None = None
     threads: int | None = None
+    # how an openai-kind server is asked for word times; "auto" probes `both` first (see engines.py)
+    word_timestamps: Literal["auto", "granularities", "flag", "both", "none"] = "auto"
+    # extra multipart form fields sent with every request (never a secret)
+    extra_form: dict[str, str] = Field(default_factory=dict)
+    # faster_whisper kind only: let each window see the previous text (off: fewer repeat loops)
+    condition_on_previous_text: bool = False
 
     @model_validator(mode="after")
     def _defaults(self) -> AsrEngineConfig:
@@ -293,6 +300,30 @@ class CaptionsConfig(BaseModel):
     job_events_max: int = 400
     delivery_coalesce_s: float = 300.0
     delivery_events_max: int = 50
+    # an engine that returns no word times is passed over while another engine remains in the chain
+    asr_words_required: bool = False
+    # share of words with real engine times at or above which a transcript counts as "real"
+    words_real_min_share: float = WORDS_REAL_MIN_SHARE
+    # word-time repair (`captions/wordtimes.py`)
+    word_min_s: float = 0.06  # a word shorter than this is zero-length and gets borrowed time
+    word_max_s: float = 1.2  # a word longer than this is stretched (usually over a pause)
+    word_char_s: float = 0.09  # nominal spoken seconds per character
+    word_nominal_min_s: float = 0.2  # lower bound of the nominal word length
+    word_rate_max: float = 7.0  # words per second above which a run of words is squeezed
+    word_squeeze_min_words: int = Field(default=4, ge=2)  # shortest run counted as squeezed
+    # "words": cues come from the words' own times; "legacy": the old caption-window merge
+    timing_mode: Literal["words", "legacy"] = "words"
+    # `utubot captions-regen` queues at most this many tracks per run unless --limit says otherwise
+    regen_limit_default: int = Field(default=20, ge=1)
+    cue_linger_s: float = 0.2  # a cue stays on screen this long after its last word (if room)
+    # sync metric (`captions/syncscore.py`): a phrase onset is "hit" when the nearest cue start lies
+    # within [-sync_early_s, +sync_late_s] of it, "loose" within sync_loose_s
+    sync_late_s: float = 0.3
+    sync_early_s: float = 0.5
+    sync_loose_s: float = 1.0
+    # `utubot captions-score` defaults
+    score_windows: int = Field(default=4, ge=1)
+    score_window_s: float = Field(default=120.0, gt=0)
 
     @field_validator("translate_to")
     @classmethod

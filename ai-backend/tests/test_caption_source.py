@@ -49,15 +49,19 @@ async def test_a_captions_job_improves_the_video_s_own_captions(env):
     recheck = event(env, doc["id"], "caption_recheck")["detail"]
     assert recheck["result"] == "found" and recheck["timed"] is True
     align = event(env, doc["id"], "align")["detail"]
-    assert align["mode"] == "merge" and align["from_asr"] == 1 and align["cues"] == 2
+    assert align["mode"] == "words" and align["speech_cues"] == 2 and align["cues"] == 2
+    assert align["fill_cues"] == 0  # the spoken captions are never repeated next to their words
+    word_timing = event(env, doc["id"], "word_timing")["detail"]
+    assert word_timing["word_timing"] == "real" and word_timing["real_share"] == 1.0
+    skipped = event(env, doc["id"], "sync_score")  # the test tone has no silence to compare with
+    assert skipped["status"] == "skipped" and skipped["detail"]["reason"] == "no_silences"
     proofread = event(env, doc["id"], "proofread")["detail"]
-    assert proofread["corrected"] == 2 and proofread["warned"] == 0
+    assert proofread["corrected"] == 1 and proofread["warned"] == 0
     vtt = stored_captions(env)
     assert "Hello there, my friend." in vtt and "How are you doing today?" in vtt
-    # the cue timing comes from the ASR words inside each caption window; the second cue
-    # (the ASR heard nothing there) keeps the caption timing and its corrected text
-    assert "00:00:00.000 --> 00:00:04.000" in vtt
-    assert "00:00:04.000 --> 00:00:08.000" in vtt
+    # the cue timing comes from the ASR words themselves (the mock hears two phrases around a pause)
+    assert "00:00:00.000 --> 00:00:01.400" in vtt
+    assert "00:00:02.000 --> 00:00:04.200" in vtt
     # the caption recheck fetched the track once; no ASR engine work was wasted
     assert len(env.fetcher.calls) == 1
 
@@ -105,7 +109,7 @@ async def test_a_captions_job_keeps_the_caption_text_when_the_asr_fails(env):
     asr = event(env, doc["id"], "asr", "warn")["detail"]
     assert asr["reason"] == "engines_unavailable"
     align = event(env, doc["id"], "align")["detail"]
-    assert align["mode"] == "merge" and align["from_asr"] == 0
+    assert align["mode"] == "captions_timing" and align["reason"] == "no_words"
     assert "Hello there, my friend." in stored_captions(env)
 
 
@@ -137,7 +141,7 @@ async def test_a_captions_job_keeps_the_caption_text_when_the_audio_has_no_speec
     asr = event(env, doc["id"], "asr", "warn")["detail"]
     assert asr["reason"] == "no_speech"
     align = event(env, doc["id"], "align")["detail"]
-    assert align["mode"] == "merge" and align["from_asr"] == 0
+    assert align["mode"] == "captions_timing" and align["reason"] == "no_words"
     assert "Hello there, my friend." in stored_captions(env)
 
 
@@ -156,7 +160,7 @@ async def test_a_captions_job_keeps_the_caption_text_when_the_audio_cannot_be_fe
     asr = event(env, doc["id"], "asr", "warn")["detail"]
     assert asr["reason"] == "audio_unavailable"
     align = event(env, doc["id"], "align")["detail"]
-    assert align["mode"] == "merge" and align["from_asr"] == 0
+    assert align["mode"] == "captions_timing" and align["reason"] == "no_words"
     assert "Hello there, my friend." in stored_captions(env)
 
 
@@ -188,8 +192,8 @@ async def test_the_improve_path_stores_cues_within_the_line_and_cps_limits(env):
     env.svc.jobs.pipeline.asr = asr
     doc = await queue_captions(env)
     align = event(env, doc["id"], "align")["detail"]
-    assert align["mode"] == "merge" and align["from_asr"] == 1
-    assert align["cues"] > 1  # the bucket was re-split instead of stored as one long cue
+    assert align["mode"] == "words" and align["speech_cues"] > 1
+    assert align["cues"] > 1  # the words were cut into several cues, none over the limits
     vtt = stored_captions(env)
     lines = [
         line
@@ -372,3 +376,190 @@ def test_proofread_batch_must_be_at_least_one():
 
     with pytest.raises(ValidationError):
         CaptionsConfig(proofread_batch=0)
+
+
+def test_the_asr_cache_key_carries_a_version():
+    from utubot.captions.pipeline import ASR_CACHE_VERSION, asr_cache_key
+
+    assert asr_cache_key("sha", True, None, "off").startswith(f"v{ASR_CACHE_VERSION}:sha:1:auto")
+    assert ASR_CACHE_VERSION == 2
+
+
+async def test_an_old_cache_row_is_not_served(env):
+    env.fetcher.text = None
+    queued = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    await wait_state(env.client, queued["job_id"])
+    rows = env.svc.db.all("SELECT cache_key FROM stage_cache WHERE stage='asr'")
+    assert rows and all(r["cache_key"].startswith("v2:") for r in rows)
+    env.svc.db.execute("UPDATE stage_cache SET cache_key=substr(cache_key, 4) WHERE stage='asr'")
+    before = len(env.llm.audio_calls)
+    again = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    await wait_state(env.client, again["job_id"])
+    assert len(env.llm.audio_calls) > before  # the v1-keyed row was not read
+
+
+async def test_interpolated_results_are_cached_per_engine_and_word_mode(env):
+    from utubot.config import AsrEngineConfig
+
+    env.fetcher.text = None
+    env.llm.audio_words = "none"
+    first = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    doc = await wait_state(env.client, first["job_id"])
+    assert doc["state"] == "ready", doc["events"]
+    asr = event(env, first["job_id"], "asr", "ok")["detail"]
+    assert asr["word_timing"] == "interpolated" and asr.get("cached") is None
+    assert asr["words_real"] == 0 and asr["words_interpolated"] > 0
+    assert event(env, first["job_id"], "word_timing", "warn")["detail"]["word_timing"] == (
+        "interpolated"
+    )
+    keys = [
+        r["cache_key"]
+        for r in env.svc.db.all("SELECT cache_key FROM stage_cache WHERE stage='asr'")
+    ]
+    assert len(keys) == 1 and keys[0].startswith("v2:") and ":wm-default=none" in keys[0]
+    calls = len(env.llm.audio_calls)
+    retry = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    again = await wait_state(env.client, retry["job_id"])
+    assert event(env, again["id"], "asr", "ok")["detail"]["cached"] is True
+    assert len(env.llm.audio_calls) == calls  # a server that never gives words is not asked again
+
+    # a new word mode is a new key: the engine is asked again, and now answers with real times
+    env.llm.audio_words = "top"
+    env.cfg.captions.asr_engines = [
+        AsrEngineConfig(
+            name="default", url=env.cfg.captions.asr_url, word_timestamps="both", key_optional=True
+        )
+    ]
+    third = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    done = await wait_state(env.client, third["job_id"])
+    assert done["state"] == "ready", done["events"]
+    assert len(env.llm.audio_calls) > calls
+    assert event(env, done["id"], "asr", "ok")["detail"]["word_timing"] == "real"
+
+
+async def test_mixed_and_real_results_are_cached_under_the_plain_key(env):
+    env.fetcher.text = None
+    queued = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    await wait_state(env.client, queued["job_id"])
+    keys = [
+        r["cache_key"]
+        for r in env.svc.db.all("SELECT cache_key FROM stage_cache WHERE stage='asr'")
+    ]
+    assert len(keys) == 1 and ":wm-" not in keys[0]
+
+
+async def test_mixed_word_times_are_cached(tmp_path):
+    from utubot.captions.asr import ASRResult
+    from utubot.captions.pipeline import CaptionPipeline, word_mode_suffix
+    from utubot.captions.types import TIMING_INTERPOLATED, Segment, Word
+    from utubot.config import Config
+    from utubot.db import Database
+
+    class MixedAsr:
+        calls = 0
+
+        async def transcribe(self, wav, language, progress, *, priority=1, want_words=True):
+            self.calls += 1
+            words = [Word(0.0, 0.5, "a"), Word(0.5, 1.0, "b", timing=TIMING_INTERPOLATED)]
+            return ASRResult(
+                words=words,
+                language="en",
+                segments=[Segment(0.0, 1.0, "a b")],
+                word_timing="mixed",
+            )
+
+        def word_signature(self, language):
+            return "x=both"
+
+    cfg = Config()
+    cfg.server.data_dir = str(tmp_path)
+    asr = MixedAsr()
+    pipe = CaptionPipeline(cfg, Database(tmp_path / "t.sqlite"), asr)
+    for _ in range(2):
+        await pipe._asr_stage(
+            VID, tmp_path / "x.wav", None, lambda f: None,
+            priority=1, want_words=True, optional_asr=False, key="v2:sha:1:auto:off",
+        )  # fmt: skip
+    assert asr.calls == 1
+    assert word_mode_suffix(asr, None) == ":wm-x=both"
+    assert word_mode_suffix(object(), None) == ":wm-unknown"
+
+
+def test_cached_asr_keeps_timing_and_segment_metrics():
+    from utubot.captions.asr import ASRResult
+    from utubot.captions.pipeline import asr_from_cache, asr_to_cache
+    from utubot.captions.types import TIMING_INTERPOLATED, TIMING_REPAIRED, Segment, Word
+
+    result = ASRResult(
+        words=[Word(0.0, 0.5, "hi", prob=0.9), Word(0.5, 1.0, "there", timing=TIMING_REPAIRED)],
+        language="en",
+        segments=[Segment(0.0, 1.0, "hi there", 0.01, -0.2, 1.3)],
+        engine="mac",
+        model="m",
+        word_timing="real",
+        stats={"words_real": 2, "words_interpolated": 0},
+    )
+    back = asr_from_cache(asr_to_cache(result))
+    assert back == result
+    old = asr_from_cache(
+        {"words": [[0.0, 0.5, "hi"]], "segments": [[0.0, 1.0, "hi there"]], "language": "en"}
+    )
+    assert old.words == [Word(0.0, 0.5, "hi", timing=TIMING_INTERPOLATED)] and old.segments == [
+        Segment(0.0, 1.0, "hi there")
+    ]
+
+
+async def test_a_wordless_fallback_answer_is_not_served_after_the_word_engine_recovers(tmp_path):
+    from tests.test_asr_engines import FakeEngine, engine_cfg, make_wav
+    from utubot.captions.engines import AsrRouter, EngineError
+    from utubot.captions.pipeline import CaptionPipeline
+    from utubot.captions.types import TIMING_INTERPOLATED
+    from utubot.config import CaptionsConfig, Config
+    from utubot.db import Database
+
+    class Wordless(FakeEngine):
+        async def transcribe_chunk(self, wav, language, want_words):
+            result = await super().transcribe_chunk(wav, language, want_words)
+            result.words = [replace(w, timing=TIMING_INTERPOLATED) for w in result.words]
+            return result
+
+    class Flaky(FakeEngine):
+        down = True
+
+        async def transcribe_chunk(self, wav, language, want_words):
+            if self.down:
+                raise EngineError("asr http 503", code="http_503", isolated=True)
+            return await super().transcribe_chunk(wav, language, want_words)
+
+    from dataclasses import replace
+
+    good, fallback = Flaky("good"), Wordless("fallback")
+    chain = AsrRouter(
+        CaptionsConfig(
+            asr_engines=[
+                engine_cfg("good", priority=1, word_timestamps="both"),
+                engine_cfg("fallback", priority=2),
+            ],
+            sample_rate=10,
+        ),
+        engine_factory=lambda e: {"good": good, "fallback": fallback}[e.name],
+        enabled=lambda e: True,
+    )
+    cfg = Config()
+    cfg.server.data_dir = str(tmp_path)
+    pipe = CaptionPipeline(cfg, Database(tmp_path / "t.sqlite"), chain)
+    wav = make_wav(tmp_path / "a.wav", 20)
+
+    async def job():
+        return await pipe._asr_stage(
+            VID, wav, None, lambda f: None,
+            priority=1, want_words=True, optional_asr=False, key="v2:sha:1:auto:off",
+        )  # fmt: skip
+
+    first = await job()
+    assert first.word_timing == "interpolated" and first.engine == "fallback"
+    stored = [r["cache_key"] for r in pipe.db.all("SELECT cache_key FROM stage_cache")]
+    assert len(stored) == 1 and ":wm-" in stored[0]
+    good.down = False
+    second = await job()
+    assert second.word_timing == "real" and second.engine == "good"

@@ -314,6 +314,23 @@ audio_format = "bestaudio/best"    # yt-dlp selector used only when no usable fo
 job_events_max = 400               # stage events kept per job (the log of GET /v1/jobs/ID); past this only milestones (queued, finished, failed, delivered) are added
 delivery_coalesce_s = 300.0        # a client that fetches a result the same way again within this time only raises the count of its "delivered" event
 delivery_events_max = 50           # "delivered" rows kept per job; past this new deliveries are counted into the newest row
+asr_words_required = false         # true: an engine that returns no word times is passed over while another engine remains
+words_real_min_share = 0.9         # share of words with real engine times at or above which a transcript counts as "real"
+word_min_s = 0.06                  # word repair: a word shorter than this is zero-length and borrows time from a gap
+word_max_s = 1.2                   # word repair: a word longer than this is stretched (usually over a pause) and is cut back
+word_char_s = 0.09                 # word repair: nominal spoken seconds per character
+word_nominal_min_s = 0.2           # word repair: lower bound of the nominal length of a word
+word_rate_max = 7.0                # word repair: words per second above which a run of words counts as squeezed
+word_squeeze_min_words = 4         # word repair: shortest run of fast words treated as squeezed and re-spread
+timing_mode = "words"              # "words": cues come from the words' own times; "legacy": the old caption-window merge
+                                   # (rollback switch, no redeploy needed)
+regen_limit_default = 20           # `utubot captions-regen` queues at most this many tracks per run (--limit overrides)
+cue_linger_s = 0.2                 # a cue stays on screen this long after its last word, when there is room before the next cue
+sync_late_s = 0.3                  # sync metric: a cue start up to this late after a phrase onset is a "hit"
+sync_early_s = 0.5                 # sync metric: ... and up to this early (cues may lead speech on purpose)
+sync_loose_s = 1.0                 # sync metric: a cue start within this of a phrase onset is "loose"
+score_windows = 4                  # `utubot captions-score`: number of evenly spaced windows transcribed
+score_window_s = 120.0             # `utubot captions-score`: seconds per window
 
 # An engine chain: each engine is used when its key variable is set (none needed when api_key_env is omitted).
 # Per audio file the router picks, among healthy engines that serve the video's language, the lowest `priority`
@@ -337,6 +354,9 @@ delivery_events_max = 50           # "delivered" rows kept per job; past this ne
 # timeout_s = 300
 # priority = 10
 # speed_factor = 35.0
+# word_timestamps = "auto"          # how the server is asked for word times: "auto" (probe, remembered per process), "granularities"
+#                                   # (`timestamp_granularities[]`), "flag" (`word_timestamps=true`, mlx-audio style), "both", "none"
+# extra_form = { condition_on_previous_text = "false" }   # extra multipart fields sent with every request (never a secret)
 #
 # [[captions.asr_engines]]          # a small CPU box on the LAN: English and Turkish only, one chunk at a time, never for interactive jobs
 # name = "lan-cpu"
@@ -357,6 +377,7 @@ delivery_events_max = 50           # "delivered" rows kept per job; past this ne
 # max_chunk_s = 600
 # priority = 30
 # speed_factor = 1.5
+# condition_on_previous_text = false # faster_whisper only: let each window see the previous text
 
 # ---- Setup import and public download page ------------------------------------------------
 # GET /setup.json (no auth) lets the TV app configure itself from a short address.
