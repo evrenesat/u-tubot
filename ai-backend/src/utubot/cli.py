@@ -212,6 +212,11 @@ def cmd_captions_score(args: argparse.Namespace) -> int:
     print(
         f"{doc['video_id']}: scored the {track['lang']} track ({version}, {track['cues']} cues) against {doc['reference']}"
     )
+    if not doc["reference_language_ok"]:
+        print(
+            f"  WARNING: the reference did not answer in the spoken language ({doc['spoken_language']});"
+            " its onsets do not describe the speech, do not trust this score"
+        )
     print(
         f"  first cue starts at {track['first_cue_start_s']} s, longest cue {track['max_cue_s']} s"
     )
@@ -225,6 +230,15 @@ def cmd_captions_score(args: argparse.Namespace) -> int:
         f"  overall   onsets {total['onsets']:>3}  hit {total['hit']:.2f}  loose {total['loose']:.2f}"
         f"  median {total['median_s']:+.2f}s  p10 {total['p10_s']:+.2f}s  p90 {total['p90_s']:+.2f}s"
     )
+    block = doc.get("words")
+    if block:
+        median = "-" if block["median_s"] is None else f"{block['median_s']:+.2f}s"
+        print(
+            f"  words     matched {block['matched']} ({block['matched_share']:.0%} of the reference)"
+            f"  median {median}  within {block['within_s']:.0%}"
+        )
+    else:
+        print("  words     no cached engine words for this video")
     return 0
 
 

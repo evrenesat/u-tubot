@@ -8,9 +8,13 @@ starts (`syncscore`). It reads the archive and a speech engine; it never touches
 from __future__ import annotations
 
 import asyncio
+import difflib
+import json
 import os
+import statistics
 import subprocess
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -22,13 +26,90 @@ from ..media_archive import KIND_AUDIO, MediaArchive
 from ..transcripts import parse_vtt
 from .align import detect_silences
 from .asr import normalize_language, run_ffmpeg
+from .chunking import bare
 from .engines import AsrRouter, EngineFactory
-from .syncscore import phrase_onsets, score_starts
+from .pipeline import ASR_CACHE_STAGE, ASR_CACHE_VERSION, asr_from_cache
+from .syncscore import (
+    PERCENTILE_HIGH,
+    PERCENTILE_LOW,
+    SECONDS_DIGITS,
+    SHARE_DIGITS,
+    percentile,
+    phrase_onsets,
+    score_starts,
+)
+from .types import Word
 from .wordtimes import repair_words
 
 
 class ScoreError(RuntimeError):
     pass
+
+
+def _is_latin(ch: str) -> bool:
+    return ch.isascii() or "LATIN" in unicodedata.name(ch, "")
+
+
+def latin_share(words: list[Word]) -> float:
+    """Share of words whose letters are all Latin (0 for no words)."""
+    letters = [[ch for ch in w.text if ch.isalpha()] for w in words]
+    letters = [chars for chars in letters if chars]
+    if not letters:
+        return 0.0
+    return sum(1 for chars in letters if all(_is_latin(ch) for ch in chars)) / len(letters)
+
+
+def cached_engine_words(db: Database, video_id: str) -> list[Word] | None:
+    """The newest cached raw engine words of the video (current cache layout, word-time answer)."""
+    row = db.one(
+        "SELECT json FROM stage_cache WHERE video_id=? AND stage=? AND cache_key LIKE ?"
+        " ORDER BY created_at DESC LIMIT 1",
+        [video_id, ASR_CACHE_STAGE, f"v{ASR_CACHE_VERSION}:%:1:%"],
+    )
+    if row is None:
+        return None
+    try:
+        words = asr_from_cache(json.loads(row["json"])).words
+    except (ValueError, TypeError, IndexError):
+        return None
+    return sorted(words, key=lambda w: w.start) or None
+
+
+def match_errors(reference: list[Word], cached: list[Word], offset: float) -> list[float]:
+    """`cached.start - reference.start - offset` for every token the two lists share, in order."""
+    ref_tokens = [bare(w.text) for w in reference]
+    own_tokens = [bare(w.text) for w in cached]
+    matcher = difflib.SequenceMatcher(None, ref_tokens, own_tokens, autojunk=False)
+    errors: list[float] = []
+    for block in matcher.get_matching_blocks():
+        for k in range(block.size):
+            if ref_tokens[block.a + k]:
+                errors.append(cached[block.b + k].start - reference[block.a + k].start - offset)
+    return errors
+
+
+def words_block(
+    windows: list[tuple[float, float, list[Word]]], cached: list[Word], cfg: Config
+) -> dict[str, Any]:
+    """The engine's cached words checked against the same audio transcribed in windows."""
+    errors: list[float] = []
+    total = 0
+    for begin, end, ref_words in windows:
+        inside = [w for w in cached if begin <= w.start < end]
+        total += len(ref_words)
+        errors += match_errors(ref_words, inside, begin)
+    if not errors:
+        return {"matched": 0, "matched_share": 0.0, "median_s": None, "p10_s": None, "p90_s": None, "within_s": 0.0}  # fmt: skip
+    ordered = sorted(errors)
+    within = sum(1 for e in ordered if abs(e) <= cfg.captions.sync_late_s)
+    return {
+        "matched": len(ordered),
+        "matched_share": round(len(ordered) / total, SHARE_DIGITS) if total else 0.0,
+        "median_s": round(statistics.median(ordered), SECONDS_DIGITS),
+        "p10_s": round(percentile(ordered, PERCENTILE_LOW), SECONDS_DIGITS),
+        "p90_s": round(percentile(ordered, PERCENTILE_HIGH), SECONDS_DIGITS),
+        "within_s": round(within / len(ordered), SHARE_DIGITS),
+    }
 
 
 def _automated() -> bool:
@@ -144,6 +225,7 @@ async def score_track(
     total = await asyncio.to_thread(audio_duration, source)
     onsets_all: list[float] = []
     per_window: list[dict[str, Any]] = []
+    ref_windows: list[tuple[float, float, list[Word]]] = []
     cfg.media_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="score-", dir=cfg.media_dir) as scratch:
         for begin in begins(total, at, windows, window_s):
@@ -162,22 +244,30 @@ async def score_track(
             # a window cut mid-speech makes its first "onset" a cut, not a phrase start
             onsets = [begin + t for t in (local[1:] if begin > 0 else local)]
             onsets_all += onsets
+            ref_windows.append((begin, begin + length, words))
             score = score_starts(cue_starts, onsets, c)
             per_window.append(
                 {
                     "start_s": begin,
                     "end_s": round(begin + length, 3),
                     "words": len(words),
+                    "language": result.language,
+                    "latin_share": round(latin_share(words), SHARE_DIGITS),
                     "word_timing": result.word_timing,
                     **score.as_detail(),
                 }
             )
             wav.unlink(missing_ok=True)
+    cached = cached_engine_words(db, video_id)
     return {
         "video_id": video_id,
         "track": track,
         "reference": reference,
         "window_s": window_s,
+        "spoken_language": language,
+        "reference_language_ok": language is None
+        or all(win["language"] == language for win in per_window),
         "windows": per_window,
+        "words": words_block(ref_windows, cached, cfg) if cached else None,
         "overall": score_starts(cue_starts, onsets_all, c).as_detail(),
     }

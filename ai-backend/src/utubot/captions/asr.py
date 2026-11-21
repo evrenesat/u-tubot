@@ -90,10 +90,18 @@ class ASRBackend(Protocol):
     ) -> ASRResult: ...
 
 
+TRACK_SUFFIXES = frozenset(
+    {"orig", "auto", "asr"}
+)  # what YouTube appends to a caption track's language
+
+
 def normalize_language(value: str | None) -> str | None:
     if not value:
         return None
     value = value.strip().lower()
+    head, _, tail = value.rpartition("-")
+    if head and tail in TRACK_SUFFIXES:
+        value = head
     return LANGUAGE_CODES.get(value, value.split("-")[0] if len(value) <= 5 else value)
 
 

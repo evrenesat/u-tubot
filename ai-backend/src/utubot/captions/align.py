@@ -20,11 +20,11 @@ from __future__ import annotations
 import bisect
 import re
 import subprocess
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from ..config import CaptionsConfig
-from .segment import build_cues, enforce_timing, pad_cues, retime_split, wrap_lines
-from .types import Cue, Word
+from .segment import build_cues, enforce_timing, merge_short, pad_cues, retime_split, wrap_lines
+from .types import TIMING_REFERENCE, Cue, Word
 
 MIDPOINT_EPS = 1e-9
 
@@ -132,8 +132,61 @@ def is_non_speech(cue: Cue) -> bool:
     return bool(text.strip()) and not any(ch.isalnum() for ch in rest)
 
 
+OPENERS = {"[": "]", "(": ")"}
+
+
+@dataclass
+class AlignStats:
+    """What `word_cues` made of YouTube's word times: fill cues built from them, and their words."""
+
+    cues: int = 0
+    words: int = 0
+    merged_short: int = 0  # short cues joined to a neighbour (`segment.merge_short`)
+
+
+def _spoken(ref: list[tuple[float, str]]) -> list[tuple[float, str]]:
+    """The reference words that are speech: tags like `[Music]`, `(applause)` and notes are left out."""
+    out: list[tuple[float, str]] = []
+    closer = ""
+    for start, text in sorted(ref):
+        token = text.strip()
+        if closer:
+            if closer in token:
+                closer = ""
+            continue
+        if token[:1] in OPENERS:
+            if OPENERS[token[:1]] not in token:
+                closer = OPENERS[token[:1]]
+            continue
+        if token and any(ch.isalnum() for ch in token):
+            out.append((start, token))
+    return out
+
+
+def reference_words(ref: list[tuple[float, str]], lead_s: float, cfg: CaptionsConfig) -> list[Word]:
+    """YouTube's `(start, text)` words as `Word`s on the engine's clock (`lead_s` added).
+
+    A word ends where the next begins, at most `word_max_s` after its own start; the last one (and one
+    before a long pause) lasts its nominal length.
+    """
+    ordered = sorted((start + lead_s, text) for start, text in _spoken(ref))
+    out: list[Word] = []
+    for i, (start, text) in enumerate(ordered):
+        nominal = min(max(len(text) * cfg.word_char_s, cfg.word_nominal_min_s), cfg.word_max_s)
+        cap = start + cfg.word_max_s
+        end = min(ordered[i + 1][0], cap) if i + 1 < len(ordered) else start + nominal
+        out.append(Word(start, max(end, start), text, timing=TIMING_REFERENCE))
+    return out
+
+
 def word_cues(
-    words: list[Word], captions: list[Cue], cfg: CaptionsConfig
+    words: list[Word],
+    captions: list[Cue],
+    cfg: CaptionsConfig,
+    ref_words: list[tuple[float, str]] | None = None,
+    ref_lead_s: float = 0.0,
+    manual: bool = False,
+    fill_stats: AlignStats | None = None,
 ) -> tuple[list[Cue], int, int]:
     """Speech cues from the words' own times plus fill cues from the captions: `(cues, speech, fill)`.
 
@@ -143,6 +196,12 @@ def word_cues(
     neighbouring speech cues and to each other, and dropped when under `min_cue_s` after that. A
     spoken caption that words overlap is never repeated: the words are the text. The cues are
     neither snapped nor padded yet.
+
+    With `ref_words` (YouTube's own word starts) and an automatic track, the speech YouTube heard
+    and the engine did not is not shown as whole caption rows (rolling rows overlap and last several
+    seconds): its text comes from the reference words inside the wordless gap, each moved by
+    `ref_lead_s` onto the engine's clock and cut into cues like any words (`fill_stats` counts them).
+    Tags, and every row of a `manual` track (authored, kept whole), keep the row rule.
     """
     speech = build_cues(words, cfg)
     margin = max(cfg.align_window_s, 0.0)
@@ -154,10 +213,54 @@ def word_cues(
     speech_starts = [cue.start for cue in speech]
     fills: list[Cue] = []
     last_end = 0.0
-    for cue in sorted(captions, key=lambda c: c.start):
+    from_words = bool(ref_words) and not manual
+    ref = reference_words(ref_words or [], ref_lead_s, cfg) if from_words else []
+
+    def heard(point: float) -> bool:
+        first = bisect.bisect_right(latest_end, point - margin - MIDPOINT_EPS)
+        return first < len(timed) and starts[first] <= point + margin + MIDPOINT_EPS
+
+    ordered = sorted(captions, key=lambda c: c.start)
+
+    def unheard(cue: Cue) -> bool:
+        if is_non_speech(cue):
+            return False
+        first = bisect.bisect_right(latest_end, cue.start - margin - MIDPOINT_EPS)
+        return not (first < len(timed) and starts[first] <= cue.end + margin + MIDPOINT_EPS)
+
+    # unheard speech rows that overlap each other (rolling rows) are one stretch: (start, end)
+    stretches: list[list[float]] = []
+    stretch_of: dict[int, int] = {}
+    if from_words:
+        for i, cue in enumerate(ordered):
+            if not unheard(cue):
+                continue
+            if stretches and cue.start < stretches[-1][1]:
+                stretches[-1][1] = max(stretches[-1][1], cue.end)
+            else:
+                stretches.append([cue.start, cue.end])
+            stretch_of[i] = len(stretches) - 1
+    built_stretch: dict[int, bool] = {}
+    for i, cue in enumerate(ordered):
         if not is_non_speech(cue):
             first = bisect.bisect_right(latest_end, cue.start - margin - MIDPOINT_EPS)
             if first < len(timed) and starts[first] <= cue.end + margin + MIDPOINT_EPS:
+                continue
+        if i in stretch_of:
+            k = stretch_of[i]
+            if k not in built_stretch:
+                begin, finish = stretches[k]
+                made = _reference_fill(
+                    ref, begin, finish, speech, speech_starts, last_end, heard, cfg
+                )
+                built_stretch[k] = bool(made)
+                if made:
+                    fills.extend(made)
+                    last_end = max(last_end, made[-1].end)
+                    if fill_stats is not None:
+                        fill_stats.cues += len(made)
+                        fill_stats.words += sum(len(c.words or []) for c in made)
+            if built_stretch[k]:
                 continue
         after = bisect.bisect_right(speech_starts, cue.start)
         low = max(speech[after - 1].end if after else 0.0, last_end)
@@ -170,8 +273,39 @@ def word_cues(
     return merged, len(speech), len(fills)
 
 
-def finish_cues(cues: list[Cue], cfg: CaptionsConfig) -> list[Cue]:
-    """The last step of word-built cues: linger after the last word, then the timing limits."""
+def _reference_fill(
+    ref: list[Word],
+    begin: float,
+    end: float,
+    speech: list[Cue],
+    speech_starts: list[float],
+    last_end: float,
+    heard,
+    cfg: CaptionsConfig,
+) -> list[Cue]:
+    """Cues from the reference words of the wordless gap around `[begin, end]` (empty: none there)."""
+    after = bisect.bisect_right(speech_starts, begin)
+    low = max(speech[after - 1].end if after else 0.0, last_end)
+    high = speech[after].start if after < len(speech) else float("inf")
+    low, high = max(begin, low), min(end, high)
+    inside = [w for w in ref if low <= w.start < high and not heard(w.start)]
+    if not inside:
+        return []
+    built = build_cues(inside, cfg)
+    out = []
+    for i, cue in enumerate(built):
+        room = built[i + 1].start if i + 1 < len(built) else high
+        cue.end = min(max(cue.end, cue.start + cfg.min_cue_s), room, high)
+        if cue.words and cue.end > cue.start:
+            out.append(cue)
+    return out
+
+
+def finish_cues(cues: list[Cue], cfg: CaptionsConfig, stats: AlignStats | None = None) -> list[Cue]:
+    """The last step of word-built cues: join short cues, linger after the last word, then the timing limits."""
+    cues, merged = merge_short(cues, cfg)
+    if stats is not None:
+        stats.merged_short += merged
     return enforce_timing(pad_cues(cues, cfg), cfg)
 
 
@@ -180,16 +314,17 @@ def cues_from_words(
     captions: list[Cue],
     cfg: CaptionsConfig,
     silences: list[tuple[float, float]] | None = None,
+    **reference: object,
 ) -> tuple[list[Cue], int, int]:
     """Cues built from the words' own times; caption cues no word touches fill the gaps.
 
     Returns `(cues, speech_cues, fill_cues)` (see `word_cues`). With `silences` the boundaries are
     snapped to them before the linger is added, so a cue never ends far after its last word.
     """
-    cues, speech, fill = word_cues(words, captions, cfg)
+    cues, speech, fill = word_cues(words, captions, cfg, **reference)  # type: ignore[arg-type]
     if silences:
         cues = snap_cues(cues, silences, cfg)
-    return finish_cues(cues, cfg), speech, fill
+    return finish_cues(cues, cfg, reference.get("fill_stats")), speech, fill
 
 
 def _too_fast(text: str, start: float, end: float, cfg: CaptionsConfig) -> bool:

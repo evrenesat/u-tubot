@@ -9,7 +9,7 @@ from tests.test_asr_engines import RATE, engine_cfg, make_wav, speech
 from utubot.captions import events
 from utubot.captions.engines import AsrRouter, ChunkResult
 from utubot.captions.events import JobEvents, JobTrace
-from utubot.captions.types import Segment
+from utubot.captions.types import Segment, Word
 from utubot.config import CaptionsConfig, Config
 from utubot.db import Database
 
@@ -287,7 +287,7 @@ async def test_retries_do_not_wait_on_the_first_request_lock_of_an_auto_engine(t
 
 from dataclasses import replace as dc_replace  # noqa: E402
 
-from utubot.captions.types import TIMING_INTERPOLATED, Word  # noqa: E402
+from utubot.captions.types import TIMING_INTERPOLATED  # noqa: E402
 
 SEAM_S = 598.0
 FIVE_CHUNKS_S = 2990
@@ -555,3 +555,56 @@ async def test_without_avg_logprob_a_forced_language_must_keep_most_of_the_text(
         _r, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
         outcomes[ratio] = rechecks_of(rechecks, "outcome")[0]
     assert outcomes == {0.6: "kept", 0.9: "replaced"}
+
+
+CREDIT = "Altyazı M.K."
+CREDIT_AT_S = (2.0, 5.0)
+
+
+class Crediting(Scripted):
+    """A healthy talk with a made-up credit line over the intro music of the first chunk."""
+
+    async def transcribe_chunk(self, wav: Path, language, want_words):
+        result = await super().transcribe_chunk(wav, language, want_words)
+        if self.asked[-1][0] == 0:
+            result.segments.insert(0, Segment(*CREDIT_AT_S, CREDIT, 0.1, -0.3, 1.0))
+            result.words.insert(0, Word(CREDIT_AT_S[0], CREDIT_AT_S[1], CREDIT))
+        return result
+
+
+async def test_a_credit_line_is_dropped_even_in_a_healthy_chunk(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    fake = Crediting("mac")
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert CREDIT not in texts(result) and all(w.text != CREDIT for w in result.words)
+    assert result.stats["hallucination_drops"] == 1 and result.stats["rechecked_chunks"] == 0
+    assert len(fake.asked) == 3  # no re-listen: the chunk is fine
+    (drop,) = rechecks
+    assert drop["detail"]["action"] == "dropped" and drop["detail"]["dropped_segments"] == 1
+
+
+async def test_the_credit_drop_is_off_with_review_off(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": Crediting("mac")})
+    result, _ = await transcribe(router, wav, want_words=True, expected_language="tr", review=False)
+    assert CREDIT in texts(result) and result.stats["hallucination_drops"] == 0
+    off = build(
+        [engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": Crediting("mac")}, asr_recheck=False
+    )
+    result, _ = await transcribe(off, wav, want_words=True, expected_language="tr")
+    assert CREDIT in texts(result)
+
+
+def test_a_cached_answer_loses_its_credit_lines_without_a_new_cache_version():
+    from utubot.captions.asr import ASRResult
+    from utubot.captions.pipeline import ASR_CACHE_VERSION, drop_cached_credits
+
+    result = ASRResult(
+        words=[Word(2.0, 5.0, CREDIT), Word(6.0, 7.0, "hello")],
+        language="tr",
+        segments=[Segment(*CREDIT_AT_S, CREDIT, 0.1, -0.3, 1.0), Segment(6.0, 7.0, "hello")],
+    )
+    cleaned = drop_cached_credits(result, CaptionsConfig())
+    assert [s.text for s in cleaned.segments] == ["hello"] and len(cleaned.words) == 1
+    assert cleaned.stats["hallucination_drops"] == 1 and ASR_CACHE_VERSION == 3

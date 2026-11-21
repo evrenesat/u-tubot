@@ -48,6 +48,7 @@ from .chunking import (
     write_chunk,
 )
 from .sanity import (
+    FLAG_CREDIT,
     REASON_HALLUCINATION,
     REASON_LANGUAGE,
     REASON_SPARSE,
@@ -1012,7 +1013,7 @@ class AsrRouter:
         spent = (
             self.cfg.asr_recheck_max_requests - job.recheck.left if job.recheck is not None else 0
         )
-        return self._merge(results, spans, spent)
+        return self._merge(results, spans, spent, review and self.cfg.asr_recheck)
 
     def _expected(
         self, results: list[SpanResult], job: _Job, expected_language: str | None
@@ -1251,7 +1252,11 @@ class AsrRouter:
         return best
 
     def _merge(
-        self, results: list[SpanResult], spans: list[Span], recheck_requests: int = 0
+        self,
+        results: list[SpanResult],
+        spans: list[Span],
+        recheck_requests: int = 0,
+        review: bool = True,
     ) -> ASRResult:
         stats = StitchStats()
         segments = stitch_segments([r.segments for r in results], spans, stats)
@@ -1271,7 +1276,9 @@ class AsrRouter:
         used = list(dict.fromkeys(e.name for r in results for e in r.engines))
         models = list(dict.fromkeys(e.model for r in results for e in r.engines))
         real, interpolated = count_kinds(words)
-        segments, words, dropped = self._drop(results, spans, segments, words)
+        segments, words, dropped = (
+            self._drop(results, spans, segments, words) if review else (segments, words, [])
+        )
         dropped_s = sum(d.end - d.start for d in dropped)
         if dropped:
             events.emit(
@@ -1313,16 +1320,17 @@ class AsrRouter:
         segments: list[Segment],
         words: list[Word],
     ) -> tuple[list[Segment], list[Word], list[DroppedSpan]]:
-        """Drop what is not speech from the stitched transcript, inside the re-listened chunks only.
+        """Drop what is not speech from the stitched transcript: inside the re-listened chunks, and
+        credit lines everywhere.
 
         Working on the stitched, absolute times means a phantom removed from the tail of one chunk
         cannot survive as the overlapping copy in its neighbour (the overlap is inside both spans).
         """
         listened = [(sp.start, sp.end) for r, sp in zip(results, spans, strict=True) if r.rechecked]
-        if not listened:
-            return segments, words, []
         flags = [
-            found if any(a <= (seg.start + seg.end) / 2 < b for a, b in listened) else set()
+            found
+            if any(a <= (seg.start + seg.end) / 2 < b for a, b in listened)
+            else found & {FLAG_CREDIT}  # a credit line is dropped in every chunk
             for seg, found in zip(segments, flag_segments(segments, self.cfg), strict=True)
         ]
         reproduced = set().union(*(r.reproduced for r in results))

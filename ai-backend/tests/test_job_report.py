@@ -977,6 +977,9 @@ def test_the_report_text_folds_running_events_and_reads_every_stage():
       skippedRecheck: describe({ stage: "asr_recheck", status: "skipped", detail: { start_s: 0, end_s: 600, reason: "sparse", skipped: "budget" } }),
       dropped: describe({ stage: "asr_recheck", status: "warn", detail: { action: "dropped", dropped_segments: 12, dropped_s: 84 } }),
       regen: triggerText({ via: "regen" }),
+      refOk: describe({ stage: "ref_check", status: "ok", detail: { anchors: 412, reference_words: 1180, within_s: 0.93, median_s: 0.25, regions: [] } }),
+      refWarn: describe({ stage: "ref_check", status: "warn", detail: { anchors: 412, reference_words: 1180, within_s: 0.8, median_s: 0.25, regions: [[724, 751, 1.65]] } }),
+      refSkipped: describe({ stage: "ref_check", status: "skipped", detail: { reason: "other_script" } }),
       scoreNull: describe({ stage: "sync_score", status: "ok", detail: { speech_overlap: null, starts_in_silence: null } }),
       scoreSkipped: describe({ stage: "sync_score", status: "skipped", detail: { reason: "no_silences" } }),
       reason: [reasonText("http_503"), reasonText("too_long"), fmtSecs(0.4), fmtSecs(125)],
@@ -1000,6 +1003,9 @@ def test_the_report_text_folds_running_events_and_reads_every_stage():
         "audio_download:running",
     ]
     assert out["secs"] == 3.8
+    assert out["refOk"] == "412 of 1,180 words matched, 93% within 0.3 s"
+    assert out["refWarn"] == "1 stretch differs (12:04-12:31 by 1.4 s)"
+    assert out["refSkipped"].startswith("Not checked")
     assert out["queued"] == (
         "Requested by owner on Living room TV, asked for explicitly, background priority"
     )

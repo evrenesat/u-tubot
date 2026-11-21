@@ -176,6 +176,11 @@ def youtube_rows(truth: list[Word]) -> list[tuple[float, float, str]]:
     return sorted(rows)
 
 
+def youtube_words(truth: list[Word]) -> list[tuple[float, str]]:
+    """YouTube's word starts: every truth word, `CAPTION_LEAD_S` early (the reference leads speech)."""
+    return [(w.start - CAPTION_LEAD_S, w.text) for w in truth]
+
+
 def tone_wav(path: Path, truth: list[Word], duration_s: float) -> Path:
     """A mono WAV with a tone wherever a phrase of the truth is and silence elsewhere."""
     tone_period = TONE_RATE // TONE_HZ

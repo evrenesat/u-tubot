@@ -191,3 +191,14 @@ def test_a_doubted_segment_does_not_count_as_a_reproduced_text():
     assert repeated_texts(loop_again, CFG) == set()
     compressed = [Segment(i * 5.0, i * 5.0 + 4.0, "la la", 0.02, -0.3, 3.0) for i in range(5)]
     assert repeated_texts(compressed, CFG) == set()
+
+
+def test_a_credit_line_is_flagged_at_any_rate():
+    from utubot.captions.sanity import FLAG_CREDIT
+
+    quick = Segment(0.0, 0.5, "Altyazı M.K.", 0.1, -0.2, 1.0)
+    healthy = Segment(1.0, 5.0, "a real sentence here", 0.1, -0.2, 1.0)
+    flags = flag_segments([quick, healthy], CFG)
+    assert FLAG_CREDIT in flags[0] and not flags[1]
+    kept, _words, dropped = drop_flagged([quick, healthy], [], flags)
+    assert kept == [healthy] and len(dropped) == 1
