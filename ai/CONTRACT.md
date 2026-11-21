@@ -277,15 +277,19 @@ anybody else and for an unknown id.
 ```
 `outputs.transcript` is for `transcript` jobs and `outputs.captions` for `captions` jobs; both show what is stored for the video now
 (`from_this_job` is false when another job made it, null for rows from before the log), with the first 10 lines or cues. `can_cancel` and
-`can_retry` are true only for the job's owner. `trigger` is `{"kind":"explicit"}` or `{"kind":"auto","mode":"on_open|on_dwell",
+`can_retry` are true only for the job's owner. `trigger` is `{"kind":"explicit"}`, `{"via":"regen"}` (queued again by `utubot captions-regen`) or `{"kind":"auto","mode":"on_open|on_dwell",
 "passive":false,"max_minutes":30}`; `client` is the name a TV was linked under, `Web UI` or `API token`.
 
 `events` is the log in order of writing. `status` is `running`, `ok`, `warn`, `skipped`, `failed`, `info`, `cancelled` or `interrupted`;
 a `running` event is followed by the `ok`/`failed`/`skipped` event of the same stage, which carries `seconds`. Stages: `queued`, `promoted`,
 `started`, `gate_wait`, `caption_recheck`, `audio_download` (`format_id`, `track` = `original|dubbed|descriptive|unmarked`, `original`,
 `language`, `bytes`, `duration_s`, `source` = `downloaded|from_archive`), `media_archive` (`bytes`, `sha256` prefix; skipped when the audio
-came from the archive), `ffmpeg`, `separation` (skipped when off, the tool failed, or the ASR answer was cached), `chunking`, `asr`, `asr_chunk`, `asr_fallback`, `stitching`,
-`diarization` (`reason` and `message` when skipped; only when diarization is configured), `cues`, `align` (`mode` = `silence|merge`; boundaries move outward only),
+came from the archive), `ffmpeg`, `separation` (skipped when off, the tool failed, or the ASR answer was cached), `chunking`, `asr`, `asr_chunk` (also `word_timing`, `words`, `word_mode`), `asr_fallback` (`reason` also `no_word_times`), `stitching`,
+`word_timing` (`word_timing` = `real|mixed|interpolated`, `words`, `real`, `interpolated`, `real_share`, `zero_length`, `stretched`, `squeezed`,
+`nonmonotonic`, `words_per_s`, `speech_s`, `silences`; `warn` with `message` when the times are estimates, `skipped` with `reason` = `no_words`),
+`diarization` (`reason` and `message` when skipped; only when diarization is configured), `cues`, `align` (`mode` = `silence|words|captions_timing|merge`; `words`:
+`speech_cues`, `fill_cues`, `caption_cues`, `moved`, `words`; boundaries snap to silences; `captions_timing` is skipped with `reason` = `no_words` when there are no words),
+`sync_score` (`cues`, `speech_overlap`, `starts_in_silence`, `silence_share`; skipped with `reason` = `no_cues|no_audio_check`),
 `proofread` (`corrected`, `warned`, `chars_in`/`chars_out`, `cached`; skipped with `reason` = `off|no_llm`), `proofread_batch` (a batch that
 kept its original text — length mismatch, empty text, growth or shrink beyond `proofread_max_ratio`), `text`, `translate`, `stored`, `retry`, `finished`, `failed` (`error_class`,
 `message`, `stage`, `technical`) and `delivered` (`via` = `captions_status|vtt|transcript_status|summary|summary_panel|insight|answer|transcript_txt`,
@@ -312,8 +316,10 @@ captions come out in English whatever the source language; `"off"` keeps the sou
 ```json
 {"status":"none|queued|running|ready|failed","progress":0.0-1.0,
  "tracks":[{"lang":"en","label":"English (u·tubot, 2 speakers)",
-            "url":"/v1/videos/{id}/captions/en.vtt","speakers":2}]}
+            "url":"/v1/videos/{id}/captions/en.vtt","speakers":2,"timing_version":1}]}
 ```
+`timing_version` (additive, may be `null`) is the version of the timing scheme that made the track (`null`: made before it existed, or
+with `[captions] timing_mode = "legacy"`); clients ignore it.
 
 ### `GET /v1/videos/{id}/captions/{lang}.vtt`
 `text/vtt`. Speaker turns are prefixed `[S1] `, `[S2] ` when diarized.
@@ -546,7 +552,7 @@ when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-adm
 
 - `GET /v1/status` -> `{"version","uptime_s","youtube":{"state":"closed|half_open|open","healthy":true,"cooldown_remaining_s":0,
   "background_waiting":0,"classes":{"captions|metadata|media":{"state":"closed|half_open|open","cooldown_remaining_s":0,"strikes":0}}},
-  "asr":{"engines":[{"name","kind","model","enabled","healthy","unhealthy_for_s","languages","priority","max_parallel","background_only"}]},"usage":{"day":"2026-11-12","llm":{"calls","errors","prompt_tokens","completion_tokens"},
+  "asr":{"engines":[{"name","kind","model","enabled","healthy","unhealthy_for_s","languages","priority","max_parallel","background_only","word_times"}]},"usage":{"day":"2026-11-12","llm":{"calls","errors","prompt_tokens","completion_tokens"},
   "transcripts":{"youtube_captions","asr"},"analyses":{"used","cap"}},"jobs":{"waiting","processing","failed"}}` (counts of the caller's jobs; usage
   is for the current UTC day). `youtube.state`, `healthy` and `cooldown_remaining_s` summarise the three endpoint classes (open if any is open, the longest
   cooldown); `classes` has each one, because a limit on one does not stop the others. Engine entries never carry URLs or keys.

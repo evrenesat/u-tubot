@@ -1,5 +1,58 @@
 # DEVLOG
 
+## 2026-11-21 (subtitle timing checkpoint 1: real word times, repair, cues from words)
+
+Plan: `temp/sync-design/agent-plan.md` (CP1). Causes measured earlier: the production engine (oMLX, mlx-audio) returns words only for the
+form field `word_timestamps=true`, so `timestamp_granularities[]` got none and every word time was interpolated silently; `improve()` then
+bucketed the words into YouTube windows of +-0.4 s and dropped the rest.
+
+- Engine word modes (`AsrEngineConfig.word_timestamps` = `auto|granularities|flag|both|none`, `extra_form`, `condition_on_previous_text`).
+  `auto` sends both fields first and falls back per the plan; words are read from the top level or from `segments[].words`; segment
+  quality metrics (`no_speech_prob`, `avg_logprob`, `compression_ratio`) and word `probability` are kept. Every word carries its
+  provenance (`Word.timing`: real, interpolated, repaired, suspect); `ASRResult.word_timing` / `stats` summarise it; `asr_chunk` events
+  and `GET /v1/status` (`word_times`) show it. `asr_words_required` passes over an engine without word times (`no_word_times`).
+- `captions/wordtimes.py`: `repair_words` (monotonic, stretched, zero-length, squeezed runs) and `classify`, run on every job against the
+  audio's silences (`word_timing` event). `captions/syncscore.py`: `phrase_onsets`, `score_starts`, `self_check` (`sync_score` event).
+- Cues: `align.cues_from_words` (speech cues from the words, caption cues no word touches kept as fill cues), `merge_words_into_cues(retime=False)`
+  for estimated word times, `segment.pad_cues` (linger after the last word, anchored on it so a snapped cue is not pushed twice).
+  `timing_mode = "legacy"` restores the old path; legacy tracks get no `timing_version`.
+- ASR cache v2 (`v2:` key prefix; raw words with provenance, segment metrics, `word_timing`, `stats`); only a `real` answer is cached
+  (`cache = "not_stored_no_word_times"` otherwise). New additive `captions.timing_version` / `captions.timing` columns, `timing_version`
+  in the captions status track list.
+- CLI: `utubot captions-score` (stored track vs. windows of the archived audio transcribed by a named engine; never YouTube) and
+  `utubot captions-regen` (queues background jobs for tracks with no or an older `timing_version`).
+- Tests: `tests/synth_speech.py` (truth timeline, Whisper-style answers with DTW flaws, rolling caption rows, tone audio, scripted engine),
+  `tests/test_sync_metric.py` (real words hit 1.00 / loose 1.00; a segment-only engine hits 0.16), wordtimes, syncscore, align, engine,
+  cache, report, migration and CLI tests. 876 tests.
+
+Deviations from the plan, all small:
+
+- The metric WAV is a tone wherever the truth has a phrase (not silence): repair uses the silences, so silent audio would make every
+  stretched word look like a head stretch.
+- `cues_from_words` takes an optional `silences` and snaps before it pads; it is split into `word_cues` + `finish_cues` so the pipeline can
+  count the moved boundaries. `pad_cues` counts the linger from the last word, not the cue end.
+- `self_check.starts_in_silence` counts a start that lies more than `sync_late_s` after a silence began *and* more than `sync_early_s`
+  before it ends (a start at the end of a silence is where a cue should start).
+- The late-end check of the sync test ignores cues held to `min_cue_s`; `captions-score` drops each window's first onset (a cut, not a phrase).
+- `captions-regen --legacy` lists only tracks without any `timing_version`.
+- `auto` probe order follows the plan (both, granularities, flag); the "400 to both" test uses a server that gives words to the field.
+
+Production steps (run by the coordinator after deploy; nothing here calls YouTube except the normal caption recheck of a regenerated job):
+
+0. Answer shape (checked 2026-11-21 before deploy): one request with BOTH `word_timestamps=true` and `timestamp_granularities[]=word,segment`
+   returns the words nested in `segments[].words` (keys `word`, `start`, `end`, `probability`), so `auto` resolves to `both`. If a later
+   engine does not, set `word_timestamps = "flag"` on it.
+1. Baseline with the old tracks, per video (the reference is the local faster-whisper engine; `<ref>` is its configured name):
+   `systemd-run --scope -p Nice=19 uv run utubot --config <config> captions-score ti3gVlNnXoY --reference <ref> --windows 4 --window-s 120 --json > temp/sync-design/score/before-ti3gVlNnXoY.json`
+   and the same for `TCSgH7l2Isg` and `EQWLxadmae0`.
+2. `uv run utubot --config <config> captions-regen --video ti3gVlNnXoY --video TCSgH7l2Isg --video EQWLxadmae0` (add `--dry-run` to list
+   first), wait for the jobs, then repeat step 1 into `after-<id>.json`.
+3. Gates: Hindi episode: `word_timing` event `ok` with `real_share >= 0.99`; `loose >= 0.85`; `hit >= 0.60` and 20 points over the
+   baseline; no speech cue over `max_cue_s`; first cue starts in 4.2-4.9 s. `TCSgH7l2Isg`: `hit` and `loose` within 2 points of the
+   baseline. `EQWLxadmae0`: windows at 1500 s and 2700 s not worse (the first chunk stays broken until CP2). Record the `asr` stage
+   seconds per audio minute of the Mac engine before and after, and update its `speed_factor` when it moved by more than a quarter.
+4. If the faster-whisper reference is too noisy: also `--reference <mac engine> --window-s 30 --windows 12`; report both, tune no gate.
+
 ## 2026-11-21 (subtitle language setting)
 
 - New per-user setting `captions_translate_to` (settings section `transcripts`, web UI Captions page, "Subtitle language" (empty with the server default as placeholder)):
