@@ -93,6 +93,10 @@ cuts evenly spaced windows (or windows starting at each `--at`) of the *archived
 is to each phrase onset of that reference: `hit` (cue start within -`sync_early_s` .. +`sync_late_s`, 0.5 / 0.3 s), `loose` (within
 `sync_loose_s`, 1 s) and the median and spread of the error. `--lang` picks the track (default: the newest with a `timing_version`, else the newest); the output says which track was scored and gives
 its first cue start and longest cue. The reference is the engine's own answer: the chunk review below does not run on it unless `--review` is given. It never touches YouTube and refuses when the audio is not archived.
+The spoken language is the transcript's with a YouTube track suffix (`-orig`, `-auto`, `-asr`) removed (`hi-orig` is `hi`) and is *forced* on the reference; each window reports the
+language the engine answered in and the Latin share of its words, and `reference_language_ok` is false (the command prints a warning) when any window answered in another language:
+the onsets of such a reference say nothing about the speech. The JSON also has a `words` block (`null` without cached engine words): the video's cached raw engine words compared token by token with the
+windows' words (`matched`, `matched_share`, `median_s`, `p10_s`, `p90_s`, `within_s` within `sync_late_s`). It checks the engine against itself with different windowing (chunk seams, long-chunk drift), not a systematic bias.
 `utubot captions-regen [--video ID]... [--legacy] [--limit N] [--dry-run]` queues a background captions job for each stored track
 whose `timing_version` is missing or older than the current scheme (`--legacy`: only tracks that have none), at most
 `regen_limit_default` (20) per run unless `--limit` says otherwise; a track is not listed when a newer track of the video already has

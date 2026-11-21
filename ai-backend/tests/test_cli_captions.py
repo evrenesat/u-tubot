@@ -9,11 +9,19 @@ from pathlib import Path
 import pytest
 
 from tests.synth_speech import make_timeline, phrases, tone_wav
-from utubot.captions.asr import ffmpeg_available
+from utubot.captions.asr import ASRResult, ffmpeg_available, normalize_language
 from utubot.captions.engines import ChunkResult, parse_verbose_json
-from utubot.captions.pipeline import TIMING_VERSION
+from utubot.captions.pipeline import (
+    ASR_CACHE_STAGE,
+    ASR_CACHE_VERSION,
+    TIMING_VERSION,
+    asr_cache_key,
+    asr_to_cache,
+)
 from utubot.captions.score import ScoreError, score_track, window_starts
 from utubot.captions.segment import fmt_vtt_time
+from utubot.captions.stages import StageCache
+from utubot.captions.types import Word
 from utubot.cli import main
 from utubot.config import AsrEngineConfig, Config, load_config
 from utubot.db import Database
@@ -104,10 +112,12 @@ def test_window_starts_are_evenly_spaced_inside_the_audio():
 class WindowEngine:
     """Answers the windows in order from the truth, as a perfect reference engine would."""
 
-    def __init__(self, truth, begins):
+    def __init__(self, truth, begins, answers="english"):
         self.truth, self.begins, self.calls = truth, list(begins), 0
+        self.answers, self.asked = answers, []
 
     async def transcribe_chunk(self, wav: Path, language, want_words) -> ChunkResult:
+        self.asked.append(language)
         begin = self.begins[self.calls]
         self.calls += 1
         with wave.open(str(wav), "rb") as fh:
@@ -118,7 +128,7 @@ class WindowEngine:
             for w in inside
         ]
         body = {
-            "language": "english",
+            "language": self.answers,
             "text": " ".join(w.text for w in inside),
             "segments": [{"start": 0.0, "end": length, "text": " ".join(w.text for w in inside)}],
             "words": words,
@@ -255,3 +265,74 @@ async def test_captions_score_picks_the_track_and_the_window_starts(tmp_path):
         engine_factory=lambda e: engine,
     )  # fmt: skip
     assert other["track"]["lang"] == "tr" and other["track"]["timing_version"] is None
+
+
+def test_track_suffixes_are_stripped_from_the_spoken_language():
+    assert normalize_language("hi-orig") == "hi"
+    assert normalize_language("en-auto") == "en" and normalize_language("pt-BR") == "pt"
+    assert normalize_language("zh-hans") == "zh-hans" and normalize_language("Turkish") == "tr"
+    assert normalize_language(None) is None and normalize_language("orig") == "orig"
+
+
+def _scored_setup(tmp_path, lang_row="en"):
+    truth = make_timeline(3, TRACK_S)
+    audio = tone_wav(tmp_path / "talk.wav", truth, TRACK_S)
+    cfg = Config()
+    cfg.server.data_dir = str(tmp_path / "data")
+    cfg.captions.asr_engines = [
+        AsrEngineConfig(name="ref", url="http://ref.example/v1/audio/transcriptions")
+    ]
+    db = Database(tmp_path / "t.sqlite")
+    db.execute(
+        "INSERT INTO captions(video_id,lang,label,speakers,vtt,created_at) VALUES(?,?,?,?,?,?)",
+        [VID, "en", "l", 0, vtt_of(truth), 1.0],
+    )
+    db.execute(
+        "INSERT INTO transcripts(video_id,lang,source,text,fetched_at) VALUES(?,?,?,?,?)",
+        [VID, lang_row, "captions", "t", 1.0],
+    )
+    MediaArchive(cfg, db).store(VID, audio, format_id="1", codec="pcm")
+    return truth, cfg, db
+
+
+def _cache_words(db, words):
+    key = asr_cache_key("sha", True, None, "none")
+    result = ASRResult(words=words, language="en", word_timing="real")
+    StageCache(db).put(VID, ASR_CACHE_STAGE, key, asr_to_cache(result))
+    assert key.startswith(f"v{ASR_CACHE_VERSION}:")
+
+
+@pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg is not installed")
+async def test_captions_score_forces_the_base_language_and_flags_a_wrong_answer(tmp_path):
+    truth, cfg, db = _scored_setup(tmp_path, lang_row="hi-orig")
+    begins = window_starts(TRACK_S, WINDOWS, WINDOW_S)
+    engine = WindowEngine(truth, begins)  # answers "english" to a Hindi request
+    doc = await score_track(
+        cfg, db, VID, reference="ref", windows=WINDOWS, window_s=WINDOW_S,
+        engine_factory=lambda e: engine,
+    )  # fmt: skip
+    assert set(engine.asked) == {"hi"} and doc["spoken_language"] == "hi"
+    assert doc["reference_language_ok"] is False and doc["words"] is None
+    assert all(win["language"] == "en" and win["latin_share"] == 1.0 for win in doc["windows"])
+
+
+@pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg is not installed")
+async def test_captions_score_words_block_finds_a_shifted_cache(tmp_path, capsys):
+    truth, cfg, db = _scored_setup(tmp_path)
+    begins = window_starts(TRACK_S, WINDOWS, WINDOW_S)
+    _cache_words(db, truth)
+    doc = await score_track(
+        cfg, db, VID, reference="ref", windows=WINDOWS, window_s=WINDOW_S,
+        engine_factory=lambda e: WindowEngine(truth, begins),
+    )  # fmt: skip
+    assert doc["reference_language_ok"] is True
+    assert doc["words"]["matched"] > 5 and doc["words"]["within_s"] >= 0.95
+    shifted = [Word(w.start + 1.0, w.end + 1.0, w.text) for w in truth]
+    _cache_words(db, shifted)
+    late = await score_track(
+        cfg, db, VID, reference="ref", windows=WINDOWS, window_s=WINDOW_S,
+        engine_factory=lambda e: WindowEngine(truth, begins),
+    )  # fmt: skip
+    assert late["words"]["within_s"] < 0.1 and late["words"]["median_s"] == pytest.approx(
+        1.0, abs=0.05
+    )
