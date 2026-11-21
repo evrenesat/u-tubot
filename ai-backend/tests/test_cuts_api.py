@@ -573,6 +573,98 @@ class TestCapsAndConfig:
         assert r.status_code == 400 and "cut preset" in r.json()["error"]
 
 
+class TestSavedPresets:
+    async def test_a_saved_preset_is_a_chip_and_builds_under_its_name(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 2, "to": 4, "label": "Dessert"}],
+            "summary": "s",
+            "kept_s": 15,
+        }
+        saved = await cuts_env.client.post(
+            "/v1/cut-presets", json={"label": "Dessert only", "prompt": "Keep only the dessert."}
+        )
+        assert saved.status_code == 200, saved.text
+        preset = saved.json()["preset"]
+        assert preset["label"] == "Dessert only" and preset["id"].startswith("cut-mine-")
+        listing = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+        assert any(
+            p["id"] == preset["id"] and p["label"] == "Dessert only" for p in listing["presets"]
+        )
+        rid = (await post_cut(cuts_env, preset=preset["id"])).json()["request_id"]
+        doc = await wait_ready(cuts_env, rid)
+        assert doc["state"] == "ready"
+        # The label the owner saved rides along with the built cut (not the id).
+        assert doc["cut"]["label"] == "Dessert only"
+        assert doc["cut"]["preset_id"] == preset["id"]
+
+    async def test_the_same_name_and_description_replace_not_duplicate(self, cuts_env):
+        body = {"label": "Dessert only", "prompt": "Keep only the dessert."}
+        first = (await cuts_env.client.post("/v1/cut-presets", json=body)).json()["preset"]
+        second = (await cuts_env.client.post("/v1/cut-presets", json=body)).json()["preset"]
+        assert first["id"] == second["id"]
+        own = (await cuts_env.client.get("/v1/cut-presets")).json()["presets"]
+        assert [p["id"] for p in own] == [first["id"]]
+
+    async def test_saved_presets_belong_to_their_owner_and_delete(self, cuts_env):
+        made = (
+            await cuts_env.client.post(
+                "/v1/cut-presets", json={"label": "Mine", "prompt": "Keep the demo."}
+            )
+        ).json()["preset"]
+        partner = httpx_client(cuts_env, OTHER_TOKEN)
+        assert (await partner.get("/v1/cut-presets")).json()["presets"] == []
+        assert (await partner.delete(f"/v1/cut-presets/{made['id']}")).status_code == 404
+        assert (await cuts_env.client.delete(f"/v1/cut-presets/{made['id']}")).status_code == 200
+        # The last saved preset deletes the set, so the built-ins are all that remain.
+        assert (await cuts_env.client.get("/v1/cut-presets")).json()["presets"] == []
+        listing = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+        assert all(not p["id"].startswith("cut-mine-") for p in listing["presets"])
+
+    async def test_a_builtin_preset_cannot_be_deleted_from_the_saved_list(self, cuts_env):
+        r = await cuts_env.client.delete("/v1/cut-presets/cut-no-filler")
+        assert r.status_code == 404
+        listing = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+        assert any(p["id"] == "cut-no-filler" for p in listing["presets"])
+
+    async def test_saved_presets_need_a_name_and_a_description(self, cuts_env):
+        for body in (
+            {"label": "", "prompt": "Keep the demo."},
+            {"label": "Name", "prompt": ""},
+            {"label": "Name", "prompt": " "},
+        ):
+            r = await cuts_env.client.post("/v1/cut-presets", json=body)
+            assert r.status_code == 400, (body, r.text)
+
+    async def test_cut_presets_stay_out_of_the_summary_prompt_lists(self, cuts_env):
+        await cuts_env.client.post(
+            "/v1/cut-presets", json={"label": "Mine", "prompt": "Keep the demo."}
+        )
+        listing = (await cuts_env.client.get("/v1/prompts")).json()
+        assert all(s["id"] != "cut-presets" for s in listing["sets"])
+        for pset in listing["sets"]:
+            assert all(not key.endswith("cut-mine") for key in [p["key"] for p in pset["prompts"]])
+
+    async def test_the_saved_list_has_a_cap(self, cuts_env):
+        import utubot.prompts as prompts_mod
+
+        old = prompts_mod.MAX_CUT_PRESETS
+        prompts_mod.MAX_CUT_PRESETS = 2
+        try:
+            await cuts_env.client.post("/v1/cut-presets", json={"label": "One", "prompt": "A."})
+            await cuts_env.client.post("/v1/cut-presets", json={"label": "Two", "prompt": "B."})
+            r = await cuts_env.client.post(
+                "/v1/cut-presets", json={"label": "Three", "prompt": "C."}
+            )
+            assert r.status_code == 400 and "delete one" in r.text
+            again = await cuts_env.client.post(
+                "/v1/cut-presets", json={"label": "One", "prompt": "A."}
+            )
+            assert again.status_code == 200
+        finally:
+            prompts_mod.MAX_CUT_PRESETS = old
+
+
 def httpx_client(env, token: str):
     import httpx
 

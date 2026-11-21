@@ -48,6 +48,7 @@ from .models import (
     AssessRequest,
     CaptionsRequest,
     CutCreateRequest,
+    CutPresetSave,
     CutPromptBody,
     DefaultRequest,
     FeedbackRequest,
@@ -107,7 +108,7 @@ UI_TYPES = {
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 CSRF_HEADER = "x-csrf-token"
 CSP = (
-    "default-src 'none'; script-src 'self'; style-src 'self';"
+    "default-src 'none'; script-src 'self'; style-src 'self'; manifest-src 'self';"
     " img-src 'self' data: https://i.ytimg.com; "
     "connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; "
     "frame-ancestors 'none'"
@@ -117,7 +118,9 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    # The phone records the cut description only when the owner taps Speak; the page asks for
+    # the microphone then, so this origin must be allowed to.
+    "Permissions-Policy": "camera=(), microphone=(self), geolocation=()",
 }
 RECENT_JOBS_LIMIT = 20
 WEB_CLIENT = "Web UI"
@@ -463,6 +466,24 @@ def create_app(
     async def index():
         return HTMLResponse(
             (WEB_DIR / "index.html").read_text(), headers={"Cache-Control": "no-cache"}
+        )
+
+    @app.get("/manifest.webmanifest")
+    async def web_manifest():
+        """The PWA manifest: installable, and the Android Share button's target (`/shared`)."""
+        return Response(
+            (WEB_DIR / "manifest.webmanifest").read_text(),
+            media_type="application/manifest+json",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @app.get("/sw.js")
+    async def service_worker():
+        """The service worker that takes a shared YouTube link and opens the cut sheet."""
+        return Response(
+            (WEB_DIR / "sw.js").read_text(),
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
         )
 
     @app.get("/ui/{path:path}")
@@ -975,6 +996,30 @@ def create_app(
     async def cuts_dismiss(request_id: str, user: UserConfig = Depends(current_user)):
         """Take a request off the phone queue (a building one is stopped)."""
         svc.cuts.dismiss(request_id, user.name)
+        return {"ok": True}
+
+    @app.get("/v1/cut-presets")
+    async def cut_presets(user: UserConfig = Depends(current_user)):
+        """The owner's own cut presets: saved on the phone, listed with their built-ins."""
+        return {
+            "presets": [
+                {"id": p.id, "label": p.label} for p in svc.prompts.own_cut_presets(user.name)
+            ]
+        }
+
+    @app.post("/v1/cut-presets")
+    async def cut_preset_save(body: CutPresetSave, user: UserConfig = Depends(current_user)):
+        """Save a description as the owner's preset, so the cut sheet offers it as a chip."""
+        try:
+            prompt = svc.prompts.save_cut_preset(user.name, body.label, body.prompt)
+        except PromptError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"preset": {"id": prompt.id, "label": prompt.label}}
+
+    @app.delete("/v1/cut-presets/{preset_id}")
+    async def cut_preset_delete(preset_id: str, user: UserConfig = Depends(current_user)):
+        if not svc.prompts.delete_cut_preset(user.name, preset_id):
+            raise HTTPException(404, "no saved cut preset with that id")
         return {"ok": True}
 
     @app.get("/cuts/{request_id}")

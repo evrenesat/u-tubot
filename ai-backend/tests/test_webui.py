@@ -15,6 +15,8 @@ WEB = Path(__file__).parents[1] / "src" / "utubot" / "web"
 PUBLIC = {
     ("GET", "/"),
     ("GET", "/ui/{path:path}"),
+    ("GET", "/manifest.webmanifest"),
+    ("GET", "/sw.js"),
     ("GET", "/v1/health"),
     ("GET", "/setup.json"),
     ("POST", "/v1/pair"),

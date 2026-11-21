@@ -19,6 +19,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SponsorBlockData;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 
 import java.util.ArrayList;
@@ -387,5 +388,18 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         return hours > 0 ? String.format(Locale.ROOT, "%d:%02d:%02d", hours, minutes, rest)
                 : String.format(Locale.ROOT, "%d:%02d", minutes, rest);
+    }
+
+    /**
+     * One kept part of a cut as the TV parts list shows it: "2:10 - 3:05  The demo"
+     */
+    public static String formatPart(CutPart part) {
+        if (part == null) {
+            return "";
+        }
+
+        String label = part.label != null ? part.label.trim() : "";
+
+        return formatLength(part.startMs) + " - " + formatLength(part.endMs) + (label.isEmpty() ? "" : "  " + label);
     }
 }

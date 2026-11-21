@@ -78,6 +78,13 @@ class CutPromptBody(BaseModel):
     prompt: str = Field(max_length=2000)
 
 
+class CutPresetSave(BaseModel):
+    """A description the owner saves as his own cut preset (phone only in v1)."""
+
+    label: str = Field(min_length=1, max_length=60)
+    prompt: str = Field(min_length=1, max_length=2000)
+
+
 class PairRequest(BaseModel):
     code: str = Field(max_length=16)
     device: str = Field(default="device", max_length=200)

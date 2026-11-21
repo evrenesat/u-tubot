@@ -24,6 +24,12 @@ TASK_SUMMARY = "summary"
 TASK_GLANCE = "glance"
 TASK_CUTS = "cuts"
 TASKS = (TASK_SUMMARY, TASK_GLANCE, TASK_CUTS)
+# The user's own director's-cut presets live in this prompt set; only the phone's Cuts tab
+# manages them (plan v2: saved presets are phone-only in v1).
+CUT_SET_ID = "cut-presets"
+CUT_SET_NAME = "My cuts"
+MAX_CUT_PRESETS = 20
+MAX_CUT_LABEL = 60
 SET_FORMAT_VERSION = 1
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 TEMPLATE_VARS = (
@@ -492,23 +498,28 @@ class PromptStore:
         panel = self.panel_key(user)
         sets = []
         for pset, source_url in self.list_sets(user):
+            shown = [
+                {
+                    "id": p.id,
+                    "key": f"{pset.id}/{p.id}",
+                    "label": p.label,
+                    "default": f"{pset.id}/{p.id}" == default,
+                    "panel_default": f"{pset.id}/{p.id}" == panel,
+                }
+                for p in pset.prompts
+                if p.task != TASK_CUTS
+            ]
+            # A set that only holds cut presets belongs to the Cuts tab (phone-only), never to
+            # the summary prompt pickers.
+            if not shown:
+                continue
             sets.append(
                 {
                     "id": pset.id,
                     "name": pset.name,
                     "version": pset.version,
                     "source_url": source_url,
-                    "prompts": [
-                        {
-                            "id": p.id,
-                            "key": f"{pset.id}/{p.id}",
-                            "label": p.label,
-                            "default": f"{pset.id}/{p.id}" == default,
-                            "panel_default": f"{pset.id}/{p.id}" == panel,
-                        }
-                        for p in pset.prompts
-                        if p.task != TASK_CUTS
-                    ],
+                    "prompts": shown,
                 }
             )
         return {"default": default, "panel_default": panel, "sets": sets}
@@ -526,3 +537,64 @@ class PromptStore:
                 if p.task == TASK_CUTS:
                     out[p.id] = p
         return list(out.values())
+
+    def own_cut_presets(self, user: str) -> list[Prompt]:
+        """The presets this user saved on the phone, in the order they were saved."""
+        found = self.get_set(user, CUT_SET_ID)
+        if not found:
+            return []
+        return [p for p in found[0].prompts if p.task == TASK_CUTS]
+
+    def save_cut_preset(self, user: str, label: str, prompt: str) -> Prompt:
+        """Save a description as the user's own cut preset. The same label and description
+        replace the earlier copy instead of piling duplicates."""
+        label = (label or "").strip()
+        prompt = (prompt or "").strip()
+        if not label:
+            raise PromptError("a saved preset needs a name")
+        if len(label) > MAX_CUT_LABEL:
+            raise PromptError(f"the preset name is longer than {MAX_CUT_LABEL} characters")
+        if not prompt:
+            raise PromptError("a saved preset needs the description of the cut")
+        if len(prompt) > MAX_TEXT_CHARS:
+            raise PromptError(f"the description is longer than {MAX_TEXT_CHARS} characters")
+        made = Prompt(
+            id="cut-mine-" + hashlib.sha256((label + "\0" + prompt).encode()).hexdigest()[:12],
+            label=label,
+            system="",
+            template=prompt,
+            max_tokens=2500,
+            task=TASK_CUTS,
+        )
+        own = self.own_cut_presets(user)
+        if not any(p.id == made.id for p in own) and len(own) >= MAX_CUT_PRESETS:
+            raise PromptError(f"at most {MAX_CUT_PRESETS} saved presets; delete one first")
+        prompts = [p for p in own if p.id != made.id]
+        prompts.append(made)
+        pset = PromptSet(
+            tubeai_prompt_set=SET_FORMAT_VERSION,
+            id=CUT_SET_ID,
+            name=CUT_SET_NAME,
+            version=str(len(prompts)),
+            prompts=prompts,
+        )
+        self.save_set(user, pset)
+        return made
+
+    def delete_cut_preset(self, user: str, prompt_id: str) -> bool:
+        """Remove one saved preset; the last one deletes the set."""
+        own = [p for p in self.own_cut_presets(user) if p.id != prompt_id]
+        if len(own) == len(self.own_cut_presets(user)):
+            return False
+        if not own:
+            self.db.execute("DELETE FROM prompt_sets WHERE user=? AND set_id=?", [user, CUT_SET_ID])
+            return True
+        pset = PromptSet(
+            tubeai_prompt_set=SET_FORMAT_VERSION,
+            id=CUT_SET_ID,
+            name=CUT_SET_NAME,
+            version=str(len(own)),
+            prompts=own,
+        )
+        self.save_set(user, pset)
+        return True

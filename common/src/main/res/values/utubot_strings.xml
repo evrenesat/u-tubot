@@ -126,6 +126,7 @@
     <string name="utubot_cut_state_needs_transcript">Needs a transcript</string>
     <string name="utubot_cut_state_ready_length">%1$s of %2$s</string>
     <string name="utubot_cut_state_ready_on">%s (on)</string>
+    <string name="utubot_cut_parts">Kept parts: %s</string>
     <string name="utubot_cut_state_failed">Failed: %s</string>
     <string name="utubot_cut_state_failed_plain">Failed</string>
     <string name="utubot_cut_not_configured">The server has no model for cuts</string>

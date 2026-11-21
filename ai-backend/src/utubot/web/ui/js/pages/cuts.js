@@ -198,14 +198,69 @@ function newCutCard(onCreated) {
   );
 }
 
+// A link shared from YouTube (Android's Share button) is held by the service worker; the page
+// takes it once and starts a waiting request for that video, so the sheet opens right away.
+function takeSharedItem() {
+  if (!("serviceWorker" in navigator)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    navigator.serviceWorker.ready
+      .then((reg) => {
+        const worker = navigator.serviceWorker.controller || reg.active;
+        if (!worker) {
+          resolve(null);
+          return;
+        }
+        const channel = new MessageChannel();
+        channel.port1.onmessage = (event) => resolve((event.data && event.data.value) || null);
+        worker.postMessage({ type: "take-share" }, [channel.port2]);
+        setTimeout(() => resolve(null), 1500);
+      })
+      .catch(() => resolve(null));
+  });
+}
+
+async function startSharedCut(value) {
+  const id = videoIdFrom(value);
+  if (!id) {
+    toast("The shared item has no YouTube link; paste the link in New cut.", "bad");
+    return;
+  }
+  try {
+    const r = await api("/v1/videos/" + id + "/cuts", { method: "POST", body: { await_prompt: true } });
+    location.hash = "#/cuts/" + r.request_id;
+  } catch (err) {
+    toast(errorText(err), "bad");
+  }
+}
+
 async function queue(view) {
   const host = h("div", { class: "stack" });
   const listHost = h("div", { class: "stack" });
+  const presetHost = h("div", { class: "stack" });
+
+  function presetRow(p, reload) {
+    return h(
+      "div",
+      { class: "row between nowrap" },
+      h("span", { text: p.label }),
+      button(
+        "Delete",
+        async () => {
+          if (!window.confirm("Delete the preset " + p.label + "?")) return;
+          await api("/v1/cut-presets/" + encodeURIComponent(p.id), { method: "DELETE" });
+          toast("Preset deleted");
+          await reload();
+        },
+        { kind: "danger" },
+      ),
+    );
+  }
 
   async function load() {
-    const { requests } = await api("/v1/cut-requests");
-    const sorted = [...requests].sort((a, b) => (GROUP[a.state] ?? 9) - (GROUP[b.state] ?? 9));
+    const [queueDoc, ownDoc] = await Promise.all([api("/v1/cut-requests"), api("/v1/cut-presets")]);
+    const sorted = [...queueDoc.requests].sort((a, b) => (GROUP[a.state] ?? 9) - (GROUP[b.state] ?? 9));
     mount(listHost, sorted.length ? sorted.map((r) => cutCard(r, load)) : empty("No cuts yet. Paste a video above, or start one from the TV."));
+    mount(presetHost, ownDoc.presets.length ? ownDoc.presets.map((p) => presetRow(p, load)) : empty("No saved presets yet. Save a description as one from a cut sheet."));
   }
 
   function draw() {
@@ -215,12 +270,15 @@ async function queue(view) {
       newCutCard((id) => {
         location.hash = "#/cuts/" + id;
       }),
+      card("Saved presets", presetHost),
       card("Your cuts", listHost),
     );
   }
 
   mount(view, host);
   draw();
+  const shared = await takeSharedItem();
+  if (shared) await startSharedCut(shared);
   await load().catch(() => {});
   return every(3000, () => load().catch(() => {}));
 }
@@ -260,11 +318,18 @@ function micButton(box) {
   // seconds). The button is disabled then, so a second tap cannot start another acquisition, and
   // cancel() marks the attempt dead so the stream that arrives late is stopped, not recorded.
   let starting = false;
+  // True while the recording is on its way to /v1/speech. A tap is refused then, so a cancel
+  // during the upload cannot reset the button for a new recording while the old request's
+  // finally would wipe that new recorder's chunks.
+  let uploading = false;
+  // Each recording is one attempt; cancel() moves to the next one, so a late `stop` event from
+  // an abandoned recorder cannot upload after a new attempt has begun.
+  let attempt = 0;
 
   function resetButton() {
-    btn.textContent = starting ? "Listening…" : "Speak";
+    btn.textContent = starting ? "Listening…" : uploading ? "Uploading…" : "Speak";
     btn.classList.remove("on");
-    btn.disabled = starting;
+    btn.disabled = starting || uploading;
   }
 
   function releaseStream() {
@@ -284,14 +349,15 @@ function micButton(box) {
 
   function cancel() {
     canceled = true;
+    attempt += 1; // a stop event from the abandoned attempt is ignored from now on
     stopRecording();
     releaseStream();
     resetButton();
   }
 
   async function sendRecording() {
-    btn.disabled = true;
-    btn.textContent = "Uploading…";
+    uploading = true;
+    resetButton();
     const type = (recorder && recorder.mimeType) || (chunks[0] && chunks[0].type) || "audio/webm";
     const blob = new Blob(chunks, { type });
     releaseStream();
@@ -320,6 +386,7 @@ function micButton(box) {
     } catch (err) {
       toast(errorText(err), "bad");
     } finally {
+      uploading = false;
       resetButton();
       recorder = null;
       chunks = [];
@@ -335,9 +402,10 @@ function micButton(box) {
       toast("This browser cannot record sound; type the cut instead.", "bad");
       return;
     }
-    if (starting) return;
+    if (starting || uploading) return;
     starting = true;
     canceled = false;
+    const myAttempt = ++attempt;
     btn.disabled = true;
     btn.textContent = "Listening…";
     let got;
@@ -373,6 +441,9 @@ function micButton(box) {
       if (event.data && event.data.size) chunks.push(event.data);
     });
     recorder.addEventListener("stop", () => {
+      // A new attempt (the owner tapped Speak again after a cancel) owns the globals now; this
+      // abandoned attempt must not upload its chunks or clear the new recorder.
+      if (myAttempt !== attempt) return;
       if (canceled) {
         resetButton();
         recorder = null;
@@ -415,6 +486,9 @@ async function sheet(view, requestId) {
   // One mic button per sheet, reused across redraws like the box; `cancel()` ties the recorder
   // and the microphone to the sheet's lifecycle.
   let mic = null;
+  // The preset name field also lives across redraws, so a name typed while the metadata arrives
+  // survives the poll.
+  let nameBox = null;
 
   function stopMic() {
     if (mic) {
@@ -457,6 +531,29 @@ async function sheet(view, requestId) {
     }
   }
 
+  async function savePreset() {
+    const text = (box && box.value || "").trim();
+    const label = (nameBox && nameBox.value || "").trim();
+    if (!text) {
+      toast("Describe the cut in the box first; the preset saves that description.", "bad");
+      return;
+    }
+    if (!label) {
+      toast("Name the preset first.", "bad");
+      return;
+    }
+    try {
+      await api("/v1/cut-presets", { method: "POST", body: { label, prompt: text } });
+      presets = null;
+      waitingSig = null;
+      nameBox.value = "";
+      toast("Saved; it is a chip on this sheet now.");
+      await draw();
+    } catch (err) {
+      toast(errorText(err), "bad");
+    }
+  }
+
   async function dismissAndLeave(req) {
     cancelMic();
     try {
@@ -485,6 +582,7 @@ async function sheet(view, requestId) {
       // Reset the redraw signature so the next successful poll replaces the error card instead
       // of hitting the "same sheet" early return forever.
       box = null;
+      nameBox = null;
       waitingSig = null;
       stopMic();
       mount(host, h("h1", { class: "page-title", text: "Cut" }), card(null, note(errorText(err), "bad"), h("a", { class: "btn sec", href: "#/cuts" }, h("span", { text: "Back to the queue" }))));
@@ -540,6 +638,12 @@ async function sheet(view, requestId) {
               ? "Speak or type; the recording limit is set on the server."
               : "Type the cut; voice needs a speech engine on the server.",
           ),
+          field(
+            "Save this description as a preset",
+            nameBox || (nameBox = textInput("", { placeholder: "Preset name", maxlength: 60 })),
+            "Only you see the saved preset, and only on the phone; it becomes a chip here.",
+          ),
+          button("Save as preset", () => savePreset(), { kind: "sec", full: true }),
           sheetActions(
             req,
             speech && speech.speech ? (mic || (mic = micButton(box))).btn : null,
@@ -555,6 +659,7 @@ async function sheet(view, requestId) {
       return;
     }
     box = null;
+    nameBox = null;
     waitingSig = null;
     stopMic();
     if (req.state === "building" || req.state === "needs_transcript") {

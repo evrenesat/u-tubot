@@ -140,10 +140,23 @@ window.addEventListener("utubot:signed-out", () => {
   if (session.user) onSignedOut();
 });
 
+// The service worker serves Android's Share target (YouTube -> Share -> u·tubot); nothing else
+// on the site depends on it. A plain-http address (not localhost) cannot register one, and the
+// app still works there.
+async function registerWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  } catch {
+    /* no secure context, or the browser refused; paste a link instead */
+  }
+}
+
 async function boot() {
   applyTheme();
   checkHealth();
   setInterval(checkHealth, 30000);
+  void registerWorker();
   try {
     await loadSession();
   } catch (err) {

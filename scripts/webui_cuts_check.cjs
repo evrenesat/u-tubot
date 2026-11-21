@@ -25,16 +25,20 @@ const BUILD_WAIT_MS = 20000;
 const DEMO_TOKEN = "utb_demo_owner";
 // Video ids with a per-run nonce: a rerun after a killed run must not hit the demo's cached
 // video metadata or the shared cut cache of that killed run (the cache key has the prompt in it,
-// so the same prompt would jump straight to ready and skip the building stage).
-const NONCE = String(Date.now() % 10);
-const VID_BUILD = "cccccccccc" + NONCE;
-const VID_FAIL = "dddddddddd" + NONCE;
-const VID_WAIT = "eeeeeeeee" + NONCE + NONCE;
-const VID_MIC_REDRAW = "ffffffffff" + NONCE;
-const VID_MIC_BUILD = "gggggggggg" + NONCE;
-const VID_MIC_LEAVE = "hhhhhhhhhh" + NONCE;
-const VID_MIC_ACQUIRE = "iiiiiiiiii" + NONCE;
-const VID_MIC_DOUBLE = "jjjjjjjjjj" + NONCE;
+// so the same prompt would jump straight to ready and skip the building stage). Five base36
+// digits (every millisecond differs) plus a six-letter per-check prefix fill the eleven-character
+// video id, so there are far more values than the ten a modulo-10 digit gave (EVR-514 note 1).
+const NONCE = (Date.now() % (36 ** 5)).toString(36).padStart(5, "0");
+const VID_BUILD = "cccccc" + NONCE;
+const VID_FAIL = "dddddd" + NONCE;
+const VID_WAIT = "eeeeee" + NONCE;
+const VID_MIC_REDRAW = "ffffff" + NONCE;
+const VID_MIC_BUILD = "gggggg" + NONCE;
+const VID_MIC_LEAVE = "hhhhhh" + NONCE;
+const VID_MIC_ACQUIRE = "iiiiii" + NONCE;
+const VID_MIC_DOUBLE = "jjjjjj" + NONCE;
+const VID_SHARE = "kkkkkk" + NONCE;
+const VID_PRESET = "llllll" + NONCE;
 const problems = [];
 let checks = 0;
 let browser = null;
@@ -233,15 +237,57 @@ function currentRequest(page, ctx) {
 
     // Voice: Speak -> Stop sends the fake recording to POST /v1/speech; the text lands in the box
     // and stays editable, and nothing is sent automatically (the request stays waiting).
+    // Hold the upload for a moment: the pause is the window where an owner might tap Speak again
+    // (EVR-514 note 2), and the mic must stay disabled until the text arrives.
+    await page.route("**/v1/speech", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      await route.continue();
+    });
     await page.getByRole("button", { name: "Speak", exact: true }).click();
     await page.waitForTimeout(300);
     await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await page.waitForTimeout(250);
+    const uploadButton = await page.evaluate(() => {
+      const b = document.querySelector(".mic");
+      return { text: b.textContent, disabled: b.disabled };
+    });
+    ok(uploadButton.disabled && uploadButton.text.includes("Uploading"), "the mic is disabled while the recording uploads");
+    const acquisitionsBefore = await page.evaluate(() => window.__getumCalls || 0);
+    await page.evaluate(() => document.querySelector(".mic").click());
+    ok((await page.evaluate(() => window.__getumCalls || 0)) === acquisitionsBefore, "a tap while uploading starts no second acquisition");
     await page.waitForFunction(() => document.querySelector("textarea").value.includes("Hello there"), undefined, { timeout: WAIT_MS });
+    await page.unroute("**/v1/speech");
     ok((await box.inputValue()).includes("Hello there. How are you doing today?"), "the spoken text lands in the box");
     ok((await page.evaluate(() => document.activeElement && document.activeElement.tagName)) === "TEXTAREA", "the box is focused after the speech");
     const stillWaiting = await currentRequest(page, ctx);
     ok(stillWaiting && stillWaiting.state === "waiting", "the spoken text was not sent automatically");
     ok((await page.locator("#view").textContent()).includes("Looking up the video"), "the title is not known yet and says so");
+
+    // EVR-514 note 2: a Build that fails while the recording still uploads must keep the mic
+    // disabled. The old resetButton cleared it, so a Speak tap there started a second stream and
+    // the first upload's finally then wiped the live recorder (no Stop control). Here the PUT is
+    // failed at the page level and the upload is held, so the window is deterministic.
+    await page.route("**/v1/speech", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+      await route.continue();
+    });
+    await page.route("**/v1/cut-requests/**", (route) =>
+      route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"demo failure"}' }),
+    );
+    await page.getByRole("button", { name: "Speak", exact: true }).click();
+    await page.waitForTimeout(250);
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole("button", { name: "Build cut" }).click();
+    await page.waitForTimeout(300);
+    const beforeCalls = await page.evaluate(() => window.__getumCalls || 0);
+    const beforeRecorders = await page.evaluate(() => window.__recorders || 0);
+    await page.evaluate(() => document.querySelector(".mic").click());
+    await page.waitForTimeout(1600);
+    ok((await page.evaluate(() => window.__getumCalls || 0)) === beforeCalls, "a tap after a failed Build during the upload starts no second acquisition");
+    ok((await page.evaluate(() => window.__recorders || 0)) === beforeRecorders, "no recorder is left live after the upload settles");
+    await page.unroute("**/v1/speech");
+    await page.unroute("**/v1/cut-requests/**");
 
     // Build: held model keeps it building with a stage line; releasing finishes it.
     await page.evaluate(() => fetch("/demo/cut/hold", { method: "POST" }));
@@ -310,6 +356,67 @@ function currentRequest(page, ctx) {
     await go(page, "cuts", 800);
     const last = await page.locator(".cut .pill").allTextContents();
     ok(last[0] === "waiting for your description", "a waiting card comes first: " + last.join(", "));
+
+    // ---- saved presets (checkpoint 4): the phone saves a description as its own chip --------
+    await go(page, "cuts", 700);
+    await page.getByPlaceholder("YouTube link or video id").fill(VID_PRESET);
+    await page.getByRole("button", { name: "Describe this cut" }).click();
+    await page.waitForTimeout(900);
+    await page.locator("textarea").fill("Keep only the lock test and the result.");
+    await page.getByPlaceholder("Preset name").fill("Lock test only");
+    await page.getByRole("button", { name: "Save as preset" }).click();
+    await page.waitForTimeout(1100);
+    const savedChips = await page.locator(".chip-btn").allTextContents();
+    ok(savedChips.join("|").includes("Lock test only"), "the saved preset becomes a chip: " + savedChips.join("|"));
+    const savedReq = await currentRequest(page, ctx);
+    ok(savedReq && savedReq.state === "waiting", "saving a preset does not start the build");
+    const own = await api(ctx, "/v1/cut-presets");
+    ok(own.body && own.body.presets.some((p) => p.label === "Lock test only"), "the preset is stored on the server");
+    await go(page, "cuts", 900);
+    ok((await page.locator("#view").textContent()).includes("Saved presets"), "the queue lists saved presets");
+    ok((await page.locator("#view").textContent()).includes("Lock test only"), "the saved preset is listed");
+    const presetCard = page.locator(".card").filter({ hasText: "Saved presets" });
+    page.once("dialog", (dialog) => dialog.accept());
+    await presetCard.getByRole("button", { name: "Delete" }).click();
+    await page.waitForTimeout(1100);
+    ok(!(await page.locator("#view").textContent()).includes("Lock test only"), "deleting the preset removes it from the list");
+    ok((await api(ctx, "/v1/cut-presets")).body.presets.length === 0, "deleting the preset clears the server list");
+    for (const r of (await api(ctx, "/v1/cut-requests")).body.requests.filter((x) => x.video_id === VID_PRESET)) {
+      await api(ctx, "/v1/cut-requests/" + r.id, { method: "DELETE" });
+    }
+
+    // ---- the Android Share target (checkpoint 4): the service worker and its manifest -------
+    const manifest = await api(ctx, "/manifest.webmanifest");
+    ok(
+      manifest.body && manifest.body.share_target && manifest.body.share_target.action === "/shared" &&
+        manifest.body.share_target.method === "POST",
+      "the manifest declares the Share target /shared (POST)",
+    );
+    const worker = await ctx.request.fetch(base + "/sw.js");
+    ok(worker.status() === 200, "the service worker is served");
+    ok(worker.headers()["service-worker-allowed"] === "/", "the worker may control the whole site");
+    const controlling = await page.evaluate(async () => {
+      const reg = await navigator.serviceWorker.ready;
+      return Boolean(navigator.serviceWorker.controller || reg.active);
+    });
+    ok(controlling, "the service worker is registered and active");
+    const sharedFetch = await page.evaluate(async (url) => {
+      const form = new FormData();
+      form.append("url", url);
+      form.append("title", "A shared video");
+      form.append("text", "");
+      const res = await fetch("/shared", { method: "POST", body: form });
+      return res.status;
+    }, "https://youtu.be/" + VID_SHARE);
+    ok(sharedFetch === 200, "a shared link POST is taken by the worker and redirected (status: " + sharedFetch + ")");
+    await go(page, "cuts", 900);
+    await page.waitForTimeout(1200);
+    ok(/#\/cuts\/[a-z0-9]+/.test(await page.evaluate(() => location.hash)), "a shared link opens its cut sheet");
+    const sharedReq = await currentRequest(page, ctx);
+    ok(sharedReq && sharedReq.video_id === VID_SHARE && sharedReq.state === "waiting", "the shared link starts a waiting request");
+    for (const r of (await api(ctx, "/v1/cut-requests")).body.requests.filter((x) => x.video_id === VID_SHARE)) {
+      await api(ctx, "/v1/cut-requests/" + r.id, { method: "DELETE" });
+    }
 
     // ---- the mic is tied to the sheet's lifecycle (EVR-510 blocking item) -------------------
     // A waiting request opened straight from its short URL, as the QR code does.
