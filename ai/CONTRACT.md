@@ -291,7 +291,7 @@ came from the archive), `ffmpeg`, `separation` (skipped when off, the tool faile
 `speech_cues`, `fill_cues`, `caption_cues`, `moved`, `words`; boundaries snap to silences; `captions_timing` is skipped with `reason` = `no_words|word_times_estimated`: the caption cues are kept as they are),
 `sync_score` (`cues`, `speech_overlap`, `starts_in_silence`, `char_timed_cues`, `silence_share`; skipped with `reason` = `no_cues|no_audio_check|no_silences`),
 `proofread` (`corrected`, `warned`, `chars_in`/`chars_out`, `cached`, `split_exact`, `split_at_pause`, `split_by_chars`, `overlong`; skipped with `reason` = `off|no_llm`), `proofread_batch` (a batch that
-kept its original text — length mismatch, empty text, growth or shrink beyond `proofread_max_ratio`), `text`, `translate` (`source`, `to`, `cues`, `split_exact`, `split_at_pause`, `split_by_chars`, `overlong`), `stored`, `retry`, `finished`, `failed` (`error_class`,
+kept its original text — length mismatch, empty text, growth or shrink beyond `proofread_max_ratio`), `text`, `translate` (`source`, `to`, `cues`, `batches`, `retried`, `split`, `untranslated`; `warn` when `untranslated` > 0, `split_exact`, `split_at_pause`, `split_by_chars`, `overlong`), `stored`, `retry`, `finished`, `failed` (`error_class`,
 `message`, `stage`, `technical`) and `delivered` (`via` = `captions_status|vtt|transcript_status|summary|summary_panel|insight|answer|transcript_txt`,
 `client`, `user`, `count`, `first_ts`). Details never carry a URL, token or secret. A job from before the log has one synthetic event,
 `finished` (or `queued` while it waits) with `detail.synthetic: true` and the message "finished (no detailed log, created before event

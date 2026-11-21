@@ -1,5 +1,16 @@
 # DEVLOG
 
+## 2026-11-21 (translation batch mismatch no longer fails the job)
+
+1. Production: one translate batch of a 228-cue episode returned the wrong number of strings and failed the whole captions job after ASR and
+   proofread had succeeded. `CaptionPipeline.translate` now retries such a batch (or a non-list / invalid JSON answer) once with a stricter
+   message ("Return exactly N strings"), then splits it in halves recursively; a single cue that still fails keeps its source text.
+2. The job fails (as before, "translation length mismatch") only when more than `[captions] translate_max_untranslated_share` (0.1) of the cues
+   stay untranslated. The `translate` stage detail carries `batches`, `retried`, `split`, `untranslated`; status `warn` when `untranslated > 0`.
+   `LLMBadJSONError` (subclass of `LLMError`) tells invalid JSON from other LLM failures. Job page text, docs and contract updated.
+3. CP4 behaviour (split stats, `Cue.words`, legacy path) untouched.
+4. Review fix: the job fails as soon as `untranslated` exceeds the share (checked per failed cue, so a model that always fails costs a few dozen calls, not ~150 per batch); an empty-string item for a non-empty source counts as a failed item (retry/split).
+
 ## 2026-11-21 (cold ASR engine: wait, do not fall through; issue 57)
 
 1. A server that is still loading its model (oMLX: HTTP 500 "Engine not started", also 500/502 saying not started, not loaded or model is loading, any 503,

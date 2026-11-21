@@ -15,7 +15,7 @@ import yt_dlp
 
 from ..config import Config
 from ..db import Database
-from ..llm import BACKGROUND, LLMClient
+from ..llm import BACKGROUND, LLMBadJSONError, LLMClient
 from ..media_archive import (
     KIND_AUDIO,
     SHA_PREFIX,
@@ -69,6 +69,10 @@ SPEAKER_PREFIX_LEN = 5
 TRANSLATE_SYSTEM = (
     "Translate each subtitle line into {lang}. Return ONLY a JSON array of strings with the "
     "same length and order as the input. Keep it short enough for subtitles."
+)
+
+TRANSLATE_STRICT = (
+    "Return exactly {n} strings: one translation per input string, same order, as a JSON array."
 )
 
 Started = Callable[[], None]
@@ -314,6 +318,24 @@ def _keep_for_archive(work: Path) -> bool:
     """
     exc = sys.exc_info()[1]
     return isinstance(exc, MediaArchiveError) and exc.work == work
+
+
+@dataclass
+class TranslateStats:
+    """How the translation batches went: asked, retried once, split in halves, left as spoken."""
+
+    batches: int = 0
+    retried: int = 0
+    split: int = 0
+    untranslated: int = 0
+
+    def as_detail(self) -> dict[str, int]:
+        return {
+            "batches": self.batches,
+            "retried": self.retried,
+            "split": self.split,
+            "untranslated": self.untranslated,
+        }
 
 
 class CaptionPipeline:
@@ -925,8 +947,13 @@ class CaptionPipeline:
         """
         if translate_to and translate_to != track_lang:
             with events.stage(events.TRANSLATE, source=track_lang, to=translate_to) as st:
-                split = SplitStats()
-                cues = await self.translate(cues, translate_to, split)
+                split, tstats = SplitStats(), TranslateStats()
+                try:
+                    cues = await self.translate(cues, translate_to, split, tstats)
+                finally:
+                    st.set(**tstats.as_detail())
+                if tstats.untranslated:
+                    st.status = events.WARN
                 st.set(cues=len(cues), **split.as_detail())
             track_lang = translate_to
             # the English output carries the quality bar: translated text is proofread too,
@@ -967,14 +994,71 @@ class CaptionPipeline:
         progress(1.0)
         return track_lang
 
+    async def _ask_translation(
+        self, texts: list[str], target: str, strict: bool
+    ) -> list[str] | None:
+        """One LLM call; None when the answer is not a list of `len(texts)` strings."""
+        assert self.llm is not None
+        system = TRANSLATE_SYSTEM.format(lang=target)
+        if strict:
+            system += " " + TRANSLATE_STRICT.format(n=len(texts))
+        user = json.dumps(texts, ensure_ascii=False)
+        if strict:
+            user = TRANSLATE_STRICT.format(n=len(texts)) + "\n" + user
+        try:
+            data = await self.llm.chat_json(
+                self.cfg.llm.captions,
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            )
+        except LLMBadJSONError:
+            return None
+        if not isinstance(data, list) or len(data) != len(texts):
+            return None
+        if not all(
+            isinstance(item, str) and (item.strip() or not src.strip())
+            for item, src in zip(data, texts, strict=True)
+        ):
+            return None
+        return data
+
+    async def _translate_texts(
+        self, texts: list[str], target: str, stats: TranslateStats, limit: float
+    ) -> list[str | None]:
+        """Translate a batch; a bad answer is retried once, then the batch is split in halves.
+
+        A single cue that still fails comes back as None (the caller keeps its source text).
+        """
+        for attempt in range(2):
+            got = await self._ask_translation(texts, target, strict=attempt > 0)
+            if got is not None:
+                return list(got)
+            if attempt == 0:
+                stats.retried += 1
+        if len(texts) == 1:
+            stats.untranslated += 1
+            if stats.untranslated > limit:
+                raise PipelineError("translation length mismatch")
+            return [None]
+        stats.split += 1
+        mid = len(texts) // 2
+        left = await self._translate_texts(texts[:mid], target, stats, limit)
+        right = await self._translate_texts(texts[mid:], target, stats, limit)
+        return left + right
+
     async def translate(
-        self, cues: list[Cue], target: str, stats: SplitStats | None = None
+        self,
+        cues: list[Cue],
+        target: str,
+        stats: SplitStats | None = None,
+        tstats: TranslateStats | None = None,
     ) -> list[Cue]:
         if self.llm is None:
             raise PipelineError("translation needs an LLM client")
         batch = self.cfg.captions.translate_batch
         c = self.cfg.captions
         stats = stats if stats is not None else SplitStats()
+        tstats = tstats if tstats is not None else TranslateStats()
+        limit = c.translate_max_untranslated_share * len(cues)
         out: list[Cue] = []
         for i in range(0, len(cues), batch):
             part = cues[i : i + batch]
@@ -984,16 +1068,12 @@ class CaptionPipeline:
                 has = joined.startswith("[S")
                 prefixes.append(joined[:SPEAKER_PREFIX_LEN] if has else "")
                 texts.append(joined[SPEAKER_PREFIX_LEN:] if has else joined)
-            data = await self.llm.chat_json(
-                self.cfg.llm.captions,
-                [
-                    {"role": "system", "content": TRANSLATE_SYSTEM.format(lang=target)},
-                    {"role": "user", "content": json.dumps(texts, ensure_ascii=False)},
-                ],
-            )
-            if not isinstance(data, list) or len(data) != len(part):
-                raise PipelineError("translation length mismatch")
+            tstats.batches += 1
+            data = await self._translate_texts(texts, target, tstats, limit)
             for offset, (cue, prefix, text) in enumerate(zip(part, prefixes, data, strict=True)):
+                if text is None:
+                    out.append(cue)
+                    continue
                 full = f"{prefix}{text}".strip()
                 # the translation no longer maps onto the source words one to one, but its cue keeps
                 # the source cue's times and words so an overflow splits on a real pause

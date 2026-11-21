@@ -456,3 +456,107 @@ async def test_legacy_proofread_counts_character_timed_overflow(env):
         events.unbind(token)
     detail = [e for e in log.list("jl") if e["stage"] == "proofread"][-1]["detail"]
     assert detail["split_by_chars"] == 1 and detail["split_exact"] == 0
+
+
+def _translate_with(env, behave):
+    """Route translate requests through `behave(texts, strict) -> list | str`; others stay as they are."""
+    import json
+
+    original = env.llm.respond
+    seen: list[tuple[list[str], bool]] = []
+
+    def respond(body):
+        if "Translate each subtitle" not in body["messages"][0]["content"]:
+            return original(body)
+        strict = "Return exactly" in body["messages"][-1]["content"]
+        raw = body["messages"][-1]["content"]
+        texts = json.loads(raw.split("\n", 1)[1] if strict else raw)
+        seen.append((texts, strict))
+        out = behave(texts, strict)
+        return out if isinstance(out, str) else json.dumps(out)
+
+    env.llm.respond = respond
+    return seen
+
+
+def _plain_cues(n):
+    from utubot.captions.types import Cue
+
+    return [Cue(i, i + 1, [f"c{i}"], None) for i in range(n)]
+
+
+async def _translated(env, cues):
+    from utubot.captions import events
+    from utubot.captions.events import JobEvents, JobTrace
+
+    log = JobEvents(env.svc.db, env.svc.jobs.pipeline.cfg.captions)
+    token = events.bind(JobTrace("jt", log))
+    try:
+        await env.svc.jobs.pipeline._finish(VID, cues, "tr", "en", lambda _f: None)
+    finally:
+        events.unbind(token)
+    return [e for e in log.list("jt") if e["stage"] == "translate"][-1]
+
+
+async def test_translate_batch_one_short_then_right_on_retry(env):
+    def behave(texts, strict):
+        return [f"T:{t}" for t in texts] if strict else [f"T:{t}" for t in texts[:-1]]
+
+    seen = _translate_with(env, behave)
+    ev = await _translated(env, _plain_cues(5))
+    assert ev["status"] == "ok"
+    assert (ev["detail"]["batches"], ev["detail"]["retried"]) == (1, 1)
+    assert (ev["detail"]["split"], ev["detail"]["untranslated"]) == (0, 0)
+    assert [strict for _t, strict in seen] == [False, True]
+    assert "T:c4" in env.svc.db.one("SELECT vtt FROM captions WHERE video_id=?", [VID])["vtt"]
+
+
+async def test_translate_batch_that_keeps_mismatching_is_split(env):
+    def behave(texts, _strict):
+        return [f"T:{t}" for t in texts] if len(texts) <= 3 else ["only one"]
+
+    _translate_with(env, behave)
+    ev = await _translated(env, _plain_cues(6))
+    assert ev["status"] == "ok"
+    assert ev["detail"]["split"] == 1 and ev["detail"]["untranslated"] == 0
+    vtt = env.svc.db.one("SELECT vtt FROM captions WHERE video_id=?", [VID])["vtt"]
+    assert all(f"T:c{i}" in vtt for i in range(6))
+
+
+async def test_translate_single_failing_cue_keeps_source_and_warns(env):
+    def behave(texts, _strict):
+        return [] if "c3" in texts else [f"T:{t}" for t in texts]
+
+    _translate_with(env, behave)
+    ev = await _translated(env, _plain_cues(20))
+    assert ev["status"] == "warn" and ev["detail"]["untranslated"] == 1
+    vtt = env.svc.db.one("SELECT vtt FROM captions WHERE video_id=?", [VID])["vtt"]
+    assert "T:c2" in vtt and "T:c3" not in vtt and "c3" in vtt
+
+
+async def test_translate_fails_above_the_untranslated_share(env):
+    from utubot.captions.pipeline import PipelineError
+
+    _translate_with(env, lambda texts, _strict: [])
+    with pytest.raises(PipelineError, match="translation length mismatch"):
+        await env.svc.jobs.pipeline.translate(_plain_cues(4), "en")
+
+
+async def test_translate_fails_fast_when_the_model_always_fails(env):
+    from utubot.captions.pipeline import PipelineError
+
+    seen = _translate_with(env, lambda texts, _strict: [])
+    with pytest.raises(PipelineError, match="translation length mismatch"):
+        await env.svc.jobs.pipeline.translate(_plain_cues(100), "en")
+    assert (
+        len(seen) < 60
+    )  # 11 single cues over the 10% share, not ~2 calls per cue of the whole job
+
+
+async def test_translate_empty_item_counts_as_failed(env):
+    def behave(texts, _strict):
+        return [f"T:{t}" if len(texts) == 1 else "" for t in texts]
+
+    _translate_with(env, behave)
+    ev = await _translated(env, _plain_cues(3))
+    assert ev["detail"]["split"] >= 1 and ev["detail"]["untranslated"] == 0
