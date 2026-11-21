@@ -297,7 +297,15 @@ const DESCRIBERS = {
   text: (d) => join([num(d.segments) + " segments", num(d.lines) + " lines", num(d.chars) + " characters"]),
   translate(d, status) {
     if (status === "running") return "Translating " + d.source + " to " + d.to;
-    return join([d.source + " to " + d.to, num(d.cues) + " cues", splitText(d)]);
+    return join([
+      d.source + " to " + d.to,
+      num(d.cues) + " cues",
+      d.batches ? d.batches + " batch" + (d.batches === 1 ? "" : "es") : null,
+      d.retried ? d.retried + " retried" : null,
+      d.split ? d.split + " split in halves" : null,
+      d.untranslated ? d.untranslated + " cue" + (d.untranslated === 1 ? "" : "s") + " left untranslated" : null,
+      splitText(d),
+    ]);
   },
   stored(d) {
     if (d.message && d.stored === false) return d.message;

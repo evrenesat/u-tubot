@@ -322,6 +322,7 @@ class CaptionsConfig(BaseModel):
     audio_format: str = "bestaudio/best"
     asr_chunk_s: int = 600
     translate_batch: int = 40
+    translate_max_untranslated_share: float = Field(0.1, ge=0.0, le=1.0)
     job_events_max: int = 400
     delivery_coalesce_s: float = 300.0
     delivery_events_max: int = 50

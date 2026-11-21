@@ -304,6 +304,9 @@ silence_min_s = 0.25               # silences shorter than this do not count for
 translate_to = "en"                # default translation target of captions jobs: English whatever
                                    # the source language (owner, 2026-11-13). "off" keeps the source.
                                    # a language code, validated at startup
+translate_max_untranslated_share = 0.1  # a translation batch with the wrong number of strings is retried,
+                                   # then split in halves; cues that still fail keep their source text.
+                                   # The job fails only when more than this share of cues stays untranslated
 proofread = true                   # LLM proofreading pass ([llm.captions]): punctuation, capitalisation,
                                    # names and terms from the title/description; skipped without an LLM
                                    # also runs over translated text, so the English output is proofread

@@ -116,7 +116,7 @@ keep their text and the stage warns. Corrected batches are cached per video, so 
 The goal is high-quality English captions for every requested video, whatever its source language (owner, 2026-11-13). The default
 translation target is English: `[captions] translate_to` is `"en"`, the API leaves `translate_to` unset by default, and the TV app's
 "prepare captions" request resolves to the same default. A track whose language differs is translated by the LLM (`translate_batch`, 40,
-cues at a time) and — so the quality bar holds for the English output — the translated text is proofread again with the title and
+cues at a time; a batch the LLM answers with the wrong number of strings is retried once with the exact count, then split in halves down to single cues, and a cue that still fails keeps its source text, flagged `warn` in the job details; the job fails only when more than `translate_max_untranslated_share`, 0.1, of the cues stay untranslated) and — so the quality bar holds for the English output — the translated text is proofread again with the title and
 description as context. A translated cue keeps the source cue's start, end and words; translated text that does not fit the line
 limits is split over the source words' boundaries the same way (proportionally, at the widest pause), never as one over-long line. Same-language captions stay available: pass `translate_to: "off"` (or "none") explicitly, or set
 `[captions] translate_to` to `"off"` to make that the default.
