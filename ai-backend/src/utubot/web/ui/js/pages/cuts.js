@@ -1,4 +1,4 @@
-import { api } from "../api.js";
+import { api, upload } from "../api.js";
 import { h, icon, mount } from "../dom.js";
 import {
   button,
@@ -40,6 +40,9 @@ const STAGE_LABEL = {
   checking: "checking the result",
 };
 const GROUP = { waiting: 0, building: 1, needs_transcript: 1, ready: 2, failed: 3 };
+const DEFAULT_SPEECH_S = 120;
+let speech = null;
+
 
 export function videoIdFrom(text) {
   const t = (text || "").trim();
@@ -222,6 +225,131 @@ async function queue(view) {
   return every(3000, () => load().catch(() => {}));
 }
 
+async function loadSpeech() {
+  if (speech) return;
+  try {
+    const me = await api("/v1/me");
+    speech = me.features || {};
+  } catch {
+    speech = { speech: false };
+  }
+}
+
+function pickMime() {
+  if (!window.MediaRecorder) return "";
+  for (const type of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/aac"]) {
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return "";
+}
+
+// Tap to start, tap to stop. The audio goes to POST /v1/speech; the text lands in the box and
+// stays editable (nothing is sent automatically). The recording is dropped after the upload.
+function micButton(box) {
+  const btn = h("button", { type: "button", class: "btn sec mic", text: "Speak" });
+  let recorder = null;
+  let chunks = [];
+  let stream = null;
+  let limitTimer = null;
+
+  function releaseStream() {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      stream = null;
+    }
+  }
+
+  function stopRecording() {
+    if (limitTimer) {
+      clearTimeout(limitTimer);
+      limitTimer = null;
+    }
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  }
+
+  async function sendRecording() {
+    btn.disabled = true;
+    btn.textContent = "Uploading…";
+    const type = (recorder && recorder.mimeType) || (chunks[0] && chunks[0].type) || "audio/webm";
+    const blob = new Blob(chunks, { type });
+    releaseStream();
+    try {
+      if (!blob.size) {
+        toast("No speech heard; try again or type it.", "bad");
+        return;
+      }
+      const form = new FormData();
+      form.append("audio", blob, "recording");
+      const r = await upload("/v1/speech", form);
+      const text = ((r && r.text) || "").trim();
+      if (!text) {
+        toast("No speech heard; try again or type it.", "bad");
+        return;
+      }
+      const old = box.value.trim();
+      box.value = old ? old + " " + text : text;
+      box.focus();
+      const end = box.value.length;
+      box.setSelectionRange(end, end);
+      toast("Speech added; edit it if needed.");
+    } catch (err) {
+      toast(errorText(err), "bad");
+    } finally {
+      btn.textContent = "Speak";
+      btn.classList.remove("on");
+      btn.disabled = false;
+      recorder = null;
+      chunks = [];
+    }
+  }
+
+  async function startRecording() {
+    if (!speech || !speech.speech) {
+      toast("Speech is not configured on this server; type the cut instead.", "bad");
+      return;
+    }
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+      toast("This browser cannot record sound; type the cut instead.", "bad");
+      return;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      toast("Microphone not available; type it instead.", "bad");
+      return;
+    }
+    try {
+      const mime = pickMime();
+      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    } catch {
+      releaseStream();
+      toast("This browser cannot record sound; type the cut instead.", "bad");
+      return;
+    }
+    chunks = [];
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data && event.data.size) chunks.push(event.data);
+    });
+    recorder.addEventListener("stop", () => void sendRecording());
+    recorder.start();
+    btn.textContent = "Stop";
+    btn.classList.add("on");
+    const maxS = Number(speech.speech_max_s) || DEFAULT_SPEECH_S;
+    limitTimer = setTimeout(() => {
+      toast("The recording reached its " + maxS + " s limit.");
+      stopRecording();
+    }, maxS * 1000);
+  }
+
+  btn.addEventListener("click", () => {
+    if (!btn.disabled) {
+      if (recorder && recorder.state === "recording") stopRecording();
+      else void startRecording();
+    }
+  });
+  return btn;
+}
+
 async function sheet(view, requestId) {
   const host = h("div", { class: "stack" });
   mount(view, host);
@@ -280,6 +408,7 @@ async function sheet(view, requestId) {
       return;
     }
     await loadPresets(req.video_id);
+    await loadSpeech();
     const kids = [
       h("a", { class: "back back-icon", href: "#/cuts" }, icon("back"), h("span", { text: "Cuts" })),
       h("h1", { class: "page-title", text: req.title || "Looking up the video…" }),
@@ -321,8 +450,18 @@ async function sheet(view, requestId) {
           head,
           note("Describe the cut, or pick a preset."),
           chips,
-          field("Your description", box),
-          sheetActions(req, button("Build cut", () => fill(req, box), { kind: "primary" })),
+          field(
+            "Your description",
+            box,
+            speech && speech.speech
+              ? "Speak or type; the recording limit is set on the server."
+              : "Type the cut; voice needs a speech engine on the server.",
+          ),
+          sheetActions(
+            req,
+            speech && speech.speech ? micButton(box) : null,
+            button("Build cut", () => fill(req, box), { kind: "primary" }),
+          ),
         ),
       );
       mount(host, ...kids);

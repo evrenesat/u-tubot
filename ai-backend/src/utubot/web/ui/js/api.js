@@ -72,3 +72,23 @@ export function adoptLogin(info) {
 export function forgetSession() {
   Object.assign(session, { user: null, admin: false, csrf: null, via: null, hasPassword: false });
 }
+
+export async function upload(path, form) {
+  const headers = { Accept: "application/json" };
+  if (session.csrf) headers["X-CSRF-Token"] = session.csrf;
+  let res;
+  try {
+    res = await fetch(path, { method: "POST", headers, credentials: "same-origin", body: form });
+  } catch {
+    throw new ApiError(0, "The server is not reachable");
+  }
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  if (res.status === 401) window.dispatchEvent(new CustomEvent("utubot:signed-out"));
+  if (!res.ok) throw new ApiError(res.status, (data && data.error) || "HTTP " + res.status, data);
+  return data;
+}

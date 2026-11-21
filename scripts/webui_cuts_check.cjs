@@ -129,6 +129,41 @@ function currentRequest(page, ctx) {
     });
     page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
 
+    await page.addInitScript(() => {
+      // A fake microphone for the voice check: getUserMedia and MediaRecorder produce a small
+      // webm blob, so the sheet's Speak button exercises the real POST /v1/speech route.
+      const stream = { getTracks: () => [{ stop() {} }] };
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { getUserMedia: async () => stream },
+      });
+      class FakeRecorder {
+        constructor(_stream, options) {
+          this.mimeType = (options && options.mimeType) || "audio/webm";
+          this.state = "inactive";
+          this.handlers = {};
+        }
+        static isTypeSupported() {
+          return true;
+        }
+        addEventListener(name, handler) {
+          this.handlers[name] = handler;
+        }
+        emit() {
+          if (this.handlers.dataavailable) this.handlers.dataavailable({ data: new Blob(["fake-opus-bytes"], { type: this.mimeType }) });
+        }
+        start() {
+          this.state = "recording";
+          setTimeout(() => { if (this.state === "recording") this.emit(); }, 50);
+        }
+        stop() {
+          this.state = "inactive";
+          this.emit();
+          setTimeout(() => { if (this.handlers.stop) this.handlers.stop(); }, 50);
+        }
+      }
+      window.MediaRecorder = FakeRecorder;
+    });
     await page.goto(base + "/");
     await page.locator("input[name=username]").fill("owner");
     await page.locator("input[name=password]").fill("demo-password-123");
@@ -160,6 +195,17 @@ function currentRequest(page, ctx) {
     ok(chips.join("|").includes("No filler"), "preset chips are offered: " + chips.join("|"));
     const req = await currentRequest(page, ctx);
     ok(req && req.state === "waiting", "the request is waiting for the description");
+
+    // Voice: Speak -> Stop sends the fake recording to POST /v1/speech; the text lands in the box
+    // and stays editable, and nothing is sent automatically (the request stays waiting).
+    await page.getByRole("button", { name: "Speak", exact: true }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("textarea").value.includes("Hello there"), undefined, { timeout: WAIT_MS });
+    ok((await box.inputValue()).includes("Hello there. How are you doing today?"), "the spoken text lands in the box");
+    ok((await page.evaluate(() => document.activeElement && document.activeElement.tagName)) === "TEXTAREA", "the box is focused after the speech");
+    const stillWaiting = await currentRequest(page, ctx);
+    ok(stillWaiting && stillWaiting.state === "waiting", "the spoken text was not sent automatically");
     ok((await page.locator("#view").textContent()).includes("Looking up the video"), "the title is not known yet and says so");
 
     // Build: held model keeps it building with a stage line; releasing finishes it.

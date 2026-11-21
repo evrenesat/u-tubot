@@ -70,7 +70,10 @@ Both browser scripts stop themselves: the whole run is budgeted below the shell 
 (`BROWSER_BUDGET_MS`, default 90 s — give the shell a longer timeout), and SIGTERM/SIGINT close the
 browser before exiting, so a killed run never leaves an orphaned headless Chromium behind.
 `scripts/webui_cuts_check.cjs` (the director's-cuts check) also resets the demo's cut knobs at the
-start and builds on per-run video ids, so it can be rerun after a killed run without a fresh demo.
+start and builds on per-run video ids, so it can be rerun after a killed run without a fresh demo. It
+stubs `getUserMedia` and `MediaRecorder` with a fake webm blob, so the cut sheet's Speak → Stop walks
+the real `POST /v1/speech` route without a microphone: the mock LLM's transcription text lands in the
+description box, editable, and the request stays waiting (nothing is sent automatically).
 
 ## Android app
 
