@@ -17,11 +17,17 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
 4. **Vocal separation** (optional): when `separation = "demucs"`, the vocals stem is separated from the music before ASR
    ([below](#vocal-separation)). A job whose ASR answer is already cached skips it — demucs can take tens of minutes on CPU.
 5. **ASR.** Speech recognition with word timestamps, chunked and stitched ([below](#asr-engines)). The answer is cached per video, audio
-   and separation mode, so a retried job or a second job for the same video does not transcribe the same audio twice.
-6. **Cues and alignment.** Words are grouped into cues of at most `max_lines` (2) lines of `max_chars_per_line` (42) characters, 1 to 7
-   seconds (`min_cue_s`, `max_cue_s`), breaking at sentence and speaker changes, and never faster than `max_cps` (20) characters per
-   second. Cue boundaries are then nudged outward to the middle of a nearby silence (`align_silence`) — outward only, so a cue never
-   loses its first or last word to the snap.
+   and separation mode, so a retried job or a second job for the same video does not transcribe the same audio twice (an answer with
+   real or partly real word times is cached under the plain key; one without any word times only under a key that includes the engines
+   and how each is asked for words, so a server that never gives words is not asked again, while a new word mode is; it is read only while no
+   engine of the chain is known to give words, so a fallback's estimate never outlives the recovery of the engine that does).
+6. **Word times, cues and alignment.** The engine's word times are checked and repaired against the audio's silences
+   ([below](#word-timing)). Words are then grouped into cues of at most `max_lines` (2) lines of `max_chars_per_line` (42) characters,
+   1 to 7 seconds (`min_cue_s`, `max_cue_s`), breaking at sentence and speaker changes and at every pause longer than `sentence_gap_s`,
+   and never faster than `max_cps` (20) characters per second. Cue boundaries are nudged outward to the middle of a nearby silence
+   (`align_silence`) — outward only, so a cue never loses its first or last word to the snap — and each cue stays on screen
+   `cue_linger_s` (0.2 s) after its last word when there is room. The job then logs a `sync_score` check of the finished cues
+   against the audio.
 7. **Proofreading.** The LLM (`[llm.captions]`) fixes punctuation, capitalisation, names and terms, using the video's title and
    description as context ([below](#proofreading)).
 8. **Translation.** The job targets English by default (`[captions] translate_to`, "en"): a track in another language is translated
@@ -33,13 +39,65 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
 
 ## Improving existing captions
 
-When the video already has a caption track, its timing is the skeleton: each caption becomes a cue, rolling repeats of automatic
-captions are dropped and text too long for one cue is re-broken (`max_lines` x `max_chars_per_line`, time shared by length). Then the
-ASR words that fall inside each cue's window (plus `align_window_s`, 0.4 s) replace its text and move its boundaries to the words
-actually spoken — the video's captions keep the timing, the speech recognition provides the better transcription. The merged text is
-wrapped to the line limits again; when it no longer fits one cue — or would run faster than `max_cps` — it is re-split into several
-cues over the words' own timings. A cue the ASR heard nothing in keeps the caption text. The proofreading pass runs last. When no
-speech engine is available, or the audio cannot be fetched at all, the caption text is proofread and stored as it is.
+When the video already has a caption track, it supplies the wording to compare with and the cues for what the engine did not hear
+(`[Music]`, speech it missed); the **times come from the audio**:
+
+- **Real word times** (the normal case): the cues are built from the engine's own word times (`align.cues_from_words`), exactly as on
+  the audio-only path, so no spoken word is dropped for lying outside a caption window. A caption cue is kept as a *fill* cue when it is a
+  non-speech tag (`[Music]`, `(applause)`, ♪: whatever the words around it) or when it has text and no word overlaps its span (widened by
+  `align_window_s`, 0.4 s): captions in gaps with no heard speech. A spoken caption that words overlap is never repeated, the words are the
+  text. Fill cues are clipped to the wordless gap between the speech cues and to each other, and dropped when that leaves under
+  `min_cue_s`. Boundaries are snapped to the silences and each cue lingers after its last word. `align` logs
+  `mode = "words"` with the speech and fill cue counts.
+- **Estimated word times** (the engine returned segments only): estimated times cannot place the engine's text, so the caption cues are
+  kept as they are, text and timing (`align` skipped, `mode = "captions_timing"`, `reason = "word_times_estimated"`).
+- **No words** (no engine, silent audio, audio unavailable): the caption text is proofread and stored as it is (`align` skipped,
+  `reason = "no_words"`).
+
+`[captions] timing_mode = "legacy"` restores the older rule (words in a caption's window replace its text and move its boundaries; words
+outside every window are dropped) without a redeploy. Going back to the old engine *requests* as well also needs
+`word_timestamps = "granularities"` on the engine (the old requests sent only `timestamp_granularities[]`). The proofreading pass runs last.
+
+## Word timing
+
+Whisper's word times (DTW) have known flaws, and a server only returns them when asked the right way. Two things handle that.
+
+**Asking.** `[[captions.asr_engines]] word_timestamps` says how an `openai`-kind server is asked: `granularities`
+(`timestamp_granularities[]=word`, OpenAI), `flag` (`word_timestamps=true`, mlx-audio/oMLX), `both`, `none`, or `auto` (the default):
+the first chunk that wants words is sent with both fields; a rejected request moves on to the single forms, a 200 without any word to
+the others, on the same chunk, and the first form that returns words is remembered (once per engine per process; `GET /v1/status`
+shows it as `word_times`, `unknown` until resolved; a chunk without any text, e.g. a silent intro, decides nothing and the next chunk probes
+again; a 413, or a 400 that does not name word, timestamp or granularities, is a problem of the chunk and does not walk the forms, so a server that rejects unknown fields with a generic 400 needs `word_timestamps` set explicitly). Words may be top-level or nested in each segment. An engine that never returns
+words is remembered as `none`; its words are spread over the segments by character count and marked `interpolated`, the job log says
+so (`word_timing` warn, `asr_chunk` `word_timing`), and with `asr_words_required = true` such an engine is passed over while another
+one remains in the chain. `extra_form` adds form fields to every request (e.g. `condition_on_previous_text = "false"`).
+
+**Repair** (`captions/wordtimes.py`, run on every job from the cached raw words, so thresholds can be tuned without re-running the
+engine). Against the audio's silences and ordinary speaking rates:
+
+| Flaw | Fix | Config |
+|---|---|---|
+| start before the previous word | clamped | |
+| stretched (longer than `word_max_s`, 1.2 s), usually the last word before a pause | ends where the overlapping silence starts; a word that starts inside a silence starts where it ends; without a silence, nominal length (`word_char_s` per character, at least `word_nominal_min_s`) | `word_max_s`, `word_char_s`, `word_nominal_min_s` |
+| zero-length (under `word_min_s`, 0.06 s) | borrows time from the gap after it, else before it; with no room it stays and is marked `suspect` (`unfixed`) | `word_min_s` |
+| squeezed run (at least `word_squeeze_min_words` words faster than `word_rate_max` per second) | re-spread by character weight, marked `suspect` | `word_squeeze_min_words`, `word_rate_max` |
+
+Every word carries its provenance (`real`, `repaired`, `suspect`, `interpolated`); the `word_timing` event reports the counts and the
+share of real times, the stored track keeps a summary in `captions.timing` with `timing_version` (additive columns). The `sync_score`
+event is the audio's verdict on the finished cues: the share of cue time over sound, and of cue starts lying in the middle of a
+silence. `char_timed_cues` counts the cues whose times were still shared over their text by character count (the job page shows it; the
+stored `captions.timing` carries the final number after proofreading and translation).
+
+**Measuring and regenerating.** `utubot captions-score VIDEO_ID --reference ENGINE [--windows N | --at SECONDS ...] [--window-s S] [--lang TRACK] [--spoken L] [--review] [--json]`
+cuts evenly spaced windows (or windows starting at each `--at`) of the *archived* audio, transcribes them with the named engine, and reports how close the nearest cue start
+is to each phrase onset of that reference: `hit` (cue start within -`sync_early_s` .. +`sync_late_s`, 0.5 / 0.3 s), `loose` (within
+`sync_loose_s`, 1 s) and the median and spread of the error. `--lang` picks the track (default: the newest with a `timing_version`, else the newest); the output says which track was scored and gives
+its first cue start and longest cue. The reference is the engine's own answer: the chunk review below does not run on it unless `--review` is given. It never touches YouTube and refuses when the audio is not archived.
+`utubot captions-regen [--video ID]... [--legacy] [--limit N] [--dry-run]` queues a background captions job for each stored track
+whose `timing_version` is missing or older than the current scheme (`--legacy`: only tracks that have none), at most
+`regen_limit_default` (20) per run unless `--limit` says otherwise; a track is not listed when a newer track of the video already has
+the current version, and nothing is queued while `timing_mode = "legacy"`. The old track keeps being served until the new one replaces it. The offline equivalent is `tests/test_sync_metric.py` (a synthetic talk, a scripted engine with
+the flaws above, a score over the whole pipeline).
 
 ## Proofreading
 
@@ -47,7 +105,10 @@ The cue texts go to the LLM in batches of `proofread_batch` (40) with the video'
 `proofread_context_chars` each). The answer must be a JSON array with the same length and order as the batch; a different shape, an
 empty string, a batch whose text grew beyond `proofread_max_ratio` (1.6 — a sign of invention) or shrank below `1 / proofread_max_ratio`
 (dropped content) falls back to the original texts. Corrected texts are wrapped to the line limits again; text that no longer fits one
-cue is re-split over the cue's own span, so the stored cues never break the limits. A failing LLM never fails the job: those batches
+cue is split on the cue's own word boundaries (`segment.split_cue`: where the text still maps word for word the groups take their
+own words' times, otherwise each cut goes to the widest pause within `split_search_frac` of the text's share of the cue's time), so
+the stored cues never break the limits and a pause between pieces shows no cue. Only a cue without words (a caption fill cue) is cut by
+character count; the stage reports `split_by_chars`. A failing LLM never fails the job: those batches
 keep their text and the stage warns. Corrected batches are cached per video, so a retried job does not pay twice.
 
 ## Translation
@@ -56,7 +117,8 @@ The goal is high-quality English captions for every requested video, whatever it
 translation target is English: `[captions] translate_to` is `"en"`, the API leaves `translate_to` unset by default, and the TV app's
 "prepare captions" request resolves to the same default. A track whose language differs is translated by the LLM (`translate_batch`, 40,
 cues at a time) and — so the quality bar holds for the English output — the translated text is proofread again with the title and
-description as context. Same-language captions stay available: pass `translate_to: "off"` (or "none") explicitly, or set
+description as context. A translated cue keeps the source cue's start, end and words; translated text that does not fit the line
+limits is split over the source words' boundaries the same way (proportionally, at the widest pause), never as one over-long line. Same-language captions stay available: pass `translate_to: "off"` (or "none") explicitly, or set
 `[captions] translate_to` to `"off"` to make that the default.
 
 ## Vocal separation
@@ -95,6 +157,9 @@ engine fails, the work falls through to the next.
 | `background_only` | `false` | never used for jobs somebody is waiting on (summary view, explicit transcribe); only for passive work such as the side panel |
 | `speed_factor`, `overhead_s` | `1.5`, `2.0` | audio seconds one stream transcribes per second, and fixed seconds per request; only used for the estimate shown to the user |
 | `compute_type`, `threads` | `[captions] whisper_*` | `faster_whisper` only |
+| `word_timestamps` | `auto` | how an `openai` server is asked for word times: `auto`, `granularities`, `flag`, `both`, `none` ([below](#word-timing)) |
+| `extra_form` | none | extra multipart form fields sent with every request (never a secret) |
+| `condition_on_previous_text` | `false` | `faster_whisper` only: let each window see the previous text |
 
 How an engine is chosen for a file: drop engines that are disabled, background-only (for interactive jobs) or whose `languages` do not
 include the video's known language; put engines that failed in the last `asr_unhealthy_s` (300 s) after the healthy ones; sort by
@@ -163,6 +228,40 @@ about 2 % download start, 20 % downloaded, 25 % converted, then the ASR step up 
 
 A transcript made this way is stored with its segments (start, end, text), the language Whisper detected most (by audio seconds), the
 engine and the model, and shown to clients as `source: "asr"` (`GET /v1/videos/ID/transcript` adds `engine` and `model`).
+
+### Chunk review (wrong language, made-up text)
+
+Whisper-style engines sometimes label a whole chunk with the wrong language and then make text up: one video's first 600 s chunk came back as
+English with a "Thank you." every 30 s over continuous Turkish speech. After the first answers are in, every chunk is judged (`captions/sanity.py`):
+
+- a segment is **not speech** (`no_speech`) when its `no_speech_prob` is above `halluc_no_speech_prob` *and* its `avg_logprob` below `halluc_avg_logprob`
+  (Whisper's own rule); a **phantom** when its text is one of `halluc_phrases` ("thank you", "you" ...) spoken at fewer than `halluc_min_rate` words per
+  second (a real, quick "Thank you." is kept); a **repeat loop** when `halluc_repeat_min` or more consecutive segments say the same thing *and* the engine
+  doubts them (low `avg_logprob` or a high compression ratio): a confident chant or chorus is speech. A repetitive segment (`halluc_compression_ratio`) counts
+  toward a bad chunk but is never dropped alone.
+- a chunk asks for a second listen when it was heard in another language than expected (`language_mismatch`, compared by base code), when the flagged
+  share of its seconds reaches `halluc_chunk_share` (`hallucination`), or when it holds under `sparse_chunk_ratio` of the median characters per
+  second of the chunks (`sparse`, only with at least `sparse_min_chunks` chunks; a chunk shorter than `sparse_min_chunk_s` is never sparse and does not count toward the median).
+  A wrong language with nothing else wrong counts only while such chunks are at most `asr_mismatch_minority_share` (0.25) of the audio: more is a bilingual video.
+- **Expected language** is the job's, else the video's metadata language (a hint, never sent on the first pass) unless more than `asr_expected_override_share` of the
+  audio was heard as one other language (then it is unknown: no language rechecks at all, only hallucination and sparse ones), else, with no hint, the heard language when it
+  covers at least `asr_expected_dominant_share` (0.8) of the audio.
+- **Ladder**, per chunk, stopping at the first answer without a reason: (1) the chunk with the expected language forced (language mismatch only, never when a language
+  was given); (2) the chunk in windows of `asr_recheck_chunk_s` (120 s), in the expected language for a mismatch and otherwise in the language the first pass heard; (3) the next engine
+  of the chain that serves the language (not for a chunk that is only sparse, which gets rung 2 alone; skipped with a single engine). A rung runs only on an engine that serves its language.
+  An answer replaces the first one only when it is not clearly worse (a forced language: at least `asr_recheck_min_chars_ratio` of the characters, no more flagged share, speech
+  `avg_logprob` not lower by more than `asr_recheck_logprob_slack`, or without an `avg_logprob` at least `asr_recheck_min_chars_ratio_no_logprob` (0.8) of the characters; never real word times by estimated ones unless the first was a hallucination) and has no reason left or ranks better
+  (right language, less flagged share, better word times, then more text, counted up to `asr_recheck_chars_cap` times the first answer's).
+- **Budget** per job: at most `asr_recheck_max_share` (0.25) of the audio is re-listened to (worst chunks first, always at least one; the rest is an `asr_recheck` event with `skipped = "budget"`) and at most
+  `asr_recheck_max_requests` (12) extra requests (a rung that would exceed it is skipped, `skipped = "requests"`). Retries run after all first answers, so they never wait on an engine's first-request lock.
+- Dropping happens on the **stitched** transcript, only inside chunks that were re-listened to (a phantom in the overlap of a neighbour goes too). `no_speech` and `phantom` segments
+  always go, with the words inside them; a `repeat_loop` segment goes only when the smaller-window pass did not say the same text with confidence. The captions of an `improve()` job fill the gap (no words there).
+  Chunks without a reason are never touched. `asr_recheck = false` turns the whole review off.
+
+Every attempt is an `asr_recheck` event (`reason`, `action` = `forced_language|smaller_window|next_engine`, `detected`, `expected`, `outcome` =
+`replaced|kept|failed`, `flagged_share_before/after`); the drops are one `asr_recheck` with `action = "dropped"`, `dropped_segments`, `dropped_s`. The `asr` event
+carries `rechecked_chunks`, `unresolved_chunks`, `skipped_chunks`, `recheck_requests`, `hallucination_drops`, `dropped_s`; the cached answer also keeps `dropped` (start, end, reasons) and `chunks` (start, end, heard language). A result with an unresolved chunk (every rung failed with an engine error; budget and request-cap skips are deterministic and are cached) is not cached (`cache = "not_stored_unresolved"`). The cached ASR answer is version 3 (older rows are ignored), stored tracks carry `timing_version` 2.
+The hint is not part of the cache key: an answer cached under another metadata language stays valid until the audio changes.
 
 ### Measured speed
 

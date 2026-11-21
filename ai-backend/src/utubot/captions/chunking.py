@@ -169,8 +169,8 @@ def dedupe_words(
         if not items:
             continue
         if out and index > 0 and items[0].start < spans[index - 1].end:
-            tail = [_bare(w.text) for w in out[-DEDUPE_MAX_WORDS:]]
-            head = [_bare(w.text) for w in items[:DEDUPE_MAX_WORDS]]
+            tail = [bare(w.text) for w in out[-DEDUPE_MAX_WORDS:]]
+            head = [bare(w.text) for w in items[:DEDUPE_MAX_WORDS]]
             repeat = _repeat_length(tail, head)
             if stats is not None:
                 stats.repeated_words += repeat
@@ -179,8 +179,12 @@ def dedupe_words(
     return out
 
 
-def _bare(word: str) -> str:
+def bare(word: str) -> str:
+    """The letters and digits of a word, lower case: what two spellings of it have in common."""
     return "".join(words_of(word))
+
+
+_bare = bare
 
 
 def stitch_segments(

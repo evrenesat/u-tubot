@@ -174,6 +174,81 @@ def cmd_youtube_record(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_captions_score(args: argparse.Namespace) -> int:
+    """Score a stored track against windows of its archived audio transcribed by a named engine."""
+    import asyncio
+
+    from .captions.score import ScoreError, score_track
+
+    cfg = load_config(args.config)
+    db = Database(cfg.db_path)
+    try:
+        doc = asyncio.run(
+            score_track(
+                cfg,
+                db,
+                args.video_id,
+                reference=args.reference,
+                lang=args.lang,
+                spoken=args.spoken,
+                at=args.at,
+                windows=args.windows,
+                window_s=args.window_s,
+                review=args.review,
+            )
+        )
+    except ScoreError as exc:
+        print(f"captions-score failed: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(doc, indent=2))
+        return 0
+    track = doc["track"]
+    version = (
+        "no timing version"
+        if track["timing_version"] is None
+        else f"timing v{track['timing_version']}"
+    )
+    print(
+        f"{doc['video_id']}: scored the {track['lang']} track ({version}, {track['cues']} cues) against {doc['reference']}"
+    )
+    print(
+        f"  first cue starts at {track['first_cue_start_s']} s, longest cue {track['max_cue_s']} s"
+    )
+    for win in doc["windows"]:
+        print(
+            f"  {win['start_s']:>8.1f}s  onsets {win['onsets']:>3}  hit {win['hit']:.2f}"
+            f"  loose {win['loose']:.2f}  median {win['median_s']:+.2f}s"
+        )
+    total = doc["overall"]
+    print(
+        f"  overall   onsets {total['onsets']:>3}  hit {total['hit']:.2f}  loose {total['loose']:.2f}"
+        f"  median {total['median_s']:+.2f}s  p10 {total['p10_s']:+.2f}s  p90 {total['p90_s']:+.2f}s"
+    )
+    return 0
+
+
+def cmd_captions_regen(args: argparse.Namespace) -> int:
+    """Queue background captions jobs for tracks made before the current timing scheme."""
+    from .captions.regen import print_items, regen
+
+    cfg = load_config(args.config)
+    if cfg.captions.timing_mode == "legacy":
+        print('skipped: [captions] timing_mode is "legacy", a regenerated track would be the same')
+        return 0
+    db = Database(cfg.db_path)
+    items = regen(
+        cfg,
+        db,
+        videos=args.video,
+        legacy_only=args.legacy,
+        limit=args.limit,
+        dry_run=args.dry_run,
+    )
+    print_items(items, args.dry_run)
+    return 0
+
+
 def cmd_prompts_validate(args: argparse.Namespace) -> int:
     try:
         with open(args.file, encoding="utf-8") as fh:
@@ -260,6 +335,54 @@ def main(argv: list[str] | None = None) -> int:
     record.add_argument("--out", help="write the cassette here (default: the fixtures directory)")
     record.add_argument("--note", help="a note stored in the cassette, e.g. why it was recorded")
     record.set_defaults(func=cmd_youtube_record)
+    score = sub.add_parser(
+        "captions-score",
+        help=(
+            "score a stored caption track against windows of its archived audio transcribed by a"
+            " named engine (reads the archive; never touches YouTube)"
+        ),
+    )
+    score.add_argument("video_id")
+    score.add_argument(
+        "--lang",
+        help="language of the track to score (default: the newest track with a timing version, else the newest)",
+    )
+    score.add_argument("--spoken", help="spoken language of the audio (default: the transcript's)")
+    score.add_argument(
+        "--at",
+        type=float,
+        action="append",
+        help="window start in seconds (repeatable; replaces --windows)",
+    )
+    score.add_argument("--reference", required=True, help="name of the reference engine")
+    score.add_argument(
+        "--windows", type=int, help="number of windows (default: [captions] score_windows)"
+    )
+    score.add_argument(
+        "--window-s", type=float, help="seconds per window (default: [captions] score_window_s)"
+    )
+    score.add_argument(
+        "--review",
+        action="store_true",
+        help="also run the chunk review (re-listen, drop hallucinated text) on the reference; off by default so the reference is the engine's own answer",
+    )
+    score.add_argument("--json", action="store_true", help="print JSON")
+    score.set_defaults(func=cmd_captions_score)
+    regen = sub.add_parser(
+        "captions-regen",
+        help="queue captions jobs for tracks made before the current timing scheme",
+    )
+    regen.add_argument("--video", action="append", help="only this video (repeatable)")
+    regen.add_argument(
+        "--legacy", action="store_true", help="only tracks with no timing version at all"
+    )
+    regen.add_argument(
+        "--limit",
+        type=int,
+        help="queue at most this many tracks (default: [captions] regen_limit_default)",
+    )
+    regen.add_argument("--dry-run", action="store_true", help="list the tracks, queue nothing")
+    regen.set_defaults(func=cmd_captions_regen)
     args = parser.parse_args(argv)
     return args.func(args)
 

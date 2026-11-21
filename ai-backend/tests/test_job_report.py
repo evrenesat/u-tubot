@@ -225,13 +225,35 @@ async def test_a_captions_job_logs_the_cues_and_the_tv_download(env):
             "chunking",
             "stitching",
             "asr",
+            "word_timing",
             "cues",
             "align",
+            "sync_score",
             "proofread",
             "stored",
             "finished",
         ],
     )
+    timing = event(env, job_id, "word_timing")["detail"]
+    assert {
+        "word_timing",
+        "words",
+        "real",
+        "interpolated",
+        "real_share",
+        "zero_length",
+        "stretched",
+        "squeezed",
+        "nonmonotonic",
+        "words_per_s",
+        "speech_s",
+        "silences",
+    } <= set(timing)
+    check = event(env, job_id, "sync_score")
+    assert check["status"] == "skipped" and check["detail"]["reason"] == "no_silences"
+    track_row = env.svc.db.one("SELECT timing_version FROM captions WHERE video_id=?", [VID])
+    assert track_row["timing_version"] == pipeline_mod.TIMING_VERSION
+    assert env.svc.jobs.status(VID)["tracks"][0]["timing_version"] == pipeline_mod.TIMING_VERSION
     asked = event(env, job_id, "queued")["detail"]
     assert asked["client"] == "Living room TV" and asked["priority"] == "background"
     recheck = event(env, job_id, "caption_recheck")["detail"]
@@ -513,7 +535,9 @@ def test_format_track_and_language_come_from_the_chosen_yt_dlp_format(tmp_path, 
 
 
 class StubAsr:
-    async def transcribe(self, wav, language, progress, *, priority=1, want_words=True):
+    async def transcribe(
+        self, wav, language, progress, *, priority=1, want_words=True, expected_language=None
+    ):
         progress(1.0)
         return ASRResult(
             words=[],
@@ -918,7 +942,7 @@ def test_the_job_report_code_builds_dom_with_text_nodes_and_no_inline_style_or_u
 @NEEDS_NODE
 def test_the_report_text_folds_running_events_and_reads_every_stage():
     script = """
-    import { collapse, describe, reasonText, fmtSecs } from "__JOBTEXT__";
+    import { collapse, describe, reasonText, fmtSecs, triggerText } from "__JOBTEXT__";
     const ev = (stage, status, detail = {}, ts = 0) => ({ stage, status, detail, ts });
     const log = [
       ev("queued", "ok", { user: "owner", client: "Living room TV", trigger: { kind: "explicit" }, priority: "background" }, 0),
@@ -943,6 +967,18 @@ def test_the_report_text_folds_running_events_and_reads_every_stage():
       fallback: describe(log[5]),
       skipped: describe({ stage: "diarization", status: "skipped", detail: log[9].detail }),
       delivered: describe(log[10]),
+      words: describe({ stage: "word_timing", status: "ok", detail: { words: 1309, real_share: 1, stretched: 14, zero_length: 9, squeezed: 4 } }),
+      wordsWarn: describe({ stage: "word_timing", status: "warn", detail: { words: 10, real_share: 0, message: "No word times." } }),
+      alignWords: describe({ stage: "align", status: "ok", detail: { mode: "words", speech_cues: 212, fill_cues: 20, moved: 31 } }),
+      alignKept: describe({ stage: "align", status: "skipped", detail: { mode: "captions_timing", reason: "no_words" } }),
+      score: describe({ stage: "sync_score", status: "ok", detail: { speech_overlap: 0.96, starts_in_silence: 0.02 } }),
+      chunk: describe({ stage: "asr_chunk", status: "ok", detail: { engine: "mac", start_s: 0, end_s: 60, chars: 9, word_timing: "interpolated" } }),
+      recheck: describe({ stage: "asr_recheck", status: "ok", detail: { start_s: 0, end_s: 600, reason: "language_mismatch", action: "forced_language", detected: "en", detected_after: "tr", expected: "tr", outcome: "replaced" } }),
+      skippedRecheck: describe({ stage: "asr_recheck", status: "skipped", detail: { start_s: 0, end_s: 600, reason: "sparse", skipped: "budget" } }),
+      dropped: describe({ stage: "asr_recheck", status: "warn", detail: { action: "dropped", dropped_segments: 12, dropped_s: 84 } }),
+      regen: triggerText({ via: "regen" }),
+      scoreNull: describe({ stage: "sync_score", status: "ok", detail: { speech_overlap: null, starts_in_silence: null } }),
+      scoreSkipped: describe({ stage: "sync_score", status: "skipped", detail: { reason: "no_silences" } }),
       reason: [reasonText("http_503"), reasonText("too_long"), fmtSecs(0.4), fmtSecs(125)],
       secs: rows[1].seconds,
     };
@@ -975,5 +1011,25 @@ def test_the_report_text_folds_running_events_and_reads_every_stage():
     assert out["fallback"] == "mac gave up on 0-600 s (HTTP 503), trying box"
     assert out["skipped"] == "Skipped: No Hugging Face token was set."
     assert out["delivered"] == "TV fetched the .vtt track (2 times)"
+    assert (
+        out["words"]
+        == "1,309 words, 100% with real times, 14 stretched, 9 zero-length, 4 squeezed fixed"
+    )
+    assert out["wordsWarn"] == "No word times., 10 words, 0% with real times"
+    assert (
+        out["alignWords"]
+        == "212 cues from word times, 20 non-speech tags and captions in gaps with no heard speech, 31 boundaries moved"
+    )
+    assert out["alignKept"] == "No words to align; the caption timing is kept"
+    assert out["score"] == "96% of cue time over sound, 2% of cues start in silence"
+    assert out["chunk"].endswith("word times: estimated")
+    assert out["recheck"] == (
+        "0-600 s heard as en, expected tr: redone with the language fixed, replaced, now heard as tr (wrong language)"
+    )
+    assert out["skippedRecheck"] == "0-600 s not re-checked (over the re-check budget)"
+    assert out["dropped"] == "12 segments (84 s) dropped as not speech"
+    assert "0%" not in out["scoreNull"] and "n/a" in out["scoreNull"]
+    assert out["scoreSkipped"] == "Not checked: the audio has no silences to compare with"
+    assert out["regen"] == "queued again to rebuild its timing"
     assert out["reason"][:2] == ["HTTP 503", "the video is longer than the transcription limit"]
     assert out["reason"][2:] == ["400 ms", "2 min 5 s"]

@@ -1,5 +1,203 @@
 # DEVLOG
 
+## 2026-11-21 (CP4 review round 1 fixes)
+
+1. Legacy mode (`timing_mode = "legacy"`) again produces the old output: `Proofreader.polish` rebuilds cues without words and overflows through
+   `retime_split` (counted in `split_by_chars`); `translate` keeps one cue per source cue with `wrap_lines(...) or [full]`. Test compares with
+   the old result.
+2. `split_cue` clamps: every piece lies in the cue, starts increase by at least `word_min_s`, each piece lasts at least `word_min_s` (a cue
+   shorter than that is shared evenly); a cue ending before its last word no longer gives a zero-length piece or pieces past `cue.end`.
+3. Exact mapping compares normalised tokens (`chunking.bare`, case and punctuation stripped; `segment.tokens_match`), not counts. A mismatch
+   goes `at_pause`. Proofread sets `words_match_text` False when it changed tokens; pieces of an `at_pause` split are False too.
+4. A last piece shorter than `min_cue_s` stretches too, up to the next cue's start (`split_cue(room_end=)`, passed by proofread and translate).
+5. Caption-row splits from `caption_cues` / `merge_words_into_cues(retime=False)` are caption-timed and no longer count as `char_timed_cues`.
+6. TIMING_VERSION 3 is reserved for CP3; CP4 jumps to 4 on purpose.
+
+## 2026-11-21 (subtitle timing checkpoint 4: proofread and translate keep real times)
+
+Plan: `temp/sync-design/agent-plan.md` (CP4). Before: a proofread text that overflowed a cue went through `retime_split` (character-count
+time over the cue's span), a translation that did not fit became one over-long line, and `Cue.words` was dropped by proofreading and
+translation.
+
+- `segment.split_cue(cue, text, cfg, stats)` + `SplitStats`: lines packed with `forced_lines`, groups of `max_lines`; with words, `exact` (text
+  still maps token for token onto the words, a speaker prefix token excluded) or `at_pause` (each cut to the widest word gap whose time
+  fraction lies within `split_search_frac` (0.2) of the text's character share; nearest boundary when none is in range); without enough
+  words `retime_split` (`by_chars`). Pieces keep `speaker` and their slice of `words`.
+- `Cue` gained `words_match_text` (False after translation, so a translated cue is never cut "exactly" by chance) and `char_timed` (set
+  by `retime_split`; counted in `sync_score.char_timed_cues`, and the final count after proofreading and translation is stored in
+  `captions.timing.char_timed_cues`).
+- `Proofreader.polish` and `CaptionPipeline.translate` carry words through (`dataclasses.replace`); `translate` splits overflow with
+  `split_cue`. `proofread` and `translate` stage details: `split_exact`, `split_at_pause`, `split_by_chars`, `overlong` (lines still over
+  the limit, i.e. one word longer than the line). `merge_words_into_cues(retime=True)` keeps `words`; fill cues have none. `TIMING_VERSION = 4`.
+- Docs: `docs/captions.md`, `docs/server.md`, `ai/CONTRACT.md`, job page text (`jobtext.js`).
+
+Deviations from the plan:
+
+1. Padding is done inside `split_cue` instead of by the caller: a non-last piece lingers `cue_linger_s` and stretches to `min_cue_s` only
+   into the gap before the next piece. The caller's `pad_cues` / `enforce_timing` would also touch cues in legacy mode.
+2. The first piece starts at the source cue's start and the last ends at its end (the plan's "first word start / last word end" would drop
+   the snap and linger already applied to the cue); interior boundaries are real word times.
+3. `by_chars` is counted per cue, not per piece. `char_timed_cues` is also in the `sync_score` event (before text passes) and the final
+   value is in the stored `timing`, since the text passes run after that event.
+4. `translate(cues, target, stats=None)` takes an optional `SplitStats`.
+5. The CP4 acceptance on the Hindi episode (production) was not run here.
+
+## 2026-11-21 (subtitle timing checkpoint 2: wrong-language and hallucinated chunks)
+
+Plan: `temp/sync-design/agent-plan.md` (CP2), builds on CP1. Evidence: EQWLxadmae0, first 600 s chunk labelled English, 20 segments,
+"Thank you." every 30 s over continuous Turkish speech.
+
+- `captions/sanity.py` (pure): `flag_segments` (`no_speech`, `repeat_loop`, `phantom`, `compressed`, `low_confidence`), `chunk_health`, `review`
+  (reasons `language_mismatch`, `hallucination`, `sparse`), `drop_flagged`. Config `halluc_*`, `sparse_*`, `asr_recheck`, `asr_recheck_chunk_s`
+  (`config.py`, `config.example.toml`).
+- `AsrRouter.transcribe(expected_language=, review=)`: after `gather_all`, per chunk with a reason the ladder runs (forced language, smaller
+  windows, next engine that serves the language), keeps the best by `ChunkHealth.rank()`, then drops flagged segments and the words inside them. Everything per
+  chunk timing (SpanResult), never on the global real/interpolated share. The ladder runs after all first answers, so it cannot re-enter
+  `OpenAIEngine._resolve`'s lock (tested with a real auto-mode engine on a mock transport). Single-engine chains work: steps 1 and 2 only.
+- `asr_recheck` event, `asr` stats `rechecked_chunks`, `hallucination_drops`, `dropped_s`; `ASR_CACHE_VERSION = 3`, `TIMING_VERSION = 2`
+  (so `captions-regen` lists CP1 tracks); `jobtext.js` text; docs (`docs/captions.md` "Chunk review", `docs/server.md`, `ai/CONTRACT.md`).
+- Pipeline: `expected_language = requested or normalize_language(video_meta.language)`, for `run`, `improve` and `transcribe` alike (computed in `_asr_stage`).
+- Tests: `test_sanity.py`, `test_asr_recheck.py` (forced language, smaller window, next engine, unrecoverable loop, healthy chunks untouched, review off,
+  failing retry, sparse chunk, auto-mode lock), `test_sync_metric.py::test_hallucinated_chunk_recovers`, jobtext cases.
+
+Deviations from the plan:
+
+- `drop_flagged` returns the dropped segments (not a count) as its third item; the router counts them and sums their seconds.
+- The metadata language is only a hint: when more than `asr_expected_override_share` (0.5) of the audio is heard as one other language the heard one is
+  expected (a wrong upload language must not make every chunk be "corrected" into the wrong language). New config key.
+- A language the engine was told (`language` given or a forced retry) is not checked on the first pass: only detected languages can mismatch.
+- The evidence chunk alone flags only 23% of its seconds (20 x 7 s of 600 s), below `halluc_chunk_share` (0.3): it is the language mismatch (metadata `tr`) and
+  the sparse rule that catch it. Drops apply to chunks that had a reason only (a lone phantom in a healthy chunk stays).
+- `captions-score` references are not reviewed by default; `--review` opts in (documented).
+- The hint is not in the ASR cache key (the key is unchanged apart from the `v3` prefix); documented.
+- An `asr_recheck` attempt that raises (`ASRError`) is logged with `outcome = "failed"` and the first answer is kept.
+
+Review round 1 fixes:
+
+1. Code-switching: the audio overriding the hint makes the language unknown (no `language_mismatch` at all); no hint needs `asr_expected_dominant_share` 0.8; a lone
+   mismatch needs `asr_mismatch_minority_share` 0.25 (`sanity.review`); a re-listen in another language is accepted only when not clearly worse (`asr_recheck_min_chars_ratio`,
+   `asr_recheck_logprob_slack` over the unflagged speech, no more flagged share); only a mismatch forces a language, the other rungs use the language the first pass heard.
+   Tests: correct hint on a code-switched video, an English stretch in a Hindi video, forced-only-for-mismatch, the evidence case still replaced.
+2. Repeats: `repeat_loop` needs low confidence or a compression flag; it is dropped only when the smaller-window pass did not say the same text (`repeated_texts`);
+   `phantom`/`no_speech` always go. Tests: confident chorus kept, chant re-heard kept, "Thank you" loop removed.
+3. Budget: `asr_recheck_max_share` (worst chunks first, at least one chunk; deviation: a single chunk over the share is still allowed, otherwise a short video could never be repaired),
+   `asr_recheck_max_requests`, a sparse-only chunk gets one rung. The agree-within-30% rule was dropped as redundant once sparse-only has one rung. Counts in the `asr` stats.
+4. Ranking: word timing breaks ties, characters count up to `asr_recheck_chars_cap`, estimated words never replace real ones (unless the first was a hallucination).
+5. Cache: a result with an unresolved chunk (budget skip, or all rungs failed) is not cached (`cache = "not_stored_unresolved"`). "Unresolved" means the ladder could not be done,
+   not that a deliberate "kept" verdict is repeated every run.
+6. Drops run after stitching on absolute times, inside re-listened spans (a phantom in a neighbour's overlap goes too). Test.
+7. `ASRResult.dropped` ([start, end, reasons]) and `.chunks` ([start, end, language]) are in the v3 cache payload (additive; v3 was never deployed).
+8. A rung only runs on engines that serve its language. 9. The `asr_recheck` text shows `detected_after` and the skipped cases. 10. Tests: short tail never sparse, a drop spanning a seam.
+
+Review round 2 fixes:
+
+1. `repeated_texts` ignores doubted segments (low `avg_logprob`, high compression ratio): a deterministic loop ("Altyazi M.K.") the engine makes up again in the windowed pass is still dropped; a repeat confirmed with confidence is kept. Tests in `test_sanity` and `test_asr_recheck`.
+2. Budget and request-cap skips are deterministic: those results are cached (`skipped_chunks` in the stats). Only a chunk whose every rung failed with an engine error is `unresolved` and keeps the result out of the cache.
+3. `_acceptable` without an `avg_logprob` on either side requires chars >= `asr_recheck_min_chars_ratio_no_logprob` (0.8) of the first answer (test: 0.6 kept, 0.9 replaced).
+
+Production steps for CP2 (coordinator, after deploy; `<config>`, `<ref>` as in CP1):
+
+1. Regenerate the video: `uv run utubot --config <config> captions-regen --video EQWLxadmae0` (all three videos regenerate anyway: `TIMING_VERSION` is 2 now).
+2. Job log of the new job: an `asr_recheck` with `start_s` 0, `end_s` 600, `reason` containing `language_mismatch` and `outcome = "replaced"` (action
+   `forced_language`; if the Mac engine still answers wrongly, `smaller_window` follows). `asr` carries `rechecked_chunks >= 1`.
+3. Stored track: no cue in 0-600 s whose text is only "Thank"/"you."/"Thank you." and its characters in 0-600 s within 0.5-2x the per-chunk median
+   (`sqlite3` on the stored VTT, or `GET /v1/videos/EQWLxadmae0/captions/tr.vtt`).
+4. `uv run utubot --config <config> captions-score EQWLxadmae0 --reference <ref> --at 300 --window-s 120 --json`: `loose >= 0.85`.
+5. The other two videos (`ti3gVlNnXoY`, `TCSgH7l2Isg`): no `asr_recheck` with `action = "dropped"` over real speech. List every drop (`dropped_segments`,
+   `dropped_s`) here and spot-check against the audio; scores (step 4 pattern of CP1) not more than 2 points below CP1.
+6. If a healthy video shows rechecks, read the `reason` and `flagged_share_before`; tune `sparse_chunk_ratio` / `halluc_chunk_share` rather than switching `asr_recheck` off
+   (the switch is `[captions] asr_recheck = false`, no redeploy needed beyond a config reload).
+
+## 2026-11-21 (subtitle timing checkpoint 1: real word times, repair, cues from words)
+
+Plan: `temp/sync-design/agent-plan.md` (CP1). Causes measured earlier: the production engine (oMLX, mlx-audio) returns words only for the
+form field `word_timestamps=true`, so `timestamp_granularities[]` got none and every word time was interpolated silently; `improve()` then
+bucketed the words into YouTube windows of +-0.4 s and dropped the rest.
+
+- Engine word modes (`AsrEngineConfig.word_timestamps` = `auto|granularities|flag|both|none`, `extra_form`, `condition_on_previous_text`).
+  `auto` sends both fields first and falls back per the plan; words are read from the top level or from `segments[].words`; segment
+  quality metrics (`no_speech_prob`, `avg_logprob`, `compression_ratio`) and word `probability` are kept. Every word carries its
+  provenance (`Word.timing`: real, interpolated, repaired, suspect); `ASRResult.word_timing` / `stats` summarise it; `asr_chunk` events
+  and `GET /v1/status` (`word_times`) show it. `asr_words_required` passes over an engine without word times (`no_word_times`).
+- `captions/wordtimes.py`: `repair_words` (monotonic, stretched, zero-length, squeezed runs) and `classify`, run on every job against the
+  audio's silences (`word_timing` event). `captions/syncscore.py`: `phrase_onsets`, `score_starts`, `self_check` (`sync_score` event).
+- Cues: `align.cues_from_words` (speech cues from the words, caption cues no word touches kept as fill cues), `merge_words_into_cues(retime=False)`
+  for estimated word times, `segment.pad_cues` (linger after the last word, anchored on it so a snapped cue is not pushed twice).
+  `timing_mode = "legacy"` restores the old path; legacy tracks get no `timing_version`.
+- ASR cache v2 (`v2:` key prefix; raw words with provenance, segment metrics, `word_timing`, `stats`); only a `real` answer is cached
+  (`cache = "not_stored_no_word_times"` otherwise). New additive `captions.timing_version` / `captions.timing` columns, `timing_version`
+  in the captions status track list.
+- CLI: `utubot captions-score` (stored track vs. windows of the archived audio transcribed by a named engine; never YouTube) and
+  `utubot captions-regen` (queues background jobs for tracks with no or an older `timing_version`).
+- Tests: `tests/synth_speech.py` (truth timeline, Whisper-style answers with DTW flaws, rolling caption rows, tone audio, scripted engine),
+  `tests/test_sync_metric.py` (real words hit 1.00 / loose 1.00; a segment-only engine hits 0.16), wordtimes, syncscore, align, engine,
+  cache, report, migration and CLI tests. 876 tests.
+
+Deviations from the plan, all small:
+
+- The metric WAV is a tone wherever the truth has a phrase (not silence): repair uses the silences, so silent audio would make every
+  stretched word look like a head stretch.
+- `cues_from_words` takes an optional `silences` and snaps before it pads; it is split into `word_cues` + `finish_cues` so the pipeline can
+  count the moved boundaries. `pad_cues` counts the linger from the last word, not the cue end.
+- `self_check.starts_in_silence` counts a start that lies more than `sync_late_s` after a silence began *and* more than `sync_early_s`
+  before it ends (a start at the end of a silence is where a cue should start).
+- The late-end check of the sync test ignores cues held to `min_cue_s`; `captions-score` drops each window's first onset (a cut, not a phrase).
+- `captions-regen --legacy` lists only tracks without any `timing_version`.
+- `auto` probe order follows the plan (both, granularities, flag); the "400 to both" test uses a server that gives words to the field.
+
+Review round 1 fixes:
+
+1. `auto` word-mode probing: an answer without any text (a silent or music-only chunk) is returned as it is, decides nothing and costs no
+   extra probes, the next chunk probes again; a 413, or a 400 that does not name the word fields, is raised instead of walking the forms.
+2. `improve()` with estimated word times keeps the caption cues, text and timing (nothing is merged in; `align` skipped with
+   `reason = "word_times_estimated"`); every caption token survives (tested on the 300 s talk).
+3. ASR cache: real and mixed answers share the plain `v2:` key; an answer without word times is stored under `...:wm-<engines and their word
+   modes>`, so a server that never gives words is not asked again but a new word mode misses. (The status of an engine whose config
+   changed no longer reports the old instance's resolved mode.)
+4. `word_cues`: coverage rule (replaced in round 2, see below).
+5. Fill cues are clipped against each other before the linger and snap.
+6. `captions-regen`: default limit `regen_limit_default` (20), skipped in legacy mode, and a track is not listed when a newer track of the
+   video already has the current `timing_version` (terminates when the regenerated language differs).
+7. `sync_score` is skipped with `reason = "no_silences"` when the audio has none; the report text shows null shares as n/a.
+8. Cached three-item word rows load as `interpolated`. 9. A zero-length word with no room is neither marked repaired nor counted in
+   `zero_length`. 10. Words still shorter than `word_min_s` after repair are marked `suspect` and counted in the new `unfixed`.
+11. `captions-score`: `--at SECONDS` (repeatable), `--lang` picks the track (default: newest with a `timing_version`, else newest), `--spoken`
+    for the audio language, output says which track was scored and gives `first_cue_start_s` and `max_cue_s`.
+12. The rollback note in `docs/captions.md` says a full return to the old requests also needs `word_timestamps = "granularities"`.
+
+Review round 2 fixes:
+
+1. Fill rule (`align.word_cues`): a caption that is only a non-speech tag (`[..]`, `(..)`, music notes) is always a fill cue (clipped to
+   the gap); a caption with text is a fill cue only when NO word overlaps its span widened by `align_window_s`. A spoken caption beside its
+   own words is never repeated (the reproduced "so that's the plan" case is a test, as is a no-token-twice check on the 300 s talk).
+   `fill_cover_min_share` is removed (config, example, docs); the `test_caption_source` expectation is back to 2 cues. Report text:
+   "non-speech tags and captions in gaps with no heard speech".
+2. Cache: the wordless (`wm-`) entry is read only while no engine of the chain is known to give words (resolved or pinned mode, or
+   faster-whisper), so a fallback's estimate stops being served once the word engine recovers (tested with a flaky first engine).
+3. Docs: `auto` walks the modes only on a 400 that names word/timestamp/granularities; servers that reject unknown fields with a generic
+   400 must set `word_timestamps` explicitly.
+
+Production steps (run by the coordinator after deploy; nothing here calls YouTube except the normal caption recheck of a regenerated job):
+
+0. Answer shape (coordinator, 2026-11-21, before deploy): the production Mac endpoint was probed with BOTH `word_timestamps=true` and
+   `timestamp_granularities[]=word,segment` on a 60 s Hindi clip: 200, words nested in `segments[].words` with keys `word`, `start`, `end`,
+   `probability`. The production config pins `word_timestamps = "both"` on that engine (no probing); `auto` would also resolve to `both`.
+1. Baseline with the old tracks, per video (the reference is the local faster-whisper engine; `<ref>` is its configured name). The old
+   tracks have no `timing_version`, and `captions-score` falls back to the newest track then; it prints which track it scored:
+   `mkdir -p temp/sync-design/score` then
+   `systemd-run --scope -p Nice=19 uv run utubot --config <config> captions-score ti3gVlNnXoY --reference <ref> --windows 4 --window-s 120 --json > temp/sync-design/score/before-ti3gVlNnXoY.json`
+   and the same for `TCSgH7l2Isg`. For `EQWLxadmae0` target the windows of the gate:
+   `... captions-score EQWLxadmae0 --reference <ref> --at 1500 --at 2700 --window-s 120 --json > temp/sync-design/score/before-EQWLxadmae0.json`.
+2. `uv run utubot --config <config> captions-regen --video ti3gVlNnXoY --video TCSgH7l2Isg --video EQWLxadmae0` (add `--dry-run` to list
+   first), wait for the jobs, then repeat step 1 into `after-<id>.json`.
+   The JSON has `track.first_cue_start_s` (gate: 4.2-4.9 s for the Hindi episode) and `track.max_cue_s` (gate: no cue longer than
+   `max_cue_s`, 7 s; fill cues are clipped by the same limit); pick the regenerated track with `--lang` if the video has several.
+3. Gates: Hindi episode: `word_timing` event `ok` with `real_share >= 0.99`; `loose >= 0.85`; `hit >= 0.60` and 20 points over the
+   baseline; no speech cue over `max_cue_s`; first cue starts in 4.2-4.9 s. `TCSgH7l2Isg`: `hit` and `loose` within 2 points of the
+   baseline. `EQWLxadmae0`: windows at 1500 s and 2700 s not worse (the first chunk stays broken until CP2). Record the `asr` stage
+   seconds per audio minute of the Mac engine before and after, and update its `speed_factor` when it moved by more than a quarter.
+4. If the faster-whisper reference is too noisy: also `--reference <mac engine> --window-s 30 --windows 12`; report both, tune no gate.
+
 ## 2026-11-21 (subtitle language setting)
 
 - New per-user setting `captions_translate_to` (settings section `transcripts`, web UI Captions page, "Subtitle language" (empty with the server default as placeholder)):

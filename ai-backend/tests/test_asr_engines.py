@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import wave
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
 import pytest
 
+from utubot.captions import events
 from utubot.captions.asr import ASRError
 from utubot.captions.engines import (
     AsrRouter,
@@ -19,8 +22,10 @@ from utubot.captions.engines import (
     engine_enabled,
     parse_verbose_json,
 )
-from utubot.captions.types import Segment, Word
-from utubot.config import AsrEngineConfig, CaptionsConfig
+from utubot.captions.events import JobEvents, JobTrace
+from utubot.captions.types import TIMING_INTERPOLATED, TIMING_REAL, Segment, Word
+from utubot.config import AsrEngineConfig, CaptionsConfig, Config
+from utubot.db import Database
 from utubot.llm import BACKGROUND, INTERACTIVE
 
 RATE = 10
@@ -832,3 +837,268 @@ async def test_a_known_language_is_never_second_guessed(tmp_path):
     )
     result, _ = await run(r, wav, "en")
     assert result.engine == "box" and mac.chunks == []
+
+
+# ---- how a server is asked for word times, and what is said about the answer --------------------------
+
+FIELD_RE = re.compile(r'name="([^"]+)"\r\n\r\n([^\r]*)')
+
+
+def form_of(request: httpx.Request) -> dict[str, list[str]]:
+    fields: dict[str, list[str]] = {}
+    for name, value in FIELD_RE.findall(request.content.decode("latin-1")):
+        fields.setdefault(name, []).append(value)
+    return fields
+
+
+NESTED_WORDS = [
+    {"word": " Hello", "start": 0.0, "end": 0.5, "probability": 0.9},
+    {"word": " there", "start": 0.6, "end": 1.2, "probability": 0.8},
+]
+
+
+def nested_body() -> dict:
+    return {
+        "language": "english",
+        "text": "Hello there",
+        "segments": [
+            {
+                "start": 0.0,
+                "end": 2.0,
+                "text": " Hello there",
+                "no_speech_prob": 0.02,
+                "avg_logprob": -0.3,
+                "compression_ratio": 1.1,
+                "words": NESTED_WORDS,
+            }
+        ],
+    }
+
+
+def wordless_body() -> dict:
+    body = nested_body()
+    del body["segments"][0]["words"]
+    return body
+
+
+class Recorder:
+    """A transport handler that answers from `rules(fields)` and keeps every request's form."""
+
+    def __init__(self, rules):
+        self.rules, self.forms = rules, []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        fields = form_of(request)
+        self.forms.append(fields)
+        status, body = self.rules(fields)
+        return httpx.Response(status, json=body)
+
+
+def asks_flag(fields) -> bool:
+    return fields.get("word_timestamps") == ["true"]
+
+
+def asks_granularity(fields) -> bool:
+    return "word" in fields.get("timestamp_granularities[]", [])
+
+
+async def test_auto_mode_sends_both_fields_and_reads_nested_words(tmp_path):
+    from tests.mock_openai import MockOpenAI
+
+    mock = MockOpenAI()
+    mock.audio_words = "flag_nested"
+    engine = OpenAIEngine(engine_cfg("mac"), httpx.ASGITransport(app=mock.app))
+    out = await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 5), "en", want_words=True)
+    assert mock.audio_calls[0]["word_timestamps"] == "true"
+    assert [w.text for w in out.words] == ["Hello", "there."] + [
+        "How",
+        "are",
+        "you",
+        "doing",
+        "today?",
+    ]
+    assert all(w.timing == TIMING_REAL for w in out.words)
+    assert out.word_timing == "real" and out.word_mode == "both" and engine.word_mode == "both"
+    assert len(mock.audio_calls) == 1
+
+
+async def test_auto_mode_retries_single_modes_when_both_is_rejected(tmp_path):
+    def rules(fields):
+        if asks_flag(fields) and asks_granularity(fields):
+            return 400, {"error": "word timestamps unsupported"}
+        return 200, (nested_body() if asks_granularity(fields) else wordless_body())
+
+    server = Recorder(rules)
+    engine = OpenAIEngine(engine_cfg("mac"), serve(server))
+    wav = make_wav(tmp_path / "c.wav", 5)
+    out = await engine.transcribe_chunk(wav, None, want_words=True)
+    assert len(server.forms) == 2 and out.word_mode == "granularities"
+    assert [w.text for w in out.words] == ["Hello", "there"] and out.words[0].prob == 0.9
+    await engine.transcribe_chunk(wav, None, want_words=True)
+    assert len(server.forms) == 3 and not asks_flag(server.forms[2])  # straight to the known mode
+
+
+async def test_auto_mode_moves_on_to_the_flag_when_the_field_gives_no_words(tmp_path):
+    def rules(fields):
+        if asks_flag(fields) and asks_granularity(fields):
+            return 400, {"error": "word timestamps unsupported"}
+        return 200, (nested_body() if asks_flag(fields) else wordless_body())
+
+    server = Recorder(rules)
+    engine = OpenAIEngine(engine_cfg("mac"), serve(server))
+    out = await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 5), None, want_words=True)
+    assert len(server.forms) == 3 and out.word_mode == "flag" and engine.word_mode == "flag"
+
+
+async def test_a_configured_mode_is_used_as_it_is_and_extra_form_fields_are_sent(tmp_path):
+    server = Recorder(lambda fields: (200, nested_body()))
+    cfg = engine_cfg(
+        "mac", word_timestamps="flag", extra_form={"condition_on_previous_text": "false"}
+    )
+    engine = OpenAIEngine(cfg, serve(server))
+    wav = make_wav(tmp_path / "c.wav", 5)
+    await engine.transcribe_chunk(wav, None, want_words=True)
+    (fields,) = server.forms
+    assert fields["word_timestamps"] == ["true"] and "word" not in fields.get(
+        "timestamp_granularities[]", []
+    )
+    assert fields["condition_on_previous_text"] == ["false"]
+    await engine.transcribe_chunk(wav, None, want_words=False)
+    assert "word_timestamps" not in server.forms[1]
+    assert server.forms[1]["condition_on_previous_text"] == ["false"]
+
+
+async def test_server_without_word_times_is_flagged_not_silent(tmp_path):
+    server = Recorder(lambda fields: (200, wordless_body()))
+    engine = OpenAIEngine(engine_cfg("mac"), serve(server))
+    wav = make_wav(tmp_path / "c.wav", 5)
+    out = await engine.transcribe_chunk(wav, None, want_words=True)
+    assert len(server.forms) == 3  # both, flag, granularities
+    assert out.word_timing == "interpolated" and out.words
+    assert all(w.timing == TIMING_INTERPOLATED for w in out.words)
+    assert engine.word_mode == "none"
+    await engine.transcribe_chunk(wav, None, want_words=True)
+    assert len(server.forms) == 4  # no probing again
+
+    db = Database(":memory:")
+    log = JobEvents(db, Config().captions)
+    token = events.bind(JobTrace("j1", log))
+    try:
+        chain = AsrRouter(
+            CaptionsConfig(asr_engines=[engine_cfg("mac")], sample_rate=RATE),
+            transport=serve(Recorder(lambda fields: (200, wordless_body()))),
+        )
+        result = await chain.transcribe(wav, None, lambda f: None, want_words=True)
+    finally:
+        events.unbind(token)
+    (chunk,) = [e["detail"] for e in log.list("j1") if e["stage"] == "asr_chunk"]
+    assert chunk["word_timing"] == "interpolated" and chunk["words"] == 2
+    assert result.word_timing == "interpolated"
+    assert result.stats == {
+        "words_real": 0,
+        "words_interpolated": 2,
+        "rechecked_chunks": 0,
+        "unresolved_chunks": 0,
+        "skipped_chunks": 0,
+        "recheck_requests": 0,
+        "hallucination_drops": 0,
+        "dropped_s": 0,
+    }
+    db.close()
+
+
+def test_parse_reads_nested_words_metrics_and_skips_unusable_word_entries():
+    body = nested_body()
+    body["segments"][0]["words"].append({"word": "x", "start": None, "end": 3})
+    body["segments"][0]["words"].append({"word": "", "start": 1, "end": 2})
+    out = parse_verbose_json(body, 2.0, True)
+    assert [w.text for w in out.words] == ["Hello", "there"]
+    seg = out.segments[0]
+    assert (seg.no_speech_prob, seg.avg_logprob, seg.compression_ratio) == (0.02, -0.3, 1.1)
+    top = {**body, "words": [{"word": "Top", "start": 0.0, "end": 0.4}]}
+    assert [w.text for w in parse_verbose_json(top, 2.0, True).words] == ["Top"]
+
+
+class WordlessEngine(FakeEngine):
+    async def transcribe_chunk(self, wav, language, want_words):
+        result = await super().transcribe_chunk(wav, language, want_words)
+        result.words = [replace(w, timing=TIMING_INTERPOLATED) for w in result.words]
+        return result
+
+
+def words_router(fakes: dict[str, FakeEngine], names: list[str], **cfg) -> AsrRouter:
+    chain = CaptionsConfig(
+        asr_engines=[engine_cfg(name, priority=i) for i, name in enumerate(names)],
+        sample_rate=RATE,
+        **cfg,
+    )
+    return AsrRouter(chain, engine_factory=lambda e: fakes[e.name], enabled=lambda e: True)
+
+
+async def test_words_required_falls_through_to_an_engine_with_word_times(tmp_path):
+    db = Database(":memory:")
+    log = JobEvents(db, Config().captions)
+    wav = make_wav(tmp_path / "a.wav", 30)
+    token = events.bind(JobTrace("j1", log))
+    try:
+        chain = words_router(
+            {"a": WordlessEngine("a"), "b": FakeEngine("b")}, ["a", "b"], asr_words_required=True
+        )
+        result, _ = await run(chain, wav, want_words=True)
+    finally:
+        events.unbind(token)
+    assert result.engine == "b" and result.word_timing == "real"
+    (fallback,) = [e["detail"] for e in log.list("j1") if e["stage"] == "asr_fallback"]
+    assert fallback["reason"] == "no_word_times" and fallback["engine"] == "a"
+    db.close()
+
+    alone = words_router({"a": WordlessEngine("a")}, ["a"], asr_words_required=True)
+    flagged, _ = await run(alone, wav, want_words=True)
+    assert flagged.engine == "a" and flagged.word_timing == "interpolated" and flagged.words
+
+    both = words_router({"a": WordlessEngine("a"), "b": FakeEngine("b")}, ["a", "b"])
+    kept, _ = await run(both, wav, want_words=True)
+    assert kept.engine == "a"  # not required: the first engine's answer stands
+
+
+async def test_the_word_mode_of_each_engine_is_in_the_status(tmp_path):
+    chain = AsrRouter(
+        CaptionsConfig(
+            asr_engines=[engine_cfg("mac"), engine_cfg("pinned", word_timestamps="flag")],
+            sample_rate=RATE,
+        ),
+        transport=serve(Recorder(lambda fields: (200, nested_body()))),
+    )
+    assert [s["word_times"] for s in chain.status()] == ["unknown", "flag"]
+    await chain.transcribe(make_wav(tmp_path / "a.wav", 5), None, lambda f: None, want_words=True)
+    assert chain.status()[0]["word_times"] == "both"
+
+
+async def test_a_textless_first_chunk_does_not_decide_the_word_mode(tmp_path):
+    silent = {"language": "english", "text": "", "segments": []}
+
+    def rules(fields):
+        return (200, silent) if len(server.forms) == 1 else (200, nested_body())
+
+    server = Recorder(rules)
+    engine = OpenAIEngine(engine_cfg("mac"), serve(server))
+    wav = make_wav(tmp_path / "c.wav", 5)
+    first = await engine.transcribe_chunk(wav, None, want_words=True)
+    assert first.words == [] and len(server.forms) == 1  # no extra probes on a textless answer
+    assert engine.word_mode is None
+    second = await engine.transcribe_chunk(wav, None, want_words=True)
+    assert second.word_timing == "real" and second.word_mode == "both"
+    assert engine.word_mode == "both" and len(server.forms) == 2
+
+
+async def test_a_rejection_about_the_chunk_does_not_walk_the_modes(tmp_path):
+    server = Recorder(lambda fields: (413, {"error": "file too large"}))
+    engine = OpenAIEngine(engine_cfg("mac"), serve(server))
+    with pytest.raises(EngineError):
+        await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 5), None, want_words=True)
+    assert len(server.forms) == 1 and engine.word_mode is None
+    plain = Recorder(lambda fields: (400, {"error": "bad audio"}))
+    engine = OpenAIEngine(engine_cfg("mac"), serve(plain))
+    with pytest.raises(EngineError):
+        await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 5), None, want_words=True)
+    assert len(plain.forms) == 1

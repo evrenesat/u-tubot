@@ -48,5 +48,12 @@
   YouTube and belongs to the owner: never run it from tests, CI or an agent's verification runs — it refuses under pytest, in CI and
   with an offline config, and committed cassettes must carry no URL at all (signatures can sit in URL paths); the recorder replaces
   every URL with a `<url>` placeholder.
+- Word times: every `Word` carries its provenance (`timing`); engine words are cached raw (`ASR_CACHE_VERSION`) and repaired per job
+  (`captions/wordtimes.py`); cues come from the words (`align.cues_from_words`), the caption track only fills wordless gaps. Never present
+  interpolated times as real: a result without real word times is flagged (`word_timing` event) and not cached. `timing_mode = "legacy"`
+  is the rollback switch. Measure changes with `tests/test_sync_metric.py` and `utubot captions-score`.
+- Chunk review: `captions/sanity.py` (pure rules) + `AsrRouter._review` re-listen to wrong-language / hallucinated / sparse chunks (language forced,
+  smaller windows, next engine) and drop what is still not speech, per chunk, after all first answers are in (never inside an engine's first-request lock).
+  The expected language is a hint (metadata) that yields to the audio majority. `captions-score` references skip it unless `--review`. Thresholds: `halluc_*`, `sparse_*`.
 - Commit messages: `<type>/<scope>: <summary>` plus bullets; no AI attribution trailers.
 - Update `DEVLOG.md` for each session.
