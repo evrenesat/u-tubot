@@ -104,7 +104,7 @@ ENGINE_SEPARATOR = "+"
 MIN_SPEED_FACTOR = 0.01
 STATUS_SERVICE_UNAVAILABLE = 503
 STATUS_WARMUP_HINTED = frozenset({500, 502, 503})
-WARMUP_HINTS = ("not started", "not loaded", "loading", "unavailable", "overloaded")
+WARMUP_HINTS = ("not started", "not loaded", "model is loading")
 CODE_ENGINE_UNAVAILABLE = "engine_unavailable"
 WARMUP_BODY_CHARS = 1000
 WARMUP_READY = "ready"
@@ -556,6 +556,7 @@ class AsrRouter:
         self.cfg = cfg
         self._sleep = sleep
         self._warmups: dict[str, _Warmup] = {}
+        self._gave_up_at: dict[str, float] = {}
         self._transport = transport
         self._factory = engine_factory or self._build
         self._clock = clock
@@ -715,8 +716,20 @@ class AsrRouter:
             return await self._warm(engine, wav, job)
 
     async def _warm(self, engine: AsrEngineConfig, wav: Path, job: _Job) -> ChunkResult:
-        """Wait for a starting engine, once for all chunks that meet it: the first leads, the rest follow."""
+        """Wait for a starting engine, once for all chunks that meet it: the first leads, the rest follow.
+
+        An engine that gave up within `asr_unhealthy_s` is not waited for again (raised at once). A
+        follower whose request meets a cold engine again after progress may lead a new wait; each
+        wait is bounded by `asr_warmup_wait_s`.
+        """
         while True:
+            gave_up = self._gave_up_at.get(engine.name)
+            if gave_up is not None and self._clock() - gave_up < self.cfg.asr_unhealthy_s:
+                raise EngineError(
+                    f"asr engine {engine.name} is not available",
+                    penalize=False,
+                    code=CODE_ENGINE_UNAVAILABLE,
+                )
             warm = self._warmups.get(engine.name)
             if warm is None:
                 warm = self._warmups[engine.name] = _Warmup()
@@ -745,12 +758,13 @@ class AsrRouter:
     ) -> ChunkResult:
         budget = self.cfg.asr_warmup_wait_s
         delay = self.cfg.asr_warmup_retry_s
+        began = self._clock()
         waited = 0.0
         attempts = 1
         while waited < budget:
             step = min(delay, self.cfg.asr_warmup_max_step_s, budget - waited)
             await self._sleep(step)
-            waited += step
+            waited = self._clock() - began
             delay *= WARMUP_BACKOFF_FACTOR
             attempts += 1
             try:
@@ -764,9 +778,11 @@ class AsrRouter:
                 self._warmup_event(engine, waited, attempts, WARMUP_READY)
                 raise
             warm.outcome = WARMUP_READY
+            self._gave_up_at.pop(engine.name, None)
             self._warmup_event(engine, waited, attempts, WARMUP_READY)
             return result
         warm.outcome = WARMUP_GAVE_UP
+        self._gave_up_at[engine.name] = self._clock()
         self._warmup_event(engine, waited, attempts, WARMUP_GAVE_UP)
         raise EngineError(
             f"asr engine {engine.name} did not become ready in {round(waited)} s",

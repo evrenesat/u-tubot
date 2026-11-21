@@ -2,7 +2,7 @@
 
 ## 2026-11-21 (cold ASR engine: wait, do not fall through; issue 57)
 
-1. A server that is still loading its model (oMLX: HTTP 500 "Engine not started", also 502/503 with a loading/unavailable/overloaded body, any 503,
+1. A server that is still loading its model (oMLX: HTTP 500 "Engine not started", also 500/502 saying not started, not loaded or model is loading, any 503,
    refused connections) is now `EngineError.transient` (`warmup_state`). `AsrRouter._transcribe` retries it on the same engine with backoff
    (`asr_warmup_wait_s` 90, `asr_warmup_retry_s` 3, doubling, `asr_warmup_max_step_s` 20) before falling through; `sleep` is injectable.
 2. One wait per engine: the first chunk leads (`_lead`), the others wait on its event (`_warm`) and then retry their own request. The retry

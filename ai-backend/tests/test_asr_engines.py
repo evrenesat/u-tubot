@@ -1131,11 +1131,14 @@ FAKE_SLEEP_S = 0.01
 
 
 class FakeSleep:
-    def __init__(self) -> None:
+    def __init__(self, clock: Clock | None = None) -> None:
         self.steps: list[float] = []
+        self.clock = clock
 
     async def __call__(self, seconds: float) -> None:
         self.steps.append(seconds)
+        if self.clock is not None:
+            self.clock.t += seconds
         await asyncio.sleep(FAKE_SLEEP_S)
 
 
@@ -1158,10 +1161,12 @@ async def test_a_cold_engine_is_waited_for_once_and_serves_every_chunk(tmp_path)
     wav = make_wav(tmp_path / "a.wav", 90)
     mac = WarmingEngine("mac", cold=3)
     local = FakeEngine("local")
-    sleep = FakeSleep()
+    clock = Clock()
+    sleep = FakeSleep(clock)
     r = router(
         [engine_cfg("mac", priority=1, max_chunk_s=30, max_parallel=3), engine_cfg("local")],
         {"mac": mac, "local": local},
+        clock=clock,
         sleep=sleep,
     )
     result, rows = await run_traced(r, wav)
@@ -1178,10 +1183,12 @@ async def test_an_engine_that_stays_down_falls_through_as_unavailable(tmp_path):
     wav = make_wav(tmp_path / "a.wav", 90)
     mac = WarmingEngine("mac", cold=10_000)
     local = FakeEngine("local")
-    sleep = FakeSleep()
+    clock = Clock()
+    sleep = FakeSleep(clock)
     r = router(
         [engine_cfg("mac", priority=1, max_chunk_s=30, max_parallel=3), engine_cfg("local")],
         {"mac": mac, "local": local},
+        clock=clock,
         sleep=sleep,
     )
     result, rows = await run_traced(r, wav)
@@ -1212,7 +1219,9 @@ async def test_a_plain_500_falls_through_without_waiting(tmp_path):
     [
         (500, '{"error":{"message":"Engine not started. Call start() first."}}', True),
         (500, "Model is LOADING", True),
-        (502, "upstream unavailable", True),
+        (502, "model is not loaded yet", True),
+        (502, "upstream unavailable", False),
+        (500, "Error loading audio file", False),
         (503, "", True),
         (502, "bad gateway", False),
         (500, "boom", False),
@@ -1267,3 +1276,35 @@ async def test_a_cold_server_during_the_word_mode_probe_marks_nothing_and_does_n
     )
     assert result.engine == "mac" and sleep.steps
     assert chain._engine(chain.cfg.asr_engines[0]).word_mode in ("both", "flag", "granularities")
+
+
+async def test_a_500_about_loading_the_audio_falls_through_at_once(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 30)
+    bad = EngineError("asr http 500: Error loading audio file", isolated=True, code="http_500")
+    sleep = FakeSleep()
+    r = router(
+        [engine_cfg("mac", priority=1), engine_cfg("local")],
+        {"mac": FakeEngine("mac", fail=bad), "local": FakeEngine("local")},
+        sleep=sleep,
+    )
+    result, _ = await run_traced(r, wav)
+    assert result.engine == "local" and not sleep.steps
+
+
+async def test_an_engine_that_gave_up_is_not_waited_for_again(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 150)
+    mac = WarmingEngine("mac", cold=10_000)
+    clock = Clock()
+    sleep = FakeSleep(clock)
+    r = router(
+        [engine_cfg("mac", max_chunk_s=30, max_parallel=1)], {"mac": mac}, clock=clock, sleep=sleep
+    )
+    _, rows = await run_traced(r, wav)
+    waits = [d for stage, d in rows if stage == "asr_wait"]
+    assert len(waits) == 1 and waits[0]["waited_s"] == r.cfg.asr_warmup_wait_s
+    assert sum(sleep.steps) == r.cfg.asr_warmup_wait_s
+
+    clock.t += r.cfg.asr_unhealthy_s + 1
+    mac.cold = 0
+    result, _ = await run(r, wav)
+    assert result.engine == "mac"
