@@ -1102,3 +1102,168 @@ async def test_a_rejection_about_the_chunk_does_not_walk_the_modes(tmp_path):
     with pytest.raises(EngineError):
         await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 5), None, want_words=True)
     assert len(plain.forms) == 1
+
+
+NOT_STARTED = EngineError(
+    "asr http 500: Engine not started. Call start() first.",
+    isolated=True,
+    code="http_500",
+    transient=True,
+)
+
+
+class WarmingEngine(FakeEngine):
+    """Answers 'engine not started' for its first `cold` requests, then works."""
+
+    def __init__(self, name: str, cold: int):
+        super().__init__(name, delay=0.01)
+        self.cold, self.calls = cold, 0
+
+    async def transcribe_chunk(self, wav, language, want_words):
+        self.calls += 1
+        if self.calls <= self.cold:
+            await asyncio.sleep(0)
+            raise NOT_STARTED
+        return await super().transcribe_chunk(wav, language, want_words)
+
+
+FAKE_SLEEP_S = 0.01
+
+
+class FakeSleep:
+    def __init__(self) -> None:
+        self.steps: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.steps.append(seconds)
+        await asyncio.sleep(FAKE_SLEEP_S)
+
+
+async def run_traced(r: AsrRouter, wav: Path):
+    db = Database(":memory:")
+    log = JobEvents(db, Config().captions)
+    token = events.bind(JobTrace("j1", log))
+    try:
+        result, _ = await run(r, wav)
+    except ASRError:
+        result = None
+    finally:
+        events.unbind(token)
+    rows = log.list("j1")
+    db.close()
+    return result, [(e["stage"], e["detail"]) for e in rows]
+
+
+async def test_a_cold_engine_is_waited_for_once_and_serves_every_chunk(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 90)
+    mac = WarmingEngine("mac", cold=3)
+    local = FakeEngine("local")
+    sleep = FakeSleep()
+    r = router(
+        [engine_cfg("mac", priority=1, max_chunk_s=30, max_parallel=3), engine_cfg("local")],
+        {"mac": mac, "local": local},
+        sleep=sleep,
+    )
+    result, rows = await run_traced(r, wav)
+    assert result.engine == "mac" and not local.chunks
+    assert len(mac.chunks) == 4  # four chunks, three at a time
+    waits = [d for stage, d in rows if stage == "asr_wait"]
+    assert len(waits) == 1 and waits[0]["outcome"] == "ready" and waits[0]["engine"] == "mac"
+    assert sleep.steps[0] == r.cfg.asr_warmup_retry_s
+    assert not [d for stage, d in rows if stage == "asr_fallback"]
+    assert r.healthy("mac")
+
+
+async def test_an_engine_that_stays_down_falls_through_as_unavailable(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 90)
+    mac = WarmingEngine("mac", cold=10_000)
+    local = FakeEngine("local")
+    sleep = FakeSleep()
+    r = router(
+        [engine_cfg("mac", priority=1, max_chunk_s=30, max_parallel=3), engine_cfg("local")],
+        {"mac": mac, "local": local},
+        sleep=sleep,
+    )
+    result, rows = await run_traced(r, wav)
+    assert result.engine == "local"
+    (wait,) = [d for stage, d in rows if stage == "asr_wait"]
+    assert wait["outcome"] == "gave_up" and wait["waited_s"] == r.cfg.asr_warmup_wait_s
+    assert sleep.steps[:4] == [3, 6, 12, 20] and sum(sleep.steps) == r.cfg.asr_warmup_wait_s
+    reasons = {d["reason"] for stage, d in rows if stage == "asr_fallback"}
+    assert reasons <= {"engine_unavailable", "unhealthy"} and "engine_unavailable" in reasons
+
+
+async def test_a_plain_500_falls_through_without_waiting(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", 30)
+    mac = FakeEngine("mac", fail=EngineError("asr http 500: boom", isolated=True, code="http_500"))
+    sleep = FakeSleep()
+    r = router(
+        [engine_cfg("mac", priority=1), engine_cfg("local")],
+        {"mac": mac, "local": FakeEngine("local")},
+        sleep=sleep,
+    )
+    result, rows = await run_traced(r, wav)
+    assert result.engine == "local" and not sleep.steps
+    assert not [1 for stage, _ in rows if stage == "asr_wait"]
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "transient"),
+    [
+        (500, '{"error":{"message":"Engine not started. Call start() first."}}', True),
+        (500, "Model is LOADING", True),
+        (502, "upstream unavailable", True),
+        (503, "", True),
+        (502, "bad gateway", False),
+        (500, "boom", False),
+        (400, "engine not started", False),
+        (404, "loading", False),
+    ],
+)
+async def test_which_http_answers_count_as_a_starting_server(tmp_path, status, body, transient):
+    engine = OpenAIEngine(engine_cfg("mac"), serve(lambda r: httpx.Response(status, text=body)))
+    with pytest.raises(EngineError) as exc:
+        await engine.transcribe_chunk(make_wav(tmp_path / "c.wav", 2), None, False)
+    assert exc.value.transient is transient
+
+
+async def test_connect_errors_are_transient_but_timeouts_are_not(tmp_path):
+    def refuse(request):
+        raise httpx.ConnectError("refused")
+
+    def slow(request):
+        raise httpx.ReadTimeout("slow")
+
+    wav = make_wav(tmp_path / "c.wav", 2)
+    for handler, transient in ((refuse, True), (slow, False)):
+        engine = OpenAIEngine(engine_cfg("mac"), serve(handler))
+        with pytest.raises(EngineError) as exc:
+            await engine.transcribe_chunk(wav, None, False)
+        assert exc.value.transient is transient
+
+
+async def test_a_cold_server_during_the_word_mode_probe_marks_nothing_and_does_not_deadlock(
+    tmp_path,
+):
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) <= 2:
+            return httpx.Response(500, text="Engine not started")
+        return httpx.Response(200, json=verbose(words=True))
+
+    sleep = FakeSleep()
+    wav = make_wav(tmp_path / "a.wav", 60)
+    chain = AsrRouter(
+        CaptionsConfig(
+            asr_engines=[engine_cfg("mac", max_chunk_s=30, max_parallel=2)], sample_rate=RATE
+        ),
+        transport=serve(handler),
+        sleep=sleep,
+    )
+    result = await asyncio.wait_for(
+        chain.transcribe(wav, None, lambda f: None, want_words=True), timeout=10
+    )
+    assert result.engine == "mac" and sleep.steps
+    assert chain._engine(chain.cfg.asr_engines[0]).word_mode in ("both", "flag", "granularities")

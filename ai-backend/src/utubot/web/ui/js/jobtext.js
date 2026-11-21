@@ -13,6 +13,7 @@ export const STAGE_LABELS = {
   chunking: "Chunking",
   asr: "Speech to text",
   asr_chunk: "Chunk recognised",
+  asr_wait: "Engine warming up",
   asr_fallback: "Engine fallback",
   asr_recheck: "Chunk re-checked",
   stitching: "Stitching",
@@ -73,6 +74,7 @@ const REASONS = {
   incomplete_response: "YouTube answered only in part",
   PipelineError: "the pipeline stopped",
   ASRError: "no speech engine could do it",
+  engine_unavailable: "engine still starting up",
   engines_unavailable: "no speech engine available",
   no_llm: "no LLM model configured",
   unavailable: "no output",
@@ -219,6 +221,11 @@ const DESCRIBERS = {
     const wordTimes = d.word_timing ? "word times: " + (d.word_timing === "real" ? "real" : d.word_timing === "mixed" ? "partly estimated" : "estimated") : null;
     return join([d.engine + " " + span, num(d.chars) + " characters", d.language ? "language " + d.language : null, wordTimes]);
   },
+  asr_wait(d) {
+    const waited = fmtSecs(d.waited_s) + ", " + d.attempts + (d.attempts === 1 ? " try" : " tries");
+    if (d.outcome === "ready") return d.engine + " was starting up and became ready after " + waited;
+    return d.engine + " did not become ready after " + waited + ", moving on";
+  },
   asr_fallback(d) {
     const span = Math.round(d.start_s) + "-" + Math.round(d.end_s) + " s";
     const why = d.reason === "language_mismatch" && d.detected ? "heard " + d.detected + ", outside its languages" : reasonText(d.reason);
@@ -333,7 +340,7 @@ export function collapse(events) {
   const open = new Map();
   for (const ev of events) {
     if (ev.stage === "delivered") continue;
-    const child = ev.stage === "asr_chunk" || ev.stage === "asr_fallback" || ev.stage === "asr_recheck" || ev.stage === "proofread_batch";
+    const child = ev.stage === "asr_chunk" || ev.stage === "asr_wait" || ev.stage === "asr_fallback" || ev.stage === "asr_recheck" || ev.stage === "proofread_batch";
     const row = { stage: ev.stage, status: ev.status, detail: ev.detail || {}, ts: ev.ts, end: ev.ts, child };
     const earlier = !child && ev.status !== "running" && open.get(ev.stage);
     if (earlier) {

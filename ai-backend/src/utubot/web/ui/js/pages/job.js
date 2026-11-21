@@ -192,7 +192,7 @@ function timelineCard(doc) {
   const first = doc.events.length ? doc.events[0].ts : doc.created_at;
   const items = rows.map((row) => {
     const text = describe({ stage: row.stage, status: row.status, detail: row.detail });
-    const label = row.child ? (row.stage === "asr_chunk" ? "Chunk" : "Fallback") : stageLabel(row.stage);
+    const label = row.child ? (row.stage === "asr_chunk" ? "Chunk" : row.stage === "asr_wait" ? "Warm-up" : "Fallback") : stageLabel(row.stage);
     const technical = row.detail.technical;
     return h(
       "li",
