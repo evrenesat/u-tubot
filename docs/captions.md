@@ -28,6 +28,14 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
    (`align_silence`) — outward only, so a cue never loses its first or last word to the snap — and each cue stays on screen
    `cue_linger_s` (0.2 s) after its last word when there is room. The job then logs a `sync_score` check of the finished cues
    against the audio.
+   **Gaps the engine did not hear.** Speech YouTube heard and the engine did not (caption rows no engine word overlaps) used to come
+   back as whole caption rows, which in rolling captions overlap and last 4 to 7 seconds. With YouTube's word starts and an automatic
+   track, the text of such a gap is built from the reference words inside it, moved by the job's measured offset (`ref_check` median) and cut
+   into cues like any words, so those cues carry words (`fill_from_words` in the `align` event; `captions.timing.reference` counts the words,
+   never mixed into `real_share`). Tags (`[Music]`) and every row of an authored (`manual`) track keep the row rule. A speech cue shorter than
+   `min_cue_s` is joined to a neighbour within `sentence_gap_s` when the join still wraps and stays within `max_cue_s`, `max_cps` and one
+   speaker (`merged_short`; the previous cue is preferred unless it ends a sentence and the next one follows without a pause).
+   Credit lines Whisper invents over music (`halluc_credits`, e.g. "Altyazı M.K.", "amara.org") are dropped from every chunk, not only re-listened ones.
    **Check against YouTube.** Captions jobs keep YouTube's own word starts (json3 `tOffsetMs`, stored in `transcripts.words`, with
    `caption_kind` `manual|auto`; a transcript stored before this is fetched once more through the gate, and used as it is while YouTube
    does not answer). The `ref_check` event matches the engine's words with them in blocks of `ref_block_s` (60 s) and reports how many

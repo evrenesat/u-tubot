@@ -285,7 +285,7 @@ const DESCRIBERS = {
   },
   align(d, status) {
     if (d.mode === "words") {
-      return join([num(d.speech_cues) + " cues from word times", num(d.fill_cues) + " non-speech tags and captions in gaps with no heard speech", num(d.moved) + " boundaries moved"]);
+      return join([num(d.speech_cues) + " cues from word times", num(d.fill_cues) + " non-speech tags and captions in gaps with no heard speech", d.fill_from_words ? num(d.fill_from_words) + " of them from YouTube word times" : null, d.merged_short ? num(d.merged_short) + " short cues joined to a neighbour" : null, num(d.moved) + " boundaries moved"]);
     }
     if (d.mode === "captions_timing") {
       if (status === "skipped") return "No words to align; the caption timing is kept";

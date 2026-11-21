@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import pytest
+
 from utubot.captions.align import (
+    AlignStats,
     caption_cues,
     cues_from_words,
     merge_words_into_cues,
     parse_silencedetect,
     snap_cues,
 )
-from utubot.captions.segment import build_cues, pad_cues
+from utubot.captions.segment import build_cues, merge_short, pad_cues
 from utubot.captions.types import Cue, Word
 from utubot.config import CaptionsConfig
 
@@ -295,3 +298,86 @@ def test_a_speech_caption_in_a_truly_wordless_gap_is_kept():
     assert fill == 1 and any(cue.lines == ["she said nothing at all"] for cue in cues)
     near = cues_from_words(words, [Cue(1.2, 14.0, ["overlapped by speech"])], CFG)
     assert near[2] == 0
+
+
+LEAD_S = 0.25
+GAP_FROM_S = 10.0
+
+
+def reference_phrase(start: float, text: str, step: float = 0.4) -> list[tuple[float, str]]:
+    """YouTube word starts of a phrase, `LEAD_S` before the engine's clock would have them."""
+    return [(start - LEAD_S + i * step, tok) for i, tok in enumerate(text.split())]
+
+
+def test_unheard_speech_is_filled_from_the_reference_words_not_the_rolling_rows():
+    words = spoken(0.0, "one two three") + spoken(30.0, "four five six")
+    first = reference_phrase(GAP_FROM_S, "she said nothing at all")
+    second = reference_phrase(GAP_FROM_S + 4.0, "and then she left")
+    rows = [
+        Cue(first[0][0], GAP_FROM_S + 6.0, ["she said nothing at all and"]),
+        Cue(second[0][0], GAP_FROM_S + 10.0, ["and then she left"]),
+    ]
+    stats = AlignStats()
+    cues, speech, fill = cues_from_words(
+        words, rows, CFG, ref_words=first + second, ref_lead_s=LEAD_S, fill_stats=stats
+    )
+    fills = [cue for cue in cues if cue.words and cue.words[0].timing == "reference"]
+    assert fill == len(fills) == stats.cues >= 1 and stats.words == 9
+    assert fills[0].start == pytest.approx(GAP_FROM_S, abs=0.05)
+    assert " ".join(" ".join(c.lines) for c in fills) == "she said nothing at all and then she left"
+    for before, after in zip(cues, cues[1:], strict=False):
+        assert before.end <= after.start + 1e-9
+    assert all(c.end - c.start <= CFG.max_cue_s for c in fills)
+
+
+def test_reference_fill_needs_an_automatic_track_and_leaves_tags_alone():
+    words = spoken(0.0, "one two three") + spoken(30.0, "four five six")
+    ref = reference_phrase(GAP_FROM_S, "she said nothing at all")
+    row = Cue(GAP_FROM_S - LEAD_S, GAP_FROM_S + 5.0, ["she said nothing at all"])
+    manual = cues_from_words(words, [row], CFG, ref_words=ref, manual=True)
+    assert manual[2] == 1 and any(c.lines == row.lines and c.words is None for c in manual[0])
+    plain = cues_from_words(words, [row], CFG)
+    assert [(c.start, c.end) for c in plain[0]] == [(c.start, c.end) for c in manual[0]]
+    tag = cues_from_words(words, [Cue(5.0, 19.0, ["[Music]"])], CFG, ref_words=ref)
+    assert tag[2] == 1 and any(c.lines == ["[Music]"] for c in tag[0])
+
+
+def test_reference_words_next_to_heard_speech_are_not_repeated():
+    words = spoken(0.0, "one two three") + spoken(30.0, "four five six")
+    ref = reference_phrase(0.0, "one two three") + reference_phrase(GAP_FROM_S, "she said")
+    row = Cue(GAP_FROM_S - LEAD_S, GAP_FROM_S + 3.0, ["she said"])
+    cues, _s, fill = cues_from_words(words, [row], CFG, ref_words=ref, ref_lead_s=LEAD_S)
+    text = " ".join(" ".join(c.lines) for c in cues)
+    assert fill == 1 and text.count("one") == 1 and "she said" in text
+
+
+def test_a_short_fragment_joins_its_neighbour():
+    cues = [
+        Cue(8.0, 9.6, ["and then she said"]),
+        Cue(9.62, 9.9, ["Henna"]),
+        Cue(9.95, 12.0, ["we should go now."]),
+    ]
+    merged, count = merge_short(cues, CFG)
+    assert count == 1 and len(merged) == 2
+    assert merged[0].lines == ["and then she said Henna"] and merged[0].end == 9.9
+
+
+def test_a_short_cue_prefers_the_next_one_after_a_sentence_end():
+    cues = [Cue(1.0, 3.0, ["It ended."]), Cue(3.1, 3.4, ["Then"]), Cue(3.5, 6.0, ["we left."])]
+    merged, count = merge_short(cues, CFG)
+    assert count == 1 and [c.lines for c in merged] == [["It ended."], ["Then we left."]]
+
+
+def test_a_short_cue_after_a_real_pause_stays_alone():
+    cues = [Cue(1.0, 3.0, ["It ended"]), Cue(6.0, 6.3, ["Wait"]), Cue(10.0, 12.0, ["Now go"])]
+    merged, count = merge_short(cues, CFG)
+    assert count == 0 and merged == cues
+
+
+def test_a_join_that_breaks_a_limit_is_not_made():
+    long_line = "x" * (CFG.max_chars_per_line * CFG.max_lines)
+    cues = [Cue(0.0, 3.0, [long_line]), Cue(3.1, 3.4, ["tail"])]
+    assert merge_short(cues, CFG)[1] == 0
+    spoken = [Cue(0.0, 3.0, ["[S1] a b"], speaker="S1"), Cue(3.1, 3.4, ["[S2] c"], speaker="S2")]
+    assert merge_short(spoken, CFG)[1] == 0
+    assert merge_short([Cue(1.0, 3.0, ["[Music]"]), Cue(3.1, 3.4, ["x"])], CFG)[1] == 0

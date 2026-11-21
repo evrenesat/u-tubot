@@ -19,9 +19,10 @@ from .types import Segment, Word
 FLAG_NO_SPEECH = "no_speech"
 FLAG_REPEAT = "repeat_loop"
 FLAG_PHANTOM = "phantom"
+FLAG_CREDIT = "credit"
 FLAG_COMPRESSED = "compressed"
 FLAG_LOW_CONF = "low_confidence"
-ALWAYS_DROPPED = frozenset({FLAG_NO_SPEECH, FLAG_PHANTOM})
+ALWAYS_DROPPED = frozenset({FLAG_NO_SPEECH, FLAG_PHANTOM, FLAG_CREDIT})
 DROP_FLAGS = ALWAYS_DROPPED | {
     FLAG_REPEAT
 }  # a repeat loop goes only when no re-listen reproduced it
@@ -43,6 +44,7 @@ def base_code(code: str | None) -> str | None:
 def flag_segments(segments: list[Segment], cfg: CaptionsConfig) -> list[set[str]]:
     """Per segment, why it is probably not speech (see the `FLAG_*` names); empty set: no doubt."""
     phrases = {bare(p) for p in cfg.halluc_phrases}
+    credits = {bare(p) for p in cfg.halluc_credits}
     flags: list[set[str]] = [set() for _ in segments]
     for index, seg in enumerate(segments):
         if (
@@ -54,6 +56,10 @@ def flag_segments(segments: list[Segment], cfg: CaptionsConfig) -> list[set[str]
             flags[index].add(FLAG_NO_SPEECH)
         words = len(seg.text.split())
         rate = words / max(seg.end - seg.start, MIN_DURATION_S)
+        if bare(seg.text) in credits:
+            flags[index].add(
+                FLAG_CREDIT
+            )  # a credit line no speaker says: at any rate, in any chunk
         if bare(seg.text) in phrases and rate < cfg.halluc_min_rate:
             flags[index].add(FLAG_PHANTOM)
         if (

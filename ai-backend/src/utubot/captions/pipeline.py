@@ -23,7 +23,7 @@ from ..media_archive import (
     MediaArchiveError,
     MediaArchiveFull,
 )
-from ..transcripts import segments_to_text
+from ..transcripts import CAPTION_MANUAL, segments_to_text
 from ..youtube import (
     CLASS_MEDIA,
     MEDIA_CLASSES,
@@ -36,6 +36,7 @@ from ..youtube import (
 )
 from . import events, reference
 from .align import (
+    AlignStats,
     caption_cues,
     detect_silences,
     finish_cues,
@@ -83,8 +84,8 @@ Progress = Callable[[float], None]
 ASR_CACHE_STAGE = "asr"
 
 
-ASR_CACHE_VERSION = 3  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review)
-TIMING_VERSION = 4  # the caption timing scheme of a stored track (`captions.timing_version`)
+ASR_CACHE_VERSION = 4  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review, 4: credit lines dropped)
+TIMING_VERSION = 5  # the caption timing scheme of a stored track (`captions.timing_version`)
 SEGMENT_METRICS = 3  # no_speech_prob, avg_logprob, compression_ratio follow start, end, text
 
 
@@ -820,6 +821,7 @@ class CaptionPipeline:
         check: dict[str, Any],
         fill_cues: int = 0,
         ref_check: Check | None = None,
+        fill_stats: AlignStats | None = None,
     ) -> dict[str, Any]:
         """What a stored track's `timing` column says about how its times were made."""
         detail = stats.as_detail()
@@ -831,6 +833,10 @@ class CaptionPipeline:
             "mode": mode,
             "self_check": check,
         }
+        if fill_stats is not None:
+            # YouTube's words that fill what the engine did not hear: never counted as engine words
+            summary["reference"] = fill_stats.words
+            summary["fill_from_words"] = fill_stats.cues
         if ref_check is not None:
             summary["ref_check"] = ref_check_summary(ref_check)
         return summary
@@ -922,6 +928,7 @@ class CaptionPipeline:
             progress(0.9)
             mode, fill_cues = "legacy", 0
             ref_check: Check | None = None
+            fill_stats = AlignStats()
             if legacy:
                 with events.stage(events.ALIGN, mode="merge", margin_s=c.align_window_s) as st:
                     # linear in cues and words, but hours of captions still take a moment: keep the
@@ -942,7 +949,17 @@ class CaptionPipeline:
                 ref_check = await self._ref_check(ref_words, segments, words)
                 with events.stage(events.ALIGN, mode="words", words=len(words)) as st:
                     before = len(cues)
-                    cues, speech, fill_cues = await asyncio.to_thread(word_cues, words, cues, c)
+                    fill_stats = AlignStats()
+                    cues, speech, fill_cues = await asyncio.to_thread(
+                        word_cues,
+                        words,
+                        cues,
+                        c,
+                        ref_words,
+                        ref_check.lead_s if ref_check else 0.0,
+                        caption_kind == CAPTION_MANUAL,
+                        fill_stats,
+                    )
                     moved = 0
                     if c.align_silence and silences:
                         edges = [(cue.start, cue.end) for cue in cues]
@@ -952,11 +969,13 @@ class CaptionPipeline:
                             for a, cue in zip(edges, cues, strict=True)
                             if a != (cue.start, cue.end)
                         )
-                    cues = finish_cues(cues, c)
+                    cues = finish_cues(cues, c, fill_stats)
                     st.set(
                         cues=len(cues),
                         speech_cues=speech,
                         fill_cues=fill_cues,
+                        fill_from_words=fill_stats.cues,
+                        merged_short=fill_stats.merged_short,
                         caption_cues=before,
                         moved=moved,
                     )
@@ -969,6 +988,7 @@ class CaptionPipeline:
                     self._emit_sync_score(cues, silences, wav),
                     fill_cues,
                     ref_check,
+                    fill_stats,
                 )
             track_lang = result.language or requested or base_hint or "und"
             track_lang = await self._finish(

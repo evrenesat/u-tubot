@@ -48,6 +48,7 @@ from .chunking import (
     write_chunk,
 )
 from .sanity import (
+    FLAG_CREDIT,
     REASON_HALLUCINATION,
     REASON_LANGUAGE,
     REASON_SPARSE,
@@ -1313,16 +1314,17 @@ class AsrRouter:
         segments: list[Segment],
         words: list[Word],
     ) -> tuple[list[Segment], list[Word], list[DroppedSpan]]:
-        """Drop what is not speech from the stitched transcript, inside the re-listened chunks only.
+        """Drop what is not speech from the stitched transcript: inside the re-listened chunks, and
+        credit lines everywhere.
 
         Working on the stitched, absolute times means a phantom removed from the tail of one chunk
         cannot survive as the overlapping copy in its neighbour (the overlap is inside both spans).
         """
         listened = [(sp.start, sp.end) for r, sp in zip(results, spans, strict=True) if r.rechecked]
-        if not listened:
-            return segments, words, []
         flags = [
-            found if any(a <= (seg.start + seg.end) / 2 < b for a, b in listened) else set()
+            found
+            if any(a <= (seg.start + seg.end) / 2 < b for a, b in listened)
+            else found & {FLAG_CREDIT}  # a credit line is dropped in every chunk
             for seg, found in zip(segments, flag_segments(segments, self.cfg), strict=True)
         ]
         reproduced = set().union(*(r.reproduced for r in results))

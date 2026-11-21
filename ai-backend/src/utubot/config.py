@@ -410,6 +410,15 @@ class CaptionsConfig(BaseModel):
             "you",
         ]
     )  # what Whisper makes up over silence or music
+    # credit lines Whisper invents over music: dropped in every chunk, whatever the rate
+    halluc_credits: list[str] = Field(
+        default_factory=lambda: [
+            "altyazı m.k.",
+            "altyazi m.k.",
+            "subtitles by the amara.org community",
+            "amara.org",
+        ]
+    )
     halluc_min_rate: float = 0.5  # words per second below which a phrase above is a phantom
     halluc_chunk_share: float = 0.3  # share of a chunk's seconds flagged that asks for a re-listen
     sparse_chunk_ratio: float = (

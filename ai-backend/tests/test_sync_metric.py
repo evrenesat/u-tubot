@@ -376,3 +376,54 @@ async def test_improve_locates_a_chunk_the_engine_has_wrong(harness):
     start, end, median = check["detail"]["regions"][0]
     assert start >= CHUNK_S - 15 and end <= DURATION_S
     assert median == pytest.approx(REF_LEAD_S + REF_SHIFT_S, abs=REF_TOLERANCE_S)
+
+
+MISSED_PHRASE = 12
+FILL_START_TOLERANCE_S = 0.15
+
+
+class DeafEngine(ScriptedEngine):
+    """A scripted engine that does not hear one phrase (its words are missing from every answer)."""
+
+    def __init__(self, *args, deaf: tuple[float, float]):
+        super().__init__(*args)
+        self.deaf = deaf
+
+    async def transcribe_chunk(self, wav, language, want_words):
+        result = await super().transcribe_chunk(wav, language, want_words)
+        span = self.spans[
+            min(
+                range(len(self.spans)),
+                key=lambda i: abs(self.spans[i].start - self.asked[-1]["start"]),
+            )
+        ]
+        lo, hi = self.deaf[0] - span.start, self.deaf[1] - span.start
+        result.words = [w for w in result.words if not (lo - 0.01 <= w.start <= hi + 0.01)]
+        return result
+
+
+async def test_improve_shows_a_phrase_only_youtube_heard_from_its_word_times(harness):
+    h = harness("flag")
+    group = phrases(h.truth)[MISSED_PHRASE]
+    h.engine = DeafEngine(
+        h.truth, "flag", DURATION_S, CHUNK_S, h.cfg.captions.asr_chunk_overlap_s,
+        deaf=(group[0].start, group[-1].end),
+    )  # fmt: skip
+    await h.run(
+        "improve",
+        youtube_rows(h.truth),
+        "en",
+        None,
+        ref_words=youtube_words(h.truth),
+        caption_kind="auto",
+    )
+    cues = h.cues()
+    text = " ".join(t for _s, _e, t in cues)
+    assert all(w.text in text for w in group), "the phrase only YouTube heard was dropped"
+    shown = [c for c in cues if group[0].text in c[2]]
+    assert shown and abs(shown[0][0] - group[0].start) <= FILL_START_TOLERANCE_S
+    align = h.event("align")["detail"]
+    assert align["fill_from_words"] >= 1
+    assert h.score().hit >= HIT_TARGET
+    timing = json.loads(h.db.one("SELECT timing FROM captions")["timing"])
+    assert timing["reference"] == len(group) and timing["real_share"] == 1.0

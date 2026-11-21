@@ -1,5 +1,42 @@
 # DEVLOG
 
+## 2026-11-21 (subtitle timing checkpoint 3 v2: honest scorer, YouTube word times as a check and for fill cues)
+
+Spec: `temp/sync-design/agent-plan-cp3-v2.md`. Replaces CP3 of `agent-plan.md`; the time warp and audio referee are not built.
+
+1. **Scorer** (commit 1). `normalize_language` strips a YouTube track suffix (`-orig`, `-auto`, `-asr`): `hi-orig` is `hi`, `pt-br` and `zh-hans`
+   as before. `captions-score` forces that language on the reference, reports per window `language` and `latin_share`, the document gets
+   `spoken_language`, `reference_language_ok` (the CLI prints a warning when false) and a `words` block (cached raw engine words against the
+   windows' words: `matched`, `matched_share`, `median_s`, `p10_s`, `p90_s`, `within_s`; `null` without a cached `v4:` row with words).
+2. **YouTube word offsets.** `parse_json3_words`, `track_kind_of`, `FetchResult`/`Transcript` `words` and `caption_kind`, additive columns
+   `transcripts.words`, `transcripts.caption_kind`. `TranscriptService.get(want_words=True)` treats a captions row with `caption_kind IS NULL` as a
+   miss (one gated fetch) and falls back to it on any `YoutubeDelayed` (cooldown included). `improve(ref_words=, caption_kind=)`; `caption_recheck` found carries both.
+3. **`ref_check`** (`captions/reference.py`, pure). Block-wise `SequenceMatcher` anchors (or caption-row first tokens), agreement, regions; stage
+   `ref_check` ok/warn/skipped (`no_reference|too_few_anchors|other_script`); `captions.timing.ref_check` has `anchors`, `median_s`, `within_s`, `regions`.
+   Changes no times. Config `ref_*` (config.py, config.example.toml).
+4. **Fill cues from YouTube words** (`align.word_cues`): unheard speech rows (stretches of overlapping rows) become cues built from the reference words
+   in the gap, moved by the job's median offset; manual tracks and tags keep the row rule. `align` detail `fill_from_words`; `timing.reference`
+   (words) and `timing.fill_from_words`; `real_share` is untouched.
+5. **Short cues and credits.** `segment.merge_short` (run by `finish_cues`, `merged_short`); `halluc_credits` dropped in every chunk (`sanity.FLAG_CREDIT`,
+   `AsrRouter._drop`); `ASR_CACHE_VERSION = 4`, `TIMING_VERSION = 5` (3 stays unused, as CP4 noted). The CP1 first-cue gate [4.2, 4.9] is withdrawn (no evidence, see the spec); no `cue_lead_s`.
+
+Deviations from the spec:
+
+- `normalize_language`: only the suffix rule (tail in `TRACK_SUFFIXES`); the "head is a known base code" clause is not needed and would change `zh-hans`.
+- `halluc_credits` is its own list; the four lines were not also added to `halluc_phrases` (that list's rate rule would only re-drop them in a rechecked chunk). They are flagged `credit` (not `phantom`) and counted in `hallucination_drops`.
+- The `words` block of `captions-score` reads the newest `v{ASR_CACHE_VERSION}:*:1:*` row, so after this change it finds nothing until a video is regenerated (the old `v3` rows are not read).
+- Fill stretches: the gap's reference words are taken from the span of the chain of overlapping unheard rows (clipped to the gap between speech cues), not from "every wordless gap"; a wordless gap that no unheard row touches gets nothing.
+- `agreement(pairs, total, cfg, source)` takes the reference token count (needed for `anchor_share`); `check()` is the entry the pipeline calls. The `ref_check` stage is emitted in words mode only (not for estimated or missing words).
+- Regions use a centred rolling median of `ref_region_min_anchors` pairs, extended to adjacent pairs that deviate on their own; the test finds exactly one region for a chunk shifted by 1.5 s.
+- Added config `ref_script_gap_share` (0.5): a Latin-share gap above it between reference and engine words is `other_script`.
+
+Production verification (coordinator, never from agents; commands run on the backend host):
+
+- Step 1 (scorer only, on the previous build is fine): `uv run utubot captions-score VIDEO --reference ENGINE --windows 12 --window-s 30 --json` for `ti3gVlNnXoY`, `EQWLxadmae0`, `TCSgH7l2Isg`; check `reference_language_ok` true, record `words` (needs a cached v3 row on that build) and `overall`.
+- After deploy: `uv run utubot captions-regen --video ID` for each of the three, then read the job detail page: `ref_check` (ok, or warn with regions listed), `align` (`fill_from_words`, `merged_short`), `asr` `hallucination_drops` (EQWLxadmae0: no "Altyazı M.K." cue), `captions.timing` (`reference`, `ref_check`).
+- Re-score with the step-1 command; gates in the spec (Hindi: `words.within_s >= 0.85`, `loose` not below the baseline, cues under 0.7 s at most 2, `fill_from_words > 0`; TCSgH7l2Isg within 2 points on the same engine).
+- Existing transcripts rows without `caption_kind` are fetched once more through the gate on the next captions job; look for `caption_recheck` found with `words` > 0.
+
 ## 2026-11-21 (translation batch mismatch no longer fails the job)
 
 1. Production: one translate batch of a 228-cue episode returned the wrong number of strings and failed the whole captions job after ASR and

@@ -354,6 +354,63 @@ def enforce_timing(cues: list[Cue], cfg: CaptionsConfig) -> list[Cue]:
     return [c for c in cues if c.end > c.start]
 
 
+def _joined(first: Cue, second: Cue, cfg: CaptionsConfig) -> Cue | None:
+    """The two cues as one, or None when speakers, line limits, `max_cue_s` or `max_cps` forbid it."""
+    if first.speaker != second.speaker:
+        return None
+    text = " ".join([*first.lines, *second.lines])
+    lines = wrap_lines(text, cfg.max_chars_per_line, cfg.max_lines)
+    start, end = min(first.start, second.start), max(first.end, second.end)
+    if lines is None or end - start > cfg.max_cue_s:
+        return None
+    if cfg.max_cps > 0 and len(text) / max(end - start, 0.1) > cfg.max_cps:
+        return None
+    words = [*first.words, *second.words] if first.words and second.words else None
+    return Cue(start, end, lines, first.speaker, words=words)
+
+
+def merge_short(cues: list[Cue], cfg: CaptionsConfig) -> tuple[list[Cue], int]:
+    """Join each speech cue shorter than `min_cue_s` to a neighbour within `sentence_gap_s`.
+
+    The previous cue is preferred unless it ends a sentence and the next one follows without a
+    pause; a join must still wrap, stay within `max_cue_s` and `max_cps` and keep one speaker.
+    Returns the cues and how many were joined.
+    """
+    from .align import is_non_speech
+
+    out: list[Cue] = []
+    pending = list(cues)
+    merged = 0
+    for i, cue in enumerate(pending):
+        if cue.end - cue.start >= cfg.min_cue_s or is_non_speech(cue):
+            out.append(cue)
+            continue
+        before = out[-1] if out and not is_non_speech(out[-1]) else None
+        after = (
+            pending[i + 1] if i + 1 < len(pending) and not is_non_speech(pending[i + 1]) else None
+        )
+        near_before = before is not None and cue.start - before.end <= cfg.sentence_gap_s
+        near_after = after is not None and after.start - cue.end <= cfg.sentence_gap_s
+        sentence_over = before is not None and " ".join(before.lines).endswith(SENTENCE_END)
+        order = ["before", "after"] if not (sentence_over and near_after) else ["after", "before"]
+        for choice in order:
+            if choice == "before" and near_before:
+                joined = _joined(before, cue, cfg)
+                if joined is not None:
+                    out[-1] = joined
+                    merged += 1
+                    break
+            if choice == "after" and near_after:
+                joined = _joined(cue, after, cfg)
+                if joined is not None:
+                    pending[i + 1] = joined
+                    merged += 1
+                    break
+        else:
+            out.append(cue)
+    return out, merged
+
+
 def pad_cues(cues: list[Cue], cfg: CaptionsConfig) -> list[Cue]:
     """Let each cue linger `cue_linger_s` past its last word, never into the next cue or past `max_cue_s`.
 
