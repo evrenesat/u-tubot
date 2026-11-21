@@ -1013,7 +1013,7 @@ def test_the_report_text_folds_running_events_and_reads_every_stage():
     assert out["wordsWarn"] == "No word times., 10 words, 0% with real times"
     assert (
         out["alignWords"]
-        == "212 cues from word times, 20 caption cues kept in gaps, 31 boundaries moved"
+        == "212 cues from word times, 20 non-speech tags and captions in gaps with no heard speech, 31 boundaries moved"
     )
     assert out["alignKept"] == "No words to align; the caption timing is kept"
     assert out["score"] == "96% of cue time over sound, 2% of cues start in silence"

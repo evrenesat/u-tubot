@@ -235,7 +235,7 @@ const DESCRIBERS = {
   },
   align(d, status) {
     if (d.mode === "words") {
-      return join([num(d.speech_cues) + " cues from word times", num(d.fill_cues) + " caption cues kept in gaps", num(d.moved) + " boundaries moved"]);
+      return join([num(d.speech_cues) + " cues from word times", num(d.fill_cues) + " non-speech tags and captions in gaps with no heard speech", num(d.moved) + " boundaries moved"]);
     }
     if (d.mode === "captions_timing") {
       if (status === "skipped") return "No words to align; the caption timing is kept";

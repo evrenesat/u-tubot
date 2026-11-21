@@ -190,3 +190,14 @@ def test_the_truth_has_the_pauses_the_tests_rely_on():
     assert len(phrases(truth)) > 30 and bisect.bisect(truth, 0, key=lambda w: w.start) == 0
     begin, finish = long_pause(truth)
     assert finish - begin >= 25.0
+
+
+async def test_improve_never_shows_a_spoken_phrase_twice(harness):
+    import re
+
+    h = harness("flag")
+    await h.run("improve", youtube_rows(h.truth), "en", None)
+    text = [t for _s, _e, t in h.cues() if t != "[Music]"]
+    tokens = " ".join(text).split()
+    assert len(tokens) == len(set(tokens)), "a token was shown twice"
+    assert not re.search(r"(w\d{4})\b.*\b\1\b", " ".join(text))

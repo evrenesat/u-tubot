@@ -262,3 +262,36 @@ def test_fill_cues_are_clipped_against_each_other():
     for before, after in zip(cues, cues[1:], strict=False):
         assert before.end <= after.start + 1e-9
     assert fills[1].start >= 15.0 - 1e-9
+
+
+def test_a_spoken_caption_next_to_its_words_is_not_repeated_in_the_gap():
+    # the reproduced case: the caption row outlasts the words by 6 s, but it is their own text
+    words = spoken(10.2, "so that's the plan", step=0.45) + spoken(18.0, "next thing here")
+    caption = Cue(10.4, 17.8, ["so that's the plan"])
+    cues, _speech, fill = cues_from_words(words, [caption], CFG)
+    assert fill == 0
+    texts = [" ".join(cue.lines) for cue in cues]
+    assert texts.count("so that's the plan") == 1
+
+
+def test_non_speech_tags_and_music_notes_beside_speech_are_kept():
+    words = spoken(0.0, "one two three") + spoken(20.0, "four five six")
+    for tag in ("[Applause]", "(applause)", "♪♪", "♪ ♫ ♪", "[Music] ♪"):
+        cues, _speech, fill = cues_from_words(words, [Cue(0.5, 19.0, [tag])], CFG)
+        assert fill == 1 and any(cue.lines == [tag] for cue in cues), tag
+    spoken_tag, _s, fill = cues_from_words(
+        words, [Cue(5.0, 19.0, ["[Music] and then speech"])], CFG
+    )
+    assert (
+        fill == 1
+    )  # the words do not overlap it (widened by the window): a speech caption in a gap
+
+
+def test_a_speech_caption_in_a_truly_wordless_gap_is_kept():
+    words = spoken(0.0, "one two three") + spoken(30.0, "four five six")
+    cues, _speech, fill = cues_from_words(
+        words, [Cue(10.0, 14.0, ["she said nothing at all"])], CFG
+    )
+    assert fill == 1 and any(cue.lines == ["she said nothing at all"] for cue in cues)
+    near = cues_from_words(words, [Cue(1.2, 14.0, ["overlapped by speech"])], CFG)
+    assert near[2] == 0

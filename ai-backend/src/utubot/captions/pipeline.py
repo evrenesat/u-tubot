@@ -551,9 +551,12 @@ class CaptionPipeline:
         self, video_id: str, key: str, want_words: bool, requested: str | None
     ) -> dict[str, Any] | None:
         """A cached answer: with real or mixed word times under `key`, without them under the
-        engine-and-word-mode variant of it."""
+        engine-and-word-mode variant of it (read only while no engine is known to give words)."""
         cached = self.cache.get(video_id, ASR_CACHE_STAGE, key)
-        if cached is None and want_words:
+        gives_words = getattr(self.asr, "chain_gives_words", None)
+        # a wordless answer is only reused while no engine is known to give words: a fallback's
+        # estimate must not outlive a recovery of the engine that does
+        if cached is None and want_words and not (gives_words and gives_words(requested)):
             cached = self.cache.get(
                 video_id, ASR_CACHE_STAGE, key + word_mode_suffix(self.asr, requested)
             )

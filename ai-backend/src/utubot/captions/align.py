@@ -115,17 +115,30 @@ def merge_words_into_cues(
     return enforce_timing(out, cfg), from_asr
 
 
+NON_SPEECH_GROUPS_RE = re.compile(r"\[[^\]]*\]|\([^)]*\)")
+
+
+def is_non_speech(cue: Cue) -> bool:
+    """A caption that is only a tag (`[Music]`, `(applause)`) or music notes, no spoken text."""
+    text = " ".join(cue.lines)
+    rest = NON_SPEECH_GROUPS_RE.sub(" ", text)
+    return bool(text.strip()) and not any(ch.isalnum() for ch in rest)
+
+
 def word_cues(
     words: list[Word], captions: list[Cue], cfg: CaptionsConfig
 ) -> tuple[list[Cue], int, int]:
     """Speech cues from the words' own times plus fill cues from the captions: `(cues, speech, fill)`.
 
-    A caption cue is a fill cue (a `[Music]` or `[Applause]` row, speech the engine missed) unless
-    words overlap at least `fill_cover_min_share` of its span. Fill cues are clipped to the wordless
-    gap between their neighbouring speech cues and to each other, and dropped when under `min_cue_s`
-    after that. The cues are neither snapped nor padded yet.
+    A caption cue is a fill cue when it is a non-speech tag (`[Music]`, `(applause)`, ♪, whatever the
+    words around it), or when it has text and no word overlaps its span widened by `align_window_s`
+    (speech the engine did not hear). Fill cues are clipped to the wordless gap between their
+    neighbouring speech cues and to each other, and dropped when under `min_cue_s` after that. A
+    spoken caption that words overlap is never repeated: the words are the text. The cues are
+    neither snapped nor padded yet.
     """
     speech = build_cues(words, cfg)
+    margin = max(cfg.align_window_s, 0.0)
     timed = sorted((w for w in words if w.text.strip()), key=lambda w: w.start)
     starts = [w.start for w in timed]
     latest_end: list[float] = []
@@ -135,14 +148,10 @@ def word_cues(
     fills: list[Cue] = []
     last_end = 0.0
     for cue in sorted(captions, key=lambda c: c.start):
-        span = cue.end - cue.start
-        covered = 0.0
-        for j in range(bisect.bisect_right(latest_end, cue.start), len(timed)):
-            if starts[j] >= cue.end:
-                break
-            covered += max(min(timed[j].end, cue.end) - max(timed[j].start, cue.start), 0.0)
-        if span > 0 and covered / span >= cfg.fill_cover_min_share:
-            continue
+        if not is_non_speech(cue):
+            first = bisect.bisect_right(latest_end, cue.start - margin - MIDPOINT_EPS)
+            if first < len(timed) and starts[first] <= cue.end + margin + MIDPOINT_EPS:
+                continue
         after = bisect.bisect_right(speech_starts, cue.start)
         low = max(speech[after - 1].end if after else 0.0, last_end)
         high = speech[after].start if after < len(speech) else float("inf")

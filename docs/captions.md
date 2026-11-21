@@ -19,7 +19,8 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
 5. **ASR.** Speech recognition with word timestamps, chunked and stitched ([below](#asr-engines)). The answer is cached per video, audio
    and separation mode, so a retried job or a second job for the same video does not transcribe the same audio twice (an answer with
    real or partly real word times is cached under the plain key; one without any word times only under a key that includes the engines
-   and how each is asked for words, so a server that never gives words is not asked again, while a new word mode is).
+   and how each is asked for words, so a server that never gives words is not asked again, while a new word mode is; it is read only while no
+   engine of the chain is known to give words, so a fallback's estimate never outlives the recovery of the engine that does).
 6. **Word times, cues and alignment.** The engine's word times are checked and repaired against the audio's silences
    ([below](#word-timing)). Words are then grouped into cues of at most `max_lines` (2) lines of `max_chars_per_line` (42) characters,
    1 to 7 seconds (`min_cue_s`, `max_cue_s`), breaking at sentence and speaker changes and at every pause longer than `sentence_gap_s`,
@@ -42,9 +43,11 @@ When the video already has a caption track, it supplies the wording to compare w
 (`[Music]`, speech it missed); the **times come from the audio**:
 
 - **Real word times** (the normal case): the cues are built from the engine's own word times (`align.cues_from_words`), exactly as on
-  the audio-only path, so no spoken word is dropped for lying outside a caption window. A caption cue that words do not cover (they overlap
-  less than `fill_cover_min_share`, 0.3, of its span: `[Music]`, `[Applause]`, speech the engine missed) is kept as a *fill* cue, clipped
-  to the wordless gap between the speech cues and to the other fill cues, and dropped when that leaves under `min_cue_s`. Boundaries are snapped to the silences and each cue lingers after its last word. `align` logs
+  the audio-only path, so no spoken word is dropped for lying outside a caption window. A caption cue is kept as a *fill* cue when it is a
+  non-speech tag (`[Music]`, `(applause)`, ♪: whatever the words around it) or when it has text and no word overlaps its span (widened by
+  `align_window_s`, 0.4 s): captions in gaps with no heard speech. A spoken caption that words overlap is never repeated, the words are the
+  text. Fill cues are clipped to the wordless gap between the speech cues and to each other, and dropped when that leaves under
+  `min_cue_s`. Boundaries are snapped to the silences and each cue lingers after its last word. `align` logs
   `mode = "words"` with the speech and fill cue counts.
 - **Estimated word times** (the engine returned segments only): estimated times cannot place the engine's text, so the caption cues are
   kept as they are, text and timing (`align` skipped, `mode = "captions_timing"`, `reason = "word_times_estimated"`).
@@ -64,7 +67,7 @@ Whisper's word times (DTW) have known flaws, and a server only returns them when
 the first chunk that wants words is sent with both fields; a rejected request moves on to the single forms, a 200 without any word to
 the others, on the same chunk, and the first form that returns words is remembered (once per engine per process; `GET /v1/status`
 shows it as `word_times`, `unknown` until resolved; a chunk without any text, e.g. a silent intro, decides nothing and the next chunk probes
-again; a 413, or a 400 that does not name the word fields, is a problem of the chunk and does not walk the forms). Words may be top-level or nested in each segment. An engine that never returns
+again; a 413, or a 400 that does not name word, timestamp or granularities, is a problem of the chunk and does not walk the forms, so a server that rejects unknown fields with a generic 400 needs `word_timestamps` set explicitly). Words may be top-level or nested in each segment. An engine that never returns
 words is remembered as `none`; its words are spread over the segments by character count and marked `interpolated`, the job log says
 so (`word_timing` warn, `asr_chunk` `word_timing`), and with `asr_words_required = true` such an engine is passed over while another
 one remains in the chain. `extra_form` adds form fields to every request (e.g. `condition_on_previous_text = "false"`).

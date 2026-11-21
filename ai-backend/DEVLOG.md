@@ -46,8 +46,7 @@ Review round 1 fixes:
 3. ASR cache: real and mixed answers share the plain `v2:` key; an answer without word times is stored under `...:wm-<engines and their word
    modes>`, so a server that never gives words is not asked again but a new word mode misses. (The status of an engine whose config
    changed no longer reports the old instance's resolved mode.)
-4. `word_cues`: a caption cue is covered only when words overlap at least `fill_cover_min_share` (0.3) of its span; `[Applause]` next to
-   speech survives, clipped to the gap.
+4. `word_cues`: coverage rule (replaced in round 2, see below).
 5. Fill cues are clipped against each other before the linger and snap.
 6. `captions-regen`: default limit `regen_limit_default` (20), skipped in legacy mode, and a track is not listed when a newer track of the
    video already has the current `timing_version` (terminates when the regenerated language differs).
@@ -57,6 +56,18 @@ Review round 1 fixes:
 11. `captions-score`: `--at SECONDS` (repeatable), `--lang` picks the track (default: newest with a `timing_version`, else newest), `--spoken`
     for the audio language, output says which track was scored and gives `first_cue_start_s` and `max_cue_s`.
 12. The rollback note in `docs/captions.md` says a full return to the old requests also needs `word_timestamps = "granularities"`.
+
+Review round 2 fixes:
+
+1. Fill rule (`align.word_cues`): a caption that is only a non-speech tag (`[..]`, `(..)`, music notes) is always a fill cue (clipped to
+   the gap); a caption with text is a fill cue only when NO word overlaps its span widened by `align_window_s`. A spoken caption beside its
+   own words is never repeated (the reproduced "so that's the plan" case is a test, as is a no-token-twice check on the 300 s talk).
+   `fill_cover_min_share` is removed (config, example, docs); the `test_caption_source` expectation is back to 2 cues. Report text:
+   "non-speech tags and captions in gaps with no heard speech".
+2. Cache: the wordless (`wm-`) entry is read only while no engine of the chain is known to give words (resolved or pinned mode, or
+   faster-whisper), so a fallback's estimate stops being served once the word engine recovers (tested with a flaky first engine).
+3. Docs: `auto` walks the modes only on a 400 that names word/timestamp/granularities; servers that reject unknown fields with a generic
+   400 must set `word_timestamps` explicitly.
 
 Production steps (run by the coordinator after deploy; nothing here calls YouTube except the normal caption recheck of a regenerated job):
 

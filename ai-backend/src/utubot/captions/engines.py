@@ -70,6 +70,7 @@ WORD_FORMS: dict[str, dict[str, Any]] = {
     MODE_NONE: {"timestamp_granularities[]": ["segment"]},
 }
 # `auto`: the first probe, and where to go on after a 200 without any word
+WORD_CAPABLE = frozenset({MODE_GRANULARITIES, MODE_FLAG, MODE_BOTH, "native"})
 PROBE_FIRST = (MODE_BOTH, MODE_GRANULARITIES, MODE_FLAG)
 PROBE_AFTER_WORDLESS = (MODE_FLAG, MODE_GRANULARITIES)
 HTTP_ERROR_FLOOR = 400
@@ -601,6 +602,11 @@ class AsrRouter:
         if mode is None and engine.word_timestamps != MODE_AUTO:
             mode = engine.word_timestamps
         return mode or "unknown"
+
+    def chain_gives_words(self, language: str | None, priority: int = BACKGROUND) -> bool:
+        """True when an engine of the chain is known to return word times (resolved or pinned mode, or local)."""
+        chain = self.candidates(normalize_language(language), priority)
+        return any(self._word_times(e) in WORD_CAPABLE for e in chain)
 
     def word_signature(self, language: str | None, priority: int = BACKGROUND) -> str:
         """The engines that would take a job and how each is asked for word times, as a cache key part."""
