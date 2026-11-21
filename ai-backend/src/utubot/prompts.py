@@ -381,9 +381,18 @@ class PromptStore:
             return None
         return next((p for p in found[0].prompts if p.id == prompt_id), None)
 
-    def save_set(self, user: str, pset: PromptSet, source_url: str | None = None) -> None:
+    def save_set(
+        self,
+        user: str,
+        pset: PromptSet,
+        source_url: str | None = None,
+        *,
+        from_cut_store: bool = False,
+    ) -> None:
         if pset.id == BUILTIN_SET_ID:
             raise PromptError("the builtin set cannot be replaced")
+        if pset.id == CUT_SET_ID and not from_cut_store:
+            raise PromptError("the cut-presets set is managed by the cut sheet, not imported here")
         self.db.execute(
             "INSERT OR REPLACE INTO prompt_sets(user,set_id,json,source_url,updated_at)"
             " VALUES(?,?,?,?,?)",
@@ -578,7 +587,7 @@ class PromptStore:
             version=str(len(prompts)),
             prompts=prompts,
         )
-        self.save_set(user, pset)
+        self.save_set(user, pset, from_cut_store=True)
         return made
 
     def delete_cut_preset(self, user: str, prompt_id: str) -> bool:
@@ -596,5 +605,5 @@ class PromptStore:
             version=str(len(own)),
             prompts=own,
         )
-        self.save_set(user, pset)
+        self.save_set(user, pset, from_cut_store=True)
         return True

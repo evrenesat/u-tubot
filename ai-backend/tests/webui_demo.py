@@ -1,6 +1,6 @@
 """Serve the web UI on loopback with a mock LLM and canned data, for screenshots and manual poking.
 
-    uv run python tests/webui_demo.py [DATA_DIR]      # DATA_DIR defaults to temp/webui-demo
+    uv run python tests/webui_demo.py [DATA_DIR] [PORT]   # defaults temp/webui-demo and 8791
 
 Prints the address and the demo credentials, then serves until interrupted. Nothing here reaches the
 network: models and summaries come from `tests/mock_openai.py`, transcripts from a fake fetcher and
@@ -30,7 +30,8 @@ from utubot.auth import hash_token  # noqa: E402
 from utubot.config import Config, LLMTask, UserConfig, UserPolicy  # noqa: E402
 from utubot.prompts import validate_prompt_set  # noqa: E402
 
-APP_PORT, LLM_PORT = 8791, 8792
+APP_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8791
+LLM_PORT = APP_PORT + 1
 OWNER_TOKEN, PARTNER_TOKEN = "utb_demo_owner", "utb_demo_partner"
 OWNER_PASSWORD = "demo-password-123"
 GLANCE = (
@@ -114,7 +115,7 @@ def build(data: Path):
     cfg.llm.triage.model = "llama3.2:3b"
     cfg.llm.cuts = LLMTask(model="llama3.1:8b")
     cfg.speech.alias = "stt"
-    cfg.speech.max_record_s = 120
+    cfg.speech.max_record_s = 50
     cfg.speech.per_user_per_min = 20
     cfg.security.scrypt_n = 2**12
     # The seeded "running" job parks its worker on the never-downloading fake; a second worker

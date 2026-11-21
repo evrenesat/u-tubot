@@ -472,8 +472,10 @@ and `GET /v1/me` features carries `"speech": false`.
   or type it."` (upstream `413`).
 - The forwarded file part keeps a decoder-friendly extension: the phone sends `recording.webm` or
   `recording.m4a`, and a bare client filename gets an extension from the content type.
-- `GET /v1/me` features adds `"speech":bool` and `"speech_max_s":int` (default 120), the phone's
-  recording limit.
+- `GET /v1/me` features adds `"speech":bool` and `"speech_max_s":int` (default 50), the phone's
+  recording limit. The modelgate route's engine refuses a chunk over about 55 s (EVR-524), so the
+  default stays below it; a longer description takes several Speak taps, each appended to the
+  box.
 
 ## Saved cut presets and the phone share target (addendum, 2026-11-21)
 

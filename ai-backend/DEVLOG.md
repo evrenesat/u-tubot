@@ -1,5 +1,17 @@
 # DEVLOG
 
+## 2026-11-21 (director's cuts checkpoint 4 review round 1)
+
+1. `save_set` refuses the reserved `cut-presets` prompt-set id unless `from_cut_store` (the
+   sheet's own save/delete paths), so `PUT /v1/prompts/sets/cut-presets` and prompt imports
+   answer 400 and cannot silently replace the owner's saved presets. Test added.
+2. `[speech] max_record_s` defaults to 50 and the phone's fallback matches: the live modelgate
+   route's oMLX whisper returns upstream 500 "Engine not started" over about 55 s (EVR-524), and
+   the phone sends one file. A longer description takes several Speak taps; each answer appends.
+   config.example.toml and docs/server.md carry the reason; the demo also uses 50.
+3. `tests/webui_demo.py` reads the optional PORT argument (`APP_PORT`, LLM port + 1) instead of
+   hard-coding 8791.
+
 ## 2026-11-21 (cold ASR engine: wait, do not fall through; issue 57)
 
 1. A server that is still loading its model (oMLX: HTTP 500 "Engine not started", also 500/502 saying not started, not loaded or model is loading, any 503,

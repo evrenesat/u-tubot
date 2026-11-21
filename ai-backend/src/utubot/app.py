@@ -103,6 +103,7 @@ UI_TYPES = {
     ".js": "text/javascript",
     ".css": "text/css",
     ".svg": "image/svg+xml",
+    ".png": "image/png",
     ".json": "application/json",
 }
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})

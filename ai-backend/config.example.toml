@@ -182,7 +182,8 @@ max_tokens = 2000
 # alias = "stt"
 # provider = "default"           # the modelgate provider whose base_url and key are used
 # max_upload_bytes = 4194304     # 4 MiB
-# max_record_s = 120             # the phone stops recording at this length
+# max_record_s = 50              # one recording stops here: the engine refuses over ~55 s;
+                                 # tap Speak again to add more text
 # per_user_per_min = 10
 # timeout_s = 60.0
 # language = "en"                # optional hint for the transcriber

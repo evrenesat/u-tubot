@@ -40,7 +40,7 @@ const STAGE_LABEL = {
   checking: "checking the result",
 };
 const GROUP = { waiting: 0, building: 1, needs_transcript: 1, ready: 2, failed: 3 };
-const DEFAULT_SPEECH_S = 120;
+const DEFAULT_SPEECH_S = 50;
 let speech = null;
 
 
@@ -200,23 +200,37 @@ function newCutCard(onCreated) {
 
 // A link shared from YouTube (Android's Share button) is held by the service worker; the page
 // takes it once and starts a waiting request for that video, so the sheet opens right away.
+//
+// `serviceWorker.ready` is a promise that never settles when registration fails (Chrome with
+// site data blocked, Firefox private windows, a proxy that does not pass /sw.js); it does not
+// reject, so awaiting it would strand the whole Cuts queue. The timeout comes first, so the
+// page moves on after 1.5 s even when the worker never arrives.
 function takeSharedItem() {
   if (!("serviceWorker" in navigator)) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    navigator.serviceWorker.ready
-      .then((reg) => {
-        const worker = navigator.serviceWorker.controller || reg.active;
-        if (!worker) {
-          resolve(null);
-          return;
-        }
+  let timer = null;
+  let timedOut = false;
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      resolve(null);
+    }, 1500);
+  });
+  const ready = navigator.serviceWorker.ready
+    .then((reg) => {
+      // A worker that registers after the deadline must not take the shared link for a page
+      // that has already moved on; the link stays in the cache for the next visit.
+      if (timedOut) return null;
+      const worker = navigator.serviceWorker.controller || reg.active;
+      if (!worker) return null;
+      return new Promise((resolve) => {
         const channel = new MessageChannel();
         channel.port1.onmessage = (event) => resolve((event.data && event.data.value) || null);
         worker.postMessage({ type: "take-share" }, [channel.port2]);
         setTimeout(() => resolve(null), 1500);
-      })
-      .catch(() => resolve(null));
-  });
+      });
+    })
+    .catch(() => null);
+  return Promise.race([ready, deadline]).finally(() => clearTimeout(timer));
 }
 
 async function startSharedCut(value) {
@@ -277,10 +291,13 @@ async function queue(view) {
 
   mount(view, host);
   draw();
+  // Start the queue and its poller before the shared link is taken: the queue must load even
+  // when the service worker is unavailable, and taking a shared link can wait up to 1.5 s.
+  const stop = every(3000, () => load().catch(() => {}));
   const shared = await takeSharedItem();
   if (shared) await startSharedCut(shared);
   await load().catch(() => {});
-  return every(3000, () => load().catch(() => {}));
+  return stop;
 }
 
 async function loadSpeech() {
@@ -438,6 +455,9 @@ function micButton(box) {
     }
     chunks = [];
     recorder.addEventListener("dataavailable", (event) => {
+      // A new attempt owns the shared `chunks` list; an abandoned recorder's last chunk must not
+      // ride along in the new recording.
+      if (myAttempt !== attempt) return;
       if (event.data && event.data.size) chunks.push(event.data);
     });
     recorder.addEventListener("stop", () => {

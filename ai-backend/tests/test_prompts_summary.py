@@ -57,6 +57,14 @@ async def test_builtin_listed_and_default(env):
     ).status_code == 400
 
 
+async def test_the_cut_presets_set_is_reserved(env):
+    # The phone's cut sheet owns this set; a generic prompt import must not overwrite it and
+    # silently drop the user's saved presets.
+    r = await env.client.put("/v1/prompts/sets/cut-presets", json=pset("cut-presets"))
+    assert r.status_code == 400 and "cut sheet" in r.json()["error"]
+    assert (await env.client.get("/v1/prompts/sets/cut-presets")).status_code == 404
+
+
 async def test_put_validate_and_default(env):
     bad = pset()
     bad["prompts"].append(dict(bad["prompts"][0]))

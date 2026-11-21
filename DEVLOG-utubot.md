@@ -1,5 +1,29 @@
 # u·tubot devlog
 
+## 2026-11-21 (director's cuts checkpoint 4 review round 1; live modelgate STT limit)
+
+- EVR-520 blocking item fixed: a failed service-worker registration no longer strands the Cuts
+  queue. `serviceWorker.ready` never settles when registration fails, so `takeSharedItem()` now
+  races it with a timeout that starts first (1.5 s), and the tab starts `load()` and its 3 s
+  poller before taking the shared link. Chrome with site data blocked, Firefox private windows
+  and a proxy that does not pass `/sw.js` therefore keep the queue; the old code left the tab
+  blank. The browser check is 69 checks (was 67): a `/sw.js`-404 context asserts the queue
+  still lists its cards; the code at c5b6b44b fails both new checks with 0 cards.
+- The Share target needs HTTPS and an installed app (Chrome builds a WebAPK only from an
+  installed PWA); docs/server.md says so. The manifest now carries 192 px and 512 px PNG icons
+  rendered from `icon.svg` beside the SVG one (Chrome's install is unreliable with an SVG-only
+  manifest and no real WebAPK means no Share sheet entry).
+- The mic's `dataavailable` handler now checks the attempt: an abandoned recorder's last chunk
+  cannot join the new recording's upload when the owner taps Speak again after a cancel.
+- `save_set` refuses the reserved `cut-presets` id unless the cut store writes it, so an import
+  or `PUT /v1/prompts/sets/cut-presets` cannot silently drop the owner's saved presets.
+- `tests/webui_demo.py` honours the optional `PORT` argument (`APP_PORT`, LLM port = port + 1)
+  instead of always binding 8791, so a reviewer can run it beside another demo.
+- Live modelgate STT (EVR-464) refuses a chunk over about 55 s (upstream 500 "Engine not
+  started"; EVR-524). `[speech] max_record_s` defaults to 50 now (also the sheet's fallback), so
+  one recording stays under it; a longer description is spoken in several taps and the answers
+  append to the box. docs/server.md, config.example.toml and the CONTRACT say the limit and why.
+
 ## 2026-11-21 (director's cuts: saved presets, TV parts, Share target, checkpoint 4)
 
 - The cut sheet saves a description as the owner's own preset: a name field and "Save as preset"

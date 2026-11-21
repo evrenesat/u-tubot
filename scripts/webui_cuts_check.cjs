@@ -568,6 +568,46 @@ function currentRequest(page, ctx) {
       await api(ctx, "/v1/cut-requests/" + r.id, { method: "DELETE" });
     }
 
+    // ---- a failed service-worker registration must not strand the Cuts queue ---------------
+    // EVR-520 blocking item: `serviceWorker.ready` never settles when registration fails (Chrome
+    // with site data blocked, Firefox private windows, a proxy that does not pass /sw.js), so an
+    // old take-shared step awaiting it left the tab blank forever. The queue must load anyway.
+    const noSw = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      deviceScaleFactor: 2,
+      colorScheme: "dark",
+      locale: "en-US",
+      timezoneId: "UTC",
+      reducedMotion: "reduce",
+      hasTouch: true,
+      isMobile: true,
+    });
+    await blockYouTubeThumbs(noSw);
+    await noSw.route("**/sw.js", (route) =>
+      route.fulfill({ status: 404, contentType: "text/plain", body: "no worker here" }),
+    );
+    const nspage = await noSw.newPage();
+    nspage.setDefaultTimeout(WAIT_MS);
+    nspage.setDefaultNavigationTimeout(WAIT_MS);
+    nspage.on("pageerror", (e) => problems.push("pageerror(no-sw): " + e.message));
+    await nspage.goto(base + "/");
+    await nspage.locator("input[name=username]").fill("owner");
+    await nspage.locator("input[name=password]").fill("demo-password-123");
+    await nspage.getByRole("button", { name: "Sign in", exact: true }).click();
+    await nspage.waitForSelector("#nav:not([hidden])");
+    await go(nspage, "cuts", 900);
+    // `ready` never rejects; give the old 1.5 s fallback and the 3 s poller enough time to show
+    // the failure, then assert the cards the queue already holds.
+    await nspage.waitForTimeout(6000);
+    const noSwCards = await nspage.locator(".cut").count();
+    ok(noSwCards >= 1, "the queue loads its cards when /sw.js is refused (cards: " + noSwCards + ")");
+    ok(
+      (await nspage.locator("#view").textContent()).includes("from the phone") ||
+        (await nspage.locator("#view").textContent()).includes("from Web UI"),
+      "the cards under a refused service worker show their source",
+    );
+    await noSw.close();
+
     // No sideways scrolling at 360 px.
     const narrow = await browser.newContext({ viewport: { width: 360, height: 740 } });
     await blockYouTubeThumbs(narrow);
