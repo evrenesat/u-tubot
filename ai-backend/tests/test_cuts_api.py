@@ -17,7 +17,9 @@ VID = "abcdefghijk"
 async def cuts_env(env):
     env.cfg.llm.cuts = LLMTask(model="cutmodel")
     env.cfg.cuts.poll_s = 0.02
-    env.cfg.cuts.transcript_wait_s = 5.0
+    # Generous: the wait returns the moment the transcript lands, and on a loaded host the
+    # real-ffmpeg ASR chain has taken longer than a tight cap, failing the request outright.
+    env.cfg.cuts.transcript_wait_s = 60.0
     env.cfg.cuts.wait_ms_cap = 3000
     env.cfg.cuts.default_wait_ms = 0
     env.cfg.captions.job_poll_s = 0.02
@@ -460,7 +462,12 @@ class TestTranscriptPath:
         rid = r.json()["request_id"]
         doc = (await cuts_env.client.get(f"/v1/cuts/{rid}")).json()
         assert doc["state"] in ("needs_transcript", "building")
-        doc = await wait_ready(cuts_env, rid, wait_ms=15000)
+        # The ASR chain (a real ffmpeg spawn) is slow on a loaded host; the long poll caps at
+        # wait_ms_cap, so poll again until the build ends instead of assuming one call is enough.
+        for _ in range(30):
+            doc = await wait_ready(cuts_env, rid, wait_ms=15000)
+            if doc["state"] in ("ready", "failed"):
+                break
         assert doc["state"] == "ready"
         # The ASR transcript arrived through the transcript job; its unit came from the audio.
         assert doc["cut"]["transcript_hash"]
