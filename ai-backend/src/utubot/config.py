@@ -200,6 +200,23 @@ class CutsConfig(BaseModel):
     max_report_chars: int = 4000
 
 
+class SpeechConfig(BaseModel):
+    """Voice prompts for director's cuts: the phone's recording goes to modelgate only.
+
+    `alias` is the modelgate transcription alias (EVR-464's `/v1/audio/transcriptions` route);
+    without it the speech route reports "not configured". The upload has its own cap because
+    audio is far larger than the JSON bodies the global `security.max_body_bytes` covers.
+    """
+
+    alias: str = ""
+    provider: str | None = None
+    max_upload_bytes: int = 4 * 1024 * 1024
+    max_record_s: int = 120
+    per_user_per_min: int = 10
+    timeout_s: float = 60.0
+    language: str | None = None
+
+
 WORDS_REAL_MIN_SHARE = 0.9
 ASR_KIND_OPENAI = "openai"
 ASR_KIND_FASTER_WHISPER = "faster_whisper"
@@ -620,6 +637,7 @@ class Config(BaseModel):
     transcripts: TranscriptConfig = Field(default_factory=TranscriptConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     cuts: CutsConfig = Field(default_factory=CutsConfig)
+    speech: SpeechConfig = Field(default_factory=SpeechConfig)
     captions: CaptionsConfig = Field(default_factory=CaptionsConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)

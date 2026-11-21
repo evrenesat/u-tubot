@@ -130,14 +130,30 @@ def origin_allowed(origin: str, allowed_hosts: list[str]) -> bool:
 
 
 class BodyLimitMiddleware:
-    def __init__(self, app: ASGIApp, get_max_bytes: Callable[[], int]):
-        self.app, self.get_max_bytes = app, get_max_bytes
+    """The request body cap; an optional per-path cap replaces it for named routes (speech)."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        get_max_bytes: Callable[[], int],
+        get_max_bytes_for_path: Callable[[str], int | None] | None = None,
+    ):
+        self.app = app
+        self.get_max_bytes = get_max_bytes
+        self.get_max_bytes_for_path = get_max_bytes_for_path
+
+    def _limit(self, scope: Scope) -> int:
+        if self.get_max_bytes_for_path is not None:
+            override = self.get_max_bytes_for_path(scope.get("path", ""))
+            if override is not None:
+                return override
+        return self.get_max_bytes()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        max_bytes = self.get_max_bytes()
+        max_bytes = self._limit(scope)
         declared = dict(scope["headers"]).get(b"content-length")
         if declared and declared.isdigit() and int(declared) > max_bytes:
             await self._reject(send)

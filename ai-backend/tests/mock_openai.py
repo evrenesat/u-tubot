@@ -12,6 +12,9 @@ class MockOpenAI:
         self.calls: list[dict[str, Any]] = []
         self.requests: list[dict[str, Any]] = []
         self.audio_calls: list[dict[str, Any]] = []
+        self.audio_filenames: list[str] = []
+        self.audio_status: int | None = None
+        self.audio_text: str = "Hello there. How are you doing today?"
         # How the transcription endpoint hands out word times: "top" (a top-level `words` list, the
         # OpenAI shape), "flag_nested" (words nested in each segment, and only when the form carries
         # `word_timestamps=true`, as the production mlx-audio server does) or "none".
@@ -95,6 +98,12 @@ class MockOpenAI:
         async def transcriptions(request: Request):
             form = await request.form()
             self.audio_calls.append({k: v for k, v in form.items() if k != "file"})
+            file_part = form.get("file")
+            self.audio_filenames.append(getattr(file_part, "filename", "") or "")
+            if self.audio_status is not None:
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse({"error": "boom"}, status_code=self.audio_status)
             words = [
                 {"word": "Hello", "start": 0.0, "end": 0.5},
                 {"word": "there.", "start": 0.5, "end": 1.2},
@@ -110,7 +119,7 @@ class MockOpenAI:
             body: dict[str, Any] = {
                 "language": "english",
                 "duration": 4.0,
-                "text": "Hello there. How are you doing today?",
+                "text": self.audio_text,
                 "segments": segments,
             }
             if self.audio_words == "top":

@@ -14,6 +14,25 @@
   dims (or replace the chapters); the sponsor colours race with chapters upstream too. Route them through `UtubotCutSeekBar` or check
   the order on the device.
 
+## 2026-11-21 (director's cuts voice, checkpoint 3)
+
+- The phone cut sheet gains a Speak/Stop mic (`MediaRecorder`, opus/webm first, mp4/aac fallback)
+  and its recording goes to `POST /v1/speech`. The backend posts the audio to modelgate
+  `/v1/audio/transcriptions` with `[speech] alias` (EVR-464) and returns only the text; nothing is
+  stored, and the log has client, alias, bytes and duration, never the content. The text lands in
+  the description box and stays editable: it is not sent automatically, and Build is still a tap.
+- The upload has its own cap (`[speech] max_upload_bytes`, 4 MiB) through a per-path body-limit
+  override, while the global `security.max_body_bytes` (256 KiB) stays for every other route. A
+  per-user rate limit (`[speech] per_user_per_min`) stops retry loops; busy/timeouts answer plain
+  "Speech service is busy, try again or type it." The sheet reads the recording limit
+  (`[speech] max_record_s`) from `GET /v1/me`; the mic stops itself at that length.
+- The webui check stubs `getUserMedia`/`MediaRecorder` with a fake webm blob and walks Speak → Stop
+  through the real route; it asserts the text is in the box, focused, editable and not sent
+  (the request is still waiting).
+- Opus's merge note from EVR-509 is folded in: `onEngineReleased` keeps a ready `mPendingCut` that
+  is still waiting for the video length, and `onEngineInitialized` restarts its poll (the same
+  rearm as `onNewVideo`).
+
 ## 2026-11-20 (director's cuts on the TV, checkpoint 2)
 
 - The video menu gains "Director's cut…": the picker of the cut presets with their state (ready shows "kept of total", again = off),

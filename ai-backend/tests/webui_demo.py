@@ -113,6 +113,9 @@ def build(data: Path):
         task.model = "llama3.1:8b"
     cfg.llm.triage.model = "llama3.2:3b"
     cfg.llm.cuts = LLMTask(model="llama3.1:8b")
+    cfg.speech.alias = "stt"
+    cfg.speech.max_record_s = 120
+    cfg.speech.per_user_per_min = 20
     cfg.security.scrypt_n = 2**12
     # The seeded "running" job parks its worker on the never-downloading fake; a second worker
     # keeps the queue alive for the cut builds the pages show live.

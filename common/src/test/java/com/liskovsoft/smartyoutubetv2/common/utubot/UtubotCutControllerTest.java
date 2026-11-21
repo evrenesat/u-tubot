@@ -137,6 +137,15 @@ public class UtubotCutControllerTest {
     }
 
     @Test
+    public void aReadyPendingCutSurvivesAnEngineRelease() {
+        setPendingCut(cut(VIDEO));
+
+        mController.onEngineReleased();
+
+        assertNotNull(getPendingCut());
+    }
+
+    @Test
     public void errorsOfARequestAfterAnEngineRelease_areRetried() {
         mCutsAnswers.add(cutsEmpty());
         mController.onNewVideo(video(VIDEO));

@@ -437,6 +437,30 @@ test set (5 hand-marked transcripts × 3 requests, must-keep/must-skip spans, no
 The key is read from the named environment variable and never logged. Past measurements live in
 `ai-backend/fixtures/cuts/` (the 2026-11-20 pick: `fast`, with `fast-instruct` as fallback).
 
+## Voice prompts
+
+The phone records a spoken cut description and posts it to `POST /v1/speech`; this backend sends
+the audio on to modelgate's `POST /v1/audio/transcriptions` with `[speech] alias` (the route from
+EVR-464) and returns only the text. Nothing is stored locally, and the log keeps the client, alias,
+bytes and duration, never the audio or the words. Wire details:
+[../ai/CONTRACT.md](../ai/CONTRACT.md#voice-prompts-addendum-2026-11-21).
+
+- `[speech] alias` names modelgate's transcription alias; without it the sheet's mic says
+  "Speech is not configured on this server; type the cut instead." and `GET /v1/me` features
+  carries `"speech": false`.
+- The upload has its own cap (`[speech] max_upload_bytes`, 4 MiB default) because the global
+  `security.max_body_bytes` (256 KiB) covers JSON bodies only; oversize answers `413`
+  `"request too large"` before the form is read.
+- A per-user rate limit (`[speech] per_user_per_min`, 10 default) stops a retry loop. Upstream
+  busy (`429`/`503`/`504`), timeouts and transport failures (modelgate unreachable) answer `503
+  "Speech service is busy, try again or type it."`; other refusals answer `502 "Speech could not
+  be transcribed, try again or type it."`. The forwarded file part gets an extension from its
+  content type when the client sent a bare filename (STT servers often pick the decoder by it).
+- The text lands in the description box and stays editable; the phone never sends it itself.
+  `[speech] max_record_s` (120 default) is the recording limit the sheet reads from `GET /v1/me`.
+- ffmpeg is needed on the modelgate host when the phone's webm/opus cannot be passed through
+  (EVR-464 documents the format matrix).
+
 ## Reverse proxy and TLS
 
 Keep the service on `127.0.0.1:8790` and terminate TLS in front of it. Set `server.public_base_url` to the public URL.
