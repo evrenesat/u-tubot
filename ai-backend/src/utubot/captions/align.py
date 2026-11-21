@@ -20,6 +20,7 @@ from __future__ import annotations
 import bisect
 import re
 import subprocess
+from dataclasses import replace
 
 from ..config import CaptionsConfig
 from .segment import build_cues, enforce_timing, pad_cues, retime_split, wrap_lines
@@ -106,7 +107,13 @@ def merge_words_into_cues(
                 out.extend(retime_split(text, cue.start, cue.end, cfg))
         elif lines is not None and not _too_fast(text, bucket[0].start, bucket[-1].end, cfg):
             out.append(
-                Cue(bucket[0].start, max(bucket[-1].end, bucket[0].start), lines, cue.speaker)
+                Cue(
+                    bucket[0].start,
+                    max(bucket[-1].end, bucket[0].start),
+                    lines,
+                    cue.speaker,
+                    words=list(bucket),
+                )
             )
         else:
             # does not fit one cue: let the words' own timings re-split it, so line, duration
@@ -157,7 +164,7 @@ def word_cues(
         high = speech[after].start if after < len(speech) else float("inf")
         start, end = max(cue.start, low), min(cue.end, high)
         if end - start >= cfg.min_cue_s:
-            fills.append(Cue(start, end, list(cue.lines), cue.speaker))
+            fills.append(replace(cue, start=start, end=end, lines=list(cue.lines), words=None))
             last_end = end
     merged = sorted([*speech, *fills], key=lambda cue: cue.start)
     return merged, len(speech), len(fills)

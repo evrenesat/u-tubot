@@ -244,3 +244,96 @@ async def test_pyannote_uses_community_pipeline(monkeypatch, tmp_path):
     turns = await PyannoteDiarizer(CFG).diarize(tmp_path / "x.wav")
     assert turns == [(0.0, 1.5, "SPEAKER_00")]
     assert seen == {"name": "pyannote/speaker-diarization-community-1", "token": "hf_test"}
+
+
+def _spoken_cue(text: str, gap_after: int | None = None, gap_s: float = 1.2):
+    """A cue over `text` whose words are 0.3 s long, with an extra pause after word `gap_after`."""
+    from utubot.captions.types import Cue
+
+    out, t = [], 0.0
+    for i, w in enumerate(text.split()):
+        out.append(Word(t, t + 0.3, w))
+        t += 0.35 + (gap_s if gap_after is not None and i == gap_after else 0.0)
+    return Cue(out[0].start, out[-1].end, [text], words=out)
+
+
+def _tight_cfg(**kw):
+    return CaptionsConfig(max_chars_per_line=20, max_lines=1, **kw)
+
+
+def test_split_cue_exact_uses_word_times():
+    from utubot.captions.segment import SplitStats, split_cue
+
+    cue = _spoken_cue("alpha beta gamma delta epsilon zeta eta theta")
+    stats = SplitStats()
+    pieces = split_cue(
+        cue, "Alpha beta, gamma delta, epsilon zeta, eta theta.", _tight_cfg(), stats
+    )
+    assert (stats.exact, stats.at_pause, stats.by_chars) == (1, 0, 0)
+    assert len(pieces) > 1
+    first_words = [p.words[0] for p in pieces]
+    for piece, word in zip(pieces[1:], first_words[1:], strict=True):
+        assert piece.start == word.start
+    for piece, nxt in zip(pieces, pieces[1:], strict=False):
+        assert piece.words[-1] is cue.words[cue.words.index(nxt.words[0]) - 1]
+        assert piece.end >= piece.words[-1].end and piece.end <= nxt.start
+    assert pieces[0].start == cue.start and pieces[-1].end == cue.end
+    assert sum(len(p.words) for p in pieces) == len(cue.words)
+
+
+def test_split_cue_prefers_the_pause():
+    from utubot.captions.segment import SplitStats, split_cue
+
+    text = "one two three four five six seven eight nine ten eleven twelve"
+    cue = _spoken_cue(text, gap_after=5)
+    gap_start, gap_end = cue.words[5].end, cue.words[6].start
+    stats = SplitStats()
+    cfg = CaptionsConfig(max_chars_per_line=40, max_lines=1)
+    # a translation of another length: the tokens no longer map onto the words
+    cue.words_match_text = False
+    pieces = split_cue(
+        cue, "uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece", cfg, stats
+    )
+    assert stats.at_pause == 1 and stats.by_chars == 0
+    assert len(pieces) == 2
+    assert pieces[0].end <= gap_start + cfg.cue_linger_s + 1e-9
+    assert pieces[1].start == gap_end
+    assert not any(p.start < gap_end and p.end > gap_start + cfg.cue_linger_s for p in pieces)
+
+
+def test_split_cue_without_words_counts_by_chars():
+    from utubot.captions.segment import SplitStats, split_cue
+    from utubot.captions.types import Cue
+
+    stats = SplitStats()
+    cue = Cue(0.0, 6.0, ["[Music]"])
+    pieces = split_cue(cue, "one two three four five six seven eight nine ten", _tight_cfg(), stats)
+    assert stats.by_chars == 1 and stats.exact == stats.at_pause == 0
+    assert len(pieces) > 1 and all(p.char_timed for p in pieces)
+    assert pieces[0].start == 0.0 and pieces[-1].end >= 6.0
+
+
+def test_split_cue_keeps_the_speaker_prefix_out_of_the_word_map():
+    from utubot.captions.segment import SplitStats, split_cue
+    from utubot.captions.types import Cue
+
+    cue = _spoken_cue("alpha beta gamma delta epsilon zeta eta theta")
+    cue = Cue(cue.start, cue.end, cue.lines, "S1", words=cue.words)
+    stats = SplitStats()
+    pieces = split_cue(cue, "[S1] " + " ".join(w.text for w in cue.words), _tight_cfg(), stats)
+    assert stats.exact == 1
+    assert sum(len(p.words) for p in pieces) == len(cue.words)
+    assert all(p.speaker == "S1" for p in pieces)
+
+
+async def test_translation_overflow_is_split_not_one_long_line(env):
+    cue = _spoken_cue("one two three four five six seven eight", gap_after=3)
+    cue = type(cue)(
+        cue.start, cue.end, ["one two three four five six seven eight"], words=cue.words
+    )
+    env.svc.jobs.pipeline.cfg.captions.max_chars_per_line = 20
+    env.svc.jobs.pipeline.cfg.captions.max_lines = 1
+    out = await env.svc.jobs.pipeline.translate([cue], "tr")
+    assert len(out) > 1
+    assert all(len(line) <= 20 for piece in out for line in piece.lines)
+    assert out[0].start == cue.start and out[-1].end == cue.end

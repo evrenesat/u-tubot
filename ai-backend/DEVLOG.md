@@ -1,5 +1,34 @@
 # DEVLOG
 
+## 2026-11-21 (subtitle timing checkpoint 4: proofread and translate keep real times)
+
+Plan: `temp/sync-design/agent-plan.md` (CP4). Before: a proofread text that overflowed a cue went through `retime_split` (character-count
+time over the cue's span), a translation that did not fit became one over-long line, and `Cue.words` was dropped by proofreading and
+translation.
+
+- `segment.split_cue(cue, text, cfg, stats)` + `SplitStats`: lines packed with `forced_lines`, groups of `max_lines`; with words, `exact` (text
+  still maps token for token onto the words, a speaker prefix token excluded) or `at_pause` (each cut to the widest word gap whose time
+  fraction lies within `split_search_frac` (0.2) of the text's character share; nearest boundary when none is in range); without enough
+  words `retime_split` (`by_chars`). Pieces keep `speaker` and their slice of `words`.
+- `Cue` gained `words_match_text` (False after translation, so a translated cue is never cut "exactly" by chance) and `char_timed` (set
+  by `retime_split`; counted in `sync_score.char_timed_cues`, and the final count after proofreading and translation is stored in
+  `captions.timing.char_timed_cues`).
+- `Proofreader.polish` and `CaptionPipeline.translate` carry words through (`dataclasses.replace`); `translate` splits overflow with
+  `split_cue`. `proofread` and `translate` stage details: `split_exact`, `split_at_pause`, `split_by_chars`, `overlong` (lines still over
+  the limit, i.e. one word longer than the line). `merge_words_into_cues(retime=True)` keeps `words`; fill cues have none. `TIMING_VERSION = 4`.
+- Docs: `docs/captions.md`, `docs/server.md`, `ai/CONTRACT.md`, job page text (`jobtext.js`).
+
+Deviations from the plan:
+
+1. Padding is done inside `split_cue` instead of by the caller: a non-last piece lingers `cue_linger_s` and stretches to `min_cue_s` only
+   into the gap before the next piece. The caller's `pad_cues` / `enforce_timing` would also touch cues in legacy mode.
+2. The first piece starts at the source cue's start and the last ends at its end (the plan's "first word start / last word end" would drop
+   the snap and linger already applied to the cue); interior boundaries are real word times.
+3. `by_chars` is counted per cue, not per piece. `char_timed_cues` is also in the `sync_score` event (before text passes) and the final
+   value is in the stored `timing`, since the text passes run after that event.
+4. `translate(cues, target, stats=None)` takes an optional `SplitStats`.
+5. The CP4 acceptance on the Hindi episode (production) was not run here.
+
 ## 2026-11-21 (subtitle timing checkpoint 2: wrong-language and hallucinated chunks)
 
 Plan: `temp/sync-design/agent-plan.md` (CP2), builds on CP1. Evidence: EQWLxadmae0, first 600 s chunk labelled English, 20 segments,

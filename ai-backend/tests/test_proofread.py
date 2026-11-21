@@ -156,3 +156,18 @@ async def test_proofread_cache_is_keyed_by_the_texts(mock_llm):
 def test_proofread_system_prompt_demands_the_same_cues():
     assert "same length and order" in PROOFREAD_SYSTEM
     assert "never merge, split, reorder" in PROOFREAD_SYSTEM
+
+
+async def test_overflowing_correction_keeps_real_boundaries(mock_llm):
+    from utubot.captions.types import Word
+
+    names = "alpha bravo charlie delta echo foxtrot golf hotel".split()
+    words = [Word(i * 0.4, i * 0.4 + 0.3, w) for i, w in enumerate(names)]
+    source = Cue(0.0, 3.1, [" ".join(names)], words=words)
+    respond_with_cues(mock_llm, ["Alpha, bravo, charlie, delta, echo, foxtrot, golf, hotel!"])
+    pr = proofreader(mock_llm, max_chars_per_line=20, max_lines=1)
+    out = await pr.polish(VID, [source], "English", CONTEXT)
+    assert len(out) > 1 and all(len(line) <= 20 for cue in out for line in cue.lines)
+    starts = {w.start for w in words}
+    assert all(cue.start in starts for cue in out)
+    assert all(cue.words and not cue.char_timed for cue in out)

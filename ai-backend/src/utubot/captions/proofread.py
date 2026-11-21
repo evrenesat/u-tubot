@@ -9,7 +9,9 @@ text suddenly grows beyond `proofread_max_ratio` (a sign of invention) or shrink
 never fails the job: the cues keep their unproofread text and the stage warns.
 
 Corrected texts are re-wrapped to the line limits; text that no longer fits one cue is re-split
-into several timed cues (`segment.retime_split`), so the stored cues never break the limits.
+into several timed cues on the cue's own word boundaries (`segment.split_cue`; character-count
+timing only for a cue without words), so the stored cues never break the limits. Cues keep their
+`words` so a later pass can still split on real pauses.
 
 Corrected batches are cached per video (`StageCache`), so a retried job does not pay for the same
 proofreading twice.
@@ -19,11 +21,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 
 from ..config import CaptionsConfig, LLMTask
 from ..llm import LLMClient
 from . import events
-from .segment import retime_split, wrap_lines
+from .segment import SplitStats, split_cue, wrap_lines
 from .stages import StageCache
 from .types import Cue
 
@@ -79,6 +82,7 @@ class Proofreader:
             )
             out: list[Cue] = []
             corrected = warned = chars_in = chars_out = 0
+            split = SplitStats()
             for i in range(0, len(cues), cfg.proofread_batch):
                 part = cues[i : i + cfg.proofread_batch]
                 texts = [" ".join(cue.lines) for cue in part]
@@ -111,12 +115,18 @@ class Proofreader:
                 for cue, text in zip(part, fixed, strict=True):
                     lines = wrap_lines(text, cfg.max_chars_per_line, cfg.max_lines)
                     if lines is not None:
-                        out.append(Cue(cue.start, cue.end, lines, cue.speaker))
+                        out.append(replace(cue, lines=lines))
                     else:
-                        # the corrected text no longer fits one cue: re-split it over the cue's
-                        # own span instead of storing lines that break the limits
-                        out.extend(retime_split(text, cue.start, cue.end, cfg))
-            st.set(corrected=corrected, warned=warned, chars_in=chars_in, chars_out=chars_out)
+                        # the corrected text no longer fits one cue: split it on the cue's own
+                        # word boundaries instead of storing lines that break the limits
+                        out.extend(split_cue(cue, text, cfg, split))
+            st.set(
+                corrected=corrected,
+                warned=warned,
+                chars_in=chars_in,
+                chars_out=chars_out,
+                **split.as_detail(),
+            )
         return out
 
     async def _polish_batch(

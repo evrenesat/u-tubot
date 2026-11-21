@@ -27,6 +27,10 @@ class Cue:
     lines: list[str]
     speaker: str | None = None
     words: list[Word] | None = field(default=None, repr=False, compare=False)
+    # False once the text is a translation: its tokens no longer map one to one onto `words`
+    words_match_text: bool = field(default=True, repr=False, compare=False)
+    # the times were shared over the text by character count (no word times behind them)
+    char_timed: bool = field(default=False, repr=False, compare=False)
 
 
 @dataclass

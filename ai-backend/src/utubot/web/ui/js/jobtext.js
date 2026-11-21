@@ -151,6 +151,14 @@ export function triggerText(trigger) {
   return String(trigger.kind);
 }
 
+function splitText(d) {
+  const parts = [];
+  if (d.split_exact) parts.push(d.split_exact + " split on word times");
+  if (d.split_at_pause) parts.push(d.split_at_pause + " split at a pause");
+  if (d.split_by_chars) parts.push(d.split_by_chars + " split by character count");
+  return parts.length ? "Long text: " + parts.join(", ") : null;
+}
+
 function join(parts) {
   return parts.filter((p) => p !== null && p !== undefined && p !== "").join(", ");
 }
@@ -254,7 +262,7 @@ const DESCRIBERS = {
   },
   sync_score(d, status) {
     if (status === "skipped") return "Not checked: " + ({ no_cues: "no cues", no_silences: "the audio has no silences to compare with" }[d.reason] || "no audio silence data");
-    return join([pct(d.speech_overlap) + " of cue time over sound", pct(d.starts_in_silence) + " of cues start in silence"]);
+    return join([pct(d.speech_overlap) + " of cue time over sound", pct(d.starts_in_silence) + " of cues start in silence", d.char_timed_cues ? num(d.char_timed_cues) + " cues timed by character count" : null]);
   },
   align(d, status) {
     if (d.mode === "words") {
@@ -272,7 +280,7 @@ const DESCRIBERS = {
   proofread(d, status) {
     if (status === "running") return join([num(d.cues) + " cues in " + d.batches + " batch" + (d.batches === 1 ? "" : "es"), d.language ? "language " + d.language : null]);
     if (status === "skipped") return "Skipped: " + (d.message || reasonText(d.reason));
-    return join([num(d.corrected) + " of " + num(d.cues) + " cues corrected", d.warned ? d.warned + " batch" + (d.warned === 1 ? "" : "es") + " not proofread" : null, d.cached ? "from the stage cache" : null, num(d.chars_in) + " → " + num(d.chars_out) + " characters"]);
+    return join([num(d.corrected) + " of " + num(d.cues) + " cues corrected", d.warned ? d.warned + " batch" + (d.warned === 1 ? "" : "es") + " not proofread" : null, d.cached ? "from the stage cache" : null, splitText(d), num(d.chars_in) + " → " + num(d.chars_out) + " characters"]);
   },
   proofread_batch(d, status) {
     if (status === "failed" || status === "warn") return join(["Batch " + d.batch + " kept its original text", reasonText(d.error_class)]);
@@ -282,7 +290,7 @@ const DESCRIBERS = {
   text: (d) => join([num(d.segments) + " segments", num(d.lines) + " lines", num(d.chars) + " characters"]),
   translate(d, status) {
     if (status === "running") return "Translating " + d.source + " to " + d.to;
-    return join([d.source + " to " + d.to, num(d.cues) + " cues"]);
+    return join([d.source + " to " + d.to, num(d.cues) + " cues", splitText(d)]);
   },
   stored(d) {
     if (d.message && d.stored === false) return d.message;

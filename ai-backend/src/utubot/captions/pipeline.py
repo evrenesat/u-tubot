@@ -7,7 +7,7 @@ import shutil
 import sys
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +56,7 @@ from .asr import (
 from .diarize import Diarizer, assign_speakers, make_diarizer
 from .formats import audio_selector, track_kind
 from .proofread import Proofreader
-from .segment import build_cues, count_speakers, pad_cues, to_vtt, wrap_lines
+from .segment import SplitStats, build_cues, count_speakers, pad_cues, split_cue, to_vtt, wrap_lines
 from .separate import make_separator
 from .stages import StageCache
 from .syncscore import self_check
@@ -78,7 +78,7 @@ ASR_CACHE_STAGE = "asr"
 
 
 ASR_CACHE_VERSION = 3  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review)
-TIMING_VERSION = 2  # the caption timing scheme of a stored track (`captions.timing_version`)
+TIMING_VERSION = 4  # the caption timing scheme of a stored track (`captions.timing_version`)
 SEGMENT_METRICS = 3  # no_speech_prob, avg_logprob, compression_ratio follow start, end, text
 
 
@@ -925,13 +925,16 @@ class CaptionPipeline:
         """
         if translate_to and translate_to != track_lang:
             with events.stage(events.TRANSLATE, source=track_lang, to=translate_to) as st:
-                cues = await self.translate(cues, translate_to)
-                st.set(cues=len(cues))
+                split = SplitStats()
+                cues = await self.translate(cues, translate_to, split)
+                st.set(cues=len(cues), **split.as_detail())
             track_lang = translate_to
             # the English output carries the quality bar: translated text is proofread too,
             # so names and punctuation are fixed against the title and description as well
             if self.proofreader.enabled:
                 cues = await self._polish(video_id, cues, track_lang)
+        if timing:
+            timing["char_timed_cues"] = sum(1 for cue in cues if cue.char_timed)
         vtt = to_vtt(cues)
         speakers = count_speakers(cues)
         label = track_label(track_lang, speakers)
@@ -964,11 +967,14 @@ class CaptionPipeline:
         progress(1.0)
         return track_lang
 
-    async def translate(self, cues: list[Cue], target: str) -> list[Cue]:
+    async def translate(
+        self, cues: list[Cue], target: str, stats: SplitStats | None = None
+    ) -> list[Cue]:
         if self.llm is None:
             raise PipelineError("translation needs an LLM client")
         batch = self.cfg.captions.translate_batch
         c = self.cfg.captions
+        stats = stats if stats is not None else SplitStats()
         out: list[Cue] = []
         for i in range(0, len(cues), batch):
             part = cues[i : i + batch]
@@ -989,8 +995,14 @@ class CaptionPipeline:
                 raise PipelineError("translation length mismatch")
             for cue, prefix, text in zip(part, prefixes, data, strict=True):
                 full = f"{prefix}{text}".strip()
-                lines = wrap_lines(full, c.max_chars_per_line, c.max_lines) or [full]
-                out.append(Cue(cue.start, cue.end, lines, cue.speaker))
+                # the translation no longer maps onto the source words one to one, but its cue keeps
+                # the source cue's times and words so an overflow splits on a real pause
+                source = replace(cue, words_match_text=False)
+                lines = wrap_lines(full, c.max_chars_per_line, c.max_lines)
+                if lines is not None:
+                    out.append(replace(source, lines=lines))
+                else:
+                    out.extend(split_cue(source, full, c, stats))
         return out
 
 

@@ -85,7 +85,8 @@ engine). Against the audio's silences and ordinary speaking rates:
 Every word carries its provenance (`real`, `repaired`, `suspect`, `interpolated`); the `word_timing` event reports the counts and the
 share of real times, the stored track keeps a summary in `captions.timing` with `timing_version` (additive columns). The `sync_score`
 event is the audio's verdict on the finished cues: the share of cue time over sound, and of cue starts lying in the middle of a
-silence.
+silence. `char_timed_cues` counts the cues whose times were still shared over their text by character count (the job page shows it; the
+stored `captions.timing` carries the final number after proofreading and translation).
 
 **Measuring and regenerating.** `utubot captions-score VIDEO_ID --reference ENGINE [--windows N | --at SECONDS ...] [--window-s S] [--lang TRACK] [--spoken L] [--review] [--json]`
 cuts evenly spaced windows (or windows starting at each `--at`) of the *archived* audio, transcribes them with the named engine, and reports how close the nearest cue start
@@ -104,7 +105,10 @@ The cue texts go to the LLM in batches of `proofread_batch` (40) with the video'
 `proofread_context_chars` each). The answer must be a JSON array with the same length and order as the batch; a different shape, an
 empty string, a batch whose text grew beyond `proofread_max_ratio` (1.6 — a sign of invention) or shrank below `1 / proofread_max_ratio`
 (dropped content) falls back to the original texts. Corrected texts are wrapped to the line limits again; text that no longer fits one
-cue is re-split over the cue's own span, so the stored cues never break the limits. A failing LLM never fails the job: those batches
+cue is split on the cue's own word boundaries (`segment.split_cue`: where the text still maps word for word the groups take their
+own words' times, otherwise each cut goes to the widest pause within `split_search_frac` of the text's share of the cue's time), so
+the stored cues never break the limits and a pause between pieces shows no cue. Only a cue without words (a caption fill cue) is cut by
+character count; the stage reports `split_by_chars`. A failing LLM never fails the job: those batches
 keep their text and the stage warns. Corrected batches are cached per video, so a retried job does not pay twice.
 
 ## Translation
@@ -113,7 +117,8 @@ The goal is high-quality English captions for every requested video, whatever it
 translation target is English: `[captions] translate_to` is `"en"`, the API leaves `translate_to` unset by default, and the TV app's
 "prepare captions" request resolves to the same default. A track whose language differs is translated by the LLM (`translate_batch`, 40,
 cues at a time) and — so the quality bar holds for the English output — the translated text is proofread again with the title and
-description as context. Same-language captions stay available: pass `translate_to: "off"` (or "none") explicitly, or set
+description as context. A translated cue keeps the source cue's start, end and words; translated text that does not fit the line
+limits is split over the source words' boundaries the same way (proportionally, at the widest pause), never as one over-long line. Same-language captions stay available: pass `translate_to: "off"` (or "none") explicitly, or set
 `[captions] translate_to` to `"off"` to make that the default.
 
 ## Vocal separation
