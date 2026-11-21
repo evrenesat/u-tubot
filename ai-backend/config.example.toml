@@ -351,6 +351,15 @@ cue_linger_s = 0.2                 # a cue stays on screen this long after its l
 sync_late_s = 0.3                  # sync metric: a cue start up to this late after a phrase onset is a "hit"
 sync_early_s = 0.5                 # sync metric: ... and up to this early (cues may lead speech on purpose)
 sync_loose_s = 1.0                 # sync metric: a cue start within this of a phrase onset is "loose"
+ref_block_s = 60.0                 # check against YouTube's word times: tokens are matched inside blocks of this many seconds ...
+ref_block_overlap_s = 5.0          # ... that overlap by this much
+ref_min_run = 2                    # ... a match shorter than this many tokens counts only for a token that is unique on both sides
+ref_max_offset_s = 3.0             # ... and a pair counts only when the two starts are at most this far apart
+ref_agree_s = 0.3                  # a pair "agrees" when its offset is within this of the median offset
+ref_region_min_anchors = 5         # a stretch of at least this many consecutive pairs whose median offset differs is reported as a region
+ref_region_off_s = 0.6             # "differs" = by more than this from the global median offset
+ref_min_anchor_share = 0.2         # fewer matched tokens than this share of the reference: too few to judge (check skipped)
+ref_script_gap_share = 0.5         # reference and engine words whose Latin shares differ by more than this are in different scripts (check skipped)
 asr_recheck = true                 # re-listen to chunks heard in the wrong language, mostly hallucinated or far sparser than the rest, then drop what is still not speech
 asr_recheck_chunk_s = 120.0        # re-listen: the "smaller window" retry cuts the chunk into windows of this many seconds
 asr_expected_override_share = 0.5  # when more than this share of the audio is heard in another language than the video's metadata says, the heard one is trusted (the metadata may be wrong)

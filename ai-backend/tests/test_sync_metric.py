@@ -24,6 +24,7 @@ from tests.synth_speech import (
     tone_wav,
     whisper_answer,
     youtube_rows,
+    youtube_words,
 )
 from utubot.captions import events
 from utubot.captions.asr import ffmpeg_available
@@ -151,10 +152,10 @@ class Harness:
         path.write_bytes(self.audio.read_bytes())
         return path
 
-    async def run(self, method: str, *args):
+    async def run(self, method: str, *args, **kw):
         token = events.bind(JobTrace("j1", self.log))
         try:
-            await getattr(self.pipeline, method)(VID, *args, lambda f: None)
+            await getattr(self.pipeline, method)(VID, *args, lambda f: None, **kw)
         finally:
             events.unbind(token)
 
@@ -319,3 +320,59 @@ async def test_translated_track_keeps_the_sync_score(harness, tmp_path):
     text_lines = [ln for ln in row["vtt"].splitlines() if ln and "-->" not in ln]
     assert all(len(line) <= limit for line in text_lines if not line.isdigit() and line != "WEBVTT")
     assert json.loads(row["timing"])["char_timed_cues"] == 0
+
+
+REF_SHIFT_S = 1.5
+REF_LEAD_S = 0.25
+REF_TOLERANCE_S = 0.05
+
+
+class ShiftedChunkEngine(ScriptedEngine):
+    """A scripted engine whose chunks starting at or after `from_s` answer `by` seconds late."""
+
+    def __init__(self, *args, from_s: float, by: float):
+        super().__init__(*args)
+        self.from_s, self.by = from_s, by
+
+    async def transcribe_chunk(self, wav, language, want_words):
+        result = await super().transcribe_chunk(wav, language, want_words)
+        if self.asked[-1]["start"] >= self.from_s:
+            for item in [*result.words, *result.segments]:
+                item.start += self.by
+                item.end += self.by
+        return result
+
+
+async def test_improve_checks_the_engine_against_youtube_word_times(harness):
+    h = harness("flag")
+    rows = youtube_rows(h.truth)
+    await h.run("improve", rows, "en", None, ref_words=youtube_words(h.truth), caption_kind="auto")
+    check = h.event("ref_check")
+    assert check["status"] == "ok", check
+    detail = check["detail"]
+    assert detail["within_s"] >= HIT_TARGET and detail["regions"] == []
+    assert detail["median_s"] == pytest.approx(REF_LEAD_S, abs=REF_TOLERANCE_S)
+    stored = json.loads(h.db.one("SELECT timing FROM captions")["timing"])["ref_check"]
+    assert stored["regions"] == 0 and stored["anchors"] > 100
+    assert h.score().hit >= HIT_TARGET  # the check changes no times
+
+
+async def test_improve_without_youtube_words_falls_back_to_the_rows(harness):
+    h = harness("flag")
+    await h.run("improve", youtube_rows(h.truth), "en", None)
+    check = h.event("ref_check")
+    assert check["status"] == "ok" and check["detail"]["source"] == "rows"
+
+
+async def test_improve_locates_a_chunk_the_engine_has_wrong(harness):
+    h = harness("flag")
+    h.engine = ShiftedChunkEngine(
+        h.truth, "flag", DURATION_S, CHUNK_S, h.cfg.captions.asr_chunk_overlap_s,
+        from_s=CHUNK_S - h.cfg.captions.asr_chunk_overlap_s, by=REF_SHIFT_S,
+    )  # fmt: skip
+    await h.run("improve", youtube_rows(h.truth), "en", None, ref_words=youtube_words(h.truth))
+    check = h.event("ref_check")
+    assert check["status"] == "warn" and len(check["detail"]["regions"]) == 1
+    start, end, median = check["detail"]["regions"][0]
+    assert start >= CHUNK_S - 15 and end <= DURATION_S
+    assert median == pytest.approx(REF_LEAD_S + REF_SHIFT_S, abs=REF_TOLERANCE_S)

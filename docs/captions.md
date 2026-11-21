@@ -28,6 +28,14 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
    (`align_silence`) — outward only, so a cue never loses its first or last word to the snap — and each cue stays on screen
    `cue_linger_s` (0.2 s) after its last word when there is room. The job then logs a `sync_score` check of the finished cues
    against the audio.
+   **Check against YouTube.** Captions jobs keep YouTube's own word starts (json3 `tOffsetMs`, stored in `transcripts.words`, with
+   `caption_kind` `manual|auto`; a transcript stored before this is fetched once more through the gate, and used as it is while YouTube
+   does not answer). The `ref_check` event matches the engine's words with them in blocks of `ref_block_s` (60 s) and reports how many
+   matched, the median offset (YouTube's rows lead speech by about a quarter of a second), the share within `ref_agree_s` (0.3 s) of it and
+   `regions`, stretches of at least `ref_region_min_anchors` (5) pairs whose offset differs from the median by more than `ref_region_off_s`
+   (0.6 s). Without word offsets the first token of each caption row is used (`source` `rows`); with fewer matches than
+   `ref_min_anchor_share` (0.2) of the reference, or another script than the engine's, the check is skipped. It changes no times: regions on
+   real videos are the evidence for ever building a time warp.
 7. **Proofreading.** The LLM (`[llm.captions]`) fixes punctuation, capitalisation, names and terms, using the video's title and
    description as context ([below](#proofreading)).
 8. **Translation.** The job targets English by default (`[captions] translate_to`, "en"): a track in another language is translated

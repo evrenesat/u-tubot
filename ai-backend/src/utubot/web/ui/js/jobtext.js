@@ -19,6 +19,7 @@ export const STAGE_LABELS = {
   stitching: "Stitching",
   separation: "Vocal separation",
   word_timing: "Word timing",
+  ref_check: "Checked against YouTube timing",
   align: "Alignment",
   sync_score: "Sync check",
   proofread: "Proofreading",
@@ -179,7 +180,7 @@ const DESCRIBERS = {
   gate_wait: (d) => join(["Class " + d.klass, "waited " + fmtSecs(d.waited_s), d.priority + " priority"]),
   caption_recheck(d) {
     if (d.message) return d.message;
-    if (d.result === "found") return "Captions exist (" + d.source + ", " + num(d.chars) + " characters); the audio was not needed";
+    if (d.result === "found") return join(["Captions exist (" + d.source + ", " + num(d.chars) + " characters)", d.words ? num(d.words) + " word times from YouTube" : null, "the audio was not needed"]);
     if (d.result === "no_captions") return "YouTube still has no captions for this video";
     return join([d.result, reasonText(d.reason)]);
   },
@@ -266,6 +267,17 @@ const DESCRIBERS = {
     const fixed = [num(d.stretched) + " stretched", num(d.zero_length) + " zero-length", num(d.squeezed) + " squeezed"];
     if (status === "warn") return join([d.message, num(d.words) + " words, " + pct(d.real_share) + " with real times"]);
     return join([num(d.words) + " words, " + pct(d.real_share) + " with real times", fixed.join(", ") + " fixed"]);
+  },
+  ref_check(d, status) {
+    if (status === "skipped") {
+      return "Not checked: " + ({ no_reference: "YouTube gave no word times to compare with", too_few_anchors: "too few words matched", other_script: "YouTube's text is in another script than the speech" }[d.reason] || "no usable reference");
+    }
+    const regions = d.regions || [];
+    if (regions.length) {
+      const shown = regions.slice(0, 3).map((r) => fmtClock(r[0]) + "-" + fmtClock(r[1]) + " by " + Math.abs(r[2] - d.median_s).toFixed(1) + " s");
+      return num(regions.length) + (regions.length === 1 ? " stretch differs (" : " stretches differ (") + shown.join(", ") + ")";
+    }
+    return num(d.anchors) + " of " + num(d.reference_words) + " words matched, " + pct(d.within_s) + " within 0.3 s";
   },
   sync_score(d, status) {
     if (status === "skipped") return "Not checked: " + ({ no_cues: "no cues", no_silences: "the audio has no silences to compare with" }[d.reason] || "no audio silence data");

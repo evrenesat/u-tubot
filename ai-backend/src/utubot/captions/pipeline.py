@@ -34,7 +34,7 @@ from ..youtube import (
     classify_failure,
     ytdlp_runtime_options,
 )
-from . import events
+from . import events, reference
 from .align import (
     caption_cues,
     detect_silences,
@@ -56,6 +56,8 @@ from .asr import (
 from .diarize import Diarizer, assign_speakers, make_diarizer
 from .formats import audio_selector, track_kind
 from .proofread import Proofreader
+from .reference import Check
+from .reference import check as check_reference
 from .segment import SplitStats, build_cues, count_speakers, pad_cues, split_cue, to_vtt, wrap_lines
 from .separate import make_separator
 from .stages import StageCache
@@ -165,6 +167,19 @@ def asr_cache_key(audio_sha: str, want_words: bool, requested: str | None, separ
     language and the audio variant — separated vocals change what the engines hear, so the mode
     joins the key."""
     return f"v{ASR_CACHE_VERSION}:{audio_sha}:{int(want_words)}:{requested or 'auto'}:{separation}"
+
+
+def ref_check_summary(verdict: Check) -> dict[str, Any]:
+    """The `ref_check` entry of the stored `timing`: small, no word lists."""
+    if verdict.status == reference.STATUS_SKIPPED or verdict.agreement is None:
+        return {"skipped": verdict.reason}
+    agreement = verdict.agreement
+    return {
+        "anchors": agreement.anchors,
+        "median_s": round(agreement.median_s, 3),
+        "within_s": round(agreement.within_s, 3),
+        "regions": len(agreement.regions),
+    }
 
 
 def word_mode_suffix(asr: Any, language: str | None) -> str:
@@ -804,10 +819,11 @@ class CaptionPipeline:
         mode: str,
         check: dict[str, Any],
         fill_cues: int = 0,
+        ref_check: Check | None = None,
     ) -> dict[str, Any]:
         """What a stored track's `timing` column says about how its times were made."""
         detail = stats.as_detail()
-        return {
+        summary = {
             "word_timing": result.word_timing,
             "real_share": detail["real_share"],
             "repaired": stats.stretched + stats.zero_length + stats.squeezed,
@@ -815,6 +831,34 @@ class CaptionPipeline:
             "mode": mode,
             "self_check": check,
         }
+        if ref_check is not None:
+            summary["ref_check"] = ref_check_summary(ref_check)
+        return summary
+
+    async def _ref_check(
+        self,
+        ref_words: list[tuple[float, str]] | None,
+        rows: list[tuple[float, float, str]],
+        words: list[Word],
+    ) -> Check:
+        """Compare the engine's word starts with YouTube's: log `ref_check`, change no times."""
+        c = self.cfg.captions
+        verdict = await asyncio.to_thread(check_reference, ref_words, rows, words, c)
+        detail: dict[str, Any] = {"reference_words": verdict.reference_words}
+        if verdict.agreement is not None:
+            detail.update(verdict.agreement.as_detail())
+        if verdict.status == reference.STATUS_SKIPPED:
+            events.emit(events.REF_CHECK, events.SKIPPED, reason=verdict.reason, **detail)
+        elif verdict.status == reference.STATUS_WARN:
+            events.emit(
+                events.REF_CHECK,
+                events.WARN,
+                message="The engine's word times differ from YouTube's in some stretches.",
+                **detail,
+            )
+        else:
+            events.emit(events.REF_CHECK, events.OK, **detail)
+        return verdict
 
     async def improve(
         self,
@@ -824,6 +868,8 @@ class CaptionPipeline:
         translate_to: str | None,
         progress: Progress,
         priority: int = BACKGROUND,
+        ref_words: list[tuple[float, str]] | None = None,
+        caption_kind: str | None = None,
     ) -> str:
         """HQ captions built on the video's own captions: better text, times from the audio.
 
@@ -875,6 +921,7 @@ class CaptionPipeline:
                 st.set(cues=len(cues))
             progress(0.9)
             mode, fill_cues = "legacy", 0
+            ref_check: Check | None = None
             if legacy:
                 with events.stage(events.ALIGN, mode="merge", margin_s=c.align_window_s) as st:
                     # linear in cues and words, but hours of captions still take a moment: keep the
@@ -892,6 +939,7 @@ class CaptionPipeline:
                     st.skip(reason="word_times_estimated", cues=len(cues))
             else:
                 mode = "words"
+                ref_check = await self._ref_check(ref_words, segments, words)
                 with events.stage(events.ALIGN, mode="words", words=len(words)) as st:
                     before = len(cues)
                     cues, speech, fill_cues = await asyncio.to_thread(word_cues, words, cues, c)
@@ -915,7 +963,12 @@ class CaptionPipeline:
             timing = {}
             if not legacy:
                 timing = self._timing_summary(
-                    result, stats, mode, self._emit_sync_score(cues, silences, wav), fill_cues
+                    result,
+                    stats,
+                    mode,
+                    self._emit_sync_score(cues, silences, wav),
+                    fill_cues,
+                    ref_check,
                 )
             track_lang = result.language or requested or base_hint or "und"
             track_lang = await self._finish(
