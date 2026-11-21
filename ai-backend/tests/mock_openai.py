@@ -12,6 +12,7 @@ class MockOpenAI:
         self.calls: list[dict[str, Any]] = []
         self.requests: list[dict[str, Any]] = []
         self.audio_calls: list[dict[str, Any]] = []
+        self.audio_filenames: list[str] = []
         self.audio_status: int | None = None
         self.audio_text: str = "Hello there. How are you doing today?"
         self.delay_s = 0.0
@@ -93,6 +94,8 @@ class MockOpenAI:
         async def transcriptions(request: Request):
             form = await request.form()
             self.audio_calls.append({k: v for k, v in form.items() if k != "file"})
+            file_part = form.get("file")
+            self.audio_filenames.append(getattr(file_part, "filename", "") or "")
             if self.audio_status is not None:
                 from fastapi.responses import JSONResponse
 

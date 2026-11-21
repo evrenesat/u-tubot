@@ -7,6 +7,26 @@
   keep the spoken language (stored as `off`); a captions request that names its own `translate_to` still wins.
   `config.check_translate_target` validates it and the server default the same way.
 
+## 2026-11-21 (director's cuts voice, checkpoint 3 review round)
+
+- EVR-510 review fixes: the cut sheet's mic is tied to the sheet's lifecycle. The button is
+  created once per sheet and reused across the poll's redraws, and `cancel()` clears the length
+  timer, stops the recorder without uploading and releases the microphone when the sheet
+  leaves waiting (Build, a preset chip, Dismiss, Back, the error card) or is torn down. A redraw
+  mid-recording keeps the live Stop control instead of leaving a recorder the owner cannot stop.
+- The spoken upload sends `recording.webm`/`recording.m4a` so STT servers that read the decoder
+  from the filename extension accept it; a bare client filename gets the same extension in the
+  backend. The multipart form is closed after the read (`await form.close()`), so a spooled temp
+  file is unlinked before the response leaves.
+- Plain errors now match the owner's view: an unreachable modelgate is `503` "busy" (retry is the
+  right next move); a missing named provider is "not configured". `loadSpeech()` retries a
+  transient `/v1/me` failure on the next draw instead of caching "no speech" for the page's life.
+- `scripts/webui_cuts_check.cjs` is 38 checks: it forces a title change mid-recording (the sheet
+  redraws, the Stop control and the one recorder stay), taps Build while recording, and leaves
+  the sheet while recording; both cancel paths assert no `/v1/speech` POST and a released track.
+  The old `cuts.js` fails the redraw and both cancel checks. Fresh demo and a rerun on a dirtied
+  demo pass, 0 Chromium left.
+
 ## 2026-11-20 (director's cuts checkpoint 1: engine, phone pages, test set)
 
 - Browser-check hygiene (the p100 crash of 2026-11-19 was ~9 orphaned headless Chromium

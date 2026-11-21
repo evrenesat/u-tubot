@@ -992,10 +992,15 @@ def create_app(
             form = await request.form(max_files=1, max_fields=4)
         except Exception as exc:
             raise HTTPException(400, "invalid or too large upload") from exc
-        upload = form.get("audio") or form.get("file")
-        if not isinstance(upload, UploadFile):
-            raise HTTPException(400, "no recording in the request")
-        audio = await upload.read()
+        # A large file part spools to a temp file; closing the form unlinks it, so the recording
+        # never lingers past the request even while the garbage collector has not run.
+        try:
+            upload = form.get("audio") or form.get("file")
+            if not isinstance(upload, UploadFile):
+                raise HTTPException(400, "no recording in the request")
+            audio = await upload.read()
+        finally:
+            await form.close()
         text = await svc.speech.transcribe(
             audio,
             filename=upload.filename or "recording",

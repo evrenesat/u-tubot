@@ -448,8 +448,10 @@ bytes and duration, never the audio or the words. Wire details:
   `security.max_body_bytes` (256 KiB) covers JSON bodies only; oversize answers `413`
   `"request too large"` before the form is read.
 - A per-user rate limit (`[speech] per_user_per_min`, 10 default) stops a retry loop. Upstream
-  busy (`429`/`503`/`504`) and timeouts answer `503 "Speech service is busy, try again or type
-  it."`; other refusals answer `502 "Speech could not be transcribed, try again or type it."`.
+  busy (`429`/`503`/`504`), timeouts and transport failures (modelgate unreachable) answer `503
+  "Speech service is busy, try again or type it."`; other refusals answer `502 "Speech could not
+  be transcribed, try again or type it."`. The forwarded file part gets an extension from its
+  content type when the client sent a bare filename (STT servers often pick the decoder by it).
 - The text lands in the description box and stays editable; the phone never sends it itself.
   `[speech] max_record_s` (120 default) is the recording limit the sheet reads from `GET /v1/me`.
 - ffmpeg is needed on the modelgate host when the phone's webm/opus cannot be passed through

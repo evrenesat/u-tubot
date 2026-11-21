@@ -30,6 +30,9 @@ const NONCE = String(Date.now() % 10);
 const VID_BUILD = "cccccccccc" + NONCE;
 const VID_FAIL = "dddddddddd" + NONCE;
 const VID_WAIT = "eeeeeeeee" + NONCE + NONCE;
+const VID_MIC_REDRAW = "ffffffffff" + NONCE;
+const VID_MIC_BUILD = "gggggggggg" + NONCE;
+const VID_MIC_LEAVE = "hhhhhhhhhh" + NONCE;
 const problems = [];
 let checks = 0;
 let browser = null;
@@ -124,6 +127,11 @@ function currentRequest(page, ctx) {
     const page = await ctx.newPage();
     page.setDefaultTimeout(WAIT_MS);
     page.setDefaultNavigationTimeout(WAIT_MS);
+    // The mic lifecycle checks assert that a canceled recording never reaches the route.
+    let speechPosts = 0;
+    page.on("request", (r) => {
+      if (r.method() === "POST" && r.url().includes("/v1/speech")) speechPosts += 1;
+    });
     page.on("console", (m) => {
       if (m.type() === "error" && !/Failed to load resource/.test(m.text())) problems.push("console: " + m.text());
     });
@@ -132,13 +140,22 @@ function currentRequest(page, ctx) {
     await page.addInitScript(() => {
       // A fake microphone for the voice check: getUserMedia and MediaRecorder produce a small
       // webm blob, so the sheet's Speak button exercises the real POST /v1/speech route.
-      const stream = { getTracks: () => [{ stop() {} }] };
+      const stream = {
+        getTracks: () => [
+          {
+            stop() {
+              window.__trackStops = (window.__trackStops || 0) + 1;
+            },
+          },
+        ],
+      };
       Object.defineProperty(navigator, "mediaDevices", {
         configurable: true,
         value: { getUserMedia: async () => stream },
       });
       class FakeRecorder {
         constructor(_stream, options) {
+          window.__recorders = (window.__recorders || 0) + 1;
           this.mimeType = (options && options.mimeType) || "audio/webm";
           this.state = "inactive";
           this.handlers = {};
@@ -275,6 +292,95 @@ function currentRequest(page, ctx) {
     await go(page, "cuts", 800);
     const last = await page.locator(".cut .pill").allTextContents();
     ok(last[0] === "waiting for your description", "a waiting card comes first: " + last.join(", "));
+
+    // ---- the mic is tied to the sheet's lifecycle (EVR-510 blocking item) -------------------
+    // A waiting request opened straight from its short URL, as the QR code does.
+    async function openWaiting(id) {
+      await api(ctx, "/v1/videos/" + id + "/cuts", {
+        method: "POST",
+        data: { await_prompt: true },
+        headers: { Authorization: "Bearer " + DEMO_TOKEN, "Content-Type": "application/json" },
+      });
+      await go(page, "cuts/" + (await newestWaiting(ctx, id)), 700);
+    }
+    async function newestWaiting(ctx, videoId) {
+      const { body } = await api(ctx, "/v1/cut-requests");
+      const row = body.requests.find((r) => r.video_id === videoId && r.state === "waiting");
+      return row ? row.id : "missing";
+    }
+
+    // 1. A redraw while recording keeps the same Speak/Stop control and one recorder; the old
+    // code rebuilt the button, leaving the mic live with no Stop (it only ended at the timer).
+    await openWaiting(VID_MIC_REDRAW);
+    await page.evaluate(() => {
+      window.__trackStops = 0;
+      window.__recorders = 0;
+    });
+    speechPosts = 0;
+    const rdraw = page.locator("textarea");
+    await rdraw.fill("keep the demo");
+    await page.getByRole("button", { name: "Speak", exact: true }).click();
+    await page.waitForTimeout(300);
+    ok(await page.getByRole("button", { name: "Stop", exact: true }).isVisible(), "recording shows its Stop control");
+    // Force the visible signature (the title) to change, which redraws the waiting sheet mid-recording.
+    await page.route("**/v1/cuts/**", async (route) => {
+      const resp = await route.fetch();
+      const json = await resp.json().catch(() => null);
+      if (json && json.id) json.title = "The changed title";
+      await route.fulfill({ status: resp.status(), contentType: "application/json", body: JSON.stringify(json || {}) });
+    });
+    await page.waitForTimeout(3600);
+    ok(await page.getByRole("button", { name: "Stop", exact: true }).isVisible(), "a redraw keeps the live Stop control");
+    const recorders = await page.evaluate(() => window.__recorders || 0);
+    ok(recorders === 1, "the redraw does not start a second recorder (started: " + recorders + ")");
+    ok((await page.locator("textarea").inputValue()) === "keep the demo", "the redraw keeps the text");
+    await page.waitForTimeout(1900);
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("textarea").value.includes("Hello there"), undefined, { timeout: WAIT_MS });
+    ok(speechPosts === 1, "the still-control mic uploads once after the redraw (POSTs: " + speechPosts + ")");
+    await page.unroute("**/v1/cuts/**");
+    const redrawDoc = await newestWaiting(ctx, VID_MIC_REDRAW);
+    ok(redrawDoc !== "missing", "the spoken text did not send the request by itself");
+    for (const r of (await api(ctx, "/v1/cut-requests")).body.requests.filter((x) => x.video_id === VID_MIC_REDRAW)) {
+      await api(ctx, "/v1/cut-requests/" + r.id, { method: "DELETE" });
+    }
+
+    // 2. Tapping Build while recording stops the mic without uploading; the sheet leaves waiting.
+    await openWaiting(VID_MIC_BUILD);
+    await page.locator("textarea").fill("keep the lock demo");
+    await page.evaluate(() => {
+      window.__trackStops = 0;
+    });
+    speechPosts = 0;
+    await page.getByRole("button", { name: "Speak", exact: true }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole("button", { name: "Build cut" }).click();
+    await page.waitForTimeout(1200);
+    const buildStops = await page.evaluate(() => window.__trackStops || 0);
+    ok(buildStops >= 1, "Build stops the recording and releases the microphone");
+    ok(speechPosts === 0, "Build while recording never uploads the audio (POSTs: " + speechPosts + ")");
+    const buildReq = await newestWaiting(ctx, VID_MIC_BUILD);
+    for (const r of (await api(ctx, "/v1/cut-requests")).body.requests.filter((x) => x.video_id === VID_MIC_BUILD)) {
+      await api(ctx, "/v1/cut-requests/" + r.id, { method: "DELETE" });
+    }
+    ok(buildReq === "missing", "the Build tap moved the request out of waiting");
+
+    // 3. Leaving the sheet (Back / hash change) stops the mic without uploading.
+    await openWaiting(VID_MIC_LEAVE);
+    await page.evaluate(() => {
+      window.__trackStops = 0;
+    });
+    speechPosts = 0;
+    await page.getByRole("button", { name: "Speak", exact: true }).click();
+    await page.waitForTimeout(300);
+    await go(page, "cuts", 900);
+    await page.waitForTimeout(1200);
+    const leaveStops = await page.evaluate(() => window.__trackStops || 0);
+    ok(leaveStops >= 1, "leaving the sheet stops the recording and releases the microphone");
+    ok(speechPosts === 0, "leaving the sheet never uploads the audio (POSTs: " + speechPosts + ")");
+    for (const r of (await api(ctx, "/v1/cut-requests")).body.requests.filter((x) => x.video_id === VID_MIC_LEAVE)) {
+      await api(ctx, "/v1/cut-requests/" + r.id, { method: "DELETE" });
+    }
 
     // No sideways scrolling at 360 px.
     const narrow = await browser.newContext({ viewport: { width: 360, height: 740 } });

@@ -128,14 +128,37 @@ async def test_an_upstream_refusal_says_try_again_or_type_it(env):
     assert r.json()["error"] != MSG_TOO_LARGE
 
 
-async def test_an_unreachable_modelgate_says_it_failed_plainly(env):
+async def test_an_unreachable_modelgate_says_try_again_or_type_it(env):
     speech_cfg(env)
     env.cfg.speech.max_upload_bytes = 4 * 1024 * 1024
 
-    failing = httpx.MockTransport(lambda request: httpx.Response(503))
+    def unreachable(_request):
+        raise httpx.ConnectError("modelgate is down")
+
+    failing = httpx.MockTransport(unreachable)
     env.svc.speech._http = httpx.AsyncClient(transport=failing, timeout=1.0)
 
     r = await env.client.post("/v1/speech", files={"audio": ("clip.webm", b"bytes", "audio/webm")})
 
     assert r.status_code == 503
     assert r.json() == {"error": MSG_BUSY}
+
+
+async def test_a_bare_filename_gets_the_recording_extension(env):
+    speech_cfg(env)
+
+    r = await env.client.post("/v1/speech", files={"audio": ("recording", b"bytes", "audio/webm")})
+
+    assert r.status_code == 200, r.text
+    assert env.llm.audio_filenames[-1] == "recording.webm"
+
+
+async def test_a_missing_provider_is_reported_as_not_configured(env):
+    speech_cfg(env)
+    env.cfg.speech.provider = "no-such-provider"
+
+    r = await env.client.post("/v1/speech", files={"audio": ("clip.webm", b"bytes", "audio/webm")})
+
+    assert r.status_code == 503
+    assert r.json() == {"error": MSG_NOT_CONFIGURED}
+    assert env.llm.audio_calls == []

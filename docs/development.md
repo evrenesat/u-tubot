@@ -73,7 +73,9 @@ browser before exiting, so a killed run never leaves an orphaned headless Chromi
 start and builds on per-run video ids, so it can be rerun after a killed run without a fresh demo. It
 stubs `getUserMedia` and `MediaRecorder` with a fake webm blob, so the cut sheet's Speak → Stop walks
 the real `POST /v1/speech` route without a microphone: the mock LLM's transcription text lands in the
-description box, editable, and the request stays waiting (nothing is sent automatically).
+description box, editable, and the request stays waiting (nothing is sent automatically). It also
+forces a redraw mid-recording, then taps Build and leaves the sheet mid-recording: those cancel paths
+must release the fake track and send no `/v1/speech` POST.
 
 ## Android app
 

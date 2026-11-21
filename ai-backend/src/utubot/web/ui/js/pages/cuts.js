@@ -231,7 +231,7 @@ async function loadSpeech() {
     const me = await api("/v1/me");
     speech = me.features || {};
   } catch {
-    speech = { speech: false };
+    // A transient failure is retried on the next draw instead of caching "no speech" forever.
   }
 }
 
@@ -245,12 +245,23 @@ function pickMime() {
 
 // Tap to start, tap to stop. The audio goes to POST /v1/speech; the text lands in the box and
 // stays editable (nothing is sent automatically). The recording is dropped after the upload.
+//
+// The sheet creates this button once and reuses it across redraws, so a redraw cannot leave a
+// recorder running without its Stop. `cancel()` is called when the sheet goes away or leaves the
+// waiting state; it stops the recorder without uploading and releases the microphone.
 function micButton(box) {
   const btn = h("button", { type: "button", class: "btn sec mic", text: "Speak" });
   let recorder = null;
   let chunks = [];
   let stream = null;
   let limitTimer = null;
+  let canceled = false;
+
+  function resetButton() {
+    btn.textContent = "Speak";
+    btn.classList.remove("on");
+    btn.disabled = false;
+  }
 
   function releaseStream() {
     if (stream) {
@@ -267,6 +278,13 @@ function micButton(box) {
     if (recorder && recorder.state !== "inactive") recorder.stop();
   }
 
+  function cancel() {
+    canceled = true;
+    stopRecording();
+    releaseStream();
+    resetButton();
+  }
+
   async function sendRecording() {
     btn.disabled = true;
     btn.textContent = "Uploading…";
@@ -278,8 +296,11 @@ function micButton(box) {
         toast("No speech heard; try again or type it.", "bad");
         return;
       }
+      // The extension lets OpenAI-compatible STT servers pick the decoder from the name,
+      // even when the content type is already right.
+      const ext = /mp4|aac/.test(type) ? "m4a" : /ogg/.test(type) ? "ogg" : /wav/.test(type) ? "wav" : "webm";
       const form = new FormData();
-      form.append("audio", blob, "recording");
+      form.append("audio", blob, "recording." + ext);
       const r = await upload("/v1/speech", form);
       const text = ((r && r.text) || "").trim();
       if (!text) {
@@ -295,9 +316,7 @@ function micButton(box) {
     } catch (err) {
       toast(errorText(err), "bad");
     } finally {
-      btn.textContent = "Speak";
-      btn.classList.remove("on");
-      btn.disabled = false;
+      resetButton();
       recorder = null;
       chunks = [];
     }
@@ -327,10 +346,19 @@ function micButton(box) {
       return;
     }
     chunks = [];
+    canceled = false;
     recorder.addEventListener("dataavailable", (event) => {
       if (event.data && event.data.size) chunks.push(event.data);
     });
-    recorder.addEventListener("stop", () => void sendRecording());
+    recorder.addEventListener("stop", () => {
+      if (canceled) {
+        resetButton();
+        recorder = null;
+        chunks = [];
+        return;
+      }
+      void sendRecording();
+    });
     recorder.start();
     btn.textContent = "Stop";
     btn.classList.add("on");
@@ -347,7 +375,7 @@ function micButton(box) {
       else void startRecording();
     }
   });
-  return btn;
+  return { btn, cancel };
 }
 
 async function sheet(view, requestId) {
@@ -360,6 +388,16 @@ async function sheet(view, requestId) {
   // fresh empty textarea would erase what the owner is typing (and its focus).
   let box = null;
   let waitingSig = null;
+  // One mic button per sheet, reused across redraws like the box; `cancel()` ties the recorder
+  // and the microphone to the sheet's lifecycle.
+  let mic = null;
+
+  function stopMic() {
+    if (mic) {
+      mic.cancel();
+      mic = null;
+    }
+  }
 
   async function loadPresets(videoId) {
     if (presets || !videoId) return;
@@ -379,12 +417,14 @@ async function sheet(view, requestId) {
   }
 
   async function fill(req, box) {
+    stopMic();
     await api("/v1/cut-requests/" + req.id, { method: "PUT", body: { prompt: box.value } });
     toast("Building the cut");
     await draw();
   }
 
   async function dismissAndLeave(req) {
+    stopMic();
     await api("/v1/cut-requests/" + req.id, { method: "DELETE" });
     location.hash = "#/cuts";
   }
@@ -404,6 +444,7 @@ async function sheet(view, requestId) {
     try {
       req = await api("/v1/cuts/" + requestId, { query: { wait_ms: 800 } });
     } catch (err) {
+      stopMic();
       mount(host, h("h1", { class: "page-title", text: "Cut" }), card(null, note(errorText(err), "bad"), h("a", { class: "btn sec", href: "#/cuts" }, h("span", { text: "Back to the queue" }))));
       return;
     }
@@ -459,7 +500,7 @@ async function sheet(view, requestId) {
           ),
           sheetActions(
             req,
-            speech && speech.speech ? micButton(box) : null,
+            speech && speech.speech ? (mic || (mic = micButton(box))).btn : null,
             button("Build cut", () => fill(req, box), { kind: "primary" }),
           ),
         ),
@@ -473,6 +514,7 @@ async function sheet(view, requestId) {
     }
     box = null;
     waitingSig = null;
+    stopMic();
     if (req.state === "building" || req.state === "needs_transcript") {
       const stage = req.state === "needs_transcript" ? "needs a transcript" : STAGE_LABEL[req.stage] || req.stage || "working";
       kids.push(
@@ -532,6 +574,7 @@ async function sheet(view, requestId) {
   pollStop = every(2500, () => draw().catch(() => {}));
   return () => {
     stopped = true;
+    stopMic();
     if (pollStop) pollStop();
   };
 }

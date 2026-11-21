@@ -23,6 +23,27 @@ MSG_FAILED = "Speech could not be transcribed, try again or type it."
 MSG_EMPTY = "The recording was empty; try again or type it."
 MSG_TOO_LARGE = "The recording is too long or too large; try again or type it."
 
+# OpenAI-compatible STT servers often pick the decoder from the filename extension. The phone
+# sends `recording.webm`/`recording.m4a`, but a client that sends a bare name gets one here.
+_EXT_BY_CONTENT_TYPE = {
+    "audio/webm": ".webm",
+    "audio/ogg": ".ogg",
+    "audio/mp4": ".m4a",
+    "audio/aac": ".aac",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/mpeg": ".mp3",
+}
+
+
+def filename_for(filename: str, content_type: str) -> str:
+    """The forwarded filename, with the recording's extension when the client sent none."""
+    name = (filename or "").strip() or "recording"
+    if "." in name.rsplit("/", 1)[-1]:
+        return name
+    ext = _EXT_BY_CONTENT_TYPE.get((content_type or "").split(";")[0].strip().lower())
+    return name + ext if ext else name
+
 
 class SpeechError(RuntimeError):
     """Speech failed; `message` is the plain reason shown to the owner."""
@@ -66,7 +87,7 @@ class SpeechService:
         provider = speech.provider or self.cfg.llm.default_provider
         provider_cfg = self.cfg.llm.providers.get(provider)
         if provider_cfg is None:
-            raise SpeechError(MSG_FAILED, status=503)
+            raise SpeechError(MSG_NOT_CONFIGURED, status=503)
 
         url = provider_cfg.base_url.rstrip("/") + "/audio/transcriptions"
         headers = {}
@@ -83,19 +104,20 @@ class SpeechService:
                 url,
                 headers=headers,
                 data=data,
-                files={"file": (filename, audio, content_type)},
+                files={"file": (filename_for(filename, content_type), audio, content_type)},
             )
         except httpx.TimeoutException as exc:
             log.warning("speech timed out: alias=%s bytes=%s", speech.alias, len(audio))
             raise SpeechError(MSG_BUSY, status=503) from exc
         except httpx.HTTPError as exc:
+            # Unreachable modelgate is "busy" to the owner: retrying is the right next move.
             log.warning(
                 "speech transport error: alias=%s bytes=%s error=%s",
                 speech.alias,
                 len(audio),
                 type(exc).__name__,
             )
-            raise SpeechError(MSG_FAILED, status=502) from exc
+            raise SpeechError(MSG_BUSY, status=503) from exc
         finally:
             log.info(
                 "speech: alias=%s bytes=%s duration=%.2fs",
