@@ -230,24 +230,32 @@ Whisper-style engines sometimes label a whole chunk with the wrong language and 
 English with a "Thank you." every 30 s over continuous Turkish speech. After the first answers are in, every chunk is judged (`captions/sanity.py`):
 
 - a segment is **not speech** (`no_speech`) when its `no_speech_prob` is above `halluc_no_speech_prob` *and* its `avg_logprob` below `halluc_avg_logprob`
-  (Whisper's own rule); a **repeat loop** when `halluc_repeat_min` or more consecutive segments say the same thing; a **phantom** when its text is one
-  of `halluc_phrases` ("thank you", "you" ...) spoken at fewer than `halluc_min_rate` words per second (a real, quick "Thank you." is kept). A
-  repetitive segment (`halluc_compression_ratio`) counts toward a bad chunk but is never dropped alone.
+  (Whisper's own rule); a **phantom** when its text is one of `halluc_phrases` ("thank you", "you" ...) spoken at fewer than `halluc_min_rate` words per
+  second (a real, quick "Thank you." is kept); a **repeat loop** when `halluc_repeat_min` or more consecutive segments say the same thing *and* the engine
+  doubts them (low `avg_logprob` or a high compression ratio): a confident chant or chorus is speech. A repetitive segment (`halluc_compression_ratio`) counts
+  toward a bad chunk but is never dropped alone.
 - a chunk asks for a second listen when it was heard in another language than expected (`language_mismatch`, compared by base code), when the flagged
   share of its seconds reaches `halluc_chunk_share` (`hallucination`), or when it holds under `sparse_chunk_ratio` of the median characters per
-  second of all chunks (`sparse`, only with at least `sparse_min_chunks` chunks).
-- **Expected language** is the one the job asked for, else the video's metadata language (a hint, never sent on the first pass), else the language most of the
-  audio was heard as. When more than `asr_expected_override_share` of the audio is heard as one other language, the heard one wins over the metadata.
-- **Ladder**, per chunk, stopping at the first answer without a reason: (1) the same chunk with the expected language forced (only for a language
-  mismatch when no language was given); (2) the chunk in windows of `asr_recheck_chunk_s` (120 s) with the language forced; (3) the next engine of the chain that serves
-  the language (skipped with a single engine). An answer replaces the first one when it has no reason left or ranks better (right language, then less flagged
-  share, then more text). The retries run after all first answers, one chunk at a time per engine slot, so they never wait on an engine's first-request lock.
-- What the kept answer still holds of not-speech segments is **dropped** with the words that lie inside them; the captions of an `improve()` job fill the gap
-  (no words there). Chunks without a reason are never touched. `asr_recheck = false` turns the whole review off.
+  second of the chunks (`sparse`, only with at least `sparse_min_chunks` chunks; a chunk shorter than `sparse_min_chunk_s` is never sparse and does not count toward the median).
+  A wrong language with nothing else wrong counts only while such chunks are at most `asr_mismatch_minority_share` (0.25) of the audio: more is a bilingual video.
+- **Expected language** is the job's, else the video's metadata language (a hint, never sent on the first pass) unless more than `asr_expected_override_share` of the
+  audio was heard as one other language (then it is unknown: no language rechecks at all, only hallucination and sparse ones), else, with no hint, the heard language when it
+  covers at least `asr_expected_dominant_share` (0.8) of the audio.
+- **Ladder**, per chunk, stopping at the first answer without a reason: (1) the chunk with the expected language forced (language mismatch only, never when a language
+  was given); (2) the chunk in windows of `asr_recheck_chunk_s` (120 s), in the expected language for a mismatch and otherwise in the language the first pass heard; (3) the next engine
+  of the chain that serves the language (not for a chunk that is only sparse, which gets rung 2 alone; skipped with a single engine). A rung runs only on an engine that serves its language.
+  An answer replaces the first one only when it is not clearly worse (a forced language: at least `asr_recheck_min_chars_ratio` of the characters, no more flagged share, speech
+  `avg_logprob` not lower by more than `asr_recheck_logprob_slack`; never real word times by estimated ones unless the first was a hallucination) and has no reason left or ranks better
+  (right language, less flagged share, better word times, then more text, counted up to `asr_recheck_chars_cap` times the first answer's).
+- **Budget** per job: at most `asr_recheck_max_share` (0.25) of the audio is re-listened to (worst chunks first, always at least one; the rest is an `asr_recheck` event with `skipped = "budget"`) and at most
+  `asr_recheck_max_requests` (12) extra requests (a rung that would exceed it is skipped, `skipped = "requests"`). Retries run after all first answers, so they never wait on an engine's first-request lock.
+- Dropping happens on the **stitched** transcript, only inside chunks that were re-listened to (a phantom in the overlap of a neighbour goes too). `no_speech` and `phantom` segments
+  always go, with the words inside them; a `repeat_loop` segment goes only when the smaller-window pass did not say the same text. The captions of an `improve()` job fill the gap (no words there).
+  Chunks without a reason are never touched. `asr_recheck = false` turns the whole review off.
 
 Every attempt is an `asr_recheck` event (`reason`, `action` = `forced_language|smaller_window|next_engine`, `detected`, `expected`, `outcome` =
 `replaced|kept|failed`, `flagged_share_before/after`); the drops are one `asr_recheck` with `action = "dropped"`, `dropped_segments`, `dropped_s`. The `asr` event
-carries `rechecked_chunks`, `hallucination_drops`, `dropped_s`. The cached ASR answer is version 3 (older rows are ignored), stored tracks carry `timing_version` 2.
+carries `rechecked_chunks`, `unresolved_chunks`, `skipped_chunks`, `recheck_requests`, `hallucination_drops`, `dropped_s`; the cached answer also keeps `dropped` (start, end, reasons) and `chunks` (start, end, heard language). A result with an unresolved chunk (budget skip, or every rung failed) is not cached (`cache = "not_stored_unresolved"`). The cached ASR answer is version 3 (older rows are ignored), stored tracks carry `timing_version` 2.
 The hint is not part of the cache key: an answer cached under another metadata language stays valid until the audio changes.
 
 ### Measured speed

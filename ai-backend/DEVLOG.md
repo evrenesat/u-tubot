@@ -30,6 +30,23 @@ Deviations from the plan:
 - The hint is not in the ASR cache key (the key is unchanged apart from the `v3` prefix); documented.
 - An `asr_recheck` attempt that raises (`ASRError`) is logged with `outcome = "failed"` and the first answer is kept.
 
+Review round 1 fixes:
+
+1. Code-switching: the audio overriding the hint makes the language unknown (no `language_mismatch` at all); no hint needs `asr_expected_dominant_share` 0.8; a lone
+   mismatch needs `asr_mismatch_minority_share` 0.25 (`sanity.review`); a re-listen in another language is accepted only when not clearly worse (`asr_recheck_min_chars_ratio`,
+   `asr_recheck_logprob_slack` over the unflagged speech, no more flagged share); only a mismatch forces a language, the other rungs use the language the first pass heard.
+   Tests: correct hint on a code-switched video, an English stretch in a Hindi video, forced-only-for-mismatch, the evidence case still replaced.
+2. Repeats: `repeat_loop` needs low confidence or a compression flag; it is dropped only when the smaller-window pass did not say the same text (`repeated_texts`);
+   `phantom`/`no_speech` always go. Tests: confident chorus kept, chant re-heard kept, "Thank you" loop removed.
+3. Budget: `asr_recheck_max_share` (worst chunks first, at least one chunk; deviation: a single chunk over the share is still allowed, otherwise a short video could never be repaired),
+   `asr_recheck_max_requests`, a sparse-only chunk gets one rung. The agree-within-30% rule was dropped as redundant once sparse-only has one rung. Counts in the `asr` stats.
+4. Ranking: word timing breaks ties, characters count up to `asr_recheck_chars_cap`, estimated words never replace real ones (unless the first was a hallucination).
+5. Cache: a result with an unresolved chunk (budget skip, or all rungs failed) is not cached (`cache = "not_stored_unresolved"`). "Unresolved" means the ladder could not be done,
+   not that a deliberate "kept" verdict is repeated every run.
+6. Drops run after stitching on absolute times, inside re-listened spans (a phantom in a neighbour's overlap goes too). Test.
+7. `ASRResult.dropped` ([start, end, reasons]) and `.chunks` ([start, end, language]) are in the v3 cache payload (additive; v3 was never deployed).
+8. A rung only runs on engines that serve its language. 9. The `asr_recheck` text shows `detected_after` and the skipped cases. 10. Tests: short tail never sparse, a drop spanning a seam.
+
 Production steps for CP2 (coordinator, after deploy; `<config>`, `<ref>` as in CP1):
 
 1. Regenerate the video: `uv run utubot --config <config> captions-regen --video EQWLxadmae0` (all three videos regenerate anyway: `TIMING_VERSION` is 2 now).

@@ -569,3 +569,59 @@ async def test_a_wordless_fallback_answer_is_not_served_after_the_word_engine_re
     good.down = False
     second = await job()
     assert second.word_timing == "real" and second.engine == "good"
+
+
+async def test_a_result_with_unresolved_rechecks_is_not_cached(tmp_path):
+    from utubot.captions import events
+    from utubot.captions.asr import ASRResult
+    from utubot.captions.events import JobEvents, JobTrace
+    from utubot.captions.pipeline import CaptionPipeline, asr_from_cache, asr_to_cache
+    from utubot.captions.types import Segment, Word
+    from utubot.config import Config
+    from utubot.db import Database
+
+    class Unresolved:
+        calls = 0
+        hint = None
+
+        async def transcribe(
+            self, wav, language, progress, *, priority=1, want_words=True, expected_language=None
+        ):
+            self.calls += 1
+            self.hint = expected_language
+            return ASRResult(
+                words=[Word(0.0, 0.5, "a")],
+                language="en",
+                segments=[Segment(0.0, 1.0, "a")],
+                word_timing="real",
+                stats={"unresolved_chunks": 1},
+                dropped=[[3.0, 9.0, "phantom"]],
+                chunks=[[0.0, 600.0, "en"]],
+            )
+
+    cfg = Config()
+    cfg.server.data_dir = str(tmp_path)
+    db = Database(tmp_path / "t.sqlite")
+    db.execute(
+        "INSERT INTO video_meta(video_id,json,fetched_at) VALUES(?,?,?)",
+        [VID, '{"language": "tr"}', 0.0],
+    )
+    asr = Unresolved()
+    pipe = CaptionPipeline(cfg, db, asr)
+    log = JobEvents(db, cfg.captions)
+    token = events.bind(JobTrace("j1", log))
+    try:
+        for _ in range(2):
+            await pipe._asr_stage(
+                VID, tmp_path / "x.wav", None, lambda f: None,
+                priority=1, want_words=True, optional_asr=False, key="v3:sha:1:auto:off",
+            )  # fmt: skip
+    finally:
+        events.unbind(token)
+    assert asr.calls == 2 and asr.hint == "tr"
+    assert not db.all("SELECT 1 FROM stage_cache WHERE stage='asr'")
+    asr_events = [e for e in log.list("j1") if e["stage"] == "asr"]
+    assert any(e["detail"].get("cache") == "not_stored_unresolved" for e in asr_events)
+    result = await asr.transcribe(None, None, None)
+    back = asr_from_cache(asr_to_cache(result))
+    assert back.dropped == [[3.0, 9.0, "phantom"]] and back.chunks == [[0.0, 600.0, "en"]]

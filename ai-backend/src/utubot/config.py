@@ -329,6 +329,29 @@ class CaptionsConfig(BaseModel):
         default=0.5, ge=0, le=1
     )  # audio share above which the
     # detected language beats the video's metadata language as the expected one
+    # share of the audio heard in one language that makes it the expected one when the video has no
+    # metadata language
+    asr_expected_dominant_share: float = Field(default=0.8, ge=0, le=1)
+    # a language mismatch with nothing else wrong re-listens only while the mismatching chunks are at
+    # most this share of the audio (more than that is a bilingual video, not a mislabelled chunk)
+    asr_mismatch_minority_share: float = Field(default=0.25, ge=0, le=1)
+    # a re-listen in another language replaces the first answer only when it is not clearly worse:
+    asr_recheck_min_chars_ratio: float = Field(
+        default=0.5, ge=0
+    )  # at least this share of the characters
+    asr_recheck_logprob_slack: float = Field(
+        default=0.3, ge=0
+    )  # avg_logprob of its speech not lower by more
+    asr_recheck_chars_cap: float = Field(
+        default=1.3, ge=1
+    )  # more text than this times the first counts as no gain
+    asr_recheck_max_share: float = Field(
+        default=0.25, ge=0, le=1
+    )  # audio share re-listened to per job
+    asr_recheck_max_requests: int = Field(default=12, ge=0)  # extra engine requests per job
+    sparse_min_chunk_s: float = Field(
+        default=60.0, ge=0
+    )  # a chunk shorter than this is never "sparse"
     halluc_no_speech_prob: float = 0.6  # a segment above this ...
     halluc_avg_logprob: float = -1.0  # ... and below this is not speech (Whisper's own rule)
     halluc_compression_ratio: float = 2.4  # above this a segment counts as repetitive text

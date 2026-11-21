@@ -91,6 +91,8 @@ def asr_to_cache(result: ASRResult) -> dict[str, Any]:
         "model": result.model,
         "word_timing": result.word_timing,
         "stats": result.stats,
+        "dropped": result.dropped,
+        "chunks": result.chunks,
         "segments": [
             [
                 seg.start,
@@ -128,6 +130,8 @@ def asr_from_cache(payload: dict[str, Any]) -> ASRResult:
         model=payload.get("model"),
         word_timing=payload.get("word_timing"),
         stats=dict(payload.get("stats") or {}),
+        dropped=list(payload.get("dropped") or []),
+        chunks=list(payload.get("chunks") or []),
     )
 
 
@@ -147,6 +151,8 @@ def _set_asr(st, result: ASRResult, cached: bool = False) -> None:
         rechecked_chunks=result.stats.get("rechecked_chunks"),
         hallucination_drops=result.stats.get("hallucination_drops"),
         dropped_s=result.stats.get("dropped_s"),
+        recheck_requests=result.stats.get("recheck_requests"),
+        skipped_chunks=result.stats.get("skipped_chunks"),
     )
 
 
@@ -528,7 +534,9 @@ class CaptionPipeline:
                         result.words, self.cfg.captions.words_real_min_share
                     )
                 _set_asr(st, result)
-                if not self._asr_empty(result, want_words):
+                if result.stats.get("unresolved_chunks"):
+                    st.set(cache="not_stored_unresolved")
+                elif not self._asr_empty(result, want_words):
                     store = key
                     if want_words and result.word_timing == "interpolated":
                         # reusable only while the engines and their word modes stay as they are

@@ -14,6 +14,7 @@ from utubot.config import CaptionsConfig, Config
 from utubot.db import Database
 
 TOTAL_S = 1740
+LONG_S = 3600  # seven chunks: one bad chunk is a small minority
 CHUNK_S = 600
 LOOP_STEP_S = 30.0
 LOOP_LEN_S = 7.0
@@ -99,8 +100,8 @@ async def test_mislabelled_chunk_is_redone_with_the_expected_language(tmp_path):
     assert len(result.words) == len({(w.start, w.text) for w in result.words})
 
 
-async def test_the_majority_of_the_audio_is_the_expected_language_without_a_hint(tmp_path):
-    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+async def test_a_dominant_language_is_the_expected_one_without_a_hint(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", LONG_S)
     fake = Scripted("mac", first_chunk_loops_unless_forced)
     router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
     result, rechecks = await transcribe(router, wav, want_words=True)
@@ -271,7 +272,7 @@ async def test_retries_do_not_wait_on_the_first_request_lock_of_an_auto_engine(t
             body = loop_body()
         return httpx.Response(200, json=body)
 
-    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    wav = make_wav(tmp_path / "a.wav", LONG_S)
     chain = CaptionsConfig(asr_engines=[engine_cfg("mac", max_chunk_s=CHUNK_S)], sample_rate=RATE)
     router = AsrRouter(chain, transport=httpx.MockTransport(handler))
     result, rechecks = await asyncio.wait_for(
@@ -279,3 +280,232 @@ async def test_retries_do_not_wait_on_the_first_request_lock_of_an_auto_engine(t
     )
     assert any(e["detail"]["action"] == "forced_language" for e in rechecks)
     assert "Thank you." not in texts(result) and result.language == TURKISH
+
+
+# --- review round 1: code-switching, repeats, budget, ranking, seams ---
+
+from dataclasses import replace as dc_replace  # noqa: E402
+
+from utubot.captions.types import TIMING_INTERPOLATED, Word  # noqa: E402
+
+SEAM_S = 598.0
+FIVE_CHUNKS_S = 2990
+
+
+class ByChunk:
+    """An engine whose answer comes from `answer(index, start, duration, language)`."""
+
+    name = "mac"
+
+    def __init__(self, answer):
+        self.answer = answer
+        self.asked: list[tuple[float, float, str | None]] = []
+
+    async def transcribe_chunk(self, wav: Path, language, want_words):
+        with wave.open(str(wav), "rb") as fh:
+            frames = fh.getnframes()
+            start = int.from_bytes(fh.readframes(1), "little") / RATE
+        duration = frames / RATE
+        self.asked.append((start, duration, language))
+        return self.answer(int(start // SEAM_S), start, duration, language)
+
+
+def talk(start, duration, language, logprob=-0.2):
+    result = speech(start, duration)
+    result.language = language
+    result.segments = [
+        dc_replace(seg, no_speech_prob=0.01, avg_logprob=logprob, compression_ratio=1.1)
+        for seg in result.segments
+    ]
+    return result
+
+
+def rechecks_of(rechecks, key="action"):
+    return [e["detail"].get(key) for e in rechecks]
+
+
+async def test_a_code_switched_video_with_a_correct_hint_is_left_alone(tmp_path):
+    langs = ["en", "hi", "en", "hi", "en"]
+    fake = ByChunk(lambda i, s, d, language: talk(s, d, language or langs[i]))
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    wav = make_wav(tmp_path / "a.wav", FIVE_CHUNKS_S)
+    result, rechecks = await transcribe(router, wav, want_words=True, expected_language="hi")
+    assert rechecks == [] and len(fake.asked) == 5
+    assert [c[2] for c in result.chunks] == langs
+
+
+async def test_an_english_stretch_inside_a_hindi_video_is_not_forced_to_hindi(tmp_path):
+    def answer(index, start, duration, language):
+        if index == 3:  # a genuine English interview; forcing Hindi garbles it
+            return talk(start, duration, language or "en", -0.2 if language is None else -1.0)
+        return talk(start, duration, language or "hi")
+
+    fake = ByChunk(answer)
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    wav = make_wav(tmp_path / "a.wav", LONG_S)
+    result, rechecks = await transcribe(router, wav, want_words=True, expected_language="hi")
+    assert rechecks and {e["detail"]["outcome"] for e in rechecks} == {"kept"}
+    assert result.chunks[3][2] == "en" and result.stats["rechecked_chunks"] == 1
+    assert not result.dropped
+
+
+async def test_forced_languages_only_for_a_language_mismatch(tmp_path):
+    def answer(index, start, duration, language):
+        if index == 2 and (language is None or duration > SMALL_WINDOW_S + 1):
+            return ChunkResult([Segment(0.0, 1.0, "hm")], [], "tr")
+        return talk(start, duration, language or "tr")
+
+    fake = ByChunk(answer)
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    wav = make_wav(tmp_path / "a.wav", LONG_S)
+    result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert rechecks_of(rechecks) == [
+        "smaller_window"
+    ]  # sparse only: one rung, in the language heard
+    langs = {lang for s, d, lang in fake.asked if 1196 <= s < 1796 and d <= SMALL_WINDOW_S + 1}
+    assert langs == {"tr"} and rechecks[0]["detail"]["outcome"] == "replaced"
+
+
+async def test_a_repeated_chant_that_the_relisten_hears_again_is_kept(tmp_path):
+    def chant(start, duration):
+        steps = int(duration // LOOP_STEP_S)
+        return ChunkResult(
+            [
+                Segment(i * LOOP_STEP_S, (i + 1) * LOOP_STEP_S, "la la la", 0.02, -1.3, 2.7)
+                for i in range(steps)
+            ],
+            [],
+            "tr",
+        )
+
+    fake = ByChunk(lambda i, s, d, language: chant(s, d) if i == 1 else talk(s, d, "tr"))
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert rechecks and result.stats["hallucination_drops"] == 0
+    assert sum(1 for seg in result.segments if seg.text == "la la la") >= 15
+
+
+async def test_a_confident_chorus_is_never_rechecked(tmp_path):
+    def chorus(start, duration):
+        return ChunkResult(
+            [
+                Segment(i * 5.0, i * 5.0 + 4.0, "oh oh oh", 0.02, -0.3, 1.1)
+                for i in range(int(duration // 5))
+            ],
+            [],
+            "tr",
+        )
+
+    fake = ByChunk(lambda i, s, d, language: chorus(s, d) if i == 1 else talk(s, d, "tr"))
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert result.stats["hallucination_drops"] == 0
+    assert sum(1 for seg in result.segments if seg.text == "oh oh oh") >= 100
+
+
+async def test_the_recheck_budget_takes_the_worst_chunks_and_reports_the_rest(tmp_path):
+    def answer(index, start, duration, language):
+        if index in (0, 1, 2) and language is None:
+            return loop_answer(duration, "en")
+        return talk(start, duration, language or "tr")
+
+    fake = ByChunk(answer)
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    wav = make_wav(tmp_path / "a.wav", LONG_S)
+    result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
+    skipped = [e for e in rechecks if e["status"] == "skipped"]
+    assert len(skipped) == 2 and {e["detail"]["skipped"] for e in skipped} == {"budget"}
+    assert result.stats["rechecked_chunks"] == 1 and result.stats["skipped_chunks"] == 2
+    assert result.stats["unresolved_chunks"] == 2
+    assert 0 < result.stats["recheck_requests"] <= 12
+
+
+async def test_the_request_cap_stops_further_rungs(tmp_path):
+    fake = Scripted("mac", first_chunk_always_loops)
+    router = build(
+        [engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake}, asr_recheck_max_requests=1
+    )
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert result.stats["recheck_requests"] == 1
+    assert [e["detail"]["skipped"] for e in rechecks if e["status"] == "skipped"] == ["requests"]
+    assert result.stats["unresolved_chunks"] == 1
+    assert len(fake.asked) == 3 + 1
+
+
+async def test_a_sparse_chunk_gets_one_rung_even_with_a_second_engine(tmp_path):
+    def sparse(index, start, duration, language):
+        if index == 1:
+            return ChunkResult([Segment(0.0, 1.0, "hm")], [], "tr")
+        return talk(start, duration, language or "tr")
+
+    mac, box = ByChunk(sparse), ByChunk(sparse)
+    router = build(
+        [
+            engine_cfg("mac", max_chunk_s=CHUNK_S, priority=10),
+            engine_cfg("box", max_chunk_s=CHUNK_S),
+        ],
+        {"mac": mac, "box": box},
+    )
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    _result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert set(rechecks_of(rechecks)) == {"smaller_window"} and not box.asked
+
+
+async def test_an_attempt_with_estimated_word_times_does_not_replace_real_ones(tmp_path):
+    def answer(index, start, duration, language):
+        if index == 1 and duration <= SMALL_WINDOW_S + 1:
+            result = talk(start, duration, "tr")
+            result.words = [dc_replace(w, timing=TIMING_INTERPOLATED) for w in result.words]
+            return result
+        if index == 1:
+            return ChunkResult([Segment(0.0, 1.0, "hm")], [Word(0.0, 0.5, "hm")], "tr")
+        return talk(start, duration, "tr")
+
+    fake = ByChunk(answer)
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert rechecks_of(rechecks, "outcome") == ["kept"]
+    assert not any(w.timing == TIMING_INTERPOLATED for w in result.words)
+
+
+async def test_a_phantom_in_the_overlap_of_a_neighbour_goes_too(tmp_path):
+    def answer(index, start, duration, language):
+        if index == 0 and language is None:
+            result = loop_answer(duration, "en")
+            result.segments.append(Segment(596.0, 599.0, "you"))
+            return result
+        result = talk(start, duration, language or "tr")
+        if index == 1 and start == SEAM_S:
+            result.segments.insert(0, Segment(0.2, 3.2, "you"))
+        return result
+
+    fake = ByChunk(answer)
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    result, _ = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert not [seg for seg in result.segments if seg.text in ("you", "Thank you.")]
+    assert result.stats["rechecked_chunks"] >= 1
+
+
+async def test_no_attempt_on_an_engine_that_does_not_serve_the_language(tmp_path):
+    def answer(index, start, duration, language):
+        return loop_answer(duration, "en") if index == 0 else talk(start, duration, "tr")
+
+    fake = ByChunk(answer)
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S, languages=["en"])], {"mac": fake})
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    result, rechecks = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert rechecks == [] and len(fake.asked) == 3 and not result.stats["rechecked_chunks"]
+
+
+async def test_dropped_spans_and_chunk_languages_are_reported(tmp_path):
+    wav = make_wav(tmp_path / "a.wav", TOTAL_S)
+    fake = Scripted("mac", first_chunk_always_loops)
+    router = build([engine_cfg("mac", max_chunk_s=CHUNK_S)], {"mac": fake})
+    result, _ = await transcribe(router, wav, want_words=True, expected_language="tr")
+    assert result.dropped and all(len(row) == 3 and row[2] for row in result.dropped)
+    assert len(result.chunks) == 3

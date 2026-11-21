@@ -973,7 +973,8 @@ def test_the_report_text_folds_running_events_and_reads_every_stage():
       alignKept: describe({ stage: "align", status: "skipped", detail: { mode: "captions_timing", reason: "no_words" } }),
       score: describe({ stage: "sync_score", status: "ok", detail: { speech_overlap: 0.96, starts_in_silence: 0.02 } }),
       chunk: describe({ stage: "asr_chunk", status: "ok", detail: { engine: "mac", start_s: 0, end_s: 60, chars: 9, word_timing: "interpolated" } }),
-      recheck: describe({ stage: "asr_recheck", status: "ok", detail: { start_s: 0, end_s: 600, reason: "language_mismatch", action: "forced_language", detected: "en", expected: "tr", outcome: "replaced" } }),
+      recheck: describe({ stage: "asr_recheck", status: "ok", detail: { start_s: 0, end_s: 600, reason: "language_mismatch", action: "forced_language", detected: "en", detected_after: "tr", expected: "tr", outcome: "replaced" } }),
+      skippedRecheck: describe({ stage: "asr_recheck", status: "skipped", detail: { start_s: 0, end_s: 600, reason: "sparse", skipped: "budget" } }),
       dropped: describe({ stage: "asr_recheck", status: "warn", detail: { action: "dropped", dropped_segments: 12, dropped_s: 84 } }),
       regen: triggerText({ via: "regen" }),
       scoreNull: describe({ stage: "sync_score", status: "ok", detail: { speech_overlap: null, starts_in_silence: null } }),
@@ -1023,8 +1024,9 @@ def test_the_report_text_folds_running_events_and_reads_every_stage():
     assert out["score"] == "96% of cue time over sound, 2% of cues start in silence"
     assert out["chunk"].endswith("word times: estimated")
     assert out["recheck"] == (
-        "0-600 s heard as en, expected tr: redone with the language fixed, replaced (wrong language)"
+        "0-600 s heard as en, expected tr: redone with the language fixed, replaced, now heard as tr (wrong language)"
     )
+    assert out["skippedRecheck"] == "0-600 s not re-checked (over the re-check budget)"
     assert out["dropped"] == "12 segments (84 s) dropped as not speech"
     assert "0%" not in out["scoreNull"] and "n/a" in out["scoreNull"]
     assert out["scoreSkipped"] == "Not checked: the audio has no silences to compare with"

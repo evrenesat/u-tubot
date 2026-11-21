@@ -221,6 +221,7 @@ const DESCRIBERS = {
       return num(d.dropped_segments) + (d.dropped_segments === 1 ? " segment (" : " segments (") + Math.round(d.dropped_s || 0) + " s) dropped as not speech";
     }
     const span = Math.round(d.start_s) + "-" + Math.round(d.end_s) + " s";
+    if (d.skipped) return span + " not re-checked (" + (d.skipped === "budget" ? "over the re-check budget" : "request limit reached") + ")";
     const heard = "heard as " + (d.detected || "an unknown language") + (d.expected ? ", expected " + d.expected : "");
     const how = {
       forced_language: "redone with the language fixed",
@@ -228,7 +229,8 @@ const DESCRIBERS = {
       next_engine: "redone on the next engine",
     }[d.action] || "redone";
     const outcome = { replaced: "replaced", kept: "no better, kept", failed: "retry failed" }[d.outcome] || d.outcome;
-    return span + " " + heard + ": " + how + ", " + outcome + (d.reason ? " (" + d.reason.split(",").map((r) => RECHECK_REASONS[r] || r.replace(/_/g, " ")).join(", ") + ")" : "");
+    const now = d.outcome === "replaced" && d.detected_after ? ", now heard as " + d.detected_after : "";
+    return span + " " + heard + ": " + how + ", " + outcome + now + (d.reason ? " (" + d.reason.split(",").map((r) => RECHECK_REASONS[r] || r.replace(/_/g, " ")).join(", ") + ")" : "");
   },
   stitching(d, status) {
     if (status === "skipped") return "One chunk, nothing to join";
