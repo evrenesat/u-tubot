@@ -8,6 +8,7 @@ with `syncscore` the same way `utubot captions-score` scores a real track.
 from __future__ import annotations
 
 import bisect
+import wave
 from pathlib import Path
 
 import pytest
@@ -18,11 +19,12 @@ from tests.synth_speech import (
     make_timeline,
     phrases,
     tone_wav,
+    whisper_answer,
     youtube_rows,
 )
 from utubot.captions import events
 from utubot.captions.asr import ffmpeg_available
-from utubot.captions.engines import AsrRouter
+from utubot.captions.engines import AsrRouter, parse_verbose_json
 from utubot.captions.events import JobEvents, JobTrace
 from utubot.captions.pipeline import TIMING_VERSION, CaptionPipeline
 from utubot.captions.syncscore import phrase_onsets, score_starts
@@ -43,8 +45,60 @@ SEED = 7
 SPEECH_OVERLAP_FLOOR = 0.85
 
 
+PHANTOM = "Thank you."
+LOOP_STEP_S = 30.0
+LOOP_LEN_S = 7.0
+HALLUCINATED_CHUNK_S = 130
+
+
+class HallucinatingEngine(ScriptedEngine):
+    """A scripted engine whose first chunk, asked without a language, is the EQWLxadmae0 failure:
+    labelled English, a phantom "Thank you." every 30 s over continuous speech."""
+
+    def __init__(self, truth, total_s, max_chunk_s, overlap_s, audio: Path):
+        super().__init__(truth, "flag", total_s, max_chunk_s, overlap_s)
+        with wave.open(str(audio), "rb") as fh:
+            self.source = fh.readframes(fh.getnframes())
+
+    async def transcribe_chunk(self, wav, language, want_words):
+        with wave.open(str(wav), "rb") as fh:
+            frames = fh.readframes(fh.getnframes())
+            rate = fh.getframerate()
+        start = self.source.find(frames) / 2 / rate
+        end = start + len(frames) / 2 / rate
+        self.asked.append(
+            {
+                "start": round(start, 1),
+                "end": round(end, 1),
+                "language": language,
+                "want_words": want_words,
+            }
+        )
+        body = whisper_answer(self.truth, start, end, "flag")
+        if start == 0 and language is None:
+            body["language"] = "english"
+            body["segments"] = [
+                {
+                    "start": i * LOOP_STEP_S,
+                    "end": i * LOOP_STEP_S + LOOP_LEN_S,
+                    "text": " " + PHANTOM,
+                    "no_speech_prob": 0.1,
+                    "avg_logprob": -0.9,
+                    "compression_ratio": 0.8,
+                }
+                for i in range(int(end // LOOP_STEP_S))
+            ]
+        else:
+            body["language"] = "turkish"
+        result = parse_verbose_json(body, end - start, want_words)
+        result.word_mode = "flag"
+        return result
+
+
 class Harness:
-    def __init__(self, tmp_path: Path, mode: str):
+    def __init__(
+        self, tmp_path: Path, mode: str, chunk_s: int = CHUNK_S, hallucinate: bool = False
+    ):
         self.truth = make_timeline(SEED, DURATION_S)
         self.audio = tone_wav(tmp_path / "talk.wav", self.truth, DURATION_S)
         self.cfg = Config()
@@ -54,14 +108,20 @@ class Harness:
             AsrEngineConfig(
                 name="scripted",
                 url="http://scripted.example/v1/audio/transcriptions",
-                max_chunk_s=CHUNK_S,
+                max_chunk_s=chunk_s,
             )
         ]
         self.cfg.captions.proofread = False
-        self.engine = ScriptedEngine(
-            self.truth, mode, DURATION_S, CHUNK_S, self.cfg.captions.asr_chunk_overlap_s
-        )
+        overlap = self.cfg.captions.asr_chunk_overlap_s
+        if hallucinate:
+            self.engine = HallucinatingEngine(self.truth, DURATION_S, chunk_s, overlap, self.audio)
+        else:
+            self.engine = ScriptedEngine(self.truth, mode, DURATION_S, chunk_s, overlap)
         self.db = Database(tmp_path / "t.sqlite")
+        self.db.execute(
+            "INSERT INTO video_meta(video_id,json,fetched_at) VALUES(?,?,?)",
+            [VID, '{"language": "tr"}', 0.0],
+        )
         router = AsrRouter(
             self.cfg.captions, engine_factory=lambda e: self.engine, enabled=lambda e: True
         )
@@ -114,8 +174,8 @@ class Harness:
 
 @pytest.fixture
 def harness(tmp_path):
-    def make(mode: str) -> Harness:
-        return Harness(tmp_path, mode)
+    def make(mode: str, **kw) -> Harness:
+        return Harness(tmp_path, mode, **kw)
 
     return make
 
@@ -201,3 +261,17 @@ async def test_improve_never_shows_a_spoken_phrase_twice(harness):
     tokens = " ".join(text).split()
     assert len(tokens) == len(set(tokens)), "a token was shown twice"
     assert not re.search(r"(w\d{4})\b.*\b\1\b", " ".join(text))
+
+
+async def test_hallucinated_chunk_recovers(harness):
+    h = harness("flag", chunk_s=HALLUCINATED_CHUNK_S, hallucinate=True)
+    await h.run("run", "auto", None)
+    recheck = h.event("asr_recheck")["detail"]
+    assert recheck["action"] == "forced_language" and recheck["outcome"] == "replaced"
+    assert (recheck["start_s"], recheck["end_s"]) == (0.0, float(HALLUCINATED_CHUNK_S))
+    assert len(h.engine.asked) == 4 and h.engine.asked[-1]["language"] == "tr"
+    assert all(text.strip() != PHANTOM.strip() for _s, _e, text in h.cues())
+    score = h.score()
+    assert score.hit >= HIT_TARGET and score.loose == 1.0, score
+    asr = h.event("asr", "ok")["detail"]
+    assert asr["rechecked_chunks"] == 1 and asr["hallucination_drops"] == 0

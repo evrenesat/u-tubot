@@ -87,11 +87,11 @@ share of real times, the stored track keeps a summary in `captions.timing` with 
 event is the audio's verdict on the finished cues: the share of cue time over sound, and of cue starts lying in the middle of a
 silence.
 
-**Measuring and regenerating.** `utubot captions-score VIDEO_ID --reference ENGINE [--windows N | --at SECONDS ...] [--window-s S] [--lang TRACK] [--spoken L] [--json]`
+**Measuring and regenerating.** `utubot captions-score VIDEO_ID --reference ENGINE [--windows N | --at SECONDS ...] [--window-s S] [--lang TRACK] [--spoken L] [--review] [--json]`
 cuts evenly spaced windows (or windows starting at each `--at`) of the *archived* audio, transcribes them with the named engine, and reports how close the nearest cue start
 is to each phrase onset of that reference: `hit` (cue start within -`sync_early_s` .. +`sync_late_s`, 0.5 / 0.3 s), `loose` (within
 `sync_loose_s`, 1 s) and the median and spread of the error. `--lang` picks the track (default: the newest with a `timing_version`, else the newest); the output says which track was scored and gives
-its first cue start and longest cue. It never touches YouTube and refuses when the audio is not archived.
+its first cue start and longest cue. The reference is the engine's own answer: the chunk review below does not run on it unless `--review` is given. It never touches YouTube and refuses when the audio is not archived.
 `utubot captions-regen [--video ID]... [--legacy] [--limit N] [--dry-run]` queues a background captions job for each stored track
 whose `timing_version` is missing or older than the current scheme (`--legacy`: only tracks that have none), at most
 `regen_limit_default` (20) per run unless `--limit` says otherwise; a track is not listed when a newer track of the video already has
@@ -223,6 +223,32 @@ about 2 % download start, 20 % downloaded, 25 % converted, then the ASR step up 
 
 A transcript made this way is stored with its segments (start, end, text), the language Whisper detected most (by audio seconds), the
 engine and the model, and shown to clients as `source: "asr"` (`GET /v1/videos/ID/transcript` adds `engine` and `model`).
+
+### Chunk review (wrong language, made-up text)
+
+Whisper-style engines sometimes label a whole chunk with the wrong language and then make text up: one video's first 600 s chunk came back as
+English with a "Thank you." every 30 s over continuous Turkish speech. After the first answers are in, every chunk is judged (`captions/sanity.py`):
+
+- a segment is **not speech** (`no_speech`) when its `no_speech_prob` is above `halluc_no_speech_prob` *and* its `avg_logprob` below `halluc_avg_logprob`
+  (Whisper's own rule); a **repeat loop** when `halluc_repeat_min` or more consecutive segments say the same thing; a **phantom** when its text is one
+  of `halluc_phrases` ("thank you", "you" ...) spoken at fewer than `halluc_min_rate` words per second (a real, quick "Thank you." is kept). A
+  repetitive segment (`halluc_compression_ratio`) counts toward a bad chunk but is never dropped alone.
+- a chunk asks for a second listen when it was heard in another language than expected (`language_mismatch`, compared by base code), when the flagged
+  share of its seconds reaches `halluc_chunk_share` (`hallucination`), or when it holds under `sparse_chunk_ratio` of the median characters per
+  second of all chunks (`sparse`, only with at least `sparse_min_chunks` chunks).
+- **Expected language** is the one the job asked for, else the video's metadata language (a hint, never sent on the first pass), else the language most of the
+  audio was heard as. When more than `asr_expected_override_share` of the audio is heard as one other language, the heard one wins over the metadata.
+- **Ladder**, per chunk, stopping at the first answer without a reason: (1) the same chunk with the expected language forced (only for a language
+  mismatch when no language was given); (2) the chunk in windows of `asr_recheck_chunk_s` (120 s) with the language forced; (3) the next engine of the chain that serves
+  the language (skipped with a single engine). An answer replaces the first one when it has no reason left or ranks better (right language, then less flagged
+  share, then more text). The retries run after all first answers, one chunk at a time per engine slot, so they never wait on an engine's first-request lock.
+- What the kept answer still holds of not-speech segments is **dropped** with the words that lie inside them; the captions of an `improve()` job fill the gap
+  (no words there). Chunks without a reason are never touched. `asr_recheck = false` turns the whole review off.
+
+Every attempt is an `asr_recheck` event (`reason`, `action` = `forced_language|smaller_window|next_engine`, `detected`, `expected`, `outcome` =
+`replaced|kept|failed`, `flagged_share_before/after`); the drops are one `asr_recheck` with `action = "dropped"`, `dropped_segments`, `dropped_s`. The `asr` event
+carries `rechecked_chunks`, `hallucination_drops`, `dropped_s`. The cached ASR answer is version 3 (older rows are ignored), stored tracks carry `timing_version` 2.
+The hint is not part of the cache key: an answer cached under another metadata language stays valid until the audio changes.
 
 ### Measured speed
 

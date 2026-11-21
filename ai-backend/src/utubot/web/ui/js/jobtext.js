@@ -14,6 +14,7 @@ export const STAGE_LABELS = {
   asr: "Speech to text",
   asr_chunk: "Chunk recognised",
   asr_fallback: "Engine fallback",
+  asr_recheck: "Chunk re-checked",
   stitching: "Stitching",
   separation: "Vocal separation",
   word_timing: "Word timing",
@@ -86,6 +87,12 @@ const TRACKS = {
 export function stageLabel(stage) {
   return STAGE_LABELS[stage] || stage;
 }
+
+const RECHECK_REASONS = {
+  language_mismatch: "wrong language",
+  hallucination: "made-up text",
+  sparse: "far less text than the other chunks",
+};
 
 export function reasonText(reason) {
   if (!reason) return "";
@@ -209,6 +216,20 @@ const DESCRIBERS = {
     const why = d.reason === "language_mismatch" && d.detected ? "heard " + d.detected + ", outside its languages" : reasonText(d.reason);
     return d.engine + " gave up on " + span + " (" + why + ")" + (d.next ? ", trying " + d.next : ", no engine left");
   },
+  asr_recheck(d) {
+    if (d.action === "dropped") {
+      return num(d.dropped_segments) + (d.dropped_segments === 1 ? " segment (" : " segments (") + Math.round(d.dropped_s || 0) + " s) dropped as not speech";
+    }
+    const span = Math.round(d.start_s) + "-" + Math.round(d.end_s) + " s";
+    const heard = "heard as " + (d.detected || "an unknown language") + (d.expected ? ", expected " + d.expected : "");
+    const how = {
+      forced_language: "redone with the language fixed",
+      smaller_window: "redone in smaller windows",
+      next_engine: "redone on the next engine",
+    }[d.action] || "redone";
+    const outcome = { replaced: "replaced", kept: "no better, kept", failed: "retry failed" }[d.outcome] || d.outcome;
+    return span + " " + heard + ": " + how + ", " + outcome + (d.reason ? " (" + d.reason.split(",").map((r) => RECHECK_REASONS[r] || r.replace(/_/g, " ")).join(", ") + ")" : "");
+  },
   stitching(d, status) {
     if (status === "skipped") return "One chunk, nothing to join";
     return join([d.seams + (d.seams === 1 ? " seam" : " seams"), num(d.cut_segments) + " segments cut at overlaps", num(d.repeated_words) + " repeated words dropped"]);
@@ -302,7 +323,7 @@ export function collapse(events) {
   const open = new Map();
   for (const ev of events) {
     if (ev.stage === "delivered") continue;
-    const child = ev.stage === "asr_chunk" || ev.stage === "asr_fallback" || ev.stage === "proofread_batch";
+    const child = ev.stage === "asr_chunk" || ev.stage === "asr_fallback" || ev.stage === "asr_recheck" || ev.stage === "proofread_batch";
     const row = { stage: ev.stage, status: ev.status, detail: ev.detail || {}, ts: ev.ts, end: ev.ts, child };
     const earlier = !child && ev.status !== "running" && open.get(ev.stage);
     if (earlier) {
