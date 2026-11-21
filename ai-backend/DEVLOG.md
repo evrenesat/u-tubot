@@ -7,6 +7,23 @@
   keep the spoken language (stored as `off`); a captions request that names its own `translate_to` still wins.
   `config.check_translate_target` validates it and the server default the same way.
 
+## 2026-11-21 (director's cuts voice, EVR-512 round)
+
+- EVR-512 blocking item fixed: the mic's `getUserMedia` acquisition window. `starting` disables the
+  button and refuses a second attempt before the permission prompt resolves; `canceled` is set
+  false at the start of the attempt, so a cancel while acquiring makes the late stream's tracks
+  stop instead of starting a recorder on a detached button. That recorder can no longer be left
+  live with no Stop or upload later at the length limit, and a double tap starts one acquisition.
+- The Build/Dismiss cancel keeps the mic instance (`cancelMic()`), so a failed request leaves the
+  old button wired to the sheet's lifecycle; both now toast a failure instead of an unhandled
+  rejection. The error card resets the box and redraw signature, so the next successful poll
+  replaces it instead of hitting the "same sheet" early return forever.
+- `scripts/webui_cuts_check.cjs` is 49 checks. A deferred fake `getUserMedia` proves the mic is
+  disabled while the prompt is open, a Build-cancelled acquisition releases the late stream with
+  no recorder or `/v1/speech` POST, and a double tap makes exactly one call and one stream. The
+  old `cuts.js` fails those five checks. Fresh demo and a rerun on a dirtied demo pass, 0 Chromium
+  left.
+
 ## 2026-11-21 (director's cuts voice, checkpoint 3 review round)
 
 - EVR-510 review fixes: the cut sheet's mic is tied to the sheet's lifecycle. The button is

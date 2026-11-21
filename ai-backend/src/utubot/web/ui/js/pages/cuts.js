@@ -256,11 +256,15 @@ function micButton(box) {
   let stream = null;
   let limitTimer = null;
   let canceled = false;
+  // True while getUserMedia is still being acquired (the first-use permission prompt can take
+  // seconds). The button is disabled then, so a second tap cannot start another acquisition, and
+  // cancel() marks the attempt dead so the stream that arrives late is stopped, not recorded.
+  let starting = false;
 
   function resetButton() {
-    btn.textContent = "Speak";
+    btn.textContent = starting ? "Listening…" : "Speak";
     btn.classList.remove("on");
-    btn.disabled = false;
+    btn.disabled = starting;
   }
 
   function releaseStream() {
@@ -331,22 +335,40 @@ function micButton(box) {
       toast("This browser cannot record sound; type the cut instead.", "bad");
       return;
     }
+    if (starting) return;
+    starting = true;
+    canceled = false;
+    btn.disabled = true;
+    btn.textContent = "Listening…";
+    let got;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      got = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
+      starting = false;
+      resetButton();
       toast("Microphone not available; type it instead.", "bad");
       return;
     }
+    if (canceled) {
+      // The sheet left (Build, Dismiss, Back, error) while the permission prompt was open:
+      // release the stream that just arrived instead of recording on a detached button.
+      got.getTracks().forEach((track) => track.stop());
+      starting = false;
+      resetButton();
+      return;
+    }
+    stream = got;
     try {
       const mime = pickMime();
       recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
     } catch {
       releaseStream();
+      starting = false;
+      resetButton();
       toast("This browser cannot record sound; type the cut instead.", "bad");
       return;
     }
     chunks = [];
-    canceled = false;
     recorder.addEventListener("dataavailable", (event) => {
       if (event.data && event.data.size) chunks.push(event.data);
     });
@@ -360,8 +382,10 @@ function micButton(box) {
       void sendRecording();
     });
     recorder.start();
+    starting = false;
     btn.textContent = "Stop";
     btn.classList.add("on");
+    btn.disabled = false;
     const maxS = Number(speech.speech_max_s) || DEFAULT_SPEECH_S;
     limitTimer = setTimeout(() => {
       toast("The recording reached its " + maxS + " s limit.");
@@ -399,6 +423,12 @@ async function sheet(view, requestId) {
     }
   }
 
+  // Cancel the live recorder but keep the instance: a failed Build/Dismiss leaves the sheet on
+  // the same box and DOM, so the button must stay tied to this sheet's lifecycle.
+  function cancelMic() {
+    if (mic) mic.cancel();
+  }
+
   async function loadPresets(videoId) {
     if (presets || !videoId) return;
     try {
@@ -417,16 +447,24 @@ async function sheet(view, requestId) {
   }
 
   async function fill(req, box) {
-    stopMic();
-    await api("/v1/cut-requests/" + req.id, { method: "PUT", body: { prompt: box.value } });
-    toast("Building the cut");
-    await draw();
+    cancelMic();
+    try {
+      await api("/v1/cut-requests/" + req.id, { method: "PUT", body: { prompt: box.value } });
+      toast("Building the cut");
+      await draw();
+    } catch (err) {
+      toast(errorText(err), "bad");
+    }
   }
 
   async function dismissAndLeave(req) {
-    stopMic();
-    await api("/v1/cut-requests/" + req.id, { method: "DELETE" });
-    location.hash = "#/cuts";
+    cancelMic();
+    try {
+      await api("/v1/cut-requests/" + req.id, { method: "DELETE" });
+      location.hash = "#/cuts";
+    } catch (err) {
+      toast(errorText(err), "bad");
+    }
   }
 
   function sheetActions(req, ...primary) {
@@ -444,6 +482,10 @@ async function sheet(view, requestId) {
     try {
       req = await api("/v1/cuts/" + requestId, { query: { wait_ms: 800 } });
     } catch (err) {
+      // Reset the redraw signature so the next successful poll replaces the error card instead
+      // of hitting the "same sheet" early return forever.
+      box = null;
+      waitingSig = null;
       stopMic();
       mount(host, h("h1", { class: "page-title", text: "Cut" }), card(null, note(errorText(err), "bad"), h("a", { class: "btn sec", href: "#/cuts" }, h("span", { text: "Back to the queue" }))));
       return;

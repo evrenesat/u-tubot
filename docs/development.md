@@ -75,7 +75,10 @@ stubs `getUserMedia` and `MediaRecorder` with a fake webm blob, so the cut sheet
 the real `POST /v1/speech` route without a microphone: the mock LLM's transcription text lands in the
 description box, editable, and the request stays waiting (nothing is sent automatically). It also
 forces a redraw mid-recording, then taps Build and leaves the sheet mid-recording: those cancel paths
-must release the fake track and send no `/v1/speech` POST.
+must release the fake track and send no `/v1/speech` POST. It also holds `getUserMedia` open (a slow
+permission prompt) to prove the acquisition window: the mic is disabled while it is open, cancelling
+before it resolves stops the late stream instead of recording it, and a double tap starts one
+acquisition.
 
 ## Android app
 

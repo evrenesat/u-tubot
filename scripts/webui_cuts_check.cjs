@@ -33,6 +33,8 @@ const VID_WAIT = "eeeeeeeee" + NONCE + NONCE;
 const VID_MIC_REDRAW = "ffffffffff" + NONCE;
 const VID_MIC_BUILD = "gggggggggg" + NONCE;
 const VID_MIC_LEAVE = "hhhhhhhhhh" + NONCE;
+const VID_MIC_ACQUIRE = "iiiiiiiiii" + NONCE;
+const VID_MIC_DOUBLE = "jjjjjjjjjj" + NONCE;
 const problems = [];
 let checks = 0;
 let browser = null;
@@ -140,7 +142,9 @@ function currentRequest(page, ctx) {
     await page.addInitScript(() => {
       // A fake microphone for the voice check: getUserMedia and MediaRecorder produce a small
       // webm blob, so the sheet's Speak button exercises the real POST /v1/speech route.
-      const stream = {
+      // __micDeferred holds the first acquisition open (a slow permission prompt): the check
+      // then cancels or taps twice before calling __resolveMic().
+      const makeStream = () => ({
         getTracks: () => [
           {
             stop() {
@@ -148,10 +152,24 @@ function currentRequest(page, ctx) {
             },
           },
         ],
-      };
+      });
       Object.defineProperty(navigator, "mediaDevices", {
         configurable: true,
-        value: { getUserMedia: async () => stream },
+        value: {
+          getUserMedia: () => {
+            window.__getumCalls = (window.__getumCalls || 0) + 1;
+            window.__micStreams = window.__micStreams || [];
+            const s = makeStream();
+            window.__micStreams.push(s);
+            if (!window.__micDeferred) return Promise.resolve(s);
+            return new Promise((resolve) => {
+              window.__resolveMic = () => {
+                window.__resolveMic = null;
+                resolve(s);
+              };
+            });
+          },
+        },
       });
       class FakeRecorder {
         constructor(_stream, options) {
@@ -379,6 +397,67 @@ function currentRequest(page, ctx) {
     ok(leaveStops >= 1, "leaving the sheet stops the recording and releases the microphone");
     ok(speechPosts === 0, "leaving the sheet never uploads the audio (POSTs: " + speechPosts + ")");
     for (const r of (await api(ctx, "/v1/cut-requests")).body.requests.filter((x) => x.video_id === VID_MIC_LEAVE)) {
+      await api(ctx, "/v1/cut-requests/" + r.id, { method: "DELETE" });
+    }
+
+    // ---- the acquisition window (EVR-512 blocking item) --------------------------------
+    // 4. Build while getUserMedia is still pending: the late stream is released, not recorded.
+    await openWaiting(VID_MIC_ACQUIRE);
+    await page.locator("textarea").fill("keep the demo");
+    await page.evaluate(() => {
+      window.__micDeferred = true;
+      window.__getumCalls = 0;
+      window.__micStreams = [];
+      window.__trackStops = 0;
+      window.__recorders = 0;
+    });
+    speechPosts = 0;
+    await page.getByRole("button", { name: "Speak", exact: true }).click();
+    await page.waitForTimeout(200);
+    ok(await page.locator(".mic").isDisabled(), "the mic is disabled while the permission prompt is open");
+    await page.getByRole("button", { name: "Build cut" }).click();
+    await page.waitForTimeout(700);
+    ok((await page.evaluate(() => window.__getumCalls || 0)) === 1, "one acquisition is in flight");
+    await page.evaluate(() => window.__resolveMic && window.__resolveMic());
+    await page.waitForTimeout(900);
+    ok((await page.evaluate(() => window.__recorders || 0)) === 0, "an acquisition cancelled by Build never starts a recorder");
+    ok((await page.evaluate(() => window.__trackStops || 0)) >= 1, "the late stream from a cancelled acquisition is stopped");
+    ok(speechPosts === 0, "an acquisition cancelled by Build never uploads (POSTs: " + speechPosts + ")");
+    for (const r of (await api(ctx, "/v1/cut-requests")).body.requests.filter((x) => x.video_id === VID_MIC_ACQUIRE)) {
+      await api(ctx, "/v1/cut-requests/" + r.id, { method: "DELETE" });
+    }
+
+    // 5. Double-tapping Speak while the prompt is open starts exactly one acquisition and one
+    // recorder; a late second stream never appears. Leaving then stops it without uploading.
+    await openWaiting(VID_MIC_DOUBLE);
+    await page.evaluate(() => {
+      window.__micDeferred = true;
+      window.__getumCalls = 0;
+      window.__micStreams = [];
+      window.__trackStops = 0;
+      window.__recorders = 0;
+    });
+    speechPosts = 0;
+    await page.getByRole("button", { name: "Speak", exact: true }).click();
+    await page.evaluate(() => {
+      const b = document.querySelector(".mic");
+      b.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await page.waitForTimeout(250);
+    ok((await page.evaluate(() => window.__getumCalls || 0)) === 1, "a second tap does not start a second acquisition");
+    ok((await page.evaluate(() => (window.__micStreams || []).length)) === 1, "a second tap acquires no second stream");
+    await page.evaluate(() => window.__resolveMic && window.__resolveMic());
+    await page.waitForTimeout(700);
+    ok((await page.evaluate(() => window.__recorders || 0)) === 1, "the deferred acquisition starts one recorder");
+    ok(await page.getByRole("button", { name: "Stop", exact: true }).isVisible(), "the deferred acquisition shows a live Stop control");
+    await go(page, "cuts", 900);
+    await page.waitForTimeout(1000);
+    ok(speechPosts === 0, "leaving with the deferred mic never uploads (POSTs: " + speechPosts + ")");
+    ok((await page.evaluate(() => window.__trackStops || 0)) >= 1, "leaving after the deferred acquisition stops its stream");
+    await page.evaluate(() => {
+      window.__micDeferred = false;
+    });
+    for (const r of (await api(ctx, "/v1/cut-requests")).body.requests.filter((x) => x.video_id === VID_MIC_DOUBLE)) {
       await api(ctx, "/v1/cut-requests/" + r.id, { method: "DELETE" });
     }
 
