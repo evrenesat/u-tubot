@@ -65,6 +65,10 @@ class ASRResult:
     # "real" | "mixed" | "interpolated"; None when words were not wanted (or the backend does not say)
     word_timing: str | None = None
     stats: dict[str, Any] = field(default_factory=dict)
+    # stretches the chunk review removed as not speech: [start_s, end_s, reasons]
+    dropped: list[list[Any]] = field(default_factory=list)
+    # the language each chunk was heard as: [start_s, end_s, language]
+    chunks: list[list[Any]] = field(default_factory=list)
 
 
 class ASRBackend(Protocol):
@@ -82,6 +86,7 @@ class ASRBackend(Protocol):
         *,
         priority: int = ...,
         want_words: bool = ...,
+        expected_language: str | None = ...,
     ) -> ASRResult: ...
 
 

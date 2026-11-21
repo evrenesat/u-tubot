@@ -1,5 +1,71 @@
 # DEVLOG
 
+## 2026-11-21 (subtitle timing checkpoint 2: wrong-language and hallucinated chunks)
+
+Plan: `temp/sync-design/agent-plan.md` (CP2), builds on CP1. Evidence: EQWLxadmae0, first 600 s chunk labelled English, 20 segments,
+"Thank you." every 30 s over continuous Turkish speech.
+
+- `captions/sanity.py` (pure): `flag_segments` (`no_speech`, `repeat_loop`, `phantom`, `compressed`, `low_confidence`), `chunk_health`, `review`
+  (reasons `language_mismatch`, `hallucination`, `sparse`), `drop_flagged`. Config `halluc_*`, `sparse_*`, `asr_recheck`, `asr_recheck_chunk_s`
+  (`config.py`, `config.example.toml`).
+- `AsrRouter.transcribe(expected_language=, review=)`: after `gather_all`, per chunk with a reason the ladder runs (forced language, smaller
+  windows, next engine that serves the language), keeps the best by `ChunkHealth.rank()`, then drops flagged segments and the words inside them. Everything per
+  chunk timing (SpanResult), never on the global real/interpolated share. The ladder runs after all first answers, so it cannot re-enter
+  `OpenAIEngine._resolve`'s lock (tested with a real auto-mode engine on a mock transport). Single-engine chains work: steps 1 and 2 only.
+- `asr_recheck` event, `asr` stats `rechecked_chunks`, `hallucination_drops`, `dropped_s`; `ASR_CACHE_VERSION = 3`, `TIMING_VERSION = 2`
+  (so `captions-regen` lists CP1 tracks); `jobtext.js` text; docs (`docs/captions.md` "Chunk review", `docs/server.md`, `ai/CONTRACT.md`).
+- Pipeline: `expected_language = requested or normalize_language(video_meta.language)`, for `run`, `improve` and `transcribe` alike (computed in `_asr_stage`).
+- Tests: `test_sanity.py`, `test_asr_recheck.py` (forced language, smaller window, next engine, unrecoverable loop, healthy chunks untouched, review off,
+  failing retry, sparse chunk, auto-mode lock), `test_sync_metric.py::test_hallucinated_chunk_recovers`, jobtext cases.
+
+Deviations from the plan:
+
+- `drop_flagged` returns the dropped segments (not a count) as its third item; the router counts them and sums their seconds.
+- The metadata language is only a hint: when more than `asr_expected_override_share` (0.5) of the audio is heard as one other language the heard one is
+  expected (a wrong upload language must not make every chunk be "corrected" into the wrong language). New config key.
+- A language the engine was told (`language` given or a forced retry) is not checked on the first pass: only detected languages can mismatch.
+- The evidence chunk alone flags only 23% of its seconds (20 x 7 s of 600 s), below `halluc_chunk_share` (0.3): it is the language mismatch (metadata `tr`) and
+  the sparse rule that catch it. Drops apply to chunks that had a reason only (a lone phantom in a healthy chunk stays).
+- `captions-score` references are not reviewed by default; `--review` opts in (documented).
+- The hint is not in the ASR cache key (the key is unchanged apart from the `v3` prefix); documented.
+- An `asr_recheck` attempt that raises (`ASRError`) is logged with `outcome = "failed"` and the first answer is kept.
+
+Review round 1 fixes:
+
+1. Code-switching: the audio overriding the hint makes the language unknown (no `language_mismatch` at all); no hint needs `asr_expected_dominant_share` 0.8; a lone
+   mismatch needs `asr_mismatch_minority_share` 0.25 (`sanity.review`); a re-listen in another language is accepted only when not clearly worse (`asr_recheck_min_chars_ratio`,
+   `asr_recheck_logprob_slack` over the unflagged speech, no more flagged share); only a mismatch forces a language, the other rungs use the language the first pass heard.
+   Tests: correct hint on a code-switched video, an English stretch in a Hindi video, forced-only-for-mismatch, the evidence case still replaced.
+2. Repeats: `repeat_loop` needs low confidence or a compression flag; it is dropped only when the smaller-window pass did not say the same text (`repeated_texts`);
+   `phantom`/`no_speech` always go. Tests: confident chorus kept, chant re-heard kept, "Thank you" loop removed.
+3. Budget: `asr_recheck_max_share` (worst chunks first, at least one chunk; deviation: a single chunk over the share is still allowed, otherwise a short video could never be repaired),
+   `asr_recheck_max_requests`, a sparse-only chunk gets one rung. The agree-within-30% rule was dropped as redundant once sparse-only has one rung. Counts in the `asr` stats.
+4. Ranking: word timing breaks ties, characters count up to `asr_recheck_chars_cap`, estimated words never replace real ones (unless the first was a hallucination).
+5. Cache: a result with an unresolved chunk (budget skip, or all rungs failed) is not cached (`cache = "not_stored_unresolved"`). "Unresolved" means the ladder could not be done,
+   not that a deliberate "kept" verdict is repeated every run.
+6. Drops run after stitching on absolute times, inside re-listened spans (a phantom in a neighbour's overlap goes too). Test.
+7. `ASRResult.dropped` ([start, end, reasons]) and `.chunks` ([start, end, language]) are in the v3 cache payload (additive; v3 was never deployed).
+8. A rung only runs on engines that serve its language. 9. The `asr_recheck` text shows `detected_after` and the skipped cases. 10. Tests: short tail never sparse, a drop spanning a seam.
+
+Review round 2 fixes:
+
+1. `repeated_texts` ignores doubted segments (low `avg_logprob`, high compression ratio): a deterministic loop ("Altyazi M.K.") the engine makes up again in the windowed pass is still dropped; a repeat confirmed with confidence is kept. Tests in `test_sanity` and `test_asr_recheck`.
+2. Budget and request-cap skips are deterministic: those results are cached (`skipped_chunks` in the stats). Only a chunk whose every rung failed with an engine error is `unresolved` and keeps the result out of the cache.
+3. `_acceptable` without an `avg_logprob` on either side requires chars >= `asr_recheck_min_chars_ratio_no_logprob` (0.8) of the first answer (test: 0.6 kept, 0.9 replaced).
+
+Production steps for CP2 (coordinator, after deploy; `<config>`, `<ref>` as in CP1):
+
+1. Regenerate the video: `uv run utubot --config <config> captions-regen --video EQWLxadmae0` (all three videos regenerate anyway: `TIMING_VERSION` is 2 now).
+2. Job log of the new job: an `asr_recheck` with `start_s` 0, `end_s` 600, `reason` containing `language_mismatch` and `outcome = "replaced"` (action
+   `forced_language`; if the Mac engine still answers wrongly, `smaller_window` follows). `asr` carries `rechecked_chunks >= 1`.
+3. Stored track: no cue in 0-600 s whose text is only "Thank"/"you."/"Thank you." and its characters in 0-600 s within 0.5-2x the per-chunk median
+   (`sqlite3` on the stored VTT, or `GET /v1/videos/EQWLxadmae0/captions/tr.vtt`).
+4. `uv run utubot --config <config> captions-score EQWLxadmae0 --reference <ref> --at 300 --window-s 120 --json`: `loose >= 0.85`.
+5. The other two videos (`ti3gVlNnXoY`, `TCSgH7l2Isg`): no `asr_recheck` with `action = "dropped"` over real speech. List every drop (`dropped_segments`,
+   `dropped_s`) here and spot-check against the audio; scores (step 4 pattern of CP1) not more than 2 points below CP1.
+6. If a healthy video shows rechecks, read the `reason` and `flagged_share_before`; tune `sparse_chunk_ratio` / `halluc_chunk_share` rather than switching `asr_recheck` off
+   (the switch is `[captions] asr_recheck = false`, no redeploy needed beyond a config reload).
+
 ## 2026-11-21 (subtitle timing checkpoint 1: real word times, repair, cues from words)
 
 Plan: `temp/sync-design/agent-plan.md` (CP1). Causes measured earlier: the production engine (oMLX, mlx-audio) returns words only for the

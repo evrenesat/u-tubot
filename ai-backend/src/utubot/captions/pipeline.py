@@ -77,10 +77,8 @@ Progress = Callable[[float], None]
 ASR_CACHE_STAGE = "asr"
 
 
-ASR_CACHE_VERSION = (
-    2  # the layout and meaning of a cached ASR answer: a new value ignores older rows
-)
-TIMING_VERSION = 1  # the caption timing scheme of a stored track (`captions.timing_version`)
+ASR_CACHE_VERSION = 3  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review)
+TIMING_VERSION = 2  # the caption timing scheme of a stored track (`captions.timing_version`)
 SEGMENT_METRICS = 3  # no_speech_prob, avg_logprob, compression_ratio follow start, end, text
 
 
@@ -93,6 +91,8 @@ def asr_to_cache(result: ASRResult) -> dict[str, Any]:
         "model": result.model,
         "word_timing": result.word_timing,
         "stats": result.stats,
+        "dropped": result.dropped,
+        "chunks": result.chunks,
         "segments": [
             [
                 seg.start,
@@ -130,6 +130,8 @@ def asr_from_cache(payload: dict[str, Any]) -> ASRResult:
         model=payload.get("model"),
         word_timing=payload.get("word_timing"),
         stats=dict(payload.get("stats") or {}),
+        dropped=list(payload.get("dropped") or []),
+        chunks=list(payload.get("chunks") or []),
     )
 
 
@@ -146,6 +148,11 @@ def _set_asr(st, result: ASRResult, cached: bool = False) -> None:
         word_timing=result.word_timing,
         words_real=real,
         words_interpolated=interpolated,
+        rechecked_chunks=result.stats.get("rechecked_chunks"),
+        hallucination_drops=result.stats.get("hallucination_drops"),
+        dropped_s=result.stats.get("dropped_s"),
+        recheck_requests=result.stats.get("recheck_requests"),
+        skipped_chunks=result.stats.get("skipped_chunks"),
     )
 
 
@@ -520,13 +527,16 @@ class CaptionPipeline:
                     lambda f: progress(0.25 + 0.6 * f),
                     priority=priority,
                     want_words=want_words,
+                    expected_language=self._expected_language(video_id, requested),
                 )
                 if want_words and result.word_timing is None:
                     result.word_timing = classify(
                         result.words, self.cfg.captions.words_real_min_share
                     )
                 _set_asr(st, result)
-                if not self._asr_empty(result, want_words):
+                if result.stats.get("unresolved_chunks"):
+                    st.set(cache="not_stored_unresolved")
+                elif not self._asr_empty(result, want_words):
                     store = key
                     if want_words and result.word_timing == "interpolated":
                         # reusable only while the engines and their word modes stay as they are
@@ -546,6 +556,13 @@ class CaptionPipeline:
             return ASRResult(words=[], language=None, segments=[], engine=None, model=None)
         self._require_speech(result, want_words, optional_asr)
         return result
+
+    def _expected_language(self, video_id: str, requested: str | None) -> str | None:
+        """The language the audio should be in: the requested one, else the video metadata's."""
+        if requested:
+            return requested
+        meta = self.db.get_json("video_meta", "video_id=?", [video_id]) or {}
+        return normalize_language(str(meta.get("language") or "")) or None
 
     def _cached_asr(
         self, video_id: str, key: str, want_words: bool, requested: str | None

@@ -321,6 +321,59 @@ class CaptionsConfig(BaseModel):
     sync_late_s: float = 0.3
     sync_early_s: float = 0.5
     sync_loose_s: float = 1.0
+    # chunk review (`captions/sanity.py`): wrong-language and hallucinated chunks are re-listened to,
+    # then the segments that are still not speech are dropped
+    asr_recheck: bool = True
+    asr_recheck_chunk_s: float = Field(default=120.0, gt=0)  # window of the "smaller window" retry
+    asr_expected_override_share: float = Field(
+        default=0.5, ge=0, le=1
+    )  # audio share above which the
+    # detected language beats the video's metadata language as the expected one
+    # share of the audio heard in one language that makes it the expected one when the video has no
+    # metadata language
+    asr_expected_dominant_share: float = Field(default=0.8, ge=0, le=1)
+    # a language mismatch with nothing else wrong re-listens only while the mismatching chunks are at
+    # most this share of the audio (more than that is a bilingual video, not a mislabelled chunk)
+    asr_mismatch_minority_share: float = Field(default=0.25, ge=0, le=1)
+    # a re-listen in another language replaces the first answer only when it is not clearly worse:
+    asr_recheck_min_chars_ratio: float = Field(
+        default=0.5, ge=0
+    )  # at least this share of the characters
+    # without avg_logprob on either side the new answer must hold this share of the first one's characters
+    asr_recheck_min_chars_ratio_no_logprob: float = Field(default=0.8, ge=0)
+    asr_recheck_logprob_slack: float = Field(
+        default=0.3, ge=0
+    )  # avg_logprob of its speech not lower by more
+    asr_recheck_chars_cap: float = Field(
+        default=1.3, ge=1
+    )  # more text than this times the first counts as no gain
+    asr_recheck_max_share: float = Field(
+        default=0.25, ge=0, le=1
+    )  # audio share re-listened to per job
+    asr_recheck_max_requests: int = Field(default=12, ge=0)  # extra engine requests per job
+    sparse_min_chunk_s: float = Field(
+        default=60.0, ge=0
+    )  # a chunk shorter than this is never "sparse"
+    halluc_no_speech_prob: float = 0.6  # a segment above this ...
+    halluc_avg_logprob: float = -1.0  # ... and below this is not speech (Whisper's own rule)
+    halluc_compression_ratio: float = 2.4  # above this a segment counts as repetitive text
+    halluc_repeat_min: int = Field(default=3, ge=2)  # consecutive equal segments that make a loop
+    halluc_phrases: list[str] = Field(
+        default_factory=lambda: [
+            "thank you",
+            "thanks for watching",
+            "thank you for watching",
+            "you",
+        ]
+    )  # what Whisper makes up over silence or music
+    halluc_min_rate: float = 0.5  # words per second below which a phrase above is a phantom
+    halluc_chunk_share: float = 0.3  # share of a chunk's seconds flagged that asks for a re-listen
+    sparse_chunk_ratio: float = (
+        0.15  # a chunk with under this share of the median characters per second
+    )
+    sparse_min_chunks: int = Field(
+        default=3, ge=1
+    )  # ... counts only with at least this many chunks
     # `utubot captions-score` defaults
     score_windows: int = Field(default=4, ge=1)
     score_window_s: float = Field(default=120.0, gt=0)

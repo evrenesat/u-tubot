@@ -994,7 +994,16 @@ async def test_server_without_word_times_is_flagged_not_silent(tmp_path):
     (chunk,) = [e["detail"] for e in log.list("j1") if e["stage"] == "asr_chunk"]
     assert chunk["word_timing"] == "interpolated" and chunk["words"] == 2
     assert result.word_timing == "interpolated"
-    assert result.stats == {"words_real": 0, "words_interpolated": 2}
+    assert result.stats == {
+        "words_real": 0,
+        "words_interpolated": 2,
+        "rechecked_chunks": 0,
+        "unresolved_chunks": 0,
+        "skipped_chunks": 0,
+        "recheck_requests": 0,
+        "hallucination_drops": 0,
+        "dropped_s": 0,
+    }
     db.close()
 
 

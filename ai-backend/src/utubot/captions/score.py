@@ -93,6 +93,7 @@ async def score_track(
     window_s: float | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     engine_factory: EngineFactory | None = None,
+    review: bool = False,
 ) -> dict[str, Any]:
     """The sync score of a stored track of `video_id` against windows transcribed by `reference`.
 
@@ -152,7 +153,9 @@ async def score_track(
                 "-ss", str(begin), "-t", str(length), "-i", str(source), "-vn", "-ac", "1",
                 "-ar", str(c.sample_rate), "-c:a", "pcm_s16le", str(wav),
             )  # fmt: skip
-            result = await router.transcribe(wav, language, lambda f: None, want_words=True)
+            result = await router.transcribe(
+                wav, language, lambda f: None, want_words=True, review=review
+            )
             silences = await asyncio.to_thread(detect_silences, wav, c.silence_min_s)
             words, _stats = repair_words(result.words, silences, c)
             local = phrase_onsets([(w.start, w.end) for w in words], c.sentence_gap_s)
