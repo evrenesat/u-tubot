@@ -59,6 +59,8 @@ import com.liskovsoft.smartyoutubetv2.common.prefs.HomeRowsData.Row;
 import com.liskovsoft.smartyoutubetv2.common.prefs.MainUIData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SectionFilterData;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBrowseCache;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.youtubeapi.service.internal.MediaServiceData;
 
 import java.util.ArrayList;
@@ -70,6 +72,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -98,6 +102,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     private final Map<VideoGroup, String> mAddedHomeRowChannelIds = Collections.synchronizedMap(new IdentityHashMap<>());
     private final Runnable mRefreshSection = this::refresh;
     private final Runnable mUpdateSections = this::updateSections;
+    private final Runnable mReplayCachedGroups = this::replayCachedGroups;
+    private final UtubotBrowseCache mBrowseCache;
     /**
      * The section shows the videos of one of its channels: a load error doesn't reload the whole section, in a skin that keeps
      * it (see SkinTraits)
@@ -109,6 +115,10 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     private int mBootSectionIndex;
     private int mBootstrapSectionId = -1;
     private Locale mSectionsLocale;
+    private boolean mCachedContentShown;
+    private List<VideoGroup> mCachedShownGroups;
+    private BrowseSection mCachedReplaySection;
+    private List<VideoGroup> mCachedReplayGroups;
 
     private BrowsePresenter(Context context) {
         super(context);
@@ -124,6 +134,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         mBrowseProcessor = new BrowseProcessorManager(getContext(), this::syncItem);
         mActions = new ArrayList<>();
+        mBrowseCache = UtubotSettings.isBuiltIn() ? UtubotBrowseCache.instance(context) : null;
         WatchLaterManager.instance(context).setOnEdited(this::onWatchLaterEdited);
         initSectionMappings();
         // Read above: the Home rows and the pinned items refer to the groups by the ids they have now, before the sections are made
@@ -156,6 +167,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         // Recreated in another language or country, another account's (see LocaleData): the titles are in the old one
         if (!Helpers.equals(LocaleUtility.getCurrentLocale(getContext()), mSectionsLocale)) {
+            if (mBrowseCache != null) {
+                mBrowseCache.invalidate();
+            }
             initSectionMappings();
             updateChannelSorting();
             updatePlaylistsStyle();
@@ -185,7 +199,18 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     private void refreshIfNeeded() {
-        if (getView() == null || !isHomeSection() || mLastUpdateTimeMs == -1 || System.currentTimeMillis() - mLastUpdateTimeMs < 3 * 60 * 60 * 1_000) {
+        if (getView() == null) {
+            return;
+        }
+
+        if (mBrowseCache != null) {
+            if (mCurrentSection != null && browseCacheState(mCurrentSection) == UtubotBrowseCache.State.STALE) {
+                refreshFromCache(mCurrentSection);
+            }
+            return;
+        }
+
+        if (!isHomeSection() || mLastUpdateTimeMs == -1 || System.currentTimeMillis() - mLastUpdateTimeMs < 3 * 60 * 60 * 1_000) {
             return;
         }
 
@@ -871,7 +896,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     public void refresh(boolean focusOnContent) {
-        updateCurrentSection();
+        updateCurrentSection(true);
         if (focusOnContent && getView() != null) {
             getView().focusOnContent();
         }
@@ -882,6 +907,10 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     private void updateCurrentSection() {
+        updateCurrentSection(false);
+    }
+
+    private void updateCurrentSection(boolean forceRefresh) {
         disposeActions();
 
         if (getView() == null || mCurrentSection == null) {
@@ -889,7 +918,173 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         }
 
         Log.d(TAG, "Update section %s", mCurrentSection.getTitle());
+
+        if (mBrowseCache != null && !forceRefresh && showCachedSection(mCurrentSection)) {
+            if (browseCacheState(mCurrentSection) == UtubotBrowseCache.State.STALE) {
+                startCachedRefresh(mCurrentSection);
+            }
+            return;
+        }
+
+        mCachedContentShown = false;
+        mCachedShownGroups = null;
+        mCachedReplaySection = null;
+        mCachedReplayGroups = null;
+        Utils.removeCallbacks(mReplayCachedGroups);
         updateSection(mCurrentSection);
+    }
+
+    private boolean showCachedSection(BrowseSection section) {
+        if (!isCacheableSection(section)) {
+            return false;
+        }
+
+        List<VideoGroup> groups = mBrowseCache.groups(section, getBrowseCacheIdentity());
+
+        if (groups == null || getView() == null) {
+            return false;
+        }
+
+        Log.d(TAG, "Show cached section %s", section.getTitle());
+        getView().showProgressBar(false);
+        mCachedContentShown = true;
+        mCachedShownGroups = groups;
+        mCachedReplaySection = section;
+        mCachedReplayGroups = groups;
+
+        for (VideoGroup group : groups) {
+            group.setAction(VideoGroup.ACTION_REPLACE);
+            getView().updateSection(group);
+        }
+
+        // A header transition may be computing its layout, and the rows' update is then dropped. Retry after it.
+        if (getView().isEmpty()) {
+            Utils.postDelayed(mReplayCachedGroups, 500);
+        }
+
+        return true;
+    }
+
+    private void replayCachedGroups() {
+        if (!mCachedContentShown || getView() == null || mCurrentSection != mCachedReplaySection || mCachedReplayGroups == null) {
+            return;
+        }
+
+        for (VideoGroup group : mCachedReplayGroups) {
+            group.setAction(VideoGroup.ACTION_REPLACE);
+            getView().updateSection(group);
+        }
+    }
+
+    private void startCachedRefresh(BrowseSection section) {
+        mBrowseCache.markAttempt(section.getId(), System.currentTimeMillis());
+        updateSection(section);
+    }
+
+    private void refreshFromCache(BrowseSection section) {
+        if (!isCacheableSection(section)) {
+            return;
+        }
+
+        List<VideoGroup> groups = mBrowseCache.groups(section, getBrowseCacheIdentity());
+
+        if (groups == null) {
+            return;
+        }
+
+        mCachedContentShown = true;
+        mCachedShownGroups = groups;
+        mBrowseCache.markAttempt(section.getId(), System.currentTimeMillis());
+        Log.d(TAG, "Refresh cached section %s", section.getTitle());
+        updateSection(section);
+    }
+
+    private boolean isCacheableSection(BrowseSection section) {
+        if (section == null || section.getId() == MediaGroup.TYPE_HIDDEN_VIDEOS || mLocalGridMappings.containsKey(section.getId())) {
+            return false;
+        }
+
+        switch (section.getType()) {
+            case BrowseSection.TYPE_GRID:
+            case BrowseSection.TYPE_SHORTS_GRID:
+            case BrowseSection.TYPE_ROW:
+            case BrowseSection.TYPE_MULTI_GRID:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private UtubotBrowseCache.State browseCacheState(BrowseSection section) {
+        return mBrowseCache.state(section.getId(), getBrowseCacheIdentity(), System.currentTimeMillis(),
+                browseRefreshMinutes());
+    }
+
+    private int browseRefreshMinutes() {
+        return UtubotSettings.instance(getContext()).getBrowseRefreshMinutes();
+    }
+
+    private String getBrowseCacheIdentity() {
+        Account account = MediaServiceManager.instance().getSelectedAccount();
+        String profile = account != null && !account.isEmpty() ? account.getProfileName() : "";
+
+        return LocaleUtility.getCurrentLocale(getContext()).toString() + "|" + profile;
+    }
+
+    private void saveCachedGroups(BrowseSection section, List<VideoGroup> groups) {
+        if (mBrowseCache == null || !isCacheableSection(section)) {
+            return;
+        }
+
+        mBrowseCache.save(section, groups, getBrowseCacheIdentity(), System.currentTimeMillis());
+        mCachedContentShown = false;
+    }
+
+    private void saveCachedGroup(BrowseSection section, VideoGroup group) {
+        if (!isCacheableSection(section) || group == null) {
+            return;
+        }
+
+        if (section.getType() == BrowseSection.TYPE_MULTI_GRID) {
+            saveCachedGroups(section, UtubotBrowseCache.mergeByPosition(mBrowseCache.groups(section, getBrowseCacheIdentity()), group));
+            return;
+        }
+
+        saveCachedGroups(section, Collections.singletonList(group));
+    }
+
+    private void appendCachedGroup(BrowseSection section, VideoGroup group) {
+        if (mBrowseCache == null || !isCacheableSection(section)) {
+            return;
+        }
+
+        mBrowseCache.append(section, group, getBrowseCacheIdentity(), System.currentTimeMillis());
+    }
+
+    private boolean handleCachedRefreshError(Throwable error) {
+        if (!mCachedContentShown || getView() == null) {
+            return false;
+        }
+
+        getView().showProgressBar(false);
+        mCachedContentShown = false;
+        Log.d(TAG, "Keep the cached section %s: %s", mCurrentSection != null ? mCurrentSection.getTitle() : null, error);
+
+        return true;
+    }
+
+    private void restoreCachedFocusedItem(VideoGroup group, Video focusedBefore) {
+        if (focusedBefore == null || getView() == null || group == null) {
+            return;
+        }
+
+        for (Video video : group.getVideos()) {
+            if (Helpers.equals(video.videoId, focusedBefore.videoId) && Helpers.equals(video.playlistId, focusedBefore.playlistId)) {
+                getView().selectSectionItem(video);
+                mCurrentVideo = video;
+                break;
+            }
+        }
     }
 
     private void updateSection(BrowseSection section) {
@@ -943,6 +1138,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         videoGroup.setTitle(section.getTitle());
         getView().updateSection(videoGroup);
         getView().showProgressBar(false);
+        saveCachedGroups(section, Collections.singletonList(videoGroup));
     }
 
     /**
@@ -1022,11 +1218,15 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
             return;
         }
         
-        getView().showProgressBar(true);
+        boolean cached = mCachedContentShown && mCachedShownGroups != null;
 
-        VideoGroup firstGroup = VideoGroup.from(section);
-        firstGroup.setAction(VideoGroup.ACTION_REPLACE);
-        getView().updateSection(firstGroup);
+        getView().showProgressBar(!cached);
+
+        if (!cached) {
+            VideoGroup firstGroup = VideoGroup.from(section);
+            firstGroup.setAction(VideoGroup.ACTION_REPLACE);
+            getView().updateSection(firstGroup);
+        }
 
         if (groups == null) {
             // No group. Maybe just clear.
@@ -1058,8 +1258,21 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
                             getView().showProgressBar(false);
 
+                            Set<Integer> usedCachedIds = new HashSet<>();
+
                             for (VideoGroup videoGroup : videoGroups) {
                                 appendLocalHistory(videoGroup, isShortsRow(videoGroup), false);
+
+                                if (cached) {
+                                    int oldId = UtubotBrowseCache.findOldId(mCachedShownGroups, videoGroup);
+
+                                    if (oldId != -1) {
+                                        videoGroup.setId(oldId);
+                                        videoGroup.setAction(VideoGroup.ACTION_REPLACE);
+                                        usedCachedIds.add(oldId);
+                                    }
+                                }
+
                                 getView().updateSection(videoGroup);
                                 mBrowseProcessor.process(videoGroup);
                                 MediaServiceManager.instance().warmUpPlaybackIfNeeded(videoGroup);
@@ -1067,11 +1280,20 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                                 continueGroupIfNeeded(videoGroup, false);
                             }
 
+                            if (cached) {
+                                removeStaleCachedRows(section, usedCachedIds);
+                            }
+
+                            saveCachedGroups(section, videoGroups);
+
                             // With the rows of the account, not popping in after them: History emits its rows together
                             addMissingLocalHistoryRows(videoGroups);
                         },
                         error -> {
                             Log.e(TAG, "updateRowsHeader error: %s", error.getMessage());
+                            if (handleCachedRefreshError(error)) {
+                                return;
+                            }
                             handleLoadError(error);
                         }, () -> {
                             // The account's History has no video: the ones watched here instead, as the History grid had them
@@ -1176,12 +1398,17 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         Log.d(TAG, "updateGridHeader: Start loading section: " + section.getTitle());
 
-        getView().showProgressBar(true);
+        boolean cached = mCachedContentShown && mCachedShownGroups != null;
+
+        getView().showProgressBar(!cached);
 
         // Stay on the same group in case of multiple subscribe calls
         VideoGroup baseGroup = VideoGroup.from(section, column);
         baseGroup.setAction(VideoGroup.ACTION_REPLACE);
-        getView().updateSection(baseGroup);
+
+        if (!cached) {
+            getView().updateSection(baseGroup);
+        }
 
         if (group == null) {
             // No group. Maybe just clear.
@@ -1203,18 +1430,66 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                             VideoGroup videoGroup = VideoGroup.from(baseGroup, mediaGroup);
                             // The grid of History with Hide Shorts History: the videos watched here, its shorts hidden too
                             appendLocalHistory(videoGroup, false, videoGroup.isEmpty());
+
+                            if (cached) {
+                                int oldId = findCachedGroupId(videoGroup.getPosition());
+
+                                videoGroup.setAction(VideoGroup.ACTION_REPLACE);
+
+                                if (oldId != -1) {
+                                    videoGroup.setId(oldId);
+                                }
+                            }
+
+                            Video focusedBefore = mCurrentVideo;
                             getView().updateSection(videoGroup);
+
+                            if (cached) {
+                                restoreCachedFocusedItem(videoGroup, focusedBefore);
+                            }
+
                             mBrowseProcessor.process(videoGroup);
                             MediaServiceManager.instance().warmUpPlaybackIfNeeded(videoGroup);
+                            saveCachedGroup(section, videoGroup);
 
                             continueGroupIfNeeded(videoGroup);
                         },
                         error -> {
                             Log.e(TAG, "updateGridHeader error: %s", error.getMessage());
+                            if (handleCachedRefreshError(error)) {
+                                return;
+                            }
                             handleLoadError(error);
                         }, () -> handleLoadError(null));
 
         mActions.add(updateAction);
+    }
+
+    private int findCachedGroupId(int position) {
+        if (mCachedShownGroups == null) {
+            return -1;
+        }
+
+        for (VideoGroup oldGroup : mCachedShownGroups) {
+            if (oldGroup.getPosition() == position) {
+                return oldGroup.getId();
+            }
+        }
+
+        return -1;
+    }
+
+    private void removeStaleCachedRows(BrowseSection section, Set<Integer> usedCachedIds) {
+        for (VideoGroup oldGroup : mCachedShownGroups) {
+            if (usedCachedIds.contains(oldGroup.getId())) {
+                continue;
+            }
+
+            VideoGroup stale = VideoGroup.from(section, oldGroup.getPosition());
+            stale.setId(oldGroup.getId());
+            stale.setAction(VideoGroup.ACTION_REPLACE);
+            getView().updateSection(stale);
+        }
     }
 
     private void continueGroup(VideoGroup group) {
@@ -1268,6 +1543,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                             VideoGroup videoGroup = VideoGroup.from(group, continueGroup);
                             getView().updateSection(videoGroup);
                             mBrowseProcessor.process(videoGroup);
+                            BrowseSection section = videoGroup.getSection();
+                            appendCachedGroup(section != null ? section : getCurrentSection(), videoGroup);
 
                             // Nothing new to show: the row would stop at the card that asked for the page
                             if (videoGroup.getSize() == size && videoGroup.getDuplicateCount() > duplicateCount
@@ -1595,6 +1872,16 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     @Override
     public void onAccountChanged(Account account) {
         Log.d(TAG, "On account changed");
+
+        if (mBrowseCache != null) {
+            mBrowseCache.invalidate();
+        }
+
+        mCachedContentShown = false;
+        mCachedShownGroups = null;
+        mCachedReplaySection = null;
+        mCachedReplayGroups = null;
+        Utils.removeCallbacks(mReplayCachedGroups);
 
         if (getView() == null) {
             return;

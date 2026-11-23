@@ -129,6 +129,13 @@ not visible to the user, which is how an invisible grid shows: `modern_browse_co
 For an update, serve an `update.json` with a higher version (`downloadUrlList_x86` next to `downloadUrlList`) and an APK built with
 `-PutubotVersionName=0.9.0`.
 
+### Checking the browse cache (no YouTube)
+
+A section can be seeded as if it had loaded before: `files/utubot_browse/<section_id>.json` holds `identity`
+(`<locale>|<profile>`, empty profile when signed out), `loaded_at_ms` and `groups`. `0.json` is Home. With the emulator in a network
+namespace that has no route out, focus Home: the log says `Show cached section Home`, the cards are drawn, and no Home YouTube load
+happens. Leave the section and focus it again for the second-focus path. This exercises a saved cache, not a live YouTube run.
+
 ### Checking the HQ captions
 
 No test or check may contact YouTube. The app's own screens play YouTube videos only, so debug builds of the `stutubot` flavor include

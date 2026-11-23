@@ -30,6 +30,8 @@
     <string name="utubot_summary_panel_desc">A side panel with a short summary of the focused video</string>
     <string name="utubot_panel_delay">Summary delay</string>
     <string name="utubot_panel_delay_value">%s s</string>
+    <string name="utubot_browse_refresh">Browse refresh</string>
+    <string name="utubot_browse_refresh_value">%s min</string>
     <string name="utubot_auto_captions">Select HQ captions automatically</string>
     <string name="utubot_auto_captions_desc">Turns on the u·tubot captions when the video has them</string>
     <string name="utubot_test_connection">Test connection</string>

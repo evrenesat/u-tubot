@@ -1,5 +1,24 @@
 # u·tubot devlog
 
+## 2026-11-23 (browse sections: stale-while-revalidate, issue 65)
+
+- Every browse section now shows its last loaded content at once: `UtubotBrowseCache` keeps the emitted rows in memory and as
+  per-section JSON under `files/utubot_browse`, keyed by the locale and the selected account. On focus `BrowsePresenter` replays
+  them without a progress bar, then refreshes in the background only when the named setting "Browse refresh" (5, 10, 20, 30 or
+  60 minutes, 10 by default) has passed. "Refresh section" and `refresh()` stay manual network loads.
+- A cached-content refresh updates in place: rows reuse the old ids (matched by title and position) so a shelf replaces itself,
+  rows that are gone are removed, a grid restores the card that had the focus, and a failed refresh keeps the cached cards and
+  shows no error page. A row's next page replaces its stored copy (`append`), so scrolling also extends the cache.
+- Account changes clear the cache (`onAccountChanged`), locale changes clear it in `onViewInitialized`, and the stored identity
+  makes a cache from another locale or account unreadable. The channel-uploads multi-grid keeps its two columns by merging
+  groups by position; local grids (queue, blocked channels) stay out because they are already instant and never load YouTube.
+  Unit tests: `UtubotBrowseCacheTest` (policy boundary, disk restart, identity/invalidation, next page, card fields),
+  `BrowseCachePolicyTest`, and the settings test for `Browse refresh`.
+- Emulator walk on the host: AVD `tv` with no route to YouTube, `0.json` seeded as the fake last Home content in
+  `files/utubot_browse` (identity `en_US|`). First focus and the focus after leaving Home for Shorts both logged
+  `Show cached section Home`; the screencap showed the three visible cards, and the only YouTube attempt between the focuses
+  was the Shorts load, blocked by DNS. No Home load. This is a cache replay check with fake saved content, not a live run.
+
 ## 2026-11-21 (director's cuts checkpoint 4 review round 1; live modelgate STT limit)
 
 - EVR-520 blocking item fixed: a failed service-worker registration no longer strands the Cuts
