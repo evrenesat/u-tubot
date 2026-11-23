@@ -9,6 +9,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.ConscryptMode;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -18,6 +19,8 @@ import static org.junit.Assert.assertTrue;
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
+// The app's Conscrypt has no native library here, and no TLS is used
+@ConscryptMode(ConscryptMode.Mode.OFF)
 public class UtubotCutActionTest {
     private UtubotSettings mSettings;
 

@@ -370,7 +370,7 @@ public class UtubotCutControllerTest {
 
         mController.onCutReady(VIDEO, cut, false);
 
-        assertEquals(155, AppDialogPresenter.instance(mContext).getId()); // READY_DIALOG_ID
+        assertEquals(155, readyOfferId()); // READY_DIALOG_ID
         OptionItem apply = readyApplyButton();
         assertEquals(mContext.getString(R.string.utubot_cut_apply), apply.getTitle());
 
@@ -524,6 +524,17 @@ public class UtubotCutControllerTest {
                 });
     }
 
+    private int readyOfferId() {
+        try {
+            Field field = AppDialogPresenter.class.getDeclaredField("mBackupId");
+            field.setAccessible(true);
+            return (int) field.get(AppDialogPresenter.instance(mContext));
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
     private OptionItem readyApplyButton() {
         try {
             Field field = AppDialogPresenter.class.getDeclaredField("mBackupCategories");
