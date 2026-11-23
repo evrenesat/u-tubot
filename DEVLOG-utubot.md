@@ -12,6 +12,8 @@
 - Account changes clear the cache (`onAccountChanged`), locale changes clear it in `onViewInitialized`, and the stored identity
   makes a cache from another locale or account unreadable. The channel-uploads multi-grid keeps its two columns by merging
   groups by position; local grids (queue, blocked channels) stay out because they are already instant and never load YouTube.
+  The cache is kept out entirely in flavors without it (`UtubotSettings.isBuiltIn()`): the multi-grid column save checks
+  `mBrowseCache == null` too, so the channel-uploads load in Electric Eel/SmartTube has no null dereference.
   Unit tests: `UtubotBrowseCacheTest` (policy boundary, disk restart, identity/invalidation, next page, card fields),
   `BrowseCachePolicyTest`, and the settings test for `Browse refresh`.
 - Emulator walk on this host: AVD `tv` in a network namespace with only loopback, `0.json` seeded as the fake last Home content in

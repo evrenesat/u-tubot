@@ -1041,7 +1041,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     private void saveCachedGroup(BrowseSection section, VideoGroup group) {
-        if (!isCacheableSection(section) || group == null) {
+        if (mBrowseCache == null || !isCacheableSection(section) || group == null) {
             return;
         }
 
