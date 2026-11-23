@@ -60,6 +60,7 @@ from .models import (
     SummaryAdhoc,
 )
 from .prompts import PANEL_ALIAS, TASK_CUTS, Prompt, PromptError, PromptStore, validate_prompt_set
+from .processed import ProcessedService
 from .security import (
     PROXY_SECRET_HEADER,
     BodyLimitMiddleware,
@@ -144,6 +145,7 @@ class Services:
     jobs: JobQueue
     reports: JobReports
     cuts: CutService
+    processed: ProcessedService
     speech: SpeechService
     gate: YoutubeGate
     transcription: Transcription
@@ -201,6 +203,7 @@ def build_services(
         jobs=jobs,
         reports=reports,
         cuts=CutService(cfg, db, llm, transcripts, prompts, jobs),
+        processed=ProcessedService(db, transcripts, prompts),
         speech=SpeechService(cfg, transport=llm_transport),
         gate=gate,
         transcription=transcription,
@@ -917,6 +920,14 @@ def create_app(
     @app.get("/v1/captions/jobs")
     async def captions_jobs(user: UserConfig = Depends(current_user)):
         return {"jobs": svc.jobs.recent(user.name, RECENT_JOBS_LIMIT)}
+
+    @app.get("/v1/processed")
+    async def processed(
+        limit: int = Query(JOBS_LIMIT_DEFAULT, ge=1, le=JOBS_LIMIT_MAX),
+        user: UserConfig = Depends(current_user),
+    ):
+        """The caller's recently processed videos, newest first: captions jobs and cuts per video."""
+        return {"videos": svc.processed.recent(user.name, limit)}
 
     @app.get("/v1/videos/{video_id}/captions/{lang}.vtt")
     async def captions_vtt(
