@@ -1,5 +1,18 @@
 # DEVLOG
 
+## 2026-11-23 (processed videos: backend endpoint, GitHub #66 step 1)
+
+- `GET /v1/processed?limit=N` (default 50, at most 200) combines the caller's `jobs` kind
+  captions and non-dismissed `cut_requests` read-only, one item per video, newest `updated_at`
+  first. Title and thumbnail come from cached metadata with fallbacks, caption states use the
+  `GET /v1/jobs` names, cuts carry preset labels, and `summary` is any stored summary for the
+  shared video. No new table or storage; dismissed cuts stay out.
+- New `processed.py` service wired into `Services`; `tests/test_processed.py` covers empty,
+  mixed items (title/thumbnail/state/label/summary/last change), limit counting videos and
+  another user's rows staying invisible. Docs in `ai/CONTRACT.md` and `docs/server.md`.
+- Verified `uv run pytest -q` 1048 passed and ruff check/format clean. The TV's Processed
+  section is a later step.
+
 ## 2026-11-21 (director's cuts checkpoint 4 review round 1)
 
 1. `save_set` refuses the reserved `cut-presets` prompt-set id unless `from_cut_store` (the
