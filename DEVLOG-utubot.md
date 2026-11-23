@@ -14,10 +14,14 @@
   groups by position; local grids (queue, blocked channels) stay out because they are already instant and never load YouTube.
   Unit tests: `UtubotBrowseCacheTest` (policy boundary, disk restart, identity/invalidation, next page, card fields),
   `BrowseCachePolicyTest`, and the settings test for `Browse refresh`.
-- Emulator walk on the host: AVD `tv` with no route to YouTube, `0.json` seeded as the fake last Home content in
-  `files/utubot_browse` (identity `en_US|`). First focus and the focus after leaving Home for Shorts both logged
-  `Show cached section Home`; the screencap showed the three visible cards, and the only YouTube attempt between the focuses
-  was the Shorts load, blocked by DNS. No Home load. This is a cache replay check with fake saved content, not a live run.
+- Emulator walk on this host: AVD `tv` in a network namespace with only loopback, `0.json` seeded as the fake last Home content in
+  `files/utubot_browse` (identity `en_US|`, `loaded_at_ms` of the run). Home, opened through `HomeLauncherActivity`, logged
+  `Show cached section Home` at 19:45:38.678 and the `uiautomator` dump showed the four cached cards (`Cached card one` to
+  `four`); the BrowsePresenter log had no `loadRowsHeader`/`updateRowsHeader` for Home. Music, opened next through
+  `MusicLauncherActivity`, loaded YouTube and failed with `UnknownHostException` in `getLikedMusicTV` at 19:46:08.733 (its stack
+  printed after the next focus). Home focused again at 19:46:07.830: `Show cached section Home`, again no Home load, and the dump
+  had the four cards. The fake thumbnail URLs failed in Glide too, so this check covers the rows' replay, not images or a live
+  YouTube run.
 
 ## 2026-11-21 (director's cuts checkpoint 4 review round 1; live modelgate STT limit)
 

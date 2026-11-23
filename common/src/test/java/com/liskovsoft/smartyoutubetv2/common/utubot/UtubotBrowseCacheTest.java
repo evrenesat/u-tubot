@@ -233,6 +233,21 @@ public class UtubotBrowseCacheTest {
     }
 
     @Test
+    public void eachSectionKeepsItsOwnRefreshClock() {
+        UtubotBrowseCache cache = new UtubotBrowseCache(mRoot);
+        BrowseSection home = section();
+        BrowseSection subscriptions = new BrowseSection(MediaGroup.TYPE_SUBSCRIPTIONS, "Subscriptions", BrowseSection.TYPE_GRID, 0);
+        long now = 1_000_000;
+
+        cache.save(home, Collections.singletonList(group(home, "Home", -1, "aaa")), IDENTITY, now);
+        cache.save(subscriptions, Collections.singletonList(group(subscriptions, "Subscriptions", -1, "bbb")), IDENTITY, now - 20 * MINUTE);
+        cache.markAttempt(home.getId(), now + MINUTE);
+
+        assertEquals(UtubotBrowseCache.State.FRESH, cache.state(home.getId(), IDENTITY, now + 6 * MINUTE, 10));
+        assertEquals(UtubotBrowseCache.State.STALE, cache.state(subscriptions.getId(), IDENTITY, now + 6 * MINUTE, 10));
+    }
+
+    @Test
     public void theCacheIsEmptyBeforeAnythingWasLoaded() {
         UtubotBrowseCache cache = new UtubotBrowseCache(mRoot);
         BrowseSection section = section();

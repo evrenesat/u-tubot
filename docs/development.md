@@ -132,9 +132,17 @@ For an update, serve an `update.json` with a higher version (`downloadUrlList_x8
 ### Checking the browse cache (no YouTube)
 
 A section can be seeded as if it had loaded before: `files/utubot_browse/<section_id>.json` holds `identity`
-(`<locale>|<profile>`, empty profile when signed out), `loaded_at_ms` and `groups`. `0.json` is Home. With the emulator in a network
-namespace that has no route out, focus Home: the log says `Show cached section Home`, the cards are drawn, and no Home YouTube load
-happens. Leave the section and focus it again for the second-focus path. This exercises a saved cache, not a live YouTube run.
+(`<locale>|<profile>`, empty profile when signed out), `loaded_at_ms` and `groups`. `0.json` is Home. `loaded_at_ms` must be inside the
+refresh window (10 minutes by default) for the focus to show it without a refresh. With the emulator in a network namespace that has
+no route out, open Home by `HomeLauncherActivity` and leave it through another launcher (e.g. `MusicLauncherActivity`), then Home
+again. `adb logcat -s BrowsePresenter` must show `Show cached section Home` on both focuses and must not show
+`loadRowsHeader: Start loading section: Home`. The cards' thumbnail URLs may fail in that namespace; that is not the section's load.
+This exercises a saved cache, not a live YouTube run.
+
+```sh
+$NS adb -P 5038 -s emulator-5554 shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.launchers.HomeLauncherActivity
+$NS adb -P 5038 -s emulator-5554 shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.launchers.MusicLauncherActivity
+```
 
 ### Checking the HQ captions
 
