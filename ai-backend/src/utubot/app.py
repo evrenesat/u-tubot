@@ -59,8 +59,8 @@ from .models import (
     QueryMeta,
     SummaryAdhoc,
 )
-from .prompts import PANEL_ALIAS, TASK_CUTS, Prompt, PromptError, PromptStore, validate_prompt_set
 from .processed import ProcessedService
+from .prompts import PANEL_ALIAS, TASK_CUTS, Prompt, PromptError, PromptStore, validate_prompt_set
 from .security import (
     PROXY_SECRET_HEADER,
     BodyLimitMiddleware,

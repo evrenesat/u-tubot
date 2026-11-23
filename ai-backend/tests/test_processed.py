@@ -102,10 +102,10 @@ async def test_mixed_items_are_one_per_video_newest_first(env):
     env.svc.transcripts.store_meta(
         VID1, {"title": "First title", "thumbnail_url": "https://i.ytimg.com/vi/first.jpg"}
     )
-    add_caption(VID1, lang="en", translate_to="de", updated_at=base - 10)
-    add_cut(VID1, preset="cut-demo", updated_at=base)
+    add_caption(env, VID1, lang="en", translate_to="de", updated_at=base - 10)
+    add_cut(env, VID1, preset="cut-demo", updated_at=base)
     add_summary(env, VID1)
-    add_caption(VID2, status="running", updated_at=base - 20, title="Title from the job")
+    add_caption(env, VID2, status="running", updated_at=base - 20, title="Title from the job")
 
     body = (await env.client.get("/v1/processed")).json()
     videos = body["videos"]
@@ -135,10 +135,10 @@ async def test_mixed_items_are_one_per_video_newest_first(env):
 
 async def test_limit_returns_that_many_videos_not_jobs(env):
     base = time.time()
-    add_caption(VID3, updated_at=base - 30)
-    add_caption(VID2, updated_at=base - 20)
-    add_caption(VID1, updated_at=base - 10)
-    add_cut(VID1, preset="cut-answer", updated_at=base - 5)
+    add_caption(env, VID3, updated_at=base - 30)
+    add_caption(env, VID2, updated_at=base - 20)
+    add_caption(env, VID1, updated_at=base - 10)
+    add_cut(env, VID1, preset="cut-answer", updated_at=base - 5)
 
     body = (await env.client.get("/v1/processed", params={"limit": 2})).json()
     videos = body["videos"]
@@ -150,9 +150,9 @@ async def test_limit_returns_that_many_videos_not_jobs(env):
 
 async def test_another_users_items_are_not_visible(env):
     base = time.time()
-    add_caption(VID1, updated_at=base - 10)
-    add_cut(VID1, user="partner", preset="cut-demo", updated_at=base)
-    add_caption(VID2, user="partner", updated_at=base + 5)
+    add_caption(env, VID1, updated_at=base - 10)
+    add_cut(env, VID1, user="partner", preset="cut-demo", updated_at=base)
+    add_caption(env, VID2, user="partner", updated_at=base + 5)
     add_summary(env, VID2)
 
     owner = (await env.client.get("/v1/processed")).json()["videos"]
