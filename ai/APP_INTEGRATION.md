@@ -162,7 +162,8 @@ so the other flavors behave as before.
   transparent dialog "Skipped 1:20" with a Back that returns to the skipped part for 5 s; nothing extra while another dialog is up.
   The skipped parts are dimmed on the seek bar (`UtubotCutSeekBar`, see the SponsorBlockController row above). Picking the applied cut
   in the picker again turns it off; a video change or a finish clears it. The "different length" message is only for a real mismatch of the video
-  that plays: a picker with no player of that video answers false and carries the cut to the video it opens. An engine release keeps the follower and the cut (only a finish ends
+  that plays: a picker with no player of that video answers false and carries the cut to the video it opens, and a cut that counted
+  as pending for another video is dropped at its open (no stale length claim). An engine release keeps the follower and the cut (only a finish ends
   the follower), and an engine re-init re-applies the cut of the same video; a same-video reload re-arms a cut that was still waiting
   for the length, and an engine release keeps such a pending one for its re-init. The skip rules live in `UtubotCutSkipper` (unit-tested); the emulator check (`CutsHarnessActivity`) plays a local MP4
   against the mock backend (docs/development.md, "Checking the director's cuts").

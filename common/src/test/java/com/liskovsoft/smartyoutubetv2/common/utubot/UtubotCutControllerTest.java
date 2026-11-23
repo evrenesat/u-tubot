@@ -143,6 +143,25 @@ public class UtubotCutControllerTest {
         assertNull(getPendingCut());
     }
 
+    /**
+     * A cut that waited for another video is dropped at the open: it never says the lengths differ for the video that plays
+     */
+    @Test
+    public void aPendingCutOfAnotherVideo_doesNotClaimADifferentLength() {
+        Cut cut = cut("othervideo00");
+        cut.label = "No filler";
+        cut.durationMs = 200_000;
+        setPendingCut(cut);
+        mController.open(video(VIDEO), 240_000);
+
+        mController.onNewVideo(video(VIDEO));
+        mController.onVideoLoaded(video(VIDEO));
+
+        assertNull(getPendingCut());
+        assertFalse(mController.isApplied(cut));
+        assertNull(ShadowToast.getTextOfLatestToast());
+    }
+
     @Test
     public void aReadyPendingCutSurvivesAnEngineRelease() {
         setPendingCut(cut(VIDEO));

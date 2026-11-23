@@ -192,8 +192,9 @@ $ADB shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.utubot.ha
 
 The skip rules themselves are unit-tested (`UtubotCutSkipperTest`: one jump past a sponsor segment, the seek of the user wins, the
 length check); the harness shows the real engine, the toast with Back and the ready announcement with its Apply. What the harness cannot show:
-the video menu's picker and the dimmed seek bar of the real skins — check those on a device or with the emulator of the app's screens
-(the section above), with the mock backend's cuts routes answering.
+the video menu's picker, the list's picker, the player's cut button and the dimmed seek bar of the real skins — check those on a device.
+The mock backend serves no browse content, and the app's list and player screens play YouTube videos only, which no check may contact, so an
+emulator cannot fill a list or open a YouTube video for these entry points.
 
 ### Private builds with a baked backend
 

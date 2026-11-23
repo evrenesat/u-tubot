@@ -12,8 +12,14 @@
 - A cut picked before the length is known waits for it instead of saying the lengths differ; the message now only appears for a
   real mismatch of the video that plays (`toggle` and `tryApplyPending`). A finish clears the applied cut, so a list picker for that
   video carries the cut to the reopened video instead of turning off a cut that is no longer playing.
-- Unit tests cover the list picker (no player, another video, unknown length, real mismatch), the carried cut on open and the
-  automatic apply. Docs: `ai/APP_INTEGRATION.md` (player button, ids row, behaviour), `docs/development.md` ("Checking the director's cuts").
+- A cut that counted as pending for another video is dropped at the open, so no stale pending cut can claim a different length for
+  the video that plays.
+- Unit tests cover the list picker (no player, another video, unknown length, real mismatch), the carried cut on open, the stale
+  pending cut and the automatic apply. Docs: `ai/APP_INTEGRATION.md` (player button, ids row, behaviour), `docs/development.md` ("Checking the director's cuts").
+- Emulator walk (mock backend, 2026-11-23): the harness requested cut skipped 60 -> 108 s (`2 skips, keeps 2:36`); a ready cut at the open
+  showed the Apply offer, which applied on one press; with "apply ready cuts automatically" on it applied without a dialog; a cut built for
+  200 s on the 240 s video showed the different-length toast and stayed off. The app's list picker and the player button cannot be driven
+  there: the mock has no browse content and the app's screens play YouTube videos only (docs/development.md notes the device pass).
 
 ## 2026-11-21 (director's cuts checkpoint 4 review round 1; live modelgate STT limit)
 

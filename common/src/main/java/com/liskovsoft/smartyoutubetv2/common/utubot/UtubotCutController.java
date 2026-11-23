@@ -77,6 +77,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         if (item == null || rearm == null || !Helpers.equals(rearm.videoId, item.videoId)) {
             UtubotCutSeekBar.setCut(item == null ? null : item.videoId, null);
             mCut = null;
+            mPendingCut = null; // a cut that waited for another video must not claim a different length for this one
         } else {
             // The same video plays again (a reload, the playback queue): the skipper and the poll are gone with stopSkipping, so the
             // cut is re-applied like a fresh one once the length is known
