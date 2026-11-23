@@ -14,8 +14,13 @@
   video carries the cut to the reopened video instead of turning off a cut that is no longer playing.
 - A cut that counted as pending for another video is dropped at the open, so no stale pending cut can claim a different length for
   the video that plays.
+- Review round 1: a destroyed view the presenter still returns and a released engine no longer count as "the video that plays"
+  (`isLivePlayer` requires `isEngineInitialized`), so the list picker of a just-played video always starts it with its cut instead of
+  toggling/queueing against a dead player. The Apply offer closes at the next video and its press compares the cut's `videoId` to the
+  current video; `tryApplyPending` drops a pending cut of another video instead of comparing only lengths.
 - Unit tests cover the list picker (no player, another video, unknown length, real mismatch), the carried cut on open, the stale
-  pending cut and the automatic apply. Docs: `ai/APP_INTEGRATION.md` (player button, ids row, behaviour), `docs/development.md` ("Checking the director's cuts").
+  pending cut, the automatic apply, the ready-Apply dialog and its press after a playback change, a released player for the same
+  video, and `UtubotCutAction.isAvailable`. Docs: `ai/APP_INTEGRATION.md` (player button, ids row, behaviour), `docs/development.md` ("Checking the director's cuts").
 - Emulator walk (mock backend, 2026-11-23): the harness requested cut skipped 60 -> 108 s (`2 skips, keeps 2:36`); a ready cut at the open
   showed the Apply offer, which applied on one press; with "apply ready cuts automatically" on it applied without a dialog; a cut built for
   200 s on the 240 s video showed the different-length toast and stayed off. The app's list picker and the player button cannot be driven

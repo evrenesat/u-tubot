@@ -59,6 +59,9 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
     @Override
     public void onNewVideo(Video item) {
+        // The Apply offer of the video that just ended is stale: its one press would apply the old video's cut
+        dismissReadyOffer();
+
         // A cut that waits to be applied is re-armed too: stopSkipping clears it, and a reload of the same video comes before the length
         // is known sometimes
         Cut rearm = mCut != null ? mCut : mPendingCut;
@@ -151,7 +154,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     public void onCutReady(String videoId, Cut cut, boolean requested) {
         Video video = getVideo();
 
-        if (getPlayer() == null || !Helpers.equals(videoId, video != null ? video.videoId : null)) {
+        if (!isLivePlayer() || !Helpers.equals(videoId, video != null ? video.videoId : null)) {
             return;
         }
 
@@ -247,11 +250,20 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         return mCut != null && Helpers.equals(mCut.videoId, cut.videoId) && Helpers.equals(mCut.label, cut.label);
     }
 
+    /**
+     * The video that plays: a destroyed view returned by the presenter, or one whose engine is released, carries the last video but is
+     * no playback (a list picker for that video must start it again through {@link #applyOnOpen(Cut)}, not toggle a cut here)
+     */
     private boolean isPlayingVideo(Cut cut) {
-        PlaybackView player = getPlayer();
         Video video = getVideo();
 
-        return cut != null && player != null && video != null && Helpers.equals(video.videoId, cut.videoId);
+        return cut != null && isLivePlayer() && video != null && Helpers.equals(video.videoId, cut.videoId);
+    }
+
+    private boolean isLivePlayer() {
+        PlaybackView player = getPlayer();
+
+        return player != null && player.isEngineInitialized();
     }
 
     private boolean isQueued(Cut cut) {
@@ -269,7 +281,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     //endregion
 
     private void apply(Cut cut) {
-        if (getPlayer() == null) {
+        if (!isLivePlayer()) {
             return;
         }
 
@@ -295,7 +307,18 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     private void tryApplyPending() {
         Cut cut = mPendingCut;
 
-        if (cut == null || getPlayer() == null) {
+        if (cut == null || !isLivePlayer()) {
+            return;
+        }
+
+        Video video = getVideo();
+
+        if (video == null || !Helpers.equals(cut.videoId, video.videoId)) {
+            // The playback moved on: the old video's cut is not this video's, and its length must not be compared to this one
+            mPendingCut = null;
+            UtubotCutSeekBar.setCut(cut.videoId, null);
+            UtubotCutSeekBar.paint(getPlayer());
+            stopPolling();
             return;
         }
 
@@ -324,7 +347,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             return;
         }
 
-        if (getPlayer() == null) {
+        if (!isLivePlayer()) {
             return;
         }
 
@@ -340,7 +363,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     }
 
     private void tick() {
-        if (getPlayer() == null || mVideo == null || mVideo.isLive) {
+        if (!isLivePlayer() || mVideo == null || mVideo.isLive) {
             return;
         }
 
@@ -432,9 +455,27 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     }
 
     /**
-     * Apply pressed on the announcement: the length may still be unknown, so the cut waits like any other pending one
+     * The Apply offer of the video that ended is closed at the next video: the cut it carries is not the new video's
+     */
+    private void dismissReadyOffer() {
+        AppDialogPresenter dialogPresenter = AppDialogPresenter.instance(getContext());
+
+        if (dialogPresenter.getId() == READY_DIALOG_ID) {
+            dialogPresenter.closeDialog();
+        }
+    }
+
+    /**
+     * Apply pressed on the announcement: the length may still be unknown, so the cut waits like any other pending one. The playback
+     * may have changed while the offer was up: the cut is only applied to the video it was built for.
      */
     private void applyReadyCut(Cut cut) {
+        Video video = getVideo();
+
+        if (cut == null || !isLivePlayer() || video == null || !Helpers.equals(cut.videoId, video.videoId)) {
+            return;
+        }
+
         mPendingCut = cut;
         startPolling();
         tryApplyPending();

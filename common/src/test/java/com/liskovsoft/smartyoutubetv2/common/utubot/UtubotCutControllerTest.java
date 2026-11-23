@@ -4,6 +4,9 @@ import android.content.Context;
 
 import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCategory;
+import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
+import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
@@ -318,6 +321,106 @@ public class UtubotCutControllerTest {
     }
 
     /**
+     * A view whose engine was released is not the video that plays even while the last video is still reachable: a list picker of that
+     * video carries the cut to the reopened video instead of turning off a cut that is not running
+     */
+    @Test
+    public void afterARelease_aListPickerOfThatVideo_doesNotTurnOff() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        assertTrue(mController.toggle(cut));
+
+        mController.releasePlayer();
+
+        assertFalse(mController.toggle(cut));
+        assertTrue(mController.isApplied(cut)); // not turned off: the next open carries it
+        assertNull(getPendingCut());
+        assertNull(ShadowToast.getTextOfLatestToast());
+        mController.onFinish();
+    }
+
+    /**
+     * A released view still answers the old length: a picker of that video must not queue the cut or claim a length for a playback that
+     * is gone
+     */
+    @Test
+    public void afterARelease_aListPickerOfThatVideo_queuesNothing() {
+        mController.open(video(VIDEO), 240_000);
+        mController.releasePlayer();
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 200_000;
+
+        assertFalse(mController.toggle(cut));
+        assertNull(getPendingCut());
+        assertNull(ShadowToast.getTextOfLatestToast());
+    }
+
+    /**
+     * A ready cut of the video that plays is offered with a one-press Apply, and that press applies it
+     */
+    @Test
+    public void aReadyCut_isOfferedAndAppliedOnOnePress() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+
+        mController.onCutReady(VIDEO, cut, false);
+
+        assertEquals(155, AppDialogPresenter.instance(mContext).getId()); // READY_DIALOG_ID
+        OptionItem apply = readyApplyButton();
+        assertEquals(mContext.getString(R.string.utubot_cut_apply), apply.getTitle());
+
+        apply.onSelect(true);
+
+        assertTrue(mController.isApplied(cut));
+        assertNull(getPendingCut());
+        mController.onFinish();
+    }
+
+    /**
+     * The Apply offer lives a moment: when the playback changes inside it, its press must not apply the old video's cut to the new video
+     */
+    @Test
+    public void aReadyOfferPressedAfterAPlaybackChange_isNotApplied() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        mController.onCutReady(VIDEO, cut, false);
+        OptionItem apply = readyApplyButton();
+
+        mController.open(video("othervideo00"), 240_000);
+
+        apply.onSelect(true);
+
+        assertFalse(mController.isApplied(cut));
+        assertNull(getPendingCut());
+        assertNull(ShadowToast.getTextOfLatestToast());
+    }
+
+    /**
+     * A pending cut is only tried on the video it was built for: a playback change with equal lengths must not apply it to another video
+     */
+    @Test
+    public void aPendingCutOfAnotherVideo_isNotTriedOnThisVideo() {
+        mController.open(video("othervideo00"), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        setPendingCut(cut);
+
+        mController.onVideoLoaded(video("othervideo00"));
+
+        assertNull(getPendingCut());
+        assertFalse(mController.isApplied(cut));
+        assertNull(ShadowToast.getTextOfLatestToast());
+    }
+
+    /**
      * The queued cut is only for the video it was built for: another video drops it
      */
     @Test
@@ -353,6 +456,7 @@ public class UtubotCutControllerTest {
     private static final class TestCutController extends UtubotCutController {
         private Video mVideo;
         private PlaybackView mPlayer;
+        private long mDurationMs;
 
         void attach(Context context) {
             setAltContext(context);
@@ -361,6 +465,13 @@ public class UtubotCutControllerTest {
         void open(Video video, long durationMs) {
             mVideo = video;
             mPlayer = player(durationMs);
+            mDurationMs = durationMs;
+        }
+
+        void releasePlayer() {
+            // Like PlaybackFragment.releasePlayer: the view stays as the presenter's weak reference, its engine is gone (and the stale
+            // length it reports must not count either)
+            mPlayer = player(mDurationMs, false);
         }
 
         void close() {
@@ -383,6 +494,10 @@ public class UtubotCutControllerTest {
      * A player of a known length whose engine stands initialized: the defaults answer every other call
      */
     private static PlaybackView player(long durationMs) {
+        return player(durationMs, true);
+    }
+
+    private static PlaybackView player(long durationMs, boolean engineInitialized) {
         return (PlaybackView) Proxy.newProxyInstance(PlaybackView.class.getClassLoader(), new Class<?>[]{PlaybackView.class},
                 (proxy, method, args) -> {
                     if ("getDurationMs".equals(method.getName())) {
@@ -390,7 +505,7 @@ public class UtubotCutControllerTest {
                     }
 
                     if ("isEngineInitialized".equals(method.getName())) {
-                        return true;
+                        return engineInitialized;
                     }
 
                     Class<?> type = method.getReturnType();
@@ -407,6 +522,18 @@ public class UtubotCutControllerTest {
 
                     return null;
                 });
+    }
+
+    private OptionItem readyApplyButton() {
+        try {
+            Field field = AppDialogPresenter.class.getDeclaredField("mBackupCategories");
+            field.setAccessible(true);
+            List<OptionCategory> categories = (List<OptionCategory>) field.get(AppDialogPresenter.instance(mContext));
+
+            return categories.get(0).options.get(0);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
     }
 
     private void setPendingCut(Cut cut) {

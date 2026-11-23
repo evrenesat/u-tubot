@@ -163,9 +163,11 @@ so the other flavors behave as before.
   The skipped parts are dimmed on the seek bar (`UtubotCutSeekBar`, see the SponsorBlockController row above). Picking the applied cut
   in the picker again turns it off; a video change or a finish clears it. The "different length" message is only for a real mismatch of the video
   that plays: a picker with no player of that video answers false and carries the cut to the video it opens, and a cut that counted
-  as pending for another video is dropped at its open (no stale length claim). An engine release keeps the follower and the cut (only a finish ends
-  the follower), and an engine re-init re-applies the cut of the same video; a same-video reload re-arms a cut that was still waiting
-  for the length, and an engine release keeps such a pending one for its re-init. The skip rules live in `UtubotCutSkipper` (unit-tested); the emulator check (`CutsHarnessActivity`) plays a local MP4
+  as pending for another video is dropped at its open (no stale length claim). A video counts as playing only with its engine initialized, so a
+  destroyed view the presenter still returns or a released engine carries no toggle and no length claim (`isLivePlayer`); the Apply offer closes
+  at the next video and its press re-checks the cut's video (`applyReadyCut`), and a pending cut of another video is not tried (`tryApplyPending`).
+  An engine release keeps the follower and the cut (only a finish ends the follower), and an engine re-init re-applies the cut of the same video; a
+  same-video reload re-arms a cut that was still waiting for the length, and an engine release keeps such a pending one for its re-init. The skip rules live in `UtubotCutSkipper` (unit-tested); the emulator check (`CutsHarnessActivity`) plays a local MP4
   against the mock backend (docs/development.md, "Checking the director's cuts").
 - With the Summary view open the focus never rests on the screen under it: the first D-pad key, OK or Enter after the grid took
   the focus back restores the view's focus and is used (`UtubotKeys.actsOnFocus`).
