@@ -1,5 +1,20 @@
 # u·tubot devlog
 
+## 2026-11-23 (director's cuts playable from lists and the player; u-tubot#64)
+
+- Picking a ready preset in a picker opened from a list no longer asks a player for its length (and no longer claims a different
+  length): `UtubotCutController.toggle` answers false without a player of that video, the menu carries the cut with `applyOnOpen`,
+  and `PlaybackPresenter.openVideo` starts the video through the normal playback path with the cut applied as it opens.
+- The player has the picker: `UtubotCutAction` puts "Director's cut…" next to the video stats button (`VideoPlayerGlue`), only in
+  the built-in flavor with a backend, and `UtubotCutController.onButtonClicked` opens the same picker for the playing video.
+- A ready cut announced at the video start offers a one-press Apply dialog; Settings, u·tubot gained "Apply ready cuts
+  automatically" (default off), which applies such a cut by itself instead of offering it.
+- A cut picked before the length is known waits for it instead of saying the lengths differ; the message now only appears for a
+  real mismatch of the video that plays (`toggle` and `tryApplyPending`). A finish clears the applied cut, so a list picker for that
+  video carries the cut to the reopened video instead of turning off a cut that is no longer playing.
+- Unit tests cover the list picker (no player, another video, unknown length, real mismatch), the carried cut on open and the
+  automatic apply. Docs: `ai/APP_INTEGRATION.md` (player button, ids row, behaviour), `docs/development.md` ("Checking the director's cuts").
+
 ## 2026-11-21 (director's cuts checkpoint 4 review round 1; live modelgate STT limit)
 
 - EVR-520 blocking item fixed: a failed service-worker registration no longer strands the Cuts

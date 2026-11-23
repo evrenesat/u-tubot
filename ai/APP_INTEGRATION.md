@@ -38,6 +38,9 @@ so the other flavors behave as before.
 | `app/presenters/SplashPresenter.java` | `UtubotPairing.promptIfNeeded` | first-launch pairing dialog when no token |
 | `app/presenters/dialogs/menu/VideoMenuPresenter.java` | `UtubotMenu.append` (two places) | AI answer, Summary panel toggle, Prepare HQ captions, Director's cut |
 | `app/presenters/PlaybackPresenter.java` | `UtubotCutController` registered after `SponsorBlockController`, gated by `UtubotSettings.isBuiltIn()` | the director's cut of the video that plays: a player controller like the sponsor block's |
+| `tv/ui/playback/other/VideoPlayerGlue.java` | `UtubotCutAction` put into the action map and added to the secondary row (`onCreateSecondaryActions`) | the Director's cut picker of the playing video from the player controls |
+| `smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/utubot/UtubotCutAction.java` | new: `Action` with the `action_utubot_cut` id, the u·tubot symbol and the label "Director's cut…"; `isAvailable` is the flavor and backend gate | the player's cut button |
+| `common/src/main/res/values/ids.xml` | `action_utubot_cut` id | the player button, whose click reaches `UtubotCutController.onButtonClicked` |
 | `app/models/playback/controllers/SponsorBlockController.java` | `onNewVideo` wipes through `UtubotCutSeekBar.wipe` and its own seek-bar segments go through `UtubotCutSeekBar.setSponsor`; `getActiveSegments()` exposes the segments of the video that plays | the cut's dimmed skips stay on the seek bar (its reset for a new video keeps a cut of the same video, its own markers are laid next to the cut's), and the cut's jump goes past the sponsor segments that would jump after it: one jump, not two. Without a cut both writes behave exactly as before. Known for the real-device pass (u-tubot#1): chapter markers still write straight to the seek bar, so their order against `onMetadata` can hide the dims on a chaptered video (recorded in the DEVLOG) |
 | `misc/AppDataSourceManager.java` | Settings entry "u·tubot", with its own tile icon `R.drawable.settings_utubot` | settings screen; Content filtering keeps `settings_aislist` |
 | `common/src/main/res/drawable-nodpi/settings_utubot.png` | new: the symbol, white on transparent, 302x302 with the canvas and padding of `settings_about.png`; `assets/brand/render.py` draws it from `utubot-symbol-mono.svg` | tile of the u·tubot Settings entry |
@@ -55,8 +58,8 @@ so the other flavors behave as before.
 ## Behaviour
 
 - Settings, always in this order: Import setup, Pair with code (6 digits, `POST /v1/pair`, token stored, connection tested,
-  then "Paired as <user>"), assess switch, mark only, answer in menu, Summary panel, Summary delay, auto-select HQ captions, Prompts (list,
-  choose default, Import from URL, Refresh all), Test connection, Advanced (backend URL and token by hand; a typed backend
+  then "Paired as <user>"), assess switch, mark only, answer in menu, Summary panel, Summary delay, auto-select HQ captions, apply ready cuts
+  automatically, Prompts (list, choose default, Import from URL, Refresh all), Test connection, Advanced (backend URL and token by hand; a typed backend
   also sets `<backend>/app/update.json` when no update URL is stored). `UtubotSettingsPresenter.buildCategories` is the list.
 - Import setup (`UtubotSetup`, `UtubotSetupFlow`): the user types a bare host or a URL, the app fetches `/setup.json`
   (`ai/CONTRACT.md`), stores backend URL, update URL and switch defaults, then opens the pairing dialog.
@@ -137,7 +140,8 @@ so the other flavors behave as before.
   (`UtubotManager.isCurrent`). Clearing the backend in Advanced also removes the stored update address.
 - Director's cuts (checkpoint 2). The video menu gains "Director's cut…" (`UtubotMenu`): the picker lists the cut presets with their
   state for the video (`GET /v1/videos/{id}/cuts` — ready "12:40 of 18:05", building, waiting, needs transcript, failed, none), a ready
-  row applies its cut (again = takes it off), a `none` row asks for the build (`POST {preset}`, then the request is followed), and the
+  row applies its cut (again = takes it off; in a picker opened from a list it starts the video through `PlaybackPresenter.openVideo`
+  with the cut carried to the player, `UtubotCutController.applyOnOpen`), a `none` row asks for the build (`POST {preset}`, then the request is followed), and the
   last row "Describe on phone…" creates a waiting request (`POST {await_prompt:true}`) and shows `UtubotCutQrView`: a dimming sheet
   over the playing video with the request's short address (`<backend>/cuts/<id>`) as a QR code (made on the device, `QrCodeEncoder`)
   and in text. The video is not paused; Back (any key) takes the sheet away. Without a model on the backend the picker says so.
@@ -145,9 +149,11 @@ so the other flavors behave as before.
   summary and one line per kept part ("2:10 - 3:05  The demo", `UtubotCutController.formatPart`), so the owner judges the cut on
   the TV before applying it (the phone sheet's parts list is the same information). Saved presets and the Android Share target are
   phone-only in v1 (the saved presets become rows of this same picker).
-- Director's cuts, while playing (`UtubotCutController`, a playback controller next to `SponsorBlockController`). When a video opens it
-  checks once where its cuts stand (`UtubotCutFollower`, like the captions follower): a ready cut is announced ("Director's cut ready:
-  No filler, 12:40"); a waiting or building request for the video is long-polled (`GET /v1/cuts/{id}?wait_ms=10000`, at most 30 min, 5
+- Director's cuts, while playing (`UtubotCutController`, a playback controller next to `SponsorBlockController`). The player's
+  "Director's cut…" button (`UtubotCutAction`, next to the video stats button while the flavor is built in and a backend is set)
+  opens the picker of the video that plays and reaches the controller's `onButtonClicked`. When a video opens it checks once where
+  its cuts stand (`UtubotCutFollower`, like the captions follower): a ready cut is announced ("Director's cut ready:
+  No filler, 12:40") with a one-press Apply dialog, or applied by itself when "apply ready cuts automatically" is on; a waiting or building request for the video is long-polled (`GET /v1/cuts/{id}?wait_ms=10000`, at most 30 min, 5
   errors in a row) and applied from the current position when it becomes ready. A cut applies only to a video of its own length (±2 s,
   `cut.duration_ms` against the player's). While a cut is on, its dropped ranges are skipped with the sponsor-skip machinery:
   `UtubotCutSkipper` skips a drop when the playback crosses into its start by itself (a seek of the user wins and plays, backwards
@@ -155,7 +161,8 @@ so the other flavors behave as before.
   getActiveSegments`, the same 3 s grouping the sponsor block uses itself), so there is one jump, not two. Each skip shows a
   transparent dialog "Skipped 1:20" with a Back that returns to the skipped part for 5 s; nothing extra while another dialog is up.
   The skipped parts are dimmed on the seek bar (`UtubotCutSeekBar`, see the SponsorBlockController row above). Picking the applied cut
-  in the picker again turns it off; a video change clears it. An engine release keeps the follower and the cut (only a finish ends
+  in the picker again turns it off; a video change or a finish clears it. The "different length" message is only for a real mismatch of the video
+  that plays: a picker with no player of that video answers false and carries the cut to the video it opens. An engine release keeps the follower and the cut (only a finish ends
   the follower), and an engine re-init re-applies the cut of the same video; a same-video reload re-arms a cut that was still waiting
   for the length, and an engine release keeps such a pending one for its re-init. The skip rules live in `UtubotCutSkipper` (unit-tested); the emulator check (`CutsHarnessActivity`) plays a local MP4
   against the mock backend (docs/development.md, "Checking the director's cuts").

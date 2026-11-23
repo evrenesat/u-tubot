@@ -165,7 +165,11 @@ public final class UtubotMenu {
 
     //region Director's cut
 
-    private static void showCuts(Context context, Video video) {
+    /**
+     * Opens the cut picker for a video: its presets and their state, the actions, the phone sheet. The video menu and the player
+     * button both come here.
+     */
+    public static void showCuts(Context context, Video video) {
         RxHelper.disposeActions(sAction);
         sAction = UtubotManager.instance(context).cutsObserve(video.videoId)
                 .observeOn(AndroidSchedulers.mainThread())
@@ -249,11 +253,18 @@ public final class UtubotMenu {
 
     private static void onPresetPicked(Context context, Video video, CutPreset preset, @Nullable UtubotCutController controller) {
         if (UtubotModels.CutState.READY.equals(preset.state) && preset.cut != null) {
-            if (controller != null) {
-                AppDialogPresenter.instance(context).closeDialog(); // the state text is stale the moment the cut is toggled
-                controller.toggle(preset.cut);
+            AppDialogPresenter.instance(context).closeDialog(); // the state text is stale the moment the cut is toggled or the video opens
+
+            if (controller != null && controller.toggle(preset.cut)) {
+                return; // the video that plays: applied or turned off in place
             }
 
+            // Opened from a list: the cut is carried into the normal playback path, applied as that video opens
+            if (controller != null) {
+                controller.applyOnOpen(preset.cut);
+            }
+
+            PlaybackPresenter.instance(context).openVideo(video);
             return;
         }
 

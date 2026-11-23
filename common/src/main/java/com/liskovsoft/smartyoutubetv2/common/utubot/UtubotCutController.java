@@ -17,6 +17,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.SeekBarSegment;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
+import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SponsorBlockData;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
@@ -38,11 +39,15 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     private static final String TAG = UtubotCutController.class.getSimpleName();
     private static final long POLL_INTERVAL_MS = 1_000;
     private static final long TOAST_BACK_MS = 5_000;
+    private static final long READY_OFFER_MS = 8_000;
     private static final int CUT_DIALOG_ID = 154;
+    private static final int READY_DIALOG_ID = 155;
     /** The colour of the skipped parts on the seek bar: dimmed, clearly not a sponsor block category */
     private static final int SKIP_COLOR = 0x99607080;
     @Nullable
     private Video mVideo;
+    @Nullable
+    private Cut mOpenCut;
     @Nullable
     private Cut mPendingCut;
     @Nullable
@@ -57,6 +62,16 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         // A cut that waits to be applied is re-armed too: stopSkipping clears it, and a reload of the same video comes before the length
         // is known sometimes
         Cut rearm = mCut != null ? mCut : mPendingCut;
+
+        if (mOpenCut != null) {
+            // The picker of a video that wasn't playing yet asked for this cut of this video: it is applied as the video opens
+            if (Helpers.equals(mOpenCut.videoId, item != null ? item.videoId : null)) {
+                rearm = mOpenCut;
+            }
+
+            mOpenCut = null;
+        }
+
         stopSkipping();
 
         if (item == null || rearm == null || !Helpers.equals(rearm.videoId, item.videoId)) {
@@ -125,6 +140,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     @Override
     public void onFinish() {
         stopSkipping();
+        mCut = null; // the playback is gone: a picker of this video from a list starts it again, with its cut carried to the player
         stopFollowing();
     }
 
@@ -132,42 +148,95 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
     @Override
     public void onCutReady(String videoId, Cut cut, boolean requested) {
-        if (getPlayer() == null || !Helpers.equals(videoId, mVideo != null ? mVideo.videoId : null)) {
+        Video video = getVideo();
+
+        if (getPlayer() == null || !Helpers.equals(videoId, video != null ? video.videoId : null)) {
             return;
         }
 
-        // A cut that came ready with the video is offered; one this TV waited for is applied from the current position
-        MessageHelpers.showMessage(getContext(), getContext().getString(R.string.utubot_cut_ready,
+        String ready = getContext().getString(R.string.utubot_cut_ready,
                 cut.label != null ? cut.label : getContext().getString(R.string.utubot_cut),
-                formatLength(cut.keptMs)));
+                formatLength(cut.keptMs));
 
+        // A cut this TV waited for is applied from the current position; a cut that was already there when the video opened
+        // is offered with a one-press Apply, unless it was picked before the video opened (then it applies by itself).
         if (requested) {
-            mPendingCut = cut;
-            startPolling();
-            tryApplyPending();
+            MessageHelpers.showMessage(getContext(), ready);
+            applyReadyCut(cut);
+        } else if (!isApplied(cut) && !isQueued(cut)) {
+            if (UtubotSettings.instance(getContext()).isApplyReadyCutsEnabled()) {
+                MessageHelpers.showMessage(getContext(), ready);
+                applyReadyCut(cut);
+            } else {
+                offerReadyCut(cut, ready);
+            }
         }
     }
 
     //endregion
 
+    /**
+     * The player button opens the cut picker of the video that plays (the video menu's picker without leaving the player)
+     */
+    @Override
+    public void onButtonClicked(int buttonId, int buttonState) {
+        Video video = getVideo();
+
+        if (buttonId == R.id.action_utubot_cut && video != null) {
+            UtubotMenu.showCuts(getContext(), video);
+        }
+    }
+
     //region The picker's actions
 
     /**
-     * Applies a ready cut now (the picker's row), or takes an applied one off again
+     * Picking the applied cut turns it off; picking a ready cut in the picker of the video that plays applies it now. The picker of
+     * a video that isn't playing yet answers false: the caller starts the video with {@link #applyOnOpen(Cut)}.
+     *
+     * @return true when the picker acted on the video that plays (applied, turned off, queued for the length, or refused for a
+     *         real length mismatch); false when no player of this video is running
      */
-    public void toggle(Cut cut) {
-        if (isApplied(cut)) {
-            turnOff();
-            return;
+    public boolean toggle(Cut cut) {
+        if (!isPlayingVideo(cut)) {
+            // A picker opened from a list has no player of this video: nothing here to toggle, no length claim to make, and a cut
+            // left in memory after an earlier playback is not "applied" to anything
+            return false;
         }
 
-        if (getPlayer() == null || !UtubotCutSkipper.matchesDuration(cut, getPlayer().getDurationMs())) {
+        if (isApplied(cut)) {
+            turnOff();
+            return true;
+        }
+
+        long durationMs = getPlayer().getDurationMs();
+
+        if (durationMs <= 0) {
+            // Length not known yet: the cut waits for it, like a cut that came ready before the stream did
+            mPendingCut = cut;
+            startPolling();
+            return true;
+        }
+
+        if (!UtubotCutSkipper.matchesDuration(cut, durationMs)) {
             MessageHelpers.showLongMessage(getContext(), getContext().getString(R.string.utubot_cut_other_length));
-            return;
+            return true;
         }
 
         mPendingCut = null;
         apply(cut);
+        return true;
+    }
+
+    /**
+     * The picker was opened for a video that isn't playing (a card of a list): this cut applies once that video opens. Another
+     * video drops it; a video of another length refuses it with the plain length message.
+     */
+    public void applyOnOpen(Cut cut) {
+        if (cut == null || cut.videoId == null) {
+            return;
+        }
+
+        mOpenCut = cut;
     }
 
     /**
@@ -175,6 +244,18 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
      */
     public boolean isApplied(Cut cut) {
         return mCut != null && Helpers.equals(mCut.videoId, cut.videoId) && Helpers.equals(mCut.label, cut.label);
+    }
+
+    private boolean isPlayingVideo(Cut cut) {
+        PlaybackView player = getPlayer();
+        Video video = getVideo();
+
+        return cut != null && player != null && video != null && Helpers.equals(video.videoId, cut.videoId);
+    }
+
+    private boolean isQueued(Cut cut) {
+        return mPendingCut != null && Helpers.equals(mPendingCut.videoId, cut.videoId)
+                && Helpers.equals(mPendingCut.label, cut.label);
     }
 
     private void turnOff() {
@@ -318,6 +399,44 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         dialogPresenter.enableExpandable(false);
         dialogPresenter.setId(CUT_DIALOG_ID);
         dialogPresenter.showDialog(getContext().getString(R.string.utubot_cut_skipped, formatLength(skippedMs)));
+    }
+
+    /**
+     * "Director's cut ready: No filler, 12:40" with a one-press Apply. The announcement goes with the offer; a dialog that is
+     * already up or the suggestions leave only the plain message, since another UI must not be taken over.
+     */
+    private void offerReadyCut(Cut cut, String text) {
+        AppDialogPresenter dialogPresenter = AppDialogPresenter.instance(getContext());
+        PlaybackView player = getPlayer();
+
+        if (player == null || dialogPresenter.isDialogShown() || player.isSuggestionsShown()) {
+            MessageHelpers.showMessage(getContext(), text);
+            return;
+        }
+
+        player.showControls(false);
+
+        OptionItem apply = UiOptionItem.from(getContext().getString(R.string.utubot_cut_apply), option -> {
+            dialogPresenter.goBack();
+            applyReadyCut(cut);
+        });
+
+        dialogPresenter.appendSingleButton(apply);
+        dialogPresenter.setCloseTimeoutMs(READY_OFFER_MS);
+        dialogPresenter.enableTransparent(true);
+        dialogPresenter.enableOverlay(true);
+        dialogPresenter.enableExpandable(false);
+        dialogPresenter.setId(READY_DIALOG_ID);
+        dialogPresenter.showDialog(text);
+    }
+
+    /**
+     * Apply pressed on the announcement: the length may still be unknown, so the cut waits like any other pending one
+     */
+    private void applyReadyCut(Cut cut) {
+        mPendingCut = cut;
+        startPolling();
+        tryApplyPending();
     }
 
     /**

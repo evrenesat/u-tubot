@@ -31,6 +31,7 @@ public class UtubotSettings {
     private static final String KEY_ANSWER_IN_MENU = "answer_in_menu";
     private static final String KEY_PANEL = "summary_panel";
     private static final String KEY_AUTO_CAPTIONS = "auto_captions";
+    private static final String KEY_AUTO_CUTS = "auto_cuts";
     private static final String KEY_WAIT_MS = "wait_ms";
     private static final String KEY_PANEL_DELAY_MS = "panel_delay_ms";
     private static final String KEY_PAIR_PROMPT_DONE = "pair_prompt_done";
@@ -304,6 +305,14 @@ public class UtubotSettings {
 
     public void setAutoCaptionsEnabled(boolean enabled) {
         mPrefs.edit().putBoolean(KEY_AUTO_CAPTIONS, enabled).apply();
+    }
+
+    public boolean isApplyReadyCutsEnabled() {
+        return mPrefs.getBoolean(KEY_AUTO_CUTS, false);
+    }
+
+    public void setApplyReadyCutsEnabled(boolean enabled) {
+        mPrefs.edit().putBoolean(KEY_AUTO_CUTS, enabled).apply();
     }
 
     /**

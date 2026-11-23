@@ -2,7 +2,9 @@ package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import android.content.Context;
 
+import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
@@ -16,9 +18,11 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowToast;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -26,6 +30,7 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -88,6 +93,7 @@ public class UtubotCutControllerTest {
     @After
     public void tearDown() {
         UtubotCutSeekBar.setCut(null, null);
+        UtubotSettings.instance(mContext).setApplyReadyCutsEnabled(false);
     }
 
     @Test
@@ -162,6 +168,149 @@ public class UtubotCutControllerTest {
         assertEquals(REQUEST, mFetchedRequests.get(mFetchedRequests.size() - 1));
     }
 
+
+    /**
+     * The picker of a video that isn't playing yet (a card of a list) has no player length to compare: toggle answers false and
+     * says nothing. Before, it claimed the cut was built for a different length.
+     */
+    @Test
+    public void aPickerWithNoPlayer_doesNotClaimADifferentLength() {
+        Cut cut = cut(VIDEO);
+        cut.durationMs = 240_000;
+
+        assertFalse(mController.toggle(cut));
+        assertNull(ShadowToast.getTextOfLatestToast());
+    }
+
+    /**
+     * The picker was built for another card: the player is another video, so no length claim either
+     */
+    @Test
+    public void aPickerOfAnotherVideo_doesNotClaimADifferentLength() {
+        mController.open(video("othervideo00"), 240_000);
+
+        assertFalse(mController.toggle(cut(VIDEO)));
+        assertNull(ShadowToast.getTextOfLatestToast());
+    }
+
+    /**
+     * The length is not known yet: the cut waits for it, with no message
+     */
+    @Test
+    public void aCutPickedBeforeTheLengthIsKnown_waitsWithoutAMessage() {
+        mController.open(video(VIDEO), 0);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+
+        assertTrue(mController.toggle(cut));
+        assertNotNull(getPendingCut());
+        assertNull(ShadowToast.getTextOfLatestToast());
+    }
+
+    /**
+     * A real mismatch of the video that plays is the only case the different-length message belongs to
+     */
+    @Test
+    public void aCutOfAnotherLength_forTheVideoThatPlays_saysSo() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 200_000;
+
+        assertTrue(mController.toggle(cut));
+        assertEquals(mContext.getString(R.string.utubot_cut_other_length), ShadowToast.getTextOfLatestToast());
+    }
+
+    /**
+     * With "Apply ready cuts automatically" on, a cut that was already ready when the video opened is applied by itself
+     */
+    @Test
+    public void aReadyCut_appliesAutomaticallyWithTheSettingOn() {
+        UtubotSettings.instance(mContext).setApplyReadyCutsEnabled(true);
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+
+        mController.onCutReady(VIDEO, cut, false);
+
+        assertTrue(mController.isApplied(cut));
+        mController.onFinish();
+    }
+
+    /**
+     * A cut picked in the picker of a list is carried to the normal playback path: the video open arms it, and the length it gets
+     * later applies it
+     */
+    @Test
+    public void aCutPickedBeforeTheVideoOpens_isAppliedAsTheVideoOpens() {
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        mCutsAnswers.add(cutsEmpty());
+        mController.applyOnOpen(cut);
+        mController.open(video(VIDEO), 240_000);
+
+        mController.onNewVideo(video(VIDEO));
+        assertNotNull(getPendingCut()); // waits for the video's length, like a cut that came ready with it
+
+        mController.onVideoLoaded(video(VIDEO));
+
+        assertTrue(mController.isApplied(cut));
+        assertNull(getPendingCut());
+    }
+
+    /**
+     * The player's picker applies a ready cut and takes it off again on the same row
+     */
+    @Test
+    public void aReadyCut_pickedInThePlayer_appliesAndTurnsOff() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+
+        assertTrue(mController.toggle(cut));
+        assertTrue(mController.isApplied(cut));
+
+        assertTrue(mController.toggle(cut));
+        assertFalse(mController.isApplied(cut));
+    }
+
+    /**
+     * A finished playback leaves no applied cut: a picker of the same video from a list carries it to the reopened video instead
+     * of turning a cut off that isn't playing
+     */
+    @Test
+    public void afterAFinish_aListPickerOfThatVideo_doesNotTurnOff() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        assertTrue(mController.toggle(cut));
+
+        mController.onFinish();
+        assertFalse(mController.isApplied(cut));
+
+        mController.close();
+        assertFalse(mController.toggle(cut));
+        assertNull(ShadowToast.getTextOfLatestToast());
+    }
+
+    /**
+     * The queued cut is only for the video it was built for: another video drops it
+     */
+    @Test
+    public void aCutPickedForAnotherVideo_isDroppedOnOpen() {
+        mCutsAnswers.add(cutsEmpty());
+        mController.applyOnOpen(cut("othervideo00"));
+
+        mController.onNewVideo(video(VIDEO));
+
+        assertNull(getPendingCut());
+    }
+
     @Test
     public void aKeptPart_isOneLineWithItsTimesAndLabel() {
         CutPart part = new CutPart();
@@ -183,9 +332,62 @@ public class UtubotCutControllerTest {
     }
 
     private static final class TestCutController extends UtubotCutController {
+        private Video mVideo;
+        private PlaybackView mPlayer;
+
         void attach(Context context) {
             setAltContext(context);
         }
+
+        void open(Video video, long durationMs) {
+            mVideo = video;
+            mPlayer = player(durationMs);
+        }
+
+        void close() {
+            mVideo = null;
+            mPlayer = null;
+        }
+
+        @Override
+        public Video getVideo() {
+            return mVideo;
+        }
+
+        @Override
+        public PlaybackView getPlayer() {
+            return mPlayer;
+        }
+    }
+
+    /**
+     * A player of a known length whose engine stands initialized: the defaults answer every other call
+     */
+    private static PlaybackView player(long durationMs) {
+        return (PlaybackView) Proxy.newProxyInstance(PlaybackView.class.getClassLoader(), new Class<?>[]{PlaybackView.class},
+                (proxy, method, args) -> {
+                    if ("getDurationMs".equals(method.getName())) {
+                        return durationMs;
+                    }
+
+                    if ("isEngineInitialized".equals(method.getName())) {
+                        return true;
+                    }
+
+                    Class<?> type = method.getReturnType();
+
+                    if (type == boolean.class) {
+                        return false;
+                    } else if (type == int.class) {
+                        return 0;
+                    } else if (type == long.class) {
+                        return 0L;
+                    } else if (type == float.class) {
+                        return 0f;
+                    }
+
+                    return null;
+                });
     }
 
     private void setPendingCut(Cut cut) {
