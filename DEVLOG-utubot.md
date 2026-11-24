@@ -1,5 +1,12 @@
 # u·tubot devlog
 
+## 2026-11-24 (Firefox extension plan, issue 72)
+
+- `ai/FIREFOX_EXTENSION_PLAN.md`: the two-part plan for a Firefox extension (desktop and Android, one codebase) with parity for the
+  u·tubot features: owner decisions, the parity matrix against the TV code, architecture, the no-YouTube test approach, signing and
+  distribution, eleven checkpoints. No backend or contract change is needed; nothing is implemented yet.
+- `AGENTS.md`: the standing rule that every AI feature is specified, built and tested for the TV app and the extension.
+
 ## 2026-11-24 (Processed section review round 1)
 
 - A backend or token change drops the Processed section's browse cache and cancels a cached refresh still in flight: `BrowsePresenter`
