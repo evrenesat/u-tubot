@@ -19,6 +19,9 @@
   changes and covers both a stale summary hit and a stale scope reopen. The archive docs say "by default" beside the LRU opt-in and
   state the overshoot-keeps-with-warning case; `ai-backend/README.md` and `config.example.toml` list `eviction` and `evict_protect_s`.
   The branch merges `main` under the PR's top devlog section so the two histories keep both entries.
+- Review round 3 (CI): the backend job's 15-minute cap let a stalled Ubuntu mirror spend 14:54 downloading `ffmpeg` and ended run
+  45356658576 inside the install, before pytest. The job now has 30 minutes, skips the install when `ffmpeg` is already on the
+  runner and retries the apt download; `test_ci_config.py` pins the budget and both install guards.
 
 ## 2026-11-24 (browse cache review round 4)
 
