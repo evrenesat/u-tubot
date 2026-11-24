@@ -20,6 +20,88 @@
   state the overshoot-keeps-with-warning case; `ai-backend/README.md` and `config.example.toml` list `eviction` and `evict_protect_s`.
   The branch merges `main` under the PR's top devlog section so the two histories keep both entries.
 
+## 2026-11-24 (browse cache review round 4)
+
+- Channels multi-grid on a cached replay: only the view's first auto-selection keeps the cached uploads; every later channel the
+  user selects loads its uploads (before, a FRESH cache blocked all selections for the whole window). A failed refresh clears the
+  skip too. Tests: second channel on a fresh cache, after a failed channels refresh and after a failed uploads refresh.
+- A cached rows refresh restores the focused card of a replaced row, as grids do (`BrowsePresenterCacheTest`).
+- The cache keeps the added-Home-row metadata (type and channel id, `VideoGroup.setAddedHomeRow`); a replayed row's menus and
+  hide section use it (`findAddedHomeRowChannelId` falls back to the group). Entries carry `format_version` (now 2): an entry of
+  another version is dropped on read, so old entries aren't misread. Tests: round trip, hidden section, old-version entry.
+- PR body: the entry cap is 512 KiB, not 8 MB.
+
+## 2026-11-24 (browse cache review round 3)
+
+- A cache entry now carries the section type that made its groups: a section whose layout changed (Playlists style, History shorts
+  history, Channels old look after a restart) doesn't replay the old groups into another fragment. The entry is dropped on the read
+  (memory or disk), and a style change drops the cache of the section it changes when the entry is for another layout, so a settings
+  change while the presenter runs doesn't replay or save the old layout's groups under the new type. A cache already made for the
+  new layout stays (e.g. at the next start the sections are made as rows first). Tests: `UtubotBrowseCacheTest` for a layout change
+  in memory and on disk after a restart, `BrowsePresenterCacheTest` for Playlists style (and its cache at the next start), History
+  shorts and Channels old look.
+- A card removed, hidden or taken from a playlist while a cached refresh is still loading is kept out of that refresh's completion
+  save (the load's groups still carry it), and a cache dropped by a removed author during that refresh isn't written back by the
+  completion either. `BrowsePresenterCacheTest` drives a two-part refresh with the card removed after its first part, and an author
+  removal before the completion.
+- On a fresh cache replay of Channels with "auto load" off, the view's auto-selection no longer clears the cached uploads column:
+  the replay keeps both columns there too (`BrowsePresenterCacheTest`).
+- Docs: `docs/development.md` ("Checking the browse cache") and `ai/APP_INTEGRATION.md` state the layout check and the refresh-save
+  filtering.
+
+## 2026-11-24 (browse cache review round 2)
+
+- A cached refresh that completes after the view is gone, or after the cached rows are dropped (an account change), no longer
+  removes stale rows through a null view or list: the removal is skipped, so completion keeps the cards (or the cache) instead of
+  crashing. An account or locale change also disposes an in-flight cached refresh, so it can't save the old account's or locale's
+  rows after the cache is cleared. Tests complete a refresh with null cached rows, with the view gone, and after an account change.
+- The channel-uploads multi-grid honours a fresh cache: its replayed channels auto-select a channel (see `ModernChannelsView`), but
+  the presenter keeps the replayed uploads and makes no uploads request; only a stale background refresh loads the uploads after
+  its channels. A failed uploads refresh shows the cached uploads column again (the channels' arrival had cleared the view's
+  column), and the failed attempt isn't retried within the refresh window. Tests drive both columns with a fake uploads presenter.
+- A card removed with Hide, Not interested or a playlist removal is taken out of the section's cache at once, so the next focus in
+  the window doesn't replay it; removing an author's cards drops the section's cache because it can't patch every row. Test: the
+  hidden card is gone from the replayed group and from the cache.
+- `BrowsePresenterCacheTest` grew from 6 to 12 tests for these paths; docs: `docs/development.md` ("Checking the browse cache").
+
+## 2026-11-24 (browse cache review round 1)
+
+- A section that emits its rows in parts (Music: `Liked music`, then the music rows; Playlists: one per playlist) now keeps every
+  part in one cache write at `onComplete`: the cache of the whole section is built from all the emission's rows, not replaced per
+  part. Stale cached rows are taken out only after every part arrived, so a part that hasn't come yet keeps its replayed rows. A
+  failed later part leaves the last whole cache and keeps `mCachedContentShown` set, so the cached cards stay on screen with no
+  error page; the flag is cleared only once the whole load completes (not on a multi-grid's first column, which would turn off the
+  cached uploads column). `BrowsePresenterCacheTest` drives two-emission sections through these cases with a fake view.
+- The cache entry cap is 512 KiB (was 8 MiB): the JSON is parsed and written on the thread that shows or saves the section, so the
+  cap bounds that stall. A larger entry is discarded (`UtubotBrowseCacheTest`). Cached rows have no page key (they come from cards
+  alone): scrolling past replayed cards waits for the background refresh; a loaded row continues as before (stated in
+  `docs/development.md` and asserted in `UtubotBrowseCacheTest`).
+
+## 2026-11-23 (browse sections: stale-while-revalidate, issue 65)
+
+- Every browse section now shows its last loaded content at once: `UtubotBrowseCache` keeps the emitted rows in memory and as
+  per-section JSON under `files/utubot_browse`, keyed by the locale and the selected account. On focus `BrowsePresenter` replays
+  them without a progress bar, then refreshes in the background only when the named setting "Browse refresh" (5, 10, 20, 30 or
+  60 minutes, 10 by default) has passed. "Refresh section" and `refresh()` stay manual network loads.
+- A cached-content refresh updates in place: rows reuse the old ids (matched by title and position) so a shelf replaces itself,
+  rows that are gone are removed, a grid restores the card that had the focus, and a failed refresh keeps the cached cards and
+  shows no error page. A row's next page replaces its stored copy (`append`), so scrolling also extends the cache.
+- Account changes clear the cache (`onAccountChanged`), locale changes clear it in `onViewInitialized`, and the stored identity
+  makes a cache from another locale or account unreadable. The channel-uploads multi-grid keeps its two columns by merging
+  groups by position; local grids (queue, blocked channels) stay out because they are already instant and never load YouTube.
+  The cache is kept out entirely in flavors without it (`UtubotSettings.isBuiltIn()`): the multi-grid column save checks
+  `mBrowseCache == null` too, so the channel-uploads load in Electric Eel/SmartTube has no null dereference.
+  Unit tests: `UtubotBrowseCacheTest` (policy boundary, disk restart, identity/invalidation, next page, card fields),
+  `BrowseCachePolicyTest`, and the settings test for `Browse refresh`.
+- Emulator walk on this host: AVD `tv` in a network namespace with only loopback, `0.json` seeded as the fake last Home content in
+  `files/utubot_browse` (identity `en_US|`, `loaded_at_ms` of the run). Home, opened through `HomeLauncherActivity`, logged
+  `Show cached section Home` at 19:45:38.678 and the `uiautomator` dump showed the four cached cards (`Cached card one` to
+  `four`); the BrowsePresenter log had no `loadRowsHeader`/`updateRowsHeader` for Home. Music, opened next through
+  `MusicLauncherActivity`, loaded YouTube and failed with `UnknownHostException` in `getLikedMusicTV` at 19:46:08.733 (its stack
+  printed after the next focus). Home focused again at 19:46:07.830: `Show cached section Home`, again no Home load, and the dump
+  had the four cards. The fake thumbnail URLs failed in Glide too, so this check covers the rows' replay, not images or a live
+  YouTube run.
+
 ## 2026-11-24 (CI app job: Robolectric no longer downloads at test time)
 
 - Every Robolectric test class failed in CI since 23 Nov at `MavenArtifactFetcher` (an `IOException` while Robolectric fetched its

@@ -1,5 +1,6 @@
 package com.liskovsoft.smartyoutubetv2.common.app.models.data;
 
+import androidx.annotation.Nullable;
 import com.liskovsoft.mediaserviceinterfaces.data.ChapterItem;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItem;
@@ -74,6 +75,7 @@ public class VideoGroup {
     private boolean mIsChannelRow; // every item is a channel (see MediaGroup.isChannelRow), kept by the pages added later
     private boolean mIsSearchTopicRow; // every item is a topic that opens a search (see MediaGroup.isSearchTopicRow), kept by the pages added later
     private int mAddedHomeRowType = -1; // a row added to Home (see HomeRowsData.Row.type), kept by the pages added later
+    private String mAddedHomeRowChannelId; // the channel of the row of a channel added to Home, which its cards don't name
     private int mHiddenFromSection = MediaGroup.TYPE_UNDEFINED; // a row of the Unhide section: where its videos were hidden from
     public boolean isQueue;
 
@@ -168,6 +170,7 @@ public class VideoGroup {
         videoGroup.mIsChannelRow = mediaGroup.isChannelRow();
         videoGroup.mIsSearchTopicRow = mediaGroup.isSearchTopicRow();
         videoGroup.mAddedHomeRowType = addedHomeRow != null ? addedHomeRow.type : -1;
+        videoGroup.mAddedHomeRowChannelId = addedHomeRow != null && addedHomeRow.type == Row.TYPE_CHANNEL ? addedHomeRow.channelId : null;
         // E.g. the watched videos of Hide watched videos from Home
         videoGroup.mHiddenVideoCount = mediaGroup.getFilteredVideoCount();
 
@@ -781,6 +784,23 @@ public class VideoGroup {
         }
 
         return ChannelGroupFilter.isHidden(GlobalPreferences.context(), area, video.channelId, video.getAuthor());
+    }
+
+    public int getAddedHomeRowType() {
+        return mAddedHomeRowType;
+    }
+
+    @Nullable
+    public String getAddedHomeRowChannelId() {
+        return mAddedHomeRowChannelId;
+    }
+
+    /**
+     * Restores what a row added to Home had when it was made (the cached rows)
+     */
+    public void setAddedHomeRow(int type, @Nullable String channelId) {
+        mAddedHomeRowType = type;
+        mAddedHomeRowChannelId = channelId;
     }
 
     /**
