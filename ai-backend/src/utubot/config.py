@@ -72,7 +72,7 @@ class LLMConfig(BaseModel):
     glance: GlanceTask | None = None
     answer: LLMTask = LLMTask(model="worker", max_tokens=600)
     analysis: LLMTask = LLMTask(model="worker", max_tokens=900)
-    captions: LLMTask = LLMTask(model="worker", max_tokens=2000)
+    captions: LLMTask = LLMTask(model="worker", reasoning_effort="none", max_tokens=2000)
     smart: LLMTask = LLMTask(model="smart", max_tokens=1500)
     cuts: LLMTask | None = None
     cuts_vision: LLMTask | None = None

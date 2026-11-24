@@ -47,7 +47,8 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
    `ref_min_anchor_share` (0.2) of the reference, or another script than the engine's, the check is skipped. It changes no times: regions on
    real videos are the evidence for ever building a time warp.
 7. **Proofreading.** The LLM (`[llm.captions]`) fixes punctuation, capitalisation, names and terms, using the video's title and
-   description as context ([below](#proofreading)).
+   description as context ([below](#proofreading)). When the track will be translated, the source pass is skipped (`proofread`
+   skipped with reason `translated`): the translated text is proofread instead.
 8. **Translation.** The job targets English by default (`[captions] translate_to`, "en"): a track in another language is translated
    ([below](#translation)), so the result is English captions whatever the source language. A track already in the target language is
    kept as it is.
@@ -150,14 +151,17 @@ own words' times, otherwise each cut goes to the widest pause within `split_sear
 the stored cues never break the limits and a pause between pieces shows no cue. Only a cue without words (a caption fill cue) is cut by
 character count; the stage reports `split_by_chars`. A failing LLM never fails the job: those batches
 keep their text and the stage warns. Corrected batches are cached per video, so a retried job does not pay twice.
+A job that will be translated skips this pass on the source text (`proofread` skipped with reason `translated`); the
+translated text is proofread after translation, so only one pass is paid.
 
 ## Translation
 
 The goal is high-quality English captions for every requested video, whatever its source language (owner, 2026-11-13). The default
 translation target is English: `[captions] translate_to` is `"en"`, the API leaves `translate_to` unset by default, and the TV app's
 "prepare captions" request resolves to the same default. A track whose language differs is translated by the LLM (`translate_batch`, 40,
-cues at a time; a batch the LLM answers with the wrong number of strings is retried once with the exact count, then split in halves down to single cues, and a cue that still fails keeps its source text, flagged `warn` in the job details; the job fails only when more than `translate_max_untranslated_share`, 0.1, of the cues stay untranslated) and — so the quality bar holds for the English output — the translated text is proofread again with the title and
-description as context. A translated cue keeps the source cue's start, end and words; translated text that does not fit the line
+cues at a time; a batch the LLM answers with the wrong number of strings is retried once with the exact count, then split in halves down to single cues, and a cue that still fails keeps its source text, flagged `warn` in the job details; the job fails only when more than `translate_max_untranslated_share`, 0.1, of the cues stay untranslated) and — so the quality bar holds for the English output — the translated text is proofread with the title and
+description as context. The source text is not proofread first: with `[llm.captions]` `reasoning_effort` defaulting to `"none"`, a
+pass over token-heavy scripts would otherwise spend the answer budget and time without improving the output. A translated cue keeps the source cue's start, end and words; translated text that does not fit the line
 limits is split over the source words' boundaries the same way (proportionally, at the widest pause), never as one over-long line. Same-language captions stay available: pass `translate_to: "off"` (or "none") explicitly, or set
 `[captions] translate_to` to `"off"` to make that the default.
 

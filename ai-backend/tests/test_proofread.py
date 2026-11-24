@@ -132,6 +132,14 @@ async def test_proofread_skips_when_off(mock_llm):
     assert not mock_llm.calls
 
 
+async def test_proofread_skips_when_asked(mock_llm):
+    out = await proofreader(mock_llm).polish(
+        VID, cues("one"), "English", CONTEXT, skip_reason="translated"
+    )
+    assert [cue.lines for cue in out] == [["one"]]
+    assert not mock_llm.calls
+
+
 async def test_proofread_uses_the_stage_cache(mock_llm):
     cache = StageCache(Database(":memory:"))
     respond_with_cues(mock_llm, ["Fixed text."])

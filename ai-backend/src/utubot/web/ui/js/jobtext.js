@@ -78,6 +78,7 @@ const REASONS = {
   engine_unavailable: "engine still starting up",
   engines_unavailable: "no speech engine available",
   no_llm: "no LLM model configured",
+  translated: "the translated text is proofread instead",
   unavailable: "no output",
 };
 const TRACKS = {

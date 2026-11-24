@@ -154,9 +154,10 @@ model = "llama3.1:8b"
 # fallback = ["openrouter:openai/gpt-4o-mini"]
 max_tokens = 900
 
-[llm.captions]              # optional caption translation
+[llm.captions]              # optional caption translation and proofreading
 model = "llama3.1:8b"
 # fallback = ["openrouter:openai/gpt-4o-mini"]
+reasoning_effort = "none"   # proofreading and translation are JSON over many short strings
 max_tokens = 2000
 
 # Director's cuts (skip timelines picked by a model) need an explicit alias here — there is no

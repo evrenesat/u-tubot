@@ -78,7 +78,8 @@ case).
 `reserved_interactive`, `json_mode`; per-task tables `[llm.triage]`, `[llm.summary]`, `[llm.glance]` (optional), `[llm.answer]`, `[llm.analysis]`, `[llm.captions]`, each with
 `model`, optional `provider`, `fallback`, `reasoning_effort`, `max_tokens`, `temperature`. `[llm.glance]` runs the short side-panel
 summary; when absent the glance uses `[llm.summary]` with `reasoning_effort = "none"`, and when present `reasoning_effort` defaults
-to `"none"` and `max_tokens` to 160. `[llm.cuts]` (optional) is the model that builds director's cuts — an explicit alias, no
+to `"none"` and `max_tokens` to 160. `[llm.captions]` also defaults to `reasoning_effort = "none"`: proofreading and
+translation are JSON over many short strings. `[llm.cuts]` (optional) is the model that builds director's cuts — an explicit alias, no
 default; without the table every cuts route reports "not configured". `[llm.cuts_vision]` (optional) is the vision model for
 Watched mode; without it Watched is unavailable, Quick still works, and every fallback in this table must name the same provider
 because the grids never go elsewhere. Pick the cuts model with the offline test set (`uv run python scripts/cut_bench.py`,
@@ -369,8 +370,7 @@ squeezed, out of order — and the number of silences used; `warn` when the engi
 (count, longest line), `align` (`mode` `silence`: boundaries moved to silences; `words`: cues built from word times, with the speech and
 fill cue counts, `fill_from_words` (fill cues built from YouTube's word times) and `merged_short` (cues under `min_cue_s` joined to a neighbour); `captions_timing`: skipped, the caption cues kept as they are (no words, or estimated word times); `merge`: the legacy rule),
 `sync_score` (after `align`: `speech_overlap`, `starts_in_silence`, `silence_share` of the finished cues against the audio, and `char_timed_cues`: cues whose times were shared over their text by character count, not taken from words), `proofread` (corrected
-cues and how overflowing text was split: `split_exact`, `split_at_pause`, `split_by_chars` (no word times, so the time is by character count), `overlong`; or skipped: off, no LLM; per-batch warnings hang under it as `proofread_batch`; runs once on the source text and once again on
-translated text, so the English output is proofread too), `text`, `translate` (the source and target language, `batches`, `retried`, `split`, `untranslated` (a batch with the wrong number of strings is retried once, then split in halves; a cue that still fails keeps its source text and the stage is `warn`; the job fails only above `translate_max_untranslated_share`), and the same split counts for translated text that does not fit a cue; skipped when the track
+cues and how overflowing text was split: `split_exact`, `split_at_pause`, `split_by_chars` (no word times, so the time is by character count), `overlong`; or skipped: off, no LLM, or `translated` when the source pass is skipped because the translated text is proofread instead; per-batch warnings hang under it as `proofread_batch`; a translated track is proofread after translation, so the English output is proofread too), `text`, `translate` (the source and target language, `batches`, `retried`, `split`, `untranslated` (a batch with the wrong number of strings is retried once, then split in halves; a cue that still fails keeps its source text and the stage is `warn`; the job fails only above `translate_max_untranslated_share`), and the same split counts for translated text that does not fit a cue; skipped when the track
 already is in the target language), `stored` (what was saved and
 how big), `retry`, `finished`, `failed` (cause class, human message, stage) and `delivered`. A `delivered` row is added by the routes clients use (`GET /v1/videos/ID/captions`, the
 `.vtt`, `GET /v1/videos/ID/transcript`, summary, insight and ask built from a transcript the audio made); the same client fetching the
