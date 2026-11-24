@@ -139,6 +139,10 @@ again. `adb logcat -s BrowsePresenter` must show `Show cached section Home` on b
 `loadRowsHeader: Start loading section: Home`. The cards' thumbnail URLs may fail in that namespace; that is not the section's load.
 This exercises a saved cache, not a live YouTube run.
 
+A cached row comes from cards alone, without the page key of its row, so scrolling past the replayed cards waits for the background
+refresh; a loaded row continues as before. A cache entry above 512 KiB isn't kept: the JSON is parsed and written on the section's
+thread, so the cap bounds that work.
+
 ```sh
 $NS adb -P 5038 -s emulator-5554 shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.launchers.HomeLauncherActivity
 $NS adb -P 5038 -s emulator-5554 shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.launchers.MusicLauncherActivity

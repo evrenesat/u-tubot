@@ -1,5 +1,18 @@
 # u·tubot devlog
 
+## 2026-11-24 (browse cache review round 1)
+
+- A section that emits its rows in parts (Music: `Liked music`, then the music rows; Playlists: one per playlist) now keeps every
+  part in one cache write at `onComplete`: the cache of the whole section is built from all the emission's rows, not replaced per
+  part. Stale cached rows are taken out only after every part arrived, so a part that hasn't come yet keeps its replayed rows. A
+  failed later part leaves the last whole cache and keeps `mCachedContentShown` set, so the cached cards stay on screen with no
+  error page; the flag is cleared only once the whole load completes (not on a multi-grid's first column, which would turn off the
+  cached uploads column). `BrowsePresenterCacheTest` drives two-emission sections through these cases with a fake view.
+- The cache entry cap is 512 KiB (was 8 MiB): the JSON is parsed and written on the thread that shows or saves the section, so the
+  cap bounds that stall. A larger entry is discarded (`UtubotBrowseCacheTest`). Cached rows have no page key (they come from cards
+  alone): scrolling past replayed cards waits for the background refresh; a loaded row continues as before (stated in
+  `docs/development.md` and asserted in `UtubotBrowseCacheTest`).
+
 ## 2026-11-23 (browse sections: stale-while-revalidate, issue 65)
 
 - Every browse section now shows its last loaded content at once: `UtubotBrowseCache` keeps the emitted rows in memory and as

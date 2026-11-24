@@ -248,6 +248,45 @@ public class UtubotBrowseCacheTest {
     }
 
     @Test
+    public void anEntryAboveTheCapIsDiscarded() {
+        UtubotBrowseCache cache = new UtubotBrowseCache(mRoot);
+        BrowseSection section = section();
+        List<Video> videos = new ArrayList<>();
+
+        for (int i = 0; i < 150; i++) {
+            Video video = video("v" + i);
+            video.description = text(4_096);
+            videos.add(video);
+        }
+
+        VideoGroup group = VideoGroup.from(videos, section, -1);
+        group.setId(1_000);
+        group.setTitle("Home");
+
+        cache.save(section, Collections.singletonList(group), IDENTITY, 1_000_000);
+
+        assertNull(cache.groups(section, IDENTITY));
+        assertEquals(0, cache.count());
+        assertFalse(new File(mRoot, section.getId() + ".json").exists());
+    }
+
+    /**
+     * The cards of the cache come without the page key of their row: scrolling past them waits for the background refresh.
+     */
+    @Test
+    public void cachedGroupsHaveNoPageToContinue() {
+        UtubotBrowseCache cache = new UtubotBrowseCache(mRoot);
+        BrowseSection section = section();
+
+        cache.save(section, Collections.singletonList(group(section, "Home", -1, "aaa", "bbb")), IDENTITY, 1_000_000);
+
+        VideoGroup restored = cache.groups(section, IDENTITY).get(0);
+
+        assertNull(restored.getMediaGroup());
+        assertNull(restored.getNextPageKey());
+    }
+
+    @Test
     public void theCacheIsEmptyBeforeAnythingWasLoaded() {
         UtubotBrowseCache cache = new UtubotBrowseCache(mRoot);
         BrowseSection section = section();
@@ -284,6 +323,16 @@ public class UtubotBrowseCacheTest {
         video.badge = "1:00";
 
         return video;
+    }
+
+    private static String text(int length) {
+        StringBuilder text = new StringBuilder(length);
+
+        for (int i = 0; i < length; i++) {
+            text.append((char) ('a' + i % 26));
+        }
+
+        return text.toString();
     }
 
     private static void clear(File root) {
