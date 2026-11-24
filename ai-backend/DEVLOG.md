@@ -254,6 +254,39 @@
 - Verified `uv run pytest -q` 1048 passed and ruff check/format clean. The TV's Processed
   section is a later step.
 
+## 2026-11-24 (director's cuts review r0: units, guards, bench and player)
+
+1. `finalize_parts` padded every part before merging gaps and dropping short parts: padding
+   could shrink a dropped gap under `merge_gap_s` and pull its boring material back into a
+   kept part, and could lengthen a model part under `min_part_s` into a keeper. Merge and
+   short-drop now run on the model's own boundaries first, then the kept boundaries are padded.
+   Tests: a 2.5 s gap stays two parts; a 3.5 s part stays dropped.
+2. The 10 % `min_keep_frac` guard now refuses only the broad `cut-no-filler` preset. A targeted
+   "Just the answer", "Only the demo" or owner prompt may legitimately be a short part of a
+   long video; every preset except highlights still refuses `max_keep_frac` (a near-whole video
+   is not a cut). `keep_guards(preset_id)` feeds the build and the bench; tests cover the helper
+   and a short targeted cut.
+3. Auto-caption rolling windows repeated the tail of the previous fragment in the next one, so
+   `build_units` carried duplicated words into the model prompt. Only the repeated run is
+   dropped, like `parse_json3_words`; a repeated line after a pause stays. A sentence closed by
+   a quote or bracket (`"Done."`, `(That was it.)`) now also ends a unit. Tests cover both.
+4. The bench dropped the fixture descriptions' chapters from the model message and gave a bad
+   unit-range answer no repair round (it failed it at once; a second unparsable answer crashed
+   the scorer). It now sends chapters, sends the engine's repair round for bad ids, records a
+   still-bad answer as a format error, and uses the same preset keep guards as the build.
+5. The highlights preset now names what makes a highlight (demos, tests, results, reveals,
+   conclusions) and what to skip (intros, sponsor reads, asks, recaps, setup chatter, outros),
+   instead of only "the most interesting minutes"; a test checks the words.
+6. Bench numbers, offline reference model (hand-marked spans mapped to units, no LLM, so these
+   measure the engine, not a real alias): before keep 0.9333, skip 0.9333, score +0.9333,
+   1 refusal, 49.43 s mean kept, 1.27 parts; after keep 1.000, skip 1.000, score +1.000,
+   0 refusals, 50.35 s mean kept, 1.33 parts. The refused cell was `bench-router`
+   `just-the-answer` ("would remove almost everything"); now it is one 13.92 s part. Live alias
+   scores from 2026-11-20 (`fast`: keep 1.000, skip 0.932, excess 0.083, score +0.849) were not
+   rerun: agents never call a cloud LLM, so trying `low`/`medium` reasoning stays an owner bench
+   run. `reasoning_effort = "none"` and `max_tokens = 2500` are unchanged for the same reason.
+   A description is used as chapters, not as free text; the chapters now reach the bench too.
+
 ## 2026-11-21 (director's cuts checkpoint 4 review round 1)
 
 1. `save_set` refuses the reserved `cut-presets` prompt-set id unless `from_cut_store` (the

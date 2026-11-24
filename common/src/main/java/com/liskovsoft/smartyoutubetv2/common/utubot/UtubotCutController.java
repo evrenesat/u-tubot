@@ -571,7 +571,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     }
 
     /**
-     * "Skipped 1:20" with a Back that returns to the skipped part, for a moment. Nothing extra while another dialog is up.
+     * "Skipped 1:20" with a Back that returns to the skipped part, for a moment. The last drop of a cut that ends before the video
+     * end says "End of cut" instead, with the same back as "Watch the rest". Nothing extra while another dialog is up.
      */
     private void showSkippedToast(long skippedFromMs, long skippedMs) {
         AppDialogPresenter dialogPresenter = AppDialogPresenter.instance(getContext());

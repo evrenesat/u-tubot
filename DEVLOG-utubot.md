@@ -202,6 +202,18 @@
   `UtubotUpdateCheckerTest`.
 - Parity: the browser extension has no update UI of its own (the browser updates it), so there is no extension row for this feature.
 - Verified with JDK 25: `:common:testStutubotDebugUnitTest` (1646 tests, 0 failures, 0 errors, 7 skipped), `:smarttubetv:assembleStutubotDebug`.
+## 2026-11-24 (director's cuts review round 0: the player)
+
+- A short forward seek that landed just inside a dropped range was treated as the playback
+  crossing into it and skipped (the skipper's 5 s flow window); `UtubotCutSkipper.onSeek` now
+  lands and plays where the user sought, while the next tick still skips a later crossing.
+  `UtubotCutController.onSeekEnd` calls it. Tests: a 2.4 s seek into a drop plays, a seek just
+  before a drop still skips on the crossing.
+- The last dropped range of a cut (kept parts end before the video end) announced another
+  middle skip; the jump that ends the cut now says "End of cut" with a "Watch the rest" back,
+  so the end is visible instead of looking like playing on. `isCutEnd` is unit-tested.
+- Backend side of the round (unit cleanup, preset guards, bench, highlights prompt) is in
+  `ai-backend/DEVLOG.md`.
 
 ## 2026-11-24 (browse cache review round 4)
 
