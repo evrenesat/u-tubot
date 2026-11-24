@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "u·tubot",
+  "description": "u·tubot on YouTube in the browser: summary of the playing video, HQ captions and director's cuts, paired with your own u·tubot server.",
+  "version": "0.1.0",
+  "default_locale": "en",
+  "icons": {
+    "48": "assets/icons/icon-48.png",
+    "96": "assets/icons/icon-96.png",
+    "128": "assets/icons/icon-128.png"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://127.0.0.2/*",
+    "http://127.0.0.3/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*",
+    "https://www.youtube.com/*",
+    "https://m.youtube.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "u·tubot",
+    "default_icon": {
+      "48": "assets/icons/icon-48.png",
+      "96": "assets/icons/icon-96.png",
+      "128": "assets/icons/icon-128.png"
+    }
+  },
+  "minimum_chrome_version": "121",
+  "background": {
+    "service_worker": "background.js"
+  }
+}

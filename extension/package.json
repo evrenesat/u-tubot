@@ -1,0 +1,24 @@
+{
+  "name": "utubot-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:firefox-unlisted": "node build.mjs --variant firefox-unlisted",
+    "build:firefox-listed": "node build.mjs --variant firefox-listed",
+    "build:firefox-test": "node build.mjs --variant firefox-test",
+    "build:chromium": "node build.mjs --variant chromium",
+    "build:chromium-test": "node build.mjs --variant chromium-test",
+    "lint": "eslint .",
+    "test": "node --test tests/unit/*.test.js",
+    "web-ext-lint": "web-ext lint --source-dir dist/firefox-unlisted --ignore-files dist/** tests/**"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "eslint": "10.15.0",
+    "web-ext": "10.8.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
