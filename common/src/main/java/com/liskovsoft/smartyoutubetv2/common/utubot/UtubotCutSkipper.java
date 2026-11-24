@@ -106,6 +106,17 @@ public final class UtubotCutSkipper {
     }
 
     /**
+     * A seek the user made: it wins and plays wherever it landed, even a short forward seek that lands just inside a drop. The next
+     * step compares against the landed position, so a later crossing of a drop is still skipped. Applying a cut is not a seek (see
+     * {@link #onAppliedAt(long)}).
+     */
+    public Decision onSeek(long positionMs) {
+        mLastPositionMs = positionMs;
+
+        return Decision.play();
+    }
+
+    /**
      * The moment a cut is applied: an explicit act, not a seek. When the playback is already inside a dropped range — an intro drop
      * the video plays in, or a cut picked up mid-drop — it jumps once to the end of the drop, with the usual one-jump extension.
      * A drop that starts at 0 cannot be crossed by the flowing playback at all, so this is the only way it is ever skipped.

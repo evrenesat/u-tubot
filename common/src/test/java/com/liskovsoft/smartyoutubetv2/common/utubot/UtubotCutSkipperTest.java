@@ -107,6 +107,23 @@ public class UtubotCutSkipperTest {
     }
 
     @Test
+    public void aShortForwardSeek_intoADrop_winsAndPlays() {
+        mSkipper.onPosition(58_000, 1f);
+
+        // a 2.4 s forward seek is under the seek threshold, but it is still the user's seek and it lands inside the drop
+        assertFalse(mSkipper.onSeek(60_400).isJump());
+        assertFalse(mSkipper.onPosition(61_400, 1f).isJump());
+    }
+
+    @Test
+    public void aSeekToJustBeforeADrop_thenPlayingThrough_withTheSeekEntry_skips() {
+        mSkipper.onPosition(20_000, 1f);
+        assertFalse(mSkipper.onSeek(58_000).isJump());
+
+        assertTrue(mSkipper.onPosition(60_100, 1f).isJump());
+    }
+
+    @Test
     public void aBackwardsMove_playsWhereItLanded() {
         mSkipper.onPosition(120_000, 1f);
 

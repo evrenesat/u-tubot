@@ -148,9 +148,9 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
     @Override
     public void onSeekEnd() {
-        // A seek of the user is where the playback starts from: not a crossing into a drop
+        // A seek of the user is where the playback starts from: not a crossing into a drop, even when it lands a moment inside one
         if (mSkipper != null && getPlayer() != null) {
-            mSkipper.onPosition(getPlayer().getPositionMs(), getSpeed());
+            mSkipper.onSeek(getPlayer().getPositionMs());
         }
     }
 
