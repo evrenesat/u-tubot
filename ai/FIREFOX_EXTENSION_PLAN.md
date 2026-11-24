@@ -1,6 +1,6 @@
 # u·tubot Firefox extension: implementation plan (issue #72)
 
-Status: draft for owner approval, revised after two plan reviews (section 14). Nothing is implemented until Part 1's
+Status: plan review approved; waiting for the owner's decisions (Part 1). Review history: section 14. Nothing is implemented until Part 1's
 decisions are answered.
 Scope: one extension for desktop Firefox and Firefox for Android that brings the u·tubot features of the TV app to
 `www.youtube.com` and `m.youtube.com`, talking to the same backend over the same contract (`ai/CONTRACT.md`).
@@ -42,7 +42,7 @@ computer and on the phone. Same server, same account rules, same wording for ser
 | D1 | How people get the extension | **A signed file kept in this repository (its own branch, not the Releases page, not the add-on store); a new version only when we raise the version number; store listing later** | Available the day it is built, no store review to wait for, low-profile while we learn how often YouTube's page changes break it. It stays off the Releases page on purpose: the TV app and the server read that page to find APK updates, and extension entries would crowd the APKs out. Cost: on the phone the install is a few extra taps through a hidden Firefox menu, and automatic updates on the phone are not confirmed yet (see Risks). Listing in the store later fixes both and is a separate, public step you confirm then. |
 | D2 | Manifest version | **Manifest V3** (no service worker, Firefox's event page) | The issue asks for V3 where Firefox supports it. Firefox supports it on both platforms. Mozilla's Android guide still says V2 is the safer choice, so an early checkpoint proves V3 on an Android emulator before the features are built; the code avoids V3-only features so a fallback to V2 would be a small manifest change. |
 | D3 | Oldest Firefox supported | **Firefox 140 on the computer, 142 on Android** | These are the first versions with Firefox's built-in "this extension sends data" consent screen, which new extensions must use. Older versions would need our own consent screen. |
-| D4 | A Mozilla add-on developer account and its signing keys | **You create the account, add two repository secrets and switch releases on with one repository variable** | Signing is required even for a file we host ourselves. Only you can create the account; the keys live only in repository secrets, never in the tree. Until you switch it on, nothing tries to release. |
+| D4 | A Mozilla add-on developer account and its signing keys | **You create the account, add two repository secrets, make the parity check a required check for `main`, and switch releases on with one repository variable** | Signing is required even for a file we host ourselves. Only you can create the account; the keys live only in repository secrets, never in the tree. Until you switch it on, nothing tries to release. |
 | D5 | The extension's permanent ID | **`extension@utubot.dev`** | It can never change after the first signed version (an update with another ID installs as a second extension). It matches the app's `dev.utubot.tv`. |
 | D6 | Plain-http servers | **Allowed for private addresses only** (home network, VPN), as in the TV app | A home server without a certificate keeps working. A public address must be https. |
 | D7 | The standing rule | **In force now, with a transition** (this pull request adds it to `AGENTS.md`, the pull request checklist and the contract) | Every AI feature is planned, built and tested for the TV app and the extension, or the contract says why one side cannot have it. Until the extension is usable (checkpoint 15), a new AI feature only has to add its row to this plan's matrix. |
@@ -352,6 +352,15 @@ extension/
   tests still catch that mistake. "Don't allow" cannot happen with this preference; the refusal paths are unit tests with
   `permissions.request` stubbed to answer false (checkpoint 4), and the real doorhanger with both answers is exercised by hand
   in the recorded runs of checkpoint 5. No browser-chrome automation is used.
+  Two assumptions carry this, each with its fallback, decided now:
+  - *The auto-grant preference still enforces the user-action rule.* If checkpoint 4 finds that a request after an `await` is
+    granted with the preference on, that one case becomes a unit test (the request helper refuses to run when not called
+    synchronously from a handler, checked with a stub) and the real rejection is added to checkpoint 5's recorded runs.
+  - *A WebDriver click counts as a user action for `permissions.request`.* If checkpoint 4 finds it does not, the permission
+    cases keep their e2e form for everything after the grant by seeding the grant through a test-variant-only page button
+    wired to the same handler, and the click-to-prompt path itself is checked in checkpoint 5's recorded runs (Android and
+    desktop) and again by the owner in checkpoint 17.
+  Either outcome is recorded in this section when it is found.
 - **The guard, fully specified:**
   - `tests/e2e/refusing_proxy.py`: a stdlib Python HTTP and CONNECT proxy on a loopback port that answers every request with 502
     and records method and host. It is the only proxy; exactly `127.0.0.1`, `127.0.0.2` and `127.0.0.3` are exempt (`network.proxy.no_proxies_on`,
@@ -373,8 +382,10 @@ extension/
   - Network namespace: **always for local and agent runs** (`tests/e2e/run-offline.sh` starts the suite in a namespace with
     loopback only, as the emulator recipe in `docs/development.md`), **not in CI** (hosted runners; the proxy guard and the
     preference file are the CI guard).
-- The Android emulator runs (checkpoints 5 and 15) use a namespace with no route out and `adb reverse` to the mock and fixture
-  servers.
+- The Android emulator runs (checkpoints 5 and 15) use a namespace with no route out. The fixture pages are reached as
+  `127.0.0.1` through `adb reverse` (the test variant's required origin). The backend is reached as `10.0.2.2:<port>`, the
+  emulator's alias of the host's loopback, so the mock also listens on `127.0.0.1` in that namespace; `10.0.2.2` is in no
+  manifest, so Import setup shows the real permission prompt. The backend is never typed as `127.0.0.1` there.
 - The real-YouTube check is the owner's own use of a released build. Agents never do it.
 
 ## 7. Test approach
@@ -426,7 +437,8 @@ extension/
 - **Release wiring** (one path, named):
   - `utubot-ci.yml`, job `changes`: new outputs `extension` (extension files changed) and `extension_release` (push to `main`,
     and the version in `extension/version` has no `utubot-ext-v<version>` tag).
-  - `utubot-ci.yml`, new job `extension-release`: needs `changes` and `extension`; runs only in this repository, on a push, when
+  - `utubot-ci.yml`, new job `extension-release`: `needs: [changes, backend, extension]` (it reads all three results; `!cancelled()` in its
+    condition, as the APK `release` job, so a skipped `backend` does not skip it); runs only in this repository, on a push, when
     `extension_release` is true, `extension` succeeded, `backend` succeeded or was skipped, and the repository variable
     `UTUBOT_EXTENSION_RELEASES` is `on`; its one step is
     `gh workflow run utubot-extension-release.yml --ref main --field sha=$GITHUB_SHA`. The variable is unset until the owner
@@ -441,14 +453,19 @@ extension/
     2. Guards: the commit is on `main`; the version's tag does not exist; the version is higher than every existing
        `utubot-ext-v*` tag; CI is green for the commit by the same rule as the APK workflow's `ci_green` (a completed
        successful `u-tubot CI` run on `main` for the commit, or, for the run that dispatched this workflow, an in-progress run
-       whose `extension` job succeeded and whose `backend` job succeeded or was skipped). The function is copied from
-       `utubot-release.yml` with the job names changed, not redesigned. A failed guard fails this run with its reason.
+       whose `extension` job succeeded and whose `backend` job succeeded or was skipped). The rule is not a shell function in
+       the workflow: it is the command `ci-green` of `scripts/utubot_ci_changes.py`, a pure function over the runs and jobs
+       JSON that the workflow fetches with `gh api` and passes in, unit-tested in `ai-backend/tests/test_ci_changes.py`. The
+       APK workflow keeps its own function unchanged. A failed guard fails this run with its reason.
     3. Build, lint, unit tests, sign; write `SHA256SUMS` and `updates.json` (id, version, `update_link`, `update_hash`,
        `strict_min_version` for both platforms).
     4. Replace the single commit of `extension-updates` (the new files plus the newest four earlier `.xpi` files) and put the
        tag `utubot-ext-v<version>` on the released `main` commit. No GitHub Release is created.
     A run by hand follows the same steps. A dry run stops after step 3 and uploads the unsigned package, the checksums and
     `updates.json` as workflow artifacts only.
+  - **Owner setup list for releases** (D4), in this order: create the developer account; add the secrets `AMO_JWT_ISSUER` and
+    `AMO_JWT_SECRET`; make `parity-box` a required status check for `main` (branch protection or ruleset; until then the
+    check only shows red and does not block a merge); set the variable `UTUBOT_EXTENSION_RELEASES` to `on`.
   - Before the first release, checkpoint 16 checks that no branch ruleset or protection blocks the workflow's push to
     `extension-updates` (`gh api repos/{owner}/{repo}/rulesets`) and records the result.
 - The listed variant has no `update_url` and is uploaded by the owner (or with `web-ext sign --channel=listed`) only after D1's
@@ -487,6 +504,8 @@ Enforcement beyond review (checkpoint 0): a workflow of its own, `.github/workfl
   never runs for `main`. Ticking the box in the description re-runs only this small job, not the test pipeline.
 - It is not part of `utubot-ci.yml` and no job there depends on it, so a missing tick never hides the backend, app or
   extension results.
+- It blocks a merge only once the owner makes `parity-box` a required status check for `main` (section 9, owner setup list);
+  that is the intended end state.
 - Rule (`scripts/utubot_ci_changes.py parity`): fail when the pull request changes `common/**/utubot/**`,
   `smarttubetv/**/utubot/**` or `ai/CONTRACT.md`, changes nothing under `extension/` and not this plan, and the description has
   no ticked parity box. Otherwise pass.
@@ -521,7 +540,7 @@ reviewed by the plan reviewer. One pull request per checkpoint, each updating `e
 | 13 | Cut picker and its ways in: presets with state, build request, kept parts and timeline, "Describe here", "Open cut sheet", the carried cut from a card | `src/content/ui/panel.js`, `src/content/cuts.js` | e2e: the picker shows each preset state of the mock; a `none` preset posts `{"preset"}` with `title`, `channel`, `duration_s`, `is_live` and is followed to ready; picking the applied cut takes it off; "Describe here" posts `{"prompt"}`; "Open cut sheet" posts `{"await_prompt":true}` and opens `<backend>/cuts/<id>`; a ready cut picked on a card opens the watch fixture with the cut applied, once; a kept part's click seeks | unit: state text, part formatting; e2e as listed | Fast |
 | 14 | Processed page and its open, full popup, About | `src/pages/{processed,popup}.*` | e2e with `/__mock/processed`: tiles in the mock's order with the processed line; empty and failed states; a tile opens the fixture watch page in the same tab and its HQ track is showing with auto-select off; the one-shot request does not carry to a second open; no image request leaves loopback | unit: tile text (ported cases of `UtubotProcessedTilesTest`); e2e as listed | Fast |
 | 15 | Android pass and parity audit: sheet layout, touch targets, the full Android runtime check, the API availability audit, every matrix row tied to its evidence | `src/content/ui/{layout,sheet}.js`, `extension/README.md` | every matrix row has a passing test or a recorded Android check named next to it in `extension/README.md`; every `browser.*` call in the sources is listed with its Firefox for Android support from MDN; the recorded emulator run covers install, setup, a mark, a summary, captions and a cut; no horizontal scroll at 360 px | e2e mobile layout; Android runtime check | Heavy |
-| 16 | Release: the `extension-release` job, the release workflow, `updates.json`, the `extension-updates` branch, install and privacy docs, README | `.github/workflows/utubot-extension-release.yml`, `.github/workflows/utubot-ci.yml`, `scripts/utubot_ci_changes.py`, `docs/install.md`, `docs/privacy.md`, `README.md` | unit: `extension_release` is true only for an untagged version on a push to `main`; the copied `ci_green` accepts a completed green run and the dispatching in-progress run with a green `extension` job, and refuses a red or missing one; `updates.json` is valid for a given version and hash. A dry run of the workflow (signing skipped without secrets) produces the package, checksums and `updates.json` as artifacts and creates no GitHub Release. Without the variable `UTUBOT_EXTENSION_RELEASES` the merge starts no release; a run by hand without secrets ends successfully with the notice and publishes nothing; the ruleset check is recorded. With the owner's secrets and the variable: one signed version is on the branch and installs on desktop Firefox, and after a version bump the installed copy updates itself. The tree and the logs contain no key | unit; workflow dry run; owner check of install and update on desktop | Fast |
+| 16 | Release: the `extension-release` job, the release workflow, `updates.json`, the `extension-updates` branch, install and privacy docs, README | `.github/workflows/utubot-extension-release.yml`, `.github/workflows/utubot-ci.yml`, `scripts/utubot_ci_changes.py`, `docs/install.md`, `docs/privacy.md`, `README.md` | unit: `extension_release` is true only for an untagged version on a push to `main`; the `ci-green` command accepts a completed green run and the dispatching in-progress run with a green `extension` job, and refuses a red or missing one; `updates.json` is valid for a given version and hash. A dry run of the workflow (signing skipped without secrets) produces the package, checksums and `updates.json` as artifacts and creates no GitHub Release. Without the variable `UTUBOT_EXTENSION_RELEASES` the merge starts no release; a run by hand without secrets ends successfully with the notice and publishes nothing; the ruleset check is recorded. With the owner's secrets and the variable: one signed version is on the branch and installs on desktop Firefox, and after a version bump the installed copy updates itself. The tree and the logs contain no key | unit; workflow dry run; owner check of install and update on desktop | Fast |
 | 17 | Owner's real-device pass and fixes; the Android install of the unlisted file and the Android update check; then, only on the owner's word, the store listing | `src/content/site.js`, fixtures | the owner used a released build on desktop and Android on real YouTube and each matrix row is ticked or has an issue; the phone picked up a second version through `update_url` or the result is recorded and the store listing proposed; every fix adds the page shape that broke to the fixtures | regression fixtures | Heavy |
 
 ## 12. CI
@@ -601,6 +620,16 @@ Checkpoint numbers below are the current ones.
 | N8 removed files stay in the branch history | Decision 20: the branch is never merged and always holds one commit (force-push of that branch only) |
 | N9 a 20 s hold proves nothing about the idle timeout | Checkpoint 5: 20 s must pass, 45 s (past the 30 s idle timeout) is run and recorded, on Android and desktop |
 | N10 rulesets may block the branch push | Section 9 and checkpoint 16: ruleset check before the first release |
+
+### Third review (approval, five lows)
+
+| Finding | Change |
+|---|---|
+| R1 backend origin on the emulator | Section 6: the backend is `10.0.2.2:<port>` there (optional origin, real prompt), fixtures stay on `127.0.0.1` |
+| R2 two untested assumptions without fallback | Section 6, prompt driver: a stated fallback for each (unit test plus recorded run; a test-only page button plus recorded runs and the owner check) |
+| R3 `backend` missing from `needs` | Section 9: `needs: [changes, backend, extension]` with `!cancelled()` |
+| R4 `ci_green` not unit-testable in YAML | Section 9 and checkpoint 16: the `ci-green` command of `scripts/utubot_ci_changes.py` with its unit test |
+| R5 is `parity-box` required | Sections 9 and 10, D4: the owner makes it a required status check for `main`, in the release setup list |
 
 ### Open lows
 
