@@ -4,7 +4,8 @@
 
 ```
 ai-backend/   Python backend (own README, AGENTS.md, tests)
-ai/           CONTRACT.md (wire contract, setup file), APP_INTEGRATION.md (touched upstream files), FORK_SURVEY.md
+ai/           CONTRACT.md (wire contract, setup file), ENGINE_CLAIM_CONTRACT.md (claim service wire contract),
+              CUT_MODES_PLAN.md (director's-cut modes), APP_INTEGRATION.md (touched upstream files), FORK_SURVEY.md
 common/       Android library; AI code in .../common/utubot/
 smarttubetv/  Android app; panel code in .../tv/utubot/
 docs/         user documentation

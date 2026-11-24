@@ -101,6 +101,12 @@
    the repeated tail twice. Word comparison ignores case and punctuation; a repeat after a gap is
    kept. Exact duplicate rows are still dropped. Tests in `tests/test_align.py`.
 
+## 2026-11-24 (frozen engine claim contract, issue 93)
+
+- `tests/test_engine_claim_contract.py` reads `../ai/ENGINE_CLAIM_CONTRACT.md` and `../ai/CUT_MODES_PLAN.md` and fails if a
+  config key, endpoint, state, `409` reason or reason sentence is missing, or if the plan link and the D-P11 wording drift.
+  The contract is the root `ai/` file of checkpoint P0; no backend code changed.
+
 ## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
 
 - Problem: only built-in presets had a target length, so the owner's saved "half" preset kept 75 % and 82 %.
