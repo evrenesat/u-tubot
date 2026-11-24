@@ -4,9 +4,11 @@
 
 - A cache entry now carries the section type that made its groups: a section whose layout changed (Playlists style, History shorts
   history, Channels old look after a restart) doesn't replay the old groups into another fragment. The entry is dropped on the read
-  (memory or disk), and `updateCategoryType` drops the cache of the section it changes, so a settings change while the presenter runs
-  doesn't leave a fresh cache for the new layout either. Tests: `UtubotBrowseCacheTest` for a layout change in memory and on disk
-  after a restart, `BrowsePresenterCacheTest` for Playlists style, History shorts and Channels old look.
+  (memory or disk), and a style change drops the cache of the section it changes when the entry is for another layout, so a settings
+  change while the presenter runs doesn't replay or save the old layout's groups under the new type. A cache already made for the
+  new layout stays (e.g. at the next start the sections are made as rows first). Tests: `UtubotBrowseCacheTest` for a layout change
+  in memory and on disk after a restart, `BrowsePresenterCacheTest` for Playlists style (and its cache at the next start), History
+  shorts and Channels old look.
 - A card removed, hidden or taken from a playlist while a cached refresh is still loading is kept out of that refresh's completion
   save (the load's groups still carry it), and a cache dropped by a removed author during that refresh isn't written back by the
   completion either. `BrowsePresenterCacheTest` drives a two-part refresh with the card removed after its first part, and an author

@@ -387,6 +387,32 @@ public class BrowsePresenterCacheTest {
     }
 
     @Test
+    public void aCachedPlaylistsGridSurvivesTheNextPresenterStart() throws Exception {
+        MainUIData.instance(mView).setPlaylistsStyle(MainUIData.PLAYLISTS_STYLE_GRID);
+        BrowseSection section = sectionOf(MediaGroup.TYPE_USER_PLAYLISTS);
+        assertEquals(BrowseSection.TYPE_GRID, section.getType());
+        seed(section, Collections.singletonList(group(section, "Playlists", 0, 9_610, "old-playlist")), now(), false);
+
+        // At a start the sections are made as rows first, then the Playlists style makes the grid again
+        section.setType(BrowseSection.TYPE_ROW);
+        mPresenter.updatePlaylistsStyle();
+        assertEquals(BrowseSection.TYPE_GRID, section.getType());
+
+        AtomicInteger gridLoads = new AtomicInteger();
+        putMapping("mGridMapping", MediaGroup.TYPE_USER_PLAYLISTS, Observable.defer(() -> {
+            gridLoads.incrementAndGet();
+            return Observable.just(mediaGroup("Playlists", 3, "new-playlist", MediaGroup.TYPE_USER_PLAYLISTS));
+        }));
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_USER_PLAYLISTS);
+
+        assertEquals(0, gridLoads.get());
+        assertEquals(0, mView.errors);
+        assertTrue(mView.hasGroup(9_610, "Playlists", 1));
+        assertNotNull(mCache.groups(section, identity()));
+    }
+
+    @Test
     public void aChannelsOldLookChangeDoesNotReplayTheCachedColumns() throws Exception {
         MainUIData.instance(mView).setUploadsOldLookEnabled(false);
         BrowseSection section = sectionOf(MediaGroup.TYPE_CHANNEL_UPLOADS);

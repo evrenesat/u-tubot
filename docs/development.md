@@ -134,7 +134,8 @@ For an update, serve an `update.json` with a higher version (`downloadUrlList_x8
 A section can be seeded as if it had loaded before: `files/utubot_browse/<section_id>.json` holds `section_type` (the layout that
 made the groups), `identity` (`<locale>|<profile>`, empty profile when signed out), `loaded_at_ms` and `groups`. `0.json` is Home. A
 section whose type changed (Playlists style, History shorts, Channels old look) doesn't replay the old groups: the entry is dropped,
-and the presenter drops it too when the style changes while it runs. `loaded_at_ms` must be inside the
+and a style change while the presenter runs drops an entry made for another layout too (one made for the new layout stays, e.g. at
+the next start). `loaded_at_ms` must be inside the
 refresh window (10 minutes by default) for the focus to show it without a refresh. With the emulator in a network namespace that has
 no route out, open Home by `HomeLauncherActivity` and leave it through another launcher (e.g. `MusicLauncherActivity`), then Home
 again. `adb logcat -s BrowsePresenter` must show `Show cached section Home` on both focuses and must not show

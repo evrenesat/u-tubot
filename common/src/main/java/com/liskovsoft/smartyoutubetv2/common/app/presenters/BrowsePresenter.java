@@ -568,15 +568,35 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         if (section != null && section.getType() != categoryType) {
             section.setType(categoryType);
-            invalidateCachedSection(section);
+            invalidateCachedSectionIfLayoutChanged(section);
         }
 
         for (BrowseSection category : mSections) {
             if (category.getId() == categoryId && category.getType() != categoryType) {
                 category.setType(categoryType);
-                invalidateCachedSection(category);
+                invalidateCachedSectionIfLayoutChanged(category);
                 break;
             }
+        }
+    }
+
+    /**
+     * The cache of the previous type is read with the new one and dropped, so it can't be replayed into another fragment. A cache
+     * already made for the new type stays (e.g. a grid cache at the next start, when the sections are made as rows first).
+     */
+    private void invalidateCachedSectionIfLayoutChanged(BrowseSection section) {
+        if (mBrowseCache == null || section == null || !isCacheableSection(section)) {
+            return;
+        }
+
+        if (mBrowseCache.groups(section, getBrowseCacheIdentity()) != null) {
+            return;
+        }
+
+        // Dropped while its refresh is still loading: the completion must not write the old layout's groups under the new type
+        if (mCachedRefreshStarted && mCurrentSection != null && section.getId() == mCurrentSection.getId()) {
+            mInvalidatedCachedSections.add(section.getId());
+            discardCachedState();
         }
     }
 
