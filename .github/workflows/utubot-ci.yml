@@ -145,6 +145,14 @@ jobs:
       - name: Set up the Android build
         uses: ./u-tubot/.github/actions/android-env
 
+      - name: Cache the Robolectric Android jars
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            u-tubot/common/build/robolectric-deps
+            u-tubot/smarttubetv/build/robolectric-deps
+          key: robolectric-deps-${{ hashFiles('u-tubot/gradle/robolectric-offline.gradle') }}
+
       - name: Unit tests and TV module compile
         working-directory: u-tubot
         run: |

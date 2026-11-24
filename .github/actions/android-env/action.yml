@@ -40,6 +40,14 @@ runs:
         distribution: 'temurin'
         cache: 'gradle'
 
+    - name: Use a Maven Central mirror
+      # Maven Central answers 429 (Too Many Requests) to the shared GitHub runner addresses, to poms and to the 150 MB Robolectric jars.
+      # Gradle does not retry that, so every artifact of Maven Central comes from Google's mirror of it in CI. Local builds are untouched.
+      shell: bash
+      run: |
+        mkdir -p "$HOME/.gradle/init.d"
+        cp "${{ github.action_path }}/maven-central-mirror.init.gradle" "$HOME/.gradle/init.d/"
+
     - name: Set up the Android SDK
       shell: bash
       env:

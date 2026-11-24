@@ -1,0 +1,33 @@
+// Robolectric runs offline: the android-all jars it needs are normal Gradle dependencies (repositories, cache and retries
+// of Gradle), copied to one directory that Robolectric reads, so no test downloads anything from Maven Central on its own.
+// Add the artifact here when a test uses a new @Config(sdk = ...).
+def robolectricAndroidAll = [
+        '9-robolectric-4913185-2-i7',   // sdk 28
+        '11-robolectric-6757853-i7',    // sdk 30
+        '13-robolectric-9030017-i7',    // sdk 33
+        '14-robolectric-10818077-i7',   // sdk 34, the default of tests without @Config (targetSdkVersion)
+]
+def robolectricDepsDir = layout.buildDirectory.dir('robolectric-deps')
+
+// One configuration per jar: all versions share one module, and a single configuration would keep only the newest.
+def robolectricConfigurations = robolectricAndroidAll.collect { version ->
+    def jarConfiguration = configurations.create("robolectricAndroidAll_${version.replaceAll('[^A-Za-z0-9]', '_')}") {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+    dependencies.add(jarConfiguration.name, "org.robolectric:android-all-instrumented:${version}")
+    jarConfiguration
+}
+
+def copyRobolectricDeps = tasks.register('copyRobolectricDependencies', Sync) {
+    from robolectricConfigurations
+    into robolectricDepsDir
+}
+
+tasks.withType(Test).configureEach {
+    dependsOn copyRobolectricDeps
+    systemProperty 'robolectric.offline', 'true'
+    jvmArgumentProviders.add({
+        ['-Drobolectric.dependency.dir=' + robolectricDepsDir.get().asFile.absolutePath]
+    } as CommandLineArgumentProvider)
+}

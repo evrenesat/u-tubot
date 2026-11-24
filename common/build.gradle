@@ -64,6 +64,8 @@ if (utubotPropsFile.exists()) {
 def utubotProp = { String key -> (project.findProperty(key) ?: utubotProps.getProperty(key) ?: '').toString() }
 def asJavaLiteral = { String value -> '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"' }
 
+apply from: rootProject.file('gradle/robolectric-offline.gradle')
+
 android {
     namespace 'com.liskovsoft.smartyoutubetv2.common'
     // FIX: Default interface methods are only supported starting with Android N (--min-api 24)
