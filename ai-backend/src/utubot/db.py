@@ -100,14 +100,39 @@ CREATE TABLE IF NOT EXISTS cut_requests(
   id TEXT PRIMARY KEY, user TEXT NOT NULL, video_id TEXT NOT NULL, source TEXT NOT NULL DEFAULT '',
   preset_id TEXT, prompt TEXT, state TEXT NOT NULL, error TEXT,
   cut_key TEXT, job_id TEXT, raw_answer TEXT, created_at REAL NOT NULL,
-  updated_at REAL NOT NULL, finished_at REAL);
+  updated_at REAL NOT NULL, finished_at REAL,
+  mode TEXT NOT NULL DEFAULT 'quick', progress REAL,
+  source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
+  release_duration_ms INTEGER);
 CREATE INDEX IF NOT EXISTS cut_requests_user ON cut_requests(user, created_at);
 CREATE INDEX IF NOT EXISTS cut_requests_video ON cut_requests(video_id);
 CREATE TABLE IF NOT EXISTS cuts(
   cache_key TEXT PRIMARY KEY, video_id TEXT NOT NULL, version TEXT NOT NULL,
   preset_id TEXT, prompt TEXT, model TEXT NOT NULL, transcript_hash TEXT NOT NULL,
-  json TEXT NOT NULL, duration_s REAL, kept_s REAL, created_at REAL NOT NULL);
+  json TEXT NOT NULL, duration_s REAL, kept_s REAL, created_at REAL NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'quick',
+  source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
+  release_duration_ms INTEGER);
 CREATE INDEX IF NOT EXISTS cuts_video ON cuts(video_id);
+CREATE TABLE IF NOT EXISTS video_scenes(
+  cache_key TEXT PRIMARY KEY, video_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
+  release_duration_ms INTEGER, video_sha256 TEXT NOT NULL, settings_key TEXT NOT NULL,
+  scene_cuts TEXT NOT NULL, manifest TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS video_scenes_video ON video_scenes(video_id);
+CREATE TABLE IF NOT EXISTS scene_descriptions(
+  cache_key TEXT PRIMARY KEY, video_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
+  release_duration_ms INTEGER, video_sha256 TEXT NOT NULL, settings_key TEXT NOT NULL,
+  model TEXT NOT NULL, prompt_hash TEXT NOT NULL, transcript_hash TEXT NOT NULL,
+  json TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS scene_descriptions_video ON scene_descriptions(video_id);
+CREATE TABLE IF NOT EXISTS scene_labels(
+  descriptions_key TEXT NOT NULL, source_key TEXT, release_key TEXT,
+  segment_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL,
+  category TEXT NOT NULL, intensity INTEGER NOT NULL, confidence REAL NOT NULL,
+  vocab_version INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS scene_labels_source ON scene_labels(source_key, release_key, category);
 """
 
 JOB_COLUMNS = {
@@ -128,6 +153,21 @@ TRANSCRIPT_COLUMNS = {
     "caption_kind": "TEXT",
 }
 CAPTION_COLUMNS = {"job_id": "TEXT", "timing_version": "INTEGER", "timing": "TEXT"}
+CUT_REQUEST_COLUMNS = {
+    "mode": "TEXT NOT NULL DEFAULT 'quick'",
+    "progress": "REAL",
+    "source_kind": "TEXT NOT NULL DEFAULT 'youtube'",
+    "source_key": "TEXT",
+    "release_key": "TEXT",
+    "release_duration_ms": "INTEGER",
+}
+CUTS_COLUMNS = {
+    "mode": "TEXT NOT NULL DEFAULT 'quick'",
+    "source_kind": "TEXT NOT NULL DEFAULT 'youtube'",
+    "source_key": "TEXT",
+    "release_key": "TEXT",
+    "release_duration_ms": "INTEGER",
+}
 METADATA_ONLY = "metadata_only"
 
 
@@ -156,6 +196,8 @@ class Database:
         self._add_missing_columns("policy_overrides", POLICY_COLUMNS)
         self._add_missing_columns("transcripts", TRANSCRIPT_COLUMNS)
         self._add_missing_columns("captions", CAPTION_COLUMNS)
+        self._add_missing_columns("cut_requests", CUT_REQUEST_COLUMNS)
+        self._add_missing_columns("cuts", CUTS_COLUMNS)
         # Rows written when a transcript could not be fetched: nothing may be built on a title alone.
         self._conn.execute("DELETE FROM transcripts WHERE source=?", [METADATA_ONLY])
         self._conn.execute("DELETE FROM summaries WHERE source=?", [METADATA_ONLY])
