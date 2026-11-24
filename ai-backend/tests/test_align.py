@@ -33,6 +33,29 @@ def test_caption_cues_keep_timing_and_drop_rolling_repeats():
     assert cues[-1].lines == ["The last one."]
 
 
+def test_caption_cues_drop_partial_rolling_repeats():
+    segments = [
+        (0.0, 4.0, "Hello there, my friend"),
+        (2.0, 6.0, "My friend how are you"),  # overlaps the previous row and repeats its end
+        (6.0, 10.0, "how are you doing today?"),
+    ]
+    cues = caption_cues(segments, CFG)
+    assert [" ".join(cue.lines) for cue in cues] == [
+        "Hello there, my friend",
+        "how are you",
+        "doing today?",
+    ]
+    assert [cue.start for cue in cues] == [0.0, 4.0, 6.0]
+    for before, after in zip(cues, cues[1:], strict=False):
+        assert before.end <= after.start + 1e-6
+
+
+def test_caption_cues_keep_repeated_text_after_a_gap():
+    segments = [(0.0, 4.0, "I don't know"), (10.0, 14.0, "I don't know")]
+    cues = caption_cues(segments, CFG)
+    assert [" ".join(cue.lines) for cue in cues] == ["I don't know", "I don't know"]
+
+
 def test_caption_cues_re_break_text_that_is_too_long():
     text = " ".join(f"word{i}" for i in range(30))
     cues = caption_cues([(0.0, 30.0, text)], CFG)

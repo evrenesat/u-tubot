@@ -23,6 +23,8 @@ import subprocess
 from dataclasses import dataclass, replace
 
 from ..config import CaptionsConfig
+from ..transcripts import ROLLING_MIN_WORDS
+from .chunking import bare
 from .segment import build_cues, enforce_timing, merge_short, pad_cues, retime_split, wrap_lines
 from .types import TIMING_REFERENCE, Cue, Word
 
@@ -333,22 +335,47 @@ def _too_fast(text: str, start: float, end: float, cfg: CaptionsConfig) -> bool:
     return len(text) / max(end - start, 0.1) > cfg.max_cps
 
 
+def _repeated_prefix(previous: str, current: str) -> int:
+    """How many leading words of `current` repeat the end of `previous` (a rolling caption row)."""
+    previous_words = [bare(word) for word in previous.split()]
+    current_words = [bare(word) for word in current.split()]
+    for size in range(min(len(previous_words), len(current_words)), 0, -1):
+        if size < ROLLING_MIN_WORDS and size != len(current_words):
+            continue
+        if previous_words[-size:] == current_words[:size]:
+            return size
+    return 0
+
+
 def caption_cues(segments: list[tuple[float, float, str]], cfg: CaptionsConfig) -> list[Cue]:
-    """Timed `(start, end, text)` rows of a fetched caption track as cues, rolling repeats dropped."""
+    """Timed `(start, end, text)` rows of a fetched caption track as cues.
+
+    Rows that only repeat the end of the previous overlapping row are dropped, in whole or in part.
+    """
     rows = sorted(
         (float(start), float(end), " ".join(str(text).split()))
         for start, end, text in segments
         if str(text).strip()
     )
     spans: list[tuple[float, float, str]] = []
+    previous_end: float | None = None
+    previous_text = ""
     for start, end, text in rows:
-        if spans and start <= spans[-1][1] + MIDPOINT_EPS and text == spans[-1][2]:
-            continue
-        spans.append((start, max(end, start), text))
+        original, end = text, max(end, start)
+        if previous_end is not None and start <= previous_end + MIDPOINT_EPS:
+            repeat = _repeated_prefix(previous_text, text)
+            if repeat:
+                text = " ".join(text.split()[repeat:])
+                start, end = max(start, previous_end), max(end, previous_end)
+                if not text:
+                    previous_end, previous_text = end, original
+                    continue
+        spans.append((start, end, text))
+        previous_end, previous_text = end, original
     cues: list[Cue] = []
     for i, (start, end, text) in enumerate(spans):
         if end <= start:
-            end = spans[i + 1][0] if i + 1 < len(spans) else start + 2.0
+            end = max(spans[i + 1][0], start) if i + 1 < len(spans) else start + 2.0
         lines = wrap_lines(text, cfg.max_chars_per_line, cfg.max_lines)
         if lines is not None:
             cues.append(Cue(start, end, lines))
