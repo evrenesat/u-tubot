@@ -14,7 +14,8 @@
   "No processed videos yet" and a failed one "Can't load the processed videos: …" through `UtubotSectionError`, and a cached
   section keeps its cards when its refresh fails. Opening a tile is unchanged (step 4 is later).
 - Tests: `UtubotProcessedTilesTest` (5: field mapping, each part and its state, ready preset labels, order, empty answer) and
-  `BrowsePresenterProcessedTest` (4: registration, injected answer loaded into the grid, empty and failed states), following
+  `BrowsePresenterProcessedTest` (5: registration, injected answer loaded into the grid, empty and failed states, a failed load
+  with the view gone), following
   `BrowsePresenterCacheTest`'s style. `:common:testStutubotDebugUnitTest` and `:smarttubetv:compileStutubotDebugJavaWithJavac`
   are green with JDK 25.
 
