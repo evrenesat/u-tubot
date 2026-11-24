@@ -1,19 +1,25 @@
 # u·tubot devlog
 
-## 2026-11-24 (Firefox extension plan, issue 72)
+## 2026-11-24 (browser extension plan, issue 72)
 
-- `ai/FIREFOX_EXTENSION_PLAN.md`: the two-part plan for a Firefox extension (desktop and Android, one codebase) with parity for the
-  u·tubot features: owner decisions, the parity matrix against the TV code, architecture, the no-YouTube test approach, signing and
-  distribution, eighteen checkpoints (0 to 17). No backend or app change is needed; nothing is implemented yet.
-- Revised after the first plan review (the plan's section 14 maps each finding to its change): the extension never creates a
-  GitHub Release (the APK readers list releases by count), explicit permission buttons, every mock-backend control specified,
-  requests without cookies, the assess mapping, a fully specified offline test guard, smaller checkpoints.
-- Second review round: the e2e permission tests use loopback addresses no manifest names, the prompt driver and the refusal
-  tests are decided, the release workflow's green rule and missing-secret behaviour are stated, the parity check is its own
-  workflow, the harness and the options page are separate checkpoints.
-- `AGENTS.md`: the standing rule that every AI feature is specified, built and tested for the TV app and the extension, with a
-  transition until the extension is usable. `ai/CONTRACT.md`: the "Clients" section, and the cut paragraph no longer says the TV
-  compares `transcript_hash` (it never did). `.github/pull_request_template.md`: the parity, contract and no-YouTube boxes.
+- `ai/BROWSER_EXTENSION_PLAN.md` (first written as `FIREFOX_EXTENSION_PLAN.md`): the two-part plan for a browser extension with
+  parity for the u·tubot features. Firefox on desktop and Android is the main target, Chromium browsers on desktop follow from
+  the same code. Owner decisions, the parity matrix against the TV code, architecture, the no-YouTube test approach, signing
+  and distribution, checkpoints 0 to 21 plus the web UI companion checkpoints C1 to C4. No backend or app change is needed for
+  parity; nothing is implemented yet.
+- Three plan review rounds are answered in the plan's section 14 (extension builds stay off GitHub Releases, explicit
+  permission buttons, every mock-backend control specified, requests without cookies, a fully specified offline test guard,
+  the parity check as its own workflow).
+- Owner additions of the same day: an MVP first (checkpoints 0 to 9: setup, pairing, the playing video's summary, HQ captions,
+  cut skipping, a signed unlisted desktop Firefox build); a Chromium track after it; a "Lessons from existing extensions"
+  section from reading SponsorBlock, its shared library, DeArrow, Return YouTube Dislike and ImprovedTube (navigation events,
+  main video lookup, ad state, timer-driven skipping, recycled cards, hermetic tests), with the site, captions and cuts
+  checkpoints changed to match; the licence rule (MIT stays, GPL code is read for technique and never copied); the mid-term
+  role as companion of the web UI.
+- `AGENTS.md`: the standing rule that every AI feature is specified, built and tested for the TV app and the browser extension,
+  with a transition, and the extension's licence rule. `ai/CONTRACT.md`: the "Clients" section, and the cut paragraph no longer
+  says the TV compares `transcript_hash` (it never did). `.github/pull_request_template.md`: the parity, contract and
+  no-YouTube boxes.
 
 ## 2026-11-24 (Processed section review round 1)
 

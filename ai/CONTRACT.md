@@ -373,8 +373,8 @@ Stored for later threshold tuning.
 
 ## Clients
 
-Two clients speak this contract: the TV app (`stutubot` flavor) and the Firefox extension (`extension/`, planned in
-`ai/FIREFOX_EXTENSION_PLAN.md`; until it is built, that plan's parity matrix is its side of a feature). A feature of this
+Two clients speak this contract: the TV app (`stutubot` flavor) and the browser extension (`extension/`, Firefox first, planned in
+`ai/BROWSER_EXTENSION_PLAN.md`; until it is built, that plan's parity matrix is its side of a feature). A feature of this
 contract is built for both. Exceptions, each with its reason:
 
 - The QR sheet of "Describe on phone…": TV only. The extension has a keyboard, takes the description itself
