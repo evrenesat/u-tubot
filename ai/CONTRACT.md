@@ -505,17 +505,19 @@ them, old cuts lack them, and a client that cannot show transitions skips as tod
 
 Build rules (mirrored from the backend config, `[cuts]`): caption fragments are merged into
 numbered sentence-like units (new unit on a pause over 0.6 s or sentence punctuation, 15 s
-cap); the model answers JSON with kept unit id ranges (`from`/`to`), a label per part, a
+cap; a rolling caption fragment's repeated tail is dropped); the model answers JSON with kept unit id ranges (`from`/`to`), a label per part, a
 one-line summary and `kept_s`; ids are validated (must exist, sorted, never overlapping) with
-one repair round; boundaries are padded 0.3 s before and 0.5 s after, gaps under 2 s merged and
-parts under 4 s dropped; a cut keeping under 10 % ("this would remove almost everything") is
-refused. A typed prompt without a target keeping over 95 % ("nothing to cut") is refused too;
-a named preset has no upper guard, because a removal preset that keeps nearly all of the video
-is a valid answer. The removal presets report the result in `summary` ("Removed 1:12 of filler,
-2 % of the video"); when nothing at all is removed that summary is "No filler found" (or
-"Nothing was removed") and the cut is `ready`, not failed. A missing timed transcript queues a
-transcript job (`needs_transcript`) and the build waits for it (15 min); live streams are
-refused. Builds run
+one repair round; kept parts are merged (gaps under 2 s) and short parts (under 4 s) dropped
+on the model's boundaries first, then boundaries are padded 0.3 s before and 0.5 s after.
+Keeping under 10 % of the video ("this would remove almost everything") is refused only for
+the broad `cut-no-filler` preset: a targeted answer, demo or owner prompt may legitimately be
+short. Keeping over 95 % ("nothing to cut") is refused only for a typed prompt without a
+target: a named preset has no upper guard, because a removal preset that keeps nearly all of
+the video is a valid answer. The removal presets report the result in `summary` ("Removed 1:12
+of filler, 2 % of the video"); when nothing at all is removed that summary is "No filler found"
+(or "Nothing was removed") and the cut is `ready`, not failed. A missing timed transcript
+queues a transcript job (`needs_transcript`) and the build waits for it (15 min); live streams
+are refused. Builds run
 as their own async tasks (never in the caption worker's queue) with a per-user cap, and one
 finished cut is shared per (video, preset or prompt, model, transcript) cache key — two requests
 with the same key that are in flight together share the model call too.

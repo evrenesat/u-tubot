@@ -483,19 +483,20 @@ or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#direct
   (`[cuts] max_active_per_user`). A missing timed transcript queues a transcript job and the
   build shows `needs_transcript` until it lands (10 min, then it fails with a plain reason).
 - The engine merges caption fragments into numbered sentence-like units (`[cuts]`
-  `unit_max_pause_s`/`unit_max_s`), sends them with title, chapters and duration to the
-  `[llm.cuts]` model, and validates its kept unit ranges: one repair round, then padding
-  (`pad_before_s`/`pad_after_s`), gap merging (`merge_gap_s`), short-part dropping
-  (`min_part_s`), and the keep guards. Keeping under `min_keep_frac` ("would remove almost
-  everything") is refused. The upper guard (`max_keep_frac`, "nothing to cut") applies only to
-  a typed prompt without a target: a named preset is a removal instruction, so keeping nearly
-  all of the video is a valid result. A removal preset puts the result in the cut's `summary`
-  ("Removed 1:12 of filler, 2 % of the video"); when nothing is removed the summary says so
-  ("No filler found") and the request is still `ready`. A failed request never blocks a new
-  one: asking for the same preset again builds a fresh request and keeps the failure in the
-  history (the picker shows it with a Retry). One finished cut is shared per (video, preset or
-  prompt, model, transcript) cache key, so a second identical request is instant; a changed
-  transcript invalidates it.
+  `unit_max_pause_s`/`unit_max_s`; rolling auto-caption repeats are dropped), sends them with
+  title, chapters and duration to the `[llm.cuts]` model, and validates its kept unit ranges:
+  one repair round, then gap merging (`merge_gap_s`) and short-part dropping (`min_part_s`) on
+  the model's own boundaries, padding (`pad_before_s`/`pad_after_s`), and the keep guards:
+  `min_keep_frac` ("would remove almost everything") refuses only the broad no-filler preset —
+  a targeted answer, demo or prompt may be short — and `max_keep_frac` ("nothing to cut")
+  refuses only a typed prompt without a target: a named preset is a removal instruction, so
+  keeping nearly all of the video is a valid result. A removal preset puts the result in the
+  cut's `summary` ("Removed 1:12 of filler, 2 % of the video"); when nothing is removed the
+  summary says so ("No filler found") and the request is still `ready`. A failed request never
+  blocks a new one: asking for the same preset again builds a fresh request and keeps the
+  failure in the history (the picker shows it with a Retry). One finished cut is shared per
+  (video, preset or prompt, model, transcript) cache key, so a second identical request is
+  instant; a changed transcript invalidates it.
 - Long videos: a transcript that fits `[cuts] max_input_tokens` goes in one request. Set that
   value to about 80% of the context of the `[llm.cuts]` alias (the default 80000 suits a
   100k-token alias; a small local model needs a lower one). A longer transcript is cut by

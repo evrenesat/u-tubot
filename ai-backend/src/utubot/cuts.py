@@ -289,6 +289,7 @@ def build_units(segments: list[tuple[float, float, str]], cfg) -> list[Unit]:
         parts.append(text)
         prev_end = max(seg_end, prev_end or 0.0)
         prev_text = text
+        prev_raw = raw_text
     flush()
     return units
 
@@ -857,41 +858,59 @@ def split_candidates(
     return groups
 
 
+def keep_guards(preset_id: str | None) -> tuple[bool, bool]:
+    """(min_guard, max_guard) of a request.
+
+    Only the broad `cut-no-filler` preset refuses keeping under `min_keep_frac`: a targeted
+    answer, demo or owner prompt may legitimately be a small part of a long video. Only a typed
+    prompt (no preset) refuses keeping over `max_keep_frac` ("nothing to cut"): a named preset is
+    a deliberate removal instruction, so keeping nearly all of the video is a valid result.
+    """
+    return preset_id == "cut-no-filler", preset_id is None
+
+
 def finalize_parts(
     parts: list[Part],
     cfg,
     *,
     guard: bool,
     duration_s: float | None,
+    min_guard: bool | None = None,
     guard_max: bool | None = None,
 ) -> tuple[list[Part], float | None]:
-    """Pad, merge and drop the kept parts; check how much of the video survives.
+    """Merge and drop the kept parts, then pad their boundaries; check how much survives.
 
-    Gaps under `cuts.merge_gap_s` are merged, parts under `cuts.min_part_s` are dropped, and
-    boundaries are padded `pad_before_s`/`pad_after_s`. A cut keeping under `min_keep_frac`
-    ("removes almost everything") is refused while `guard` is on. A cut over `max_keep_frac`
-    ("nothing to cut") is refused only while `guard_max` is on (it defaults to `guard`); a
-    named preset turns it off, because a removal preset that keeps nearly all is a valid answer.
+    Gaps under `cuts.merge_gap_s` are merged and parts under `cuts.min_part_s` are dropped on
+    the model's own boundaries first, so padding cannot pull a dropped gap into a merge or
+    keep a part the model made too short. Only then are the kept boundaries padded
+    `pad_before_s`/`pad_after_s`. A cut keeping under `min_keep_frac` ("this would remove almost
+    everything", only while the lower guard is on) is refused. A cut over `max_keep_frac`
+    ("nothing to cut", only while the upper guard is on) is refused too; both guards default to
+    `guard`, and a named preset turns the upper one off.
     """
     merged: list[Part] = []
-    duration_ms = int(duration_s * 1000) if duration_s else None
     for part in parts:
+        if merged and (part.start_ms - merged[-1].end_ms) < cfg.merge_gap_s * 1000:
+            merged[-1] = Part(merged[-1].label, merged[-1].start_ms, part.end_ms)
+        else:
+            merged.append(Part(part.label, part.start_ms, part.end_ms))
+    duration_ms = int(duration_s * 1000) if duration_s else None
+    kept: list[Part] = []
+    for part in merged:
+        if part.end_ms - part.start_ms < cfg.min_part_s * 1000:
+            continue
         start = max(0, part.start_ms - int(cfg.pad_before_s * 1000))
         end = part.end_ms + int(cfg.pad_after_s * 1000)
         if duration_ms is not None:
             end = min(end, duration_ms)  # the last part must not pad past the video end
-        if merged and (start - merged[-1].end_ms) < cfg.merge_gap_s * 1000:
-            merged[-1] = Part(merged[-1].label, merged[-1].start_ms, end)
-        else:
-            merged.append(Part(part.label, start, end))
-    kept = [p for p in merged if p.end_ms - p.start_ms >= cfg.min_part_s * 1000]
+        kept.append(Part(part.label, start, end))
     if not kept:
         raise CutRefused("Nothing was worth keeping, so there is no cut.")
     kept_ms = sum(p.end_ms - p.start_ms for p in kept)
-    if guard and duration_s:
+    if duration_s:
         duration_ms = int(duration_s * 1000)
         frac = kept_ms / duration_ms
-        if frac < cfg.min_keep_frac:
+        if (guard if min_guard is None else min_guard) and frac < cfg.min_keep_frac:
             raise CutRefused(
                 f"This cut would remove almost everything: it keeps only "
                 f"{cut_clock(kept_ms)} of {cut_clock(duration_ms)} ({round(frac * 100)} %). "

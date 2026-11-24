@@ -17,6 +17,7 @@ from utubot.cuts import (
     effective_target_s,
     expand_candidate_parts,
     finalize_parts,
+    keep_guards,
     merge_candidates,
     parse_chapters,
     parse_cut_answer,
@@ -152,8 +153,31 @@ class TestFinalize:
             guard=False,
             duration_s=None,
         )
-        # a and b are 1.8 s apart (minus padding) -> one part; c is 2 s -> dropped.
+        # a and b are 1.8 s apart -> one part; c is 2 s -> dropped; then the part is padded.
         assert len(parts) == 1 and parts[0].start_ms == 0 and parts[0].end_ms == 30500
+
+    def test_padding_does_not_merge_a_gap_the_model_dropped(self):
+        parts, _ = finalize_parts(
+            [Part("a", 10000, 20000), Part("b", 22500, 30000)],
+            CFG,
+            guard=False,
+            duration_s=None,
+        )
+        # The gap is 2.5 s, over the 2 s merge budget. Padding both sides would shrink it to
+        # 1.7 s and pull the dropped material back into one part.
+        assert [p.label for p in parts] == ["a", "b"]
+        assert (parts[0].start_ms, parts[0].end_ms) == (9700, 20500)
+        assert (parts[1].start_ms, parts[1].end_ms) == (22200, 30500)
+
+    def test_padding_does_not_keep_a_part_under_the_minimum(self):
+        parts, _ = finalize_parts(
+            [Part("short", 10000, 13500), Part("long", 20000, 30000)],
+            CFG,
+            guard=False,
+            duration_s=None,
+        )
+        # The short part is 3.5 s on the model's own boundaries; padding would make it 4.2 s.
+        assert [p.label for p in parts] == ["long"]
 
     def test_keep_guard(self):
         with pytest.raises(Exception, match="remove almost everything"):
@@ -195,6 +219,23 @@ class TestFinalize:
                 guard_max=False,
                 duration_s=600.0,
             )
+
+    def test_a_targeted_cut_may_keep_less_than_the_broad_guard(self):
+        # "Just the answer" on a long video: a short answer is the point, not a broken cut.
+        with pytest.raises(Exception, match="remove almost everything"):
+            finalize_parts([Part("a", 0, 5000)], CFG, guard=True, duration_s=600.0)
+        parts, _ = finalize_parts(
+            [Part("a", 0, 5000)], CFG, guard=True, duration_s=600.0, min_guard=False
+        )
+        assert parts[0].start_ms == 0 and parts[0].end_ms == 5500
+
+    def test_keep_guards_follow_the_preset(self):
+        assert keep_guards("cut-no-filler") == (True, False)
+        assert keep_guards("cut-answer") == (False, False)
+        assert keep_guards("cut-demo") == (False, False)
+        assert keep_guards("cut-highlights-5") == (False, False)
+        assert keep_guards(None) == (False, True)
+        assert keep_guards("cut-mine-abc") == (False, False)
 
 
 class TestDocument:
