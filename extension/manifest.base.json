@@ -10,6 +10,9 @@
     "128": "assets/icons/icon-128.png"
   },
   "permissions": ["storage"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
   "host_permissions": [
     "https://www.youtube.com/*",
     "https://m.youtube.com/*"

@@ -8,11 +8,19 @@ const RELEASE = ["firefox-unlisted", "firefox-listed", "chromium"];
 const YOUTUBE = ["https://www.youtube.com/*", "https://m.youtube.com/*"];
 const LOOPBACK = "127.0.0.1";
 
-test("release variants name no loopback origin", () => {
+test("release variants name no loopback origin and no fixture override", () => {
   for (const variant of RELEASE) {
     const text = JSON.stringify(variantManifest(variant));
     assert.equal(text.includes(LOOPBACK), false, variant);
+    assert.equal(text.toLowerCase().includes("fixture"), false, variant);
     assert.equal(variantManifest(variant).browser_specific_settings?.gecko?.id ?? null, variant.startsWith("firefox") ? "extension@utubot.dev" : null);
+  }
+});
+
+test("every variant allows plain http jobs without the upgrade directive", () => {
+  for (const variant of [...FIREFOX, "chromium", "chromium-test"]) {
+    const manifest = variantManifest(variant);
+    assert.equal(manifest.content_security_policy.extension_pages, "script-src 'self'; object-src 'self'", variant);
   }
 });
 

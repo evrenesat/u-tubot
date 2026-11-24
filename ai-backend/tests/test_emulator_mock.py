@@ -196,6 +196,8 @@ def test_panel_prompt_can_be_refused(mock):
     video = "ccccccccccc"
     mock.get("/__mock/set?panel=404")
     assert mock.get(f"/v1/videos/{video}/summary?prompt=panel").status_code == 404
+    mock.get("/__mock/set?panel=400")
+    assert mock.get(f"/v1/videos/{video}/summary?prompt=panel").status_code == 400
     mock.get("/__mock/set?panel=ok")
     assert mock.get(f"/v1/videos/{video}/summary?prompt=panel").status_code == 200
 

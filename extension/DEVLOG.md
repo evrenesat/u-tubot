@@ -1,3 +1,25 @@
+# u·tubot browser extension devlog
+
+## 2026-11-24 (checkpoints 0-3: review pass and fixes)
+
+- Checked every Done When of checkpoints 0, 1, 2 and 3 against the plan on `main`. The skeleton, classifiers, mock controls,
+  background core and e2e harness are the first pass of `conduktor/UTB-7`; this pass keeps them and closes the gaps found.
+- `manifest.base.json`: `content_security_policy.extension_pages = "script-src 'self'; object-src 'self'"` on every variant, so
+  plain-http private servers are not upgraded (decision 10). Manifest tests also assert release variants carry no fixture/loopback
+  strings and that the CSP has no `upgrade-insecure-requests`.
+- `src/background/client.js`: a backend-bound call without a token throws `No token` before `fetch`; `auth.js` gained
+  `isUnderBackend` for the scope check. Caption files outside the backend still need no token. `tests/unit/client.test.js` covers
+  both; `tests/unit/e2e.test.js` now names every `user.js` service group of section 6.
+- `scripts/emulator_mock_backend.py`: removed a stray `DELETE /v1/prompts/default` branch that read an undefined body (the plan
+  names only `PUT`); the mock test adds the `panel=400` answer. `ai-backend/tests/test_ci_changes.py` and `test_emulator_mock.py`
+  were reformatted and the unused import removed so `ruff check` and `ruff format --check` pass in CI.
+- Evidence: `npm run lint`, `npm test` (45 pass), all five builds, `web-ext lint` on the three Firefox variants (0 errors);
+  `ruff check`/`format --check`, `pytest tests/test_ci_changes.py tests/test_emulator_mock.py` (34 pass); the e2e suite (3 pass)
+  behind the refusing proxy in the pinned Firefox. A deliberate probe fetched `refused.example.invalid` through Firefox; the final
+  guard failed and printed that host (probe then removed), so a host-leaking session cannot pass. `run-offline.sh` is still not
+  runnable here (`unshare --net` and bubblewrap are denied, `Operation not permitted`); CI's proxy guard is the offline check and
+  the namespace run stays with the owner host.
+
 ## 2026-11-24 (checkpoint 2: background core)
 
 - `src/background/client.js` calls every endpoint of the plan's section 1 with the contract's methods, paths, query fields
@@ -12,8 +34,6 @@
 - `src/shared/models.js`, `meta.js`, `messages.js`: the contract's parsers and the message sets. `tests/unit/{auth,setup,client,
   messages,router}.test.js`: the ported setup and client cases, every endpoint's method/path/query, the credentials and auth
   scoping, the sender and video-id checks and a fresh router load.
-
-# u·tubot browser extension devlog
 
 ## 2026-11-24 (checkpoint 1: mock backend controls)
 

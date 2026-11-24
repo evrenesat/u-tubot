@@ -530,13 +530,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         url = urlparse(self.path)
-        if url.path == "/v1/prompts/default":
-            key = (body.get("key") or "").strip()
-            if key not in all_prompt_keys():
-                return self.send_json({"error": "unknown prompt"}, 404)
-            global DEFAULT_PROMPT_KEY
-            DEFAULT_PROMPT_KEY = key
-            return self.send_json({"default": key})
         m = re.match(r"/v1/cut-requests/([a-z0-9]+)$", url.path)
         if m:
             with CUT_LOCK:

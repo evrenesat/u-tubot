@@ -191,6 +191,24 @@ test("too many videos in one assess call are refused before a request", async ()
   assert.equal(calls.length, 0);
 });
 
+test("a backend call that needs a token is not sent without one", async () => {
+  const { calls, fetchImpl } = fake({});
+  const client = createClient(BASE, "", fetchImpl);
+  for (const request of [
+    (c) => c.me(),
+    (c) => c.assess([{ video_id: VIDEO }], "home"),
+    (c) => c.summary(VIDEO, null, null, 1000),
+    (c) => c.captionFile("/v1/videos/abcdefghijk/captions/en.vtt"),
+  ]) {
+    await assert.rejects(() => request(client), /No token/);
+  }
+  assert.equal(calls.length, 0);
+
+  const external = await one((c) => c.captionFile("https://other.example/x.vtt"), "WEBVTT");
+  assert.equal(external.url.origin, "https://other.example");
+  assert.equal(authOf(external), null);
+});
+
 test("a caption file over the size cap is refused", async () => {
   const big = "x".repeat(4 * 1024 * 1024 + 1);
   const { fetchImpl } = fake(big);

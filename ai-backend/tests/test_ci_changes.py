@@ -5,8 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from utubot_ci_changes import (  # noqa: E402
@@ -34,7 +32,9 @@ def test_backend_only_keeps_the_old_answer():
 
 
 def test_app_file_keeps_the_old_answer():
-    assert classify_files(["smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/MainActivity.java"]) == Classification(
+    assert classify_files(
+        ["smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/MainActivity.java"]
+    ) == Classification(
         backend=False, app=True, release=False, extension=False, extension_release=False
     )
 
@@ -73,7 +73,13 @@ def test_classifier_command_prints_the_outputs(tmp_path):
         "REPO": "evrenesat/u-tubot",
     }
     result = subprocess.run(
-        [sys.executable, str(REPO / "scripts/utubot_ci_changes.py"), "classify", "--files", str(files)],
+        [
+            sys.executable,
+            str(REPO / "scripts/utubot_ci_changes.py"),
+            "classify",
+            "--files",
+            str(files),
+        ],
         check=True,
         capture_output=True,
         text=True,
@@ -93,11 +99,19 @@ def test_parity_fails_a_contract_change_without_the_box():
 
 
 def test_parity_passes_with_the_box():
-    assert parity_fails(["ai/CONTRACT.md"], "- [x] AI feature parity: this changed both clients") is False
+    assert (
+        parity_fails(["ai/CONTRACT.md"], "- [x] AI feature parity: this changed both clients")
+        is False
+    )
 
 
 def test_parity_passes_with_an_extension_change():
-    assert parity_fails(["ai/CONTRACT.md", "extension/src/shared/api.js"], "a description without the box") is False
+    assert (
+        parity_fails(
+            ["ai/CONTRACT.md", "extension/src/shared/api.js"], "a description without the box"
+        )
+        is False
+    )
 
 
 def test_parity_passes_with_the_plan():
@@ -109,7 +123,13 @@ def test_parity_passes_an_unrelated_change_without_the_box():
 
 
 def test_parity_fails_tv_utubot_code_without_the_box():
-    assert parity_fails(["common/src/main/java/com/liskovsoft/smartyoutubetv2/common/utubot/UtubotMenu.java"], "no box") is True
+    assert (
+        parity_fails(
+            ["common/src/main/java/com/liskovsoft/smartyoutubetv2/common/utubot/UtubotMenu.java"],
+            "no box",
+        )
+        is True
+    )
 
 
 def test_parity_command_reads_the_body_from_the_environment_without_executing_it(tmp_path):
@@ -122,7 +142,13 @@ def test_parity_command_reads_the_body_from_the_environment_without_executing_it
         "PR_BODY": f"- [x] AI feature parity: $(touch {marker}) `touch {marker}`",
     }
     result = subprocess.run(
-        [sys.executable, str(REPO / "scripts/utubot_ci_changes.py"), "parity", "--files", str(files)],
+        [
+            sys.executable,
+            str(REPO / "scripts/utubot_ci_changes.py"),
+            "parity",
+            "--files",
+            str(files),
+        ],
         capture_output=True,
         text=True,
         env=env,
@@ -164,7 +190,10 @@ def test_ci_green_accepts_the_dispatching_run_with_the_needed_jobs_green():
 
 
 def test_ci_green_refuses_a_red_or_missing_needed_job():
-    red = [{"name": "extension", "conclusion": "failure"}, {"name": "backend", "conclusion": "success"}]
+    red = [
+        {"name": "extension", "conclusion": "failure"},
+        {"name": "backend", "conclusion": "success"},
+    ]
     missing = [{"name": "extension", "conclusion": "success"}]
     assert ci_green([OPEN_RUN], red, auto=True) is False
     assert ci_green([OPEN_RUN], missing, auto=True) is False
@@ -172,7 +201,10 @@ def test_ci_green_refuses_a_red_or_missing_needed_job():
 
 
 def test_ci_green_refuses_the_in_progress_run_for_a_manual_release():
-    jobs = [{"name": "extension", "conclusion": "success"}, {"name": "backend", "conclusion": "success"}]
+    jobs = [
+        {"name": "extension", "conclusion": "success"},
+        {"name": "backend", "conclusion": "success"},
+    ]
     assert ci_green([OPEN_RUN], jobs, auto=False) is False
 
 

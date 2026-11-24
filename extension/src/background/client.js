@@ -3,7 +3,7 @@
  * `cache: "no-store"`; the bearer header is added only to a URL under the stored backend. Caption files are
  * fetched here and handed to the page as text.
  */
-import { authorizationFor, stripTrailingSlash } from "./auth.js";
+import { authorizationFor, isUnderBackend, stripTrailingSlash } from "./auth.js";
 import { addLiveFlag, addMeta, videoToJson } from "../shared/meta.js";
 import {
   parseAssess,
@@ -72,6 +72,10 @@ export function createClient(baseUrl, token, fetchImpl = globalThis.fetch) {
   async function send(url, options = {}) {
     const headers = {};
     const authorization = options.auth === false ? null : authorizationFor(base, bearer, url.href);
+
+    if (options.auth !== false && isUnderBackend(base, url.href) && !authorization) {
+      throw new Error("No token");
+    }
 
     if (authorization) {
       headers.Authorization = authorization;

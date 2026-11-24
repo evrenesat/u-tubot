@@ -12,11 +12,9 @@ export function stripTrailingSlash(address) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
-export function authorizationFor(baseUrl, token, absoluteUrl) {
-  const bearer = (token ?? "").trim();
-
-  if (!bearer || !absoluteUrl) {
-    return null;
+export function isUnderBackend(baseUrl, absoluteUrl) {
+  if (!absoluteUrl) {
+    return false;
   }
 
   let base;
@@ -26,21 +24,29 @@ export function authorizationFor(baseUrl, token, absoluteUrl) {
     base = new URL(stripTrailingSlash(baseUrl));
     target = new URL(absoluteUrl.trim());
   } catch {
-    return null;
+    return false;
   }
 
   if (base.protocol !== target.protocol || base.hostname.toLowerCase() !== target.hostname.toLowerCase() || base.port !== target.port) {
-    return null;
+    return false;
   }
 
   const basePath = segments(base);
   const targetPath = segments(target);
 
   if (targetPath.length < basePath.length) {
+    return false;
+  }
+
+  return targetPath.slice(0, basePath.length).every((segment, index) => segment === basePath[index]);
+}
+
+export function authorizationFor(baseUrl, token, absoluteUrl) {
+  const bearer = (token ?? "").trim();
+
+  if (!bearer || !isUnderBackend(baseUrl, absoluteUrl)) {
     return null;
   }
 
-  const under = targetPath.slice(0, basePath.length).every((segment, index) => segment === basePath[index]);
-
-  return under ? `Bearer ${bearer}` : null;
+  return `Bearer ${bearer}`;
 }

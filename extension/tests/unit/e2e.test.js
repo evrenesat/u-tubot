@@ -20,6 +20,13 @@ test("the committed profile names every service group and its preference", () =>
     assert.match(body, /user_pref\("/, group[1]);
   }
 
+  for (const name of ["updates", "add-on metadata", "blocklist", "remote settings", "telemetry and health report",
+    "Normandy and experiments", "safe browsing lists", "captive-portal and connectivity checks", "DNS over HTTPS",
+    "DNS and link prefetch", "speculative connections", "push service", "new-tab content and sponsored tiles",
+    "search suggestions and search-engine updates", "location services", "default browser and first-run pages"]) {
+    assert.match(text, new RegExp(`^// group: ${name}$`, "m"), name);
+  }
+
   const pref = (key) => {
     const match = text.match(new RegExp(`user_pref\\("${key.replaceAll(".", "\\.")}", (.*)\\);`));
     assert.ok(match, key);
