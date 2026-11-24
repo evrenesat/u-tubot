@@ -101,3 +101,15 @@ export function setBadgeText(text) {
 export function setBadgeBackgroundColor(color) {
   return api.action.setBadgeBackgroundColor({ color });
 }
+
+export function permissionsContains(origins) {
+  return api.permissions.contains({ origins });
+}
+
+export function permissionsRequest(origins) {
+  return api.permissions.request({ origins });
+}
+
+export function permissionsRemove(origins) {
+  return api.permissions.remove({ origins });
+}
