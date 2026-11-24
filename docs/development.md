@@ -202,16 +202,18 @@ $ADB shell input keyevent KEYCODE_DPAD_RIGHT ; $ADB shell input keyevent KEYCODE
 $ADB shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CutsHarnessActivity \
     --es video_id harnessCutA --es url http://10.0.2.2:18790/media/test.mp4 --ez await_prompt true
 $ADB exec-out screencap -p > cuts-qr-sheet.png
-# A cut that is ready when the video opens is only announced ("Director's cut ready: …"), not applied
+# A cut that is ready when the video opens is announced ("Director's cut ready: …"), with a one-press Apply
+# (or applied by itself when Settings, u·tubot, "Apply ready cuts automatically" is on)
 $NS curl "localhost:18790/__mock/cuts?video=harnessCutA&state=ready"
 $ADB shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CutsHarnessActivity \
     --es video_id harnessCutA --es url http://10.0.2.2:18790/media/test.mp4
 ```
 
 The skip rules themselves are unit-tested (`UtubotCutSkipperTest`: one jump past a sponsor segment, the seek of the user wins, the
-length check); the harness shows the real engine, the toast with Back and the announce of a ready cut. What the harness cannot show:
-the video menu's picker and the dimmed seek bar of the real skins — check those on a device or with the emulator of the app's screens
-(the section above), with the mock backend's cuts routes answering.
+length check); the harness shows the real engine, the toast with Back and the ready announcement with its Apply. What the harness cannot show:
+the video menu's picker, the list's picker, the player's cut button and the dimmed seek bar of the real skins — check those on a device.
+The mock backend serves no browse content, and the app's list and player screens play YouTube videos only, which no check may contact, so an
+emulator cannot fill a list or open a YouTube video for these entry points.
 
 ### Private builds with a baked backend
 

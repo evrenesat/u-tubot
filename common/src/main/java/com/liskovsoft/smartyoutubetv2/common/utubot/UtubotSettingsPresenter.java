@@ -83,6 +83,8 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
                 formatBrowseRefresh(context, mSettings.getBrowseRefreshMinutes()), option -> showBrowseRefresh())));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_captions), context.getString(R.string.utubot_auto_captions_desc),
                 option -> mSettings.setAutoCaptionsEnabled(option.isSelected()), mSettings.isAutoCaptionsEnabled())));
+        categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_cuts), context.getString(R.string.utubot_auto_cuts_desc),
+                option -> mSettings.setApplyReadyCutsEnabled(option.isSelected()), mSettings.isApplyReadyCutsEnabled())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_prompts), option -> showPrompts())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_test_connection), option -> testConnection())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_advanced), context.getString(R.string.utubot_advanced_desc),
