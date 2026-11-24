@@ -9,11 +9,13 @@ def robolectricAndroidAll = [
 ]
 // Maven Central answers 429 (Too Many Requests) to the 150 MB jars from the shared GitHub runner addresses, so these jars come from
 // Google's mirror of Maven Central first. Only this module is asked of it.
-repositories.addFirst(repositories.maven {
+def robolectricMirror = repositories.maven {
     name = 'mavenCentralMirrorForRobolectric'
     url = 'https://maven-central.storage-download.googleapis.com/maven2/'
     content { includeModule('org.robolectric', 'android-all-instrumented') }
-})
+}
+repositories.remove(robolectricMirror)
+repositories.addFirst(robolectricMirror)
 
 def robolectricDepsDir = layout.buildDirectory.dir('robolectric-deps')
 
