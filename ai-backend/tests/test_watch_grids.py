@@ -6,7 +6,7 @@ from PIL import Image
 from tests.synth_video import CUTS, DURATION_S, ffmpeg_available, make_video
 from utubot.config import CutsConfig
 from utubot.watch.frame_selector import AnalyzedFrame, derive_thresholds
-from utubot.watch.grids import build_grid_plan, chunk_plan
+from utubot.watch.grids import _budget_split, build_grid_plan, chunk_plan
 
 NINETY_MINUTES = 90 * 60
 
@@ -70,3 +70,6 @@ class TestSyntheticGrids:
         assert len(selections) == len(chunks)
         assert chunks[0].start == 0.0 and chunks[-1].end == pytest.approx(NINETY_MINUTES)
         assert all(right.start == left.end for left, right in zip(chunks, chunks[1:], strict=False))
+        budget = _budget_split(float(NINETY_MINUTES), cuts, frames, thresholds, cfg, cfg.max_grids)
+        assert len(budget) == cfg.max_grids
+        assert budget[0].start == 0.0 and budget[-1].end == pytest.approx(NINETY_MINUTES)

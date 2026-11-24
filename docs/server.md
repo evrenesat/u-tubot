@@ -234,7 +234,9 @@ content-addressed by its sha256 under `[archive] path` (default `<data dir>/arch
 bytes are stored once; the scratch copy under `data_dir/media` is removed when the job is done, as before.
 
 Pipelines read from the archive first: a job whose video is already archived never contacts YouTube for its audio (no gate wait,
-the report shows "From the media archive"), and only a miss leads to a download, which the job then stores. Removing entries is
+the report shows "From the media archive"), and only a miss leads to a download, which the job then stores. Watched cuts read or
+store a `kind=video` entry; `utubot media import <video_id> <file> [--kind video|audio]` adds an already-downloaded file without
+network (the default kind is `video`, which is what the grid tests and offline benches use). Removing entries is
 an explicit admin act — *Admin → Media archive* in the web UI (usage against the quota, one row per video with format, size,
 sha256 and age, a *Remove* button) or `DELETE /v1/admin/archive/{video_id}` (`GET /v1/admin/archive` lists it). Nothing in the
 archive is ever deleted automatically, and the scratch sweep of `data_dir/media` never touches it.

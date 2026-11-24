@@ -100,6 +100,24 @@ class TestWatchedBuild:
         assert len(watched_env.llm.describe_calls) == described
         assert (watched_env.svc.cfg.media_dir / "watched").exists()
 
+    async def test_a_second_watched_build_waits_in_line(self, watched_env, tmp_path):
+        await store_video(watched_env, tmp_path)
+        set_transcript(watched_env.fetcher)
+        watched_env.llm.delay_s = 0.5
+        watched_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 4, "label": "The demo"}],
+            "summary": "s",
+            "kept_s": 20,
+        }
+        first = await post_watched(watched_env, preset="cut-demo")
+        second = await post_watched(watched_env, preset="cut-highlights-5")
+        first_doc = await wait_ready(watched_env, first.json()["request_id"])
+        assert first_doc["state"] == "ready", first_doc.get("error")
+        second_doc = await wait_ready(watched_env, second.json()["request_id"])
+        assert second_doc["state"] == "ready"
+        job = (await watched_env.client.get(f"/v1/jobs/{second_doc['job_id']}")).json()
+        assert "in_line" in {event["stage"] for event in job["events"]}
+
     async def test_failure_offers_quick_instead(self, watched_env, tmp_path):
         await store_video(watched_env, tmp_path)
         set_transcript(watched_env.fetcher)
@@ -119,6 +137,32 @@ class TestWatchedBuild:
         assert "seen" in doc["error"] or "describe" in doc["error"]
         assert doc["fallback"]["mode"] == "quick"
         assert doc["fallback"]["state"] == "none"
+
+    async def test_an_upstream_http_400_retries_with_half_context(self, watched_env, tmp_path):
+        await store_video(watched_env, tmp_path)
+        set_transcript(watched_env.fetcher)
+        watched_env.llm.describe_400_first = 1
+        watched_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 4, "label": "The demo"}],
+            "summary": "s",
+            "kept_s": 20,
+        }
+        r = await post_watched(watched_env)
+        doc = await wait_ready(watched_env, r.json()["request_id"])
+        assert doc["state"] == "ready", doc.get("error")
+        assert len(watched_env.llm.describe_calls) == doc["cut"]["watched"]["grids"]
+
+    async def test_long_videos_fail_before_the_video_download(self, watched_env):
+        watched_env.cfg.cuts.watched.max_video_minutes = 1
+        set_transcript(watched_env.fetcher, n=12, seconds_each=10.0)
+        watched_env.svc.transcripts.store_meta(VID, {"duration_s": 120})
+        assert watched_env.cfg.cuts.watched.max_video_minutes == 1
+        assert watched_env.svc.cfg.cuts.watched.max_video_minutes == 1
+        r = await post_watched(watched_env)
+        doc = await wait_ready(watched_env, r.json()["request_id"])
+        assert doc["state"] == "failed" and "longer" in doc["error"]
+        assert doc["fallback"] == {"mode": "quick", "state": "none"}
+        assert watched_env.svc.archive.lookup(VID, "video") is None
 
     async def test_watched_listed_unavailable_without_a_vision_model(self, env):
         env.cfg.llm.cuts = LLMTask(model="cutmodel")

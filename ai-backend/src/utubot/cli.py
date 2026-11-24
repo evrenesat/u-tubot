@@ -265,6 +265,8 @@ def cmd_captions_regen(args: argparse.Namespace) -> int:
 
 
 def cmd_media_import(args: argparse.Namespace) -> int:
+    from fastapi import HTTPException
+
     from .app import check_video_id
 
     cfg = load_config(args.config)
@@ -278,7 +280,7 @@ def cmd_media_import(args: argparse.Namespace) -> int:
         check_video_id(args.video_id)
         archive.require_room()
         entry = archive.store(args.video_id, source, kind=args.kind)
-    except (ValueError, MediaArchiveFull, MediaArchiveError) as exc:
+    except (ValueError, MediaArchiveFull, MediaArchiveError, HTTPException) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     finally:

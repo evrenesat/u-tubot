@@ -158,8 +158,11 @@ def _with_quiet_stretches(
             continue
         end = chunk.end
         cuts = list(chunk.source_scene_cut_times)
+        hard_cuts = {round(value, 6) for value in scene_cuts}
         index += 1
         while index < len(chunks) and selections[index][1] and chunks[index].start <= end + 1e-6:
+            if round(chunks[index].start, 6) in hard_cuts and index > 0:
+                break
             candidate_end = chunks[index].end
             if candidate_end - chunk.start > cfg.quiet_max_chunk_s:
                 break
