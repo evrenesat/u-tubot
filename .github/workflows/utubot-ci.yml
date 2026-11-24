@@ -97,7 +97,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # The ffmpeg install on the hosted runner can spend >14 minutes on a stalled Ubuntu mirror,
+    # and the 15-minute cap killed a run inside it (45356658576), before pytest started.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: ai-backend
@@ -116,7 +118,12 @@ jobs:
       - name: Install ffmpeg
         # The caption tests cut audio with it, as the backend does in production.
         working-directory: .
-        run: sudo apt-get install -y --no-install-recommends ffmpeg
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg is already on this runner"
+            exit 0
+          fi
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends ffmpeg
 
       - name: Install the dependencies
         run: uv sync --frozen
