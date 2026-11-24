@@ -1,5 +1,29 @@
 # u·tubot devlog
 
+## 2026-11-24 (Processed section, issue 66 steps 1-4)
+
+- Backend (step 1): `GET /v1/processed?limit=N` (default 50, at most 200, auth) answers `{"videos":[...]}`, one item per video from
+  the caller's caption jobs and non-dismissed cut requests, newest `updated_at` first; `summary` says whether a stored summary exists.
+  A read-only `ProcessedService` combines rows already there (no new storage); `ai-backend/DEVLOG.md` and `docs/server.md` carry it.
+- TV data layer (step 2): `UtubotModels` gained `ProcessedItem`/`ProcessedList` and their caption and cut entries,
+  `UtubotParser.parseProcessed` and `UtubotClient.processed(limit)` read the endpoint with the bearer token, and
+  `UtubotManager.processedObserve` is cancellable like the cuts one.
+- Sidebar section (step 3): `UtubotProcessedSection` maps the answer to newest-first grid tiles with the processed line under the
+  title ("HQ captions: ready • Cut ready: Only the demo • Summary ready", or the newest state for unfinished work); `BrowsePresenter`
+  and `SidebarService` register it only in the built-in flavor, the browse cache of #65 is reused and empty/failed answers show
+  `UtubotSectionError`.
+- Opening a tile (step 4): `BrowsePresenter.onVideoItemClicked` recognizes the section's cards through their group (`UtubotProcessedOpen.isProcessed`)
+  and opens them with `UtubotProcessedOpen.open`, which asks `UtubotCaptionsOpen` for the video's HQ captions and then starts the
+  normal playback path (`PlaybackPresenter.openVideo`). The player takes that request when it sets the video, and selects the HQ track
+  even with "Select HQ captions automatically" off; the request is for that playback only and expires if no player takes it.
+- A ready cut is not carried again: the Processed open goes through the same playback path as #64, whose `UtubotCutController`
+  follows the video (`GET /v1/videos/{id}/cuts`) and announces a ready cut with its one-press Apply dialog (or applies it by itself
+  when "apply ready cuts automatically" is on). A tile with no cut starts plainly.
+- Tests: `UtubotProcessedOpenTest` (4: the tile's captions selected with the automatic setting off, a ready cut offered by the player
+  path, no cut and plain play, only the section's cards are Processed). The steps 1-3 tests (parser, client, tiles, presenter) stay.
+- Docs: README Features and docs/install.md "Using it" list the section; docs/server.md and docs/captions.md say what its tiles show
+  and that opening one selects the HQ captions.
+
 ## 2026-11-24 (Processed sidebar section, issue 66 step 3)
 
 - The built-in flavor has a sidebar section `Processed` past the other entries and before Settings (`UtubotProcessedSection.ID`,

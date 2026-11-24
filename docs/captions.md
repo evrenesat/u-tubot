@@ -149,7 +149,8 @@ music detector. The stage is best-effort: a missing tool, a failure or `separati
 says so in the job log. A job whose ASR answer is already cached skips the separation — the cache is keyed by the separation mode, so
 separated and unseparated audio never share an answer.
 job while the video plays and, when it is ready, adds the track to the video and turns it on (you asked for it) with a short "u·tubot
-captions ready"; at the start of a video the setting *Select HQ captions automatically* decides. The app fetches the VTT once, with
+captions ready"; at the start of a video the setting *Select HQ captions automatically* decides. A video opened from the TV's
+*Processed* section selects the HQ track too, whatever that setting says: that section exists for what was processed. The app fetches the VTT once, with
 its `Authorization` header, and keeps the file in its own storage: the subtitle menu offers it for that video from then on, after a
 restart or an update, with another backend or with this one off the air.
 

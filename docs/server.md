@@ -476,6 +476,12 @@ read-only view over rows it already has rather than a new history table. Wire de
   cached metadata URL, else YouTube's standard `mqdefault` image for the id. Nothing is stored
   for this endpoint.
 
+On the TV, a tile's second title says what is ready there ("HQ captions: ready • Cut ready: Only
+the demo • Summary ready") or where unfinished work stands. Opening a tile plays the video through
+the usual playback path, selects its HQ captions even when *Select HQ captions automatically* is
+off, and offers a ready director's cut with the same one-press Apply that any video start offers
+(the player's cut controller, as at any video start).
+
 ## Voice prompts
 
 The phone records a spoken cut description and posts it to `POST /v1/speech`; this backend sends

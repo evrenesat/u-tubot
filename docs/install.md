@@ -92,3 +92,7 @@ repository, and the credit to Electric Eel and SmartTube.
   background**. A small animated indicator shows while the server is working. See [prompt-sets.md](prompt-sets.md).
 - HQ captions: after "Prepare HQ captions" finishes, the track "<language> (u·tubot)" appears in the subtitle picker, and is
   selected automatically unless you turn that off. See [captions.md](captions.md).
+- Processed section: the sidebar lists the videos your server recently processed (caption jobs, cut requests and summaries),
+  newest change first. Each tile says what is ready there, and opening one plays the video with its HQ captions selected and offers
+  a ready director's cut with its one-press Apply (or applies it when "apply ready cuts automatically" is on). See
+  [server.md](server.md#processed-videos).

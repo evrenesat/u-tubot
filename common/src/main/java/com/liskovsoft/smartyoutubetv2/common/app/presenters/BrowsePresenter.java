@@ -62,6 +62,7 @@ import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBrowseCache;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotProcessedOpen;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotProcessedSection;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSectionError;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
@@ -667,6 +668,13 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     @Override
     public void onVideoItemClicked(Video item) {
         if (getContext() == null) {
+            return;
+        }
+
+        // A Processed tile is about what was processed: it opens with its HQ captions selected, and the player's cut controller
+        // offers a ready cut as it does at any video start (#64)
+        if (UtubotProcessedOpen.isProcessed(item)) {
+            UtubotProcessedOpen.open(getContext(), item);
             return;
         }
 
