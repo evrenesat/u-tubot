@@ -1,6 +1,7 @@
 # Director's cuts: quick and watched modes (plan)
 
-Status: draft, revision 3 (revision 2 made the watched mode reuse the owner's earlier scene-analysis code; revision 3
+Status: draft, revision 4 (revision 4 adds Phase 2 at the end and the vision-model shortlist of the owner's model
+research, both not yet reviewed; revision 2 made the watched mode reuse the owner's earlier scene-analysis code; revision 3
 answers the plan review, section 6). Waits for the owner's decisions (Part 1). Nothing is implemented.
 Scope: two ways to build a director's cut. **Quick** is today's cut, made from the transcript only, and stays the default.
 **Watched** is made from what is on screen plus what is said: the server downloads a small copy of the video, turns it into
@@ -42,8 +43,8 @@ an estimate (see 2.2).
 
 | | Quick | Watched, first cut of a video | Watched, another preset of the same video |
 |---|---|---|---|
-| 20-minute video (40 to 100 grids) | 10 to 30 s | 5 to 10 min with a small vision model, 10 to 25 min with a 35B-class one | 20 to 60 s (the grids are already described) |
-| 60-minute video (120 to 240 grids, capped) | 20 to 60 s | 12 to 25 min small, 30 to 55 min 35B-class | 30 to 90 s |
+| 20-minute video (40 to 100 grids) | 10 to 30 s | 2 to 8 min if the big local engine does 2 to 5 s per grid as the model research expects; 5 to 25 min at the March laptop speeds | 20 to 60 s (the grids are already described) |
+| 60-minute video (120 to 240 grids, capped) | 20 to 60 s | 4 to 20 min at the expected speed; 12 to 55 min at the March speeds | 30 to 90 s |
 | Stored | nothing new | a 360p video-only copy, about 50 to 100 MB per 20 min (estimate), in the media archive | nothing new |
 
 One watched job runs at a time; others wait in line and say so. The picker shows the server's own estimate, corrected from
@@ -54,11 +55,13 @@ the last finished watched jobs.
 Decision 7 blocks checkpoint 2; the others can wait until the checkpoint that needs them.
 
 1. **Default mode: Quick** (recommended). Watched is chosen per video, or set as your personal default in Settings.
-2. **Vision model: Qwen3.6-35B-A3B first, if it takes pictures** (recommended). Its predecessor did this job in
-   scene-analyser; this model itself is **untested here**, and the gateway lists it as text-only. Checkpoint 3 first probes
-   each candidate with one picture, then measures those that pass (section 2.2 names them). The alias the cuts use today
-   is the candidate known to be listed with image input and is the pick if the Qwen3.6 model does not pass. Alternative:
-   speed first, take the fastest model that passes.
+2. **Vision model: Qwen3.6-35B-A3B, settled by a 45-minute bake-off** (changed; recommended). Your model research of
+   24 Nov shortlists three models that are already installed on the big local engine: Qwen3.6-35B-A3B (8-bit, 40 GB, open
+   licence, strong at reading text) as the default; Qwen3.8-Flash-Next (4-bit, 113 GB, licence not confirmed) if it is
+   clearly better for at most twice the time; gemma-4-26B as a check from another model family. None of them was measured
+   on pictures here. The bake-off (40 of your scene-analyser grids and 8 short clips, each model alone on the engine) is
+   the first step of checkpoint 3 and needs a window in which the engine's usual big model is unloaded. Alternative: skip
+   the bake-off and take the default.
 3. **Cloud vision: not built now** (changed; recommended). No switch, no label. Pictures go only to the one provider you
    configure for the vision task. Alternative: build an off-by-default switch for a cloud model.
 4. **Keep the small video copy in the media archive** (recommended, same rule as audio in #34: a second look with a better
@@ -73,9 +76,17 @@ Decision 7 blocks checkpoint 2; the others can wait until the checkpoint that ne
    Optional and separate: add a licence to `r2t4` itself. Alternative: keep it out and write the analysis part new from the
    ideas (slower, and loses tested code).
 
+## Next: phase 2
+
+After the checkpoints of this plan: prime and normal users, a claim on the big local engine for prime picture work, a model
+route per class (prime may use the claimed engine or the cloud, normal waits for a free local model), and an effort notch
+for Watched (Keyframes, Standard, Dense). It is the last part of this file ("Phase 2"), with ten decisions of its own, and
+blocks nothing above.
+
 ## Risks
 
-- Watched is slow at the measured speeds: a 35B-class model needs tens of minutes for a long video. The plan caps the number
+- Watched is slow at the only speeds that were measured (March, a laptop): tens of minutes for a long video. The model
+  research expects several times faster on today's engine; nothing confirms that before the bake-off. The plan caps the number
   of grids, shares the descriptions between presets, and measures a faster model on at least 100 grids; if that is still too slow for you, the
   answer is a smaller vision model (decision 2's alternative), not a different design.
 - scene-analyser was tuned on a drama episode. Talking heads and screen recordings have few cuts; the plan adds one rule for
@@ -256,18 +267,20 @@ coverage. The cost side is measured (5.4 requests per minute instead of about 22
 so checkpoint 3 measures one thing about it: whether text on a slide is still read inside a 512 px cell (2.11).
 
 **Vision model.** A new task table `[llm.cuts_vision]` (same fields as other tasks; no default, like `[llm.cuts]`).
-Candidates on the owner's gateway, by alias as served today:
+The shortlist of the owner's model research (24 Nov 2026), all three installed on the big local engine and served by its
+current engine software, which stays (no other engine showed a gain for this job):
 
-| # | Alias | Model | Gateway says | Note |
-|---|---|---|---|---|
-| 1 | `qwen3.6-35b-a3b-oq8e-mtp` | Qwen3.6-35B-A3B | text only (the default for discovered models) | recommended if it passes the probe; successor of the measured Qwen3.5-35B-A3B |
-| 2 | `fast` (`fast-instruct` is the same family and counts as one) | Qwen3.8-Flash-Next | image input | the `[llm.cuts]` pick of 2026-11-20; the known image-capable candidate |
-| 3 | `gemma-4-26b-a4b-it-oq8e-mtp` | gemma-4-26B | text only (default) | no earlier data |
+| # | Model (build) | Size | Expected s per grid | Role | Note |
+|---|---|---|---|---|---|
+| 1 | Qwen3.6-35B-A3B, 8-bit | 40 GB | 2 to 5 | default | Apache-2.0; the best document-reading score found; takes video natively; successor of the measured Qwen3.5-35B-A3B |
+| 2 | Qwen3.8-Flash-Next, 4-bit | 113 GB | 4 to 10 | wins only if clearly better | licence not confirmed; leaves less memory for parallel requests. The gateway's `fast` alias serves the same family from another engine and is not this build |
+| 3 | gemma-4-26B-A4B, 8-bit | 30 GB | 2 to 5 | cross-family check | Apache-2.0; weaker document-reading score |
 
-The Qwen3.5 models that scene-analyser measured ran on a laptop model server and are not served by the gateway, so they
-are not candidates. Checkpoint 3 starts with a probe (2.11) and continues only with the aliases that pass it. A candidate
-that passes while declared text-only needs its capability corrected in the gateway's own configuration (outside this
-repository) before it is used; the pick is recorded in `ai-backend/fixtures/cuts/VISION-CHOICE-<date>.md`.
+The speeds are the research's estimates, not measurements. The gateway serves 1 and 3 today as discovered aliases
+(`qwen3.6-35b-a3b-oq8e-mtp`, `gemma-4-26b-a4b-it-oq8e-mtp`) declared without image input; the winner gets a curated alias
+with the right capability in the gateway's own configuration (outside this repository). The pick is recorded in
+`ai-backend/fixtures/cuts/VISION-CHOICE-<date>.md`. The Qwen3.5 models that scene-analyser measured are not installed and
+are not candidates.
 `llm.py` gains message content parts (`[{"type":"text"},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,..."}}]`),
 OpenAI-compatible, nothing provider-specific. JSON answers go through the existing `chat_json` and `extract_json`;
 `json-repair` is not added.
@@ -471,22 +484,32 @@ stage sequence and `progress`, `/__mock/cuts?...&mode=` and a `state=failed&mode
 ### 2.11 Evaluation
 
 - **Grid test** (`scripts/grid_bench.py`, run by hand against a real endpoint, never in CI), three steps:
-  1. *Probe* (`--probe`, the first step of checkpoint 3): one generated grid with a large known word in one cell and a
-     colour change across the cells, sent to each candidate alias. Pass: HTTP 200 and the word in the answer. A refusal, an
-     error or an answer without the word drops the candidate. If no candidate passes, the plan stops there and the owner
-     decides (another local model, or the alternative of decision 3).
-  2. *Scores*, for the candidates that passed: grids built by the real grid code from clips rendered with `ffmpeg` from
+  1. *Bake-off* (the first step of checkpoint 3; about 45 minutes of engine time, each candidate loaded alone, so it needs
+     a window in which the engine's usual big model is unloaded: by hand until phase 2 exists, by an engine claim after).
+     Inputs, on the owner's machine only and never in this repository: 40 grids from the recorded scene-analyser run, picked
+     by kind (10 with on-screen text, 10 dialogue, 10 action, 10 dark), and 8 clips of 8 to 15 s of the same kinds. Per
+     candidate: the 40 grids at one request at a time and at six in parallel, then the 8 clips as native video input; the
+     scene-analyser JSON prompt, temperature 0, thinking off. Recorded: seconds per grid at both levels, tokens in and out,
+     valid-JSON rate, peak memory, load time. Quality: a short reference line per grid (visible text, people, main action)
+     written from the frames, each answer judged 0 to 2 on text, who and what, and action, plus a count of invented names
+     or text. Pass bar: valid JSON at least 98 %, text read right on at least 80 % of the on-screen-text grids. A candidate
+     that does not answer pictures at all fails here. Pick: candidate 1 unless candidate 2 is clearly better on quality
+     for at most twice the time; candidate 3 only if both Qwen models fail the bar. If none passes, the plan stops and the
+     owner decides (another model, or the alternative of decision 3).
+  2. *Scores*, for the pick and the runner-up: grids built by the real grid code from clips rendered with `ffmpeg` from
      known content (text slides at three sizes, a terminal-like text block, colour scenes, a title card, a change between
      the first and the last cell). On-screen text recall, `kind` accuracy, valid JSON rate; and the same content sent as
      four single frames, once, to put a number on what the grid costs in legibility.
-  3. *Long run*, for the candidates that passed: at least 100 consecutive grids of one real video from the archive (offline
+  3. *Long run*, for the pick: at least 100 consecutive grids of one real video from the archive (offline
      mode, imported as in 2.12), with the real describe prompt at its full bounded context. Recorded: answered and failed
      counts, median and 95th percentile seconds per grid, the largest prompt sent, any HTTP 400. `eta_s_per_grid` and
      `describe_timeout_s` are set from it.
-  Decision rule (decision 2): candidate 1 is the pick when it passes the probe, answers at least 95 % of the long run in
-  valid form and has a median of at most `describe_s_per_grid_max = 20.0`. A faster candidate replaces it only if its text
-  recall and kind accuracy are each within 0.05 of it. If candidate 1 fails, the best-scoring passing candidate under the
-  same limits is the pick.
+  The pick of step 1 stands unless the long run answers under 95 % in valid form or its median is over
+  `describe_s_per_grid_max = 20.0`; then the runner-up takes its place and the long run is repeated.
+  Parallel describing: if six in parallel gave at least twice the throughput in step 1, `describe_concurrency` is set
+  to what was measured as best and the carry-forward state is dropped from the prompt (it needs strict order); the
+  transcript context stays. Until then it is 1. Native video input is measured in step 1 for later use only; this plan
+  sends grids.
 - **cutbench, watched mode**: every fixture gains a hand-written TDT (no video, no vision model: this measures the join and
   the editor). Three new fixtures where the transcript alone misleads: a silent demo (the must-keep span has no speech), a
   walkthrough where the talk refers to the screen ("as you can see here") and the screen decides relevance, and a sponsor
@@ -550,7 +573,7 @@ plan (Fast: straightforward from this plan; Heavy: the tricky parts).
 | 0 | Gates, not work of this plan: owner decision 7 answered (needed by 2); #82 merged (its own Heavy-tier task; needed by 4 and 5, see 2.3) | the decision is recorded in this plan; `main` has the server-side length selection | #82's own | n/a |
 | 1 | Mode plumbing with quick only: contract text, `mode` on requests and cuts, `modes` and `by_mode`, `default_mode`, `UserPolicy.cut_mode`, additive columns, watched listed as unavailable, mock backend modes, parity-matrix row | old request bodies answer exactly as before (replayed in a test); `mode:"watched"` answers the 409; settings round trip; quick cache keys unchanged (a stored row from before is still served) | `test_cuts_api.py`, `test_settings.py`, `test_db_migrations.py`, `test_emulator_mock.py` | Fast |
 | 2 | Video and grids, no model: `watch/video.py`; `frame_selector.py` and `grids.py` copied with headers and `THIRD_PARTY.md`, adapted to config; `watch/ffmpeg.py` and the worker thread; the quiet-stretch rule and the cap with its budget split; `utubot media import`; archive `kind=video`, limits, disk checks, scratch cleanup, archive remove hook | on the synthetic clip: every hard cut is a chunk end or in that chunk's cut list within 0.5 s, every chunk is 4 to 15 s except the joined still stretch (one grid for 30 s), each grid is 2x2 with cells of at most 512 px, the manifest matches scene-analyser's record; the cap holds on generated chunk lists including a 90-minute one with a cut every 4 s (budget split, 240 grids); a long poll answers within its `wait_ms` while the grid stage runs; cancelling a build ends the child `ffmpeg`; `media import` works offline; a second run downloads nothing and reuses the manifest; grids are gone after the stage; over-limit and full-archive cases fail before a download. Recorded by the owner's server for one talking video and one screen recording: grids per minute, stage time, video size | `test_watch_video.py`, `test_watch_selector.py`, `test_watch_grids.py`, `test_media_archive.py`, `test_cli_media.py` | Heavy |
-| 3 | First step: the image-input probe of 2.11 for the three candidate aliases, result recorded before anything else is built. Then: content parts in `llm.py`, `[llm.cuts_vision]`, `memory.py` and `tdt.py` copied with their ported tests, `describe.py` (sequential, bounded context, records, resume, timeout), the cloud rule; `grid_bench.py`; the model pick | mock: one request per grid in order, context never over the limit on a two-hour transcript, one retry then `not_seen`, HTTP 400 retried once with half the context, the 20 % rule, resume after a restart at the next grid, TDT validated and cached per key, same-provider fallback rule; on the owner's engines: scores for every candidate that passed the probe, the long run of at least 100 grids at full context, the pick, the eta and timeout values and the model's real prompt limit recorded; if none passes, stop and report | `test_watch_describe.py`, `test_watch_memory.py`, `test_watch_tdt.py`, `test_llm_parts.py`, config tests | Heavy |
+| 3 | First step: the bake-off of 2.11 for the three shortlisted models (owner's machine, engine window needed), result and pick recorded before anything else is built. Then: content parts in `llm.py`, `[llm.cuts_vision]`, `memory.py` and `tdt.py` copied with their ported tests, `describe.py` (sequential, bounded context, records, resume, timeout), the cloud rule; `grid_bench.py`; the model pick | mock: one request per grid in order, context never over the limit on a two-hour transcript, one retry then `not_seen`, HTTP 400 retried once with half the context, the 20 % rule, resume after a restart at the next grid, TDT validated and cached per key, same-provider fallback rule; on the owner's engines: the bake-off table, the scores of step 2, the long run of at least 100 grids at full context, the pick, the eta and timeout values and the model's real prompt limit recorded; if none passes, stop and report | `test_watch_describe.py`, `test_watch_memory.py`, `test_watch_tdt.py`, `test_llm_parts.py`, config tests | Heavy |
 | 4 | The watched build: `join.py`, `service.py`, branch in `CutService`, snap, #82 selection reused, queue slot, progress and eta, timeouts, failures and `fallback`, job-report stages, admin TDT route and status | end to end on the synthetic clip with the mock models: a watched request goes through every stage to a ready cut whose kept ranges include the silent part; restart mid-build resumes and reuses the caches; second preset skips stages 2 to 4; each failure row of 2.8 produces its document; the band holds after snap | `test_cuts_watched.py`, `test_watch_join.py`, `test_job_report.py` | Heavy |
 | 5 | Evaluation: cutbench TDTs, three visual fixtures, `--mode`, report columns; the labelled-set runner; the gate | bench numbers for both modes recorded in `fixtures/cuts/`; gate result stated; labelled-set run recorded (numbers, grids per minute, times, a readable sample) by the owner's server | `test_cutbench.py` | Fast |
 | 6 | Clients: TV picker row, follower over long builds, texts, labels, failure dialog; web UI control, progress, settings, failure offer; extension side per 2.10 | TV unit tests for the picker model and parser with the new fields; emulator run against the mock (`--cuts-watched-delay`) recorded: pick Watched, keep playing, ready announcement, Apply; failed case shows "Use Quick"; web UI tests for the control and the progress view | `UtubotCut*Test`, `test_webui.py`, emulator recipe in `docs/development.md` | Fast |
@@ -577,9 +600,11 @@ Order: 1, then 2, 3, 4, 5 in sequence; 6 may run beside 2 to 5 once 1 has landed
 
 ### 5.2 Could not be verified from here
 
-- Whether any candidate actually answers a picture through the gateway: nothing was probed, for `fast` either. "Text only"
-  is the gateway's default for discovered models and may say nothing about the two builds. Qwen3.6-35B-A3B is recommended
-  on the strength of its predecessor's runs, not its own. The probe is the first step of checkpoint 3.
+- Whether any shortlisted model answers a picture through the gateway, and how well: nothing was sent to them. The
+  research found them registered as vision models on the engine; the gateway declares the discovered ones without image
+  input. Their speeds are estimates and their benchmark scores are the model authors' own. The bake-off is the first
+  step of checkpoint 3.
+- Whether parallel requests help, and whether dropping the carry-forward state for them costs quality.
 - Why the growing-context run failed, and the real prompt limit of any candidate.
 - Speed on today's engines. The per-grid times are from a laptop in March 2026 with older models, 21 grids each from the
   first three minutes, with little context; one session of the same model was ten times slower. Every time in Part 1, the
@@ -604,7 +629,7 @@ Plan review of revision 2 (clean context, verdict: approve with changes; no high
 | # | Finding | Answer |
 |---|---|---|
 | M1 | The #82 gate has no owner, order or fallback; its answer format is unknown | 2.3 and checkpoint 0: #82 is its own Heavy-tier task; checkpoints 4 and 5 wait for its merge; what the plan needs from it and what happens if the format differs or it slips; Part 1 reworded |
-| M2 | The recommended vision model is unprobed and the candidates are unnamed | 2.2: three candidates by alias; 2.11 and checkpoint 3: the image-input probe is the first step, with a pass condition and a rule when the first choice fails; decision 2 says "untested here" |
+| M2 | The recommended vision model is unprobed and the candidates are unnamed | 2.2: three named candidates (since replaced by the shortlist of the owner's model research); 2.11 and checkpoint 3: a bake-off is the first step, with a pass bar and a pick rule; decision 2 says none was measured here |
 | M3 | Speed rests on 21-grid runs with little context | 2.11 step 3 and checkpoint 3: a run of at least 100 grids at full context; the eta default and the timeout are placeholders set from it; Part 1 says the times are a guess |
 | M4 | The 10,000-character cause was stated as shown | 1.2, 2.2, 5.1, 5.2: the observed evidence only, cause unverified; HTTP 400 retried with half the context; the real limit recorded in checkpoint 3 |
 | M5 | The grid cap can contradict the 90-minute limit, after a paid download | 2.2: the cap raises `min_chunk_s` too and ends in a budget split, so every video within the limit fits; the only length refusal is before the download; decision 5 kept, failure row removed |
@@ -623,3 +648,192 @@ Plan review of revision 2 (clean context, verdict: approve with changes; no high
 | L | 5.1 and 5.2 read as contradictory on the gateway's list | Reworded: what the list says (5.1), what was never probed (5.2) |
 | - | Review note: a hard cut does not always end a chunk in `frame_selector` | Found while answering M5; 2.2 and checkpoint 2 corrected |
 
+---
+
+# Phase 2: priority classes and engine claims
+
+Added 24 Nov 2026 (evening) on the owner's request. It comes after the checkpoints above and blocks none of them. It is
+not reviewed yet. What it adds: two classes of user, a way for a priority request to get the big local engine to itself,
+a model route per class, and an effort notch for watched cuts. Infrastructure that is not part of this repository is
+described here only as far as this backend sees it; the owner's private companion plan holds the rest.
+
+## P.1 Owner part
+
+What changes for you:
+
+- **Prime users.** One checkbox per u·tubot user in the web UI's user list. Your user is prime; a child's user is normal.
+  On the TV each YouTube account can be paired with its own u·tubot user, so the class follows whoever is signed in.
+- **Prime work goes first and alone.** A prime request for demanding work (a watched cut, HQ captions) starts at once.
+  Normal requests never slow it: they wait in line and say "waiting for a priority job"; a normal watched build that is
+  already running pauses at its next grid and continues afterwards.
+- **The big engine on demand.** When a prime request needs picture analysis, the backend claims the big local engine:
+  other work that uses it (your coding agents) moves to its configured replacement while the claim lasts and comes back
+  after. The same claim can be made by hand from the conductor's page, and it ends by itself if the claimer dies.
+- **Cloud is a choice per class.** Prime may use the claimed local engine, and the cloud when you allow it. Normal users
+  use local models when they are free and wait otherwise; they never reach the cloud.
+- **Effort notch.** Watched gets three levels: Keyframes (about one grid a minute, a few minutes per video), Standard
+  (phase 1) and Dense. Normal users default to Quick and may use Watched at Keyframes; prime defaults to Standard.
+
+Decisions (each with the recommendation):
+
+| # | Decision | Recommended | Alternative |
+|---|---|---|---|
+| P1 | Where the claim lives | The conductor owns the claim (page control, API, audit, expiry) and switches the gateway with the existing mode switch | A claim feature inside the gateway itself: cleaner routing, more new code; revisit if claims become frequent |
+| P2 | Vision model under a claim | The big model that is already loaded, if it answers pictures and is within the bake-off's pass bar: then a claim needs no model change and is ready in seconds. Otherwise the bake-off winner of decision 2, loaded in its place for the length of the claim (minutes to load, and to load the big model back) | Always the bake-off winner |
+| P3 | Pictures to the cloud for prime | No: pictures stay local, as in phase 1 decision 3 | Yes, with the "Watched (cloud)" label, when the claim is refused |
+| P4 | Text tasks for prime (summaries, answers, the cut editor) | Local first; the cloud only when the local model has not started answering within 5 s | Cloud always, as the server is set up today |
+| P5 | Normal users and Watched | Allowed at Keyframes only; default Quick | Not allowed at all |
+| P6 | A running normal build when prime work arrives | Pause at the next grid, resume after | Let it finish first |
+| P7 | Users on the TV | Each YouTube account can pair with its own u·tubot user; unpaired accounts use the device's user, which should be a normal one | One user per device as today (a child on your TV would then be prime) |
+| P8 | Claim length | 30 minutes, renewed while the job runs, at most 2 hours; requests already running on the engine finish, new ones are redirected | Cut running requests off at once |
+| P9 | The engine is in video mode | A claim is refused; prime work takes its next route or waits. Video mode is only left by hand | A claim ends video mode |
+| P10 | "Automatic" claims | The backend claims by itself when a prime job needs it, and releases after; no click | Also time windows or rules on the conductor |
+
+## P.2 Facts checked for this phase
+
+- Users: `UserConfig` has `name`, `token_sha256`, `admin`, `policy`; `admin` is flipped in `users.toml` by
+  `set_user_admin` and through `PUT /v1/users/{name}`; a user cannot change it for itself. There is no class or priority
+  on a user.
+- The TV keeps one backend address and token "shared by every account" (`UtubotSettings`), so today every YouTube account
+  on a device is the same u·tubot user.
+- Priorities: `llm.py` has `INTERACTIVE` and `BACKGROUND` and a `PriorityLimiter` per provider (`max_concurrent`,
+  `reserved_interactive`); `JobQueue` claims jobs `ORDER BY priority, created_at`; the YouTube gate takes the same
+  priority; cut builds run as their own tasks with a per-user cap. Nothing distinguishes users.
+- Providers: every task table names a model and optionally a provider and fallbacks; a provider has one key. The route
+  cannot depend on the caller today.
+- The gateway (modelgate) decides per client key whether cloud engines may be reached (`allow_cloud`) and refuses
+  otherwise with `403 cloud_not_allowed`.
+- The owner's infrastructure already has a mode switch that repoints the gateway's coding aliases to a cloud model while
+  the big local engine does other work, and back. It is driven by hand today. Read, not run, for this plan.
+
+## P.3 Decisions (backend and clients)
+
+### P.3.1 Classes
+
+- `UserConfig.prime: bool = False`, stored like `admin`: `users.toml`, `set_user_prime`, `utubot user prime NAME on|off`,
+  `PUT /v1/users/{name}` `{"prime":bool}` (admin only; a user declared in `config.toml` answers `409` as for `admin`).
+  `GET /v1/me` and the user list carry `"class":"prime"|"normal"`. It is not part of `UserPolicy`: a user cannot set it.
+- Everything a request starts inherits the class of the user who asked: `jobs.klass` and `cut_requests.klass`
+  (`TEXT NOT NULL DEFAULT 'normal'`, additive). A shared build (same cache key) takes the highest class waiting on it.
+- Order everywhere is (class, then today's priority, then age): `JobQueue`, `PriorityLimiter` (prime waiters first;
+  `reserved_prime = 1` slot per provider that normal work cannot take), the YouTube gate, the watched slot.
+- "Demanding work" is a named set: watched builds, caption and transcription jobs. While a prime demanding job is running
+  or waiting, no normal demanding job starts (stage `in_line`, reason `priority`), and a running normal one yields at its
+  next safe point: a watched build after the current grid (describing is resumable per grid, 2.4), a caption job after
+  the current ASR chunk (cached per chunk today). Small interactive calls of normal users are not held; they queue behind
+  prime in the limiter.
+- Per-class defaults in config, `[classes.prime]` and `[classes.normal]`: `cut_mode`, `watched_effort`,
+  `watched_max_effort`, `max_active_cuts`, `routes` (P.3.2). `UserPolicy` values still apply within what the class allows.
+
+### P.3.2 Routes per class
+
+A route is a named way to reach a model; a class lists the routes it may use, in order, per kind of work.
+
+| Route | Meaning | In config |
+|---|---|---|
+| `local` | The shared local models, through a provider whose gateway key cannot reach cloud engines | `[llm.providers.<name>]` with `route = "local"` |
+| `claimed` | The big local engine while this backend holds a claim on it (P.3.3) | a provider with `route = "claimed"`, and the alias to use per task |
+| `cloud` | A provider whose key may reach cloud engines | a provider with `route = "cloud"` |
+
+- Each task table gains `by_route = { local = "<alias>", claimed = "<alias>", cloud = "<alias>" }`; a missing entry means
+  the task cannot use that route. `model` stays the default for servers without classes.
+- `[classes.<class>.routes]`: `text = [...]`, `pictures = [...]`, `speech = [...]`. Defaults: prime
+  `text = ["local","cloud"]`, `pictures = ["claimed"]`, `speech = ["local"]`; normal `["local"]` for all three.
+- Trying the next route: a refusal (`403`, the gateway's "cloud not allowed", "engine claimed") moves on at once; a busy
+  local model moves on after `cloud_after_s = 5.0` without a first byte (prime text only, decision P4). When the list is
+  exhausted the request waits and retries its first route (back-pressure as today); it never fails for being normal.
+- Normal work can never reach the cloud by accident: its only provider's key is refused there by the gateway. This is the
+  same guarantee as 2.7, now used for a class.
+- `GET /v1/admin/status` shows the routes per class and which one served the last request of each task.
+
+### P.3.3 Engine claims, as this backend sees them
+
+The backend speaks a small HTTP contract to a claim service; it does not know what stands behind it. Without
+`[engine_claim]` the route `claimed` is simply unavailable.
+
+- `[engine_claim] url`, `token_env`, `engine = "<name>"`, `ttl_s = 1800`, `renew_every_s = 300`, `max_s = 7200`,
+  `wait_ready_s = 120`.
+- `POST <url>` `{"engine","holder","reason","ttl_s"}` -> `201 {"id","state":"draining"|"active","expires_at"}`; `409`
+  with `{"reason"}` when it cannot be given (another holder, the engine in another mode, engine down).
+  `POST <url>/<id>/renew` -> `200` with the new `expires_at`; `DELETE <url>/<id>` -> `200`. `GET <url>?engine=` -> the
+  current claim or none.
+- The backend claims when a prime job needs the `claimed` route, renews while it runs (after every grid at the latest),
+  and releases when no prime job needs it any more (after `release_idle_s = 60`, so two cuts in a row share one claim).
+  A claim that cannot be renewed is treated as lost: the job pauses at the next grid and asks again.
+- A refused claim is not an error: the job takes the next route of its class; with none (pictures, decision P3) it waits
+  and shows "waiting for the engine" with the service's reason.
+- A restart releases nothing by itself; the backend looks up its own claim by holder on start and continues or releases.
+  The service's expiry is the safety net.
+- The job report gains the stage `claim` (asked, waited, state, lost). No address or token of the service is logged.
+
+### P.3.4 Effort
+
+- Three levels, `keyframes`, `standard`, `dense`, as named grid settings in `[cuts.watched.effort.<level>]`:
+  - `keyframes`: the budget split of 2.2 from the start, one grid per `keyframes_grid_s = 60` (four frames a minute, taken
+    at scene cuts where there are any), at most 90 grids;
+  - `standard`: the phase 1 settings;
+  - `dense`: scene-analyser's `high_recall` preset (threshold 0.34, 2.5 fps analysis, chunks 3.5 to 12 s), at most 480 grids.
+- Contract (additive): optional `"effort"` beside `"mode"` on the build routes; `modes[]` entry of `watched` gains
+  `"efforts":[{"id","label","default":bool,"available":bool,"eta_s"}]`; the cut document's `watched` object gains
+  `"effort"`. An effort above the class's `watched_max_effort` answers `403` with a plain sentence.
+- Caching: the effort is part of the grid settings key, so each level has its own manifest and TDT. A request is served
+  from a stored TDT of the same or a higher level when one exists (a cut never waits for work that a better result
+  already covers).
+- Expected first-cut times at the measured 5.6 to 13.8 s per grid: a 20-minute video at `keyframes` is 20 grids, 2 to 5
+  minutes. Estimates, like the phase 1 table.
+- Clients: a second row under the mode switch, "Effort: Keyframes / Standard / Dense", the default marked, levels above
+  the user's maximum not shown. TV, phone and extension alike; the parity-matrix row of phase 1 is extended.
+
+### P.3.5 Users on the TV and in the extension
+
+- TV: the token store becomes per YouTube account with the device token as fallback. Settings gain "Pair this account";
+  an account without its own pairing uses the device's user. Switching the account drops the per-user caches (as a token
+  change does today). Signed out of YouTube: the device's user.
+- Extension: one u·tubot user per browser profile, as planned; no change. `ai/CONTRACT.md` "Clients" gains the per-account
+  pairing as a TV-only item with this reason (a browser profile already is one person).
+- Web UI: the user list shows and edits the class; Settings shows your class and what it allows.
+
+## P.4 Checkpoints
+
+Repositories: **u-tubot** (this one), **modelgate** (the gateway), **conductor** and **ops** (the owner's private
+repositories; their steps are specified in the private companion plan and only named here).
+
+| # | Repo | Scope | Done when (tests never contact YouTube or a real engine unless marked "drill") | Tier |
+|---|---|---|---|---|
+| P1 | u-tubot | Classes: `prime` flag, CLI, API, web UI checkbox, `klass` columns, ordering in queue, limiter, gate and cut cap, normal demanding work waits and yields | unit: a normal job queued first starts after a prime one queued later; with a prime watched build active a normal one stays `in_line` with reason `priority`; a running normal build stops after its current grid and finishes later with the same TDT; a user cannot set its own class; migrations additive | Heavy |
+| P2 | u-tubot | Routes: `route` on providers, `by_route`, `[classes.*.routes]`, next-route rules, status | mock gateway with two keys: normal work is never sent with the cloud key (asserted on every recorded request); a `403 cloud_not_allowed` makes a normal request wait and retry, not fail; prime text moves to cloud after `cloud_after_s`; servers without classes behave as before (replayed requests) | Heavy |
+| P3 | ops | The mode switch gains `claim` and `release` with a lease and an expiry timer; refuses against video mode | companion plan; tests against a fake gateway admin API | Fast |
+| P4 | modelgate | The normally loaded big model as a fourth bake-off entry; a curated alias with image input for the model decision P2 names, for claimed use and without fallback; a second u·tubot client key that cannot reach cloud engines | production-config test; drill: one bake-off grid against that alias | Fast |
+| P5 | conductor | Claim API, expiry, audit, the page control and lane state, the actuator call | companion plan; pytest with a stub actuator | Heavy |
+| P6 | u-tubot | Claim client: `[engine_claim]`, claim, renew, release, lost claim, restart, job-report stage, refusal handling | mock claim service: a prime watched build claims before its first grid, renews, releases 60 s after the last job; a `409` leaves it waiting with the reason; a lost claim pauses at the next grid; no claim call is ever made for a normal user | Heavy |
+| P7 | u-tubot | Effort: settings, contract, cache rule, class limits, mock backend, the three clients | synthetic clip: `keyframes` yields one grid per 60 s, `dense` more grids than `standard`; a stored `standard` TDT serves a `keyframes` request without a vision call; a normal user asking for `standard` gets the `403`; TV, web UI tests for the notch; emulator recipe with the mock | Fast |
+| P8 | u-tubot (app) | Per-account pairing on the TV | unit tests for the token store (account token, fallback, account switch clears caches); emulator run against two mock users recorded | Fast |
+| P9 | all | Owner drill on the real machines, with the backend in offline mode and an imported video | recorded: a prime watched cut claims the engine, the coding aliases answer from their replacement meanwhile, the grids are described locally, the claim is released and the aliases are back; a normal request made meanwhile waited | Fast |
+
+Order: P1 and P2 can start once phase 1 checkpoint 1 has landed. P3, P4, P5 are independent of this repository. P6 needs
+P2 and P5. P7 needs phase 1 checkpoint 4. P8 needs P1. P9 needs all.
+
+## P.5 Tests without YouTube
+
+- Everything in this repository runs against mocks: `tests/mock_openai.py` grows a second key and the gateway's refusal
+  answers; a new `tests/mock_claims.py` plays the claim service (grant, refuse with each reason, expire, lose). Users of
+  both classes come from the test config. Watched cases use the synthetic clip and the fake downloader of phase 1.
+- `scripts/emulator_mock_backend.py` gains `class` on `/v1/me`, `efforts`, and the `in_line` reason, so the TV and the
+  extension are checked without a server.
+- The drill (P9) is the only step on real engines. It uses `[youtube] offline` and `utubot media import`, so it makes no
+  request to YouTube either.
+
+## P.6 Not verified for this phase
+
+- That the big model that is normally loaded answers pictures (the gateway declares it without image input, its cloud
+  counterpart with; the model research did not check it either). Decision P2 depends on it; P4 adds it to the bake-off
+  as a fourth entry, which costs no load time.
+- How long a model change under a claim takes in both directions; `wait_ready_s` is 120 only for the no-change case and
+  is set from the measured load time otherwise.
+- How long requests already running on the big engine take to finish after a claim, and whether a prime request sharing
+  the engine with them for that time is fast enough.
+- Whether every alias the coding agents use is covered by the mode switch (read in its documentation, not checked live).
+- The 5 s first-byte threshold for prime text, and the keyframes level's quality (one grid a minute may be too thin for
+  screen recordings; the labelled set of 2.11 gets an effort column).
+- How the TV learns which YouTube account is active at the moment a request is made (the account code is upstream's; read
+  only at `UtubotSettings`).

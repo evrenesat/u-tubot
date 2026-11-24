@@ -17,6 +17,11 @@
   least 100 grids at full context, the grid cap always fits a video within the 90-minute limit, the grid stage runs in a worker
   thread with its own `ffmpeg` module, an owner command `utubot media import` feeds offline runs, the waiting stage is
   `in_line`, and the cloud switch is no longer built.
+- Revision 4: decision 2 now follows the owner's model research (three installed vision models, Qwen3.6-35B-A3B as the default,
+  settled by a 45-minute bake-off that is the first step of checkpoint 3). A new last part, "Phase 2: priority classes and engine
+  claims", not yet reviewed: prime and normal users, class-ordered queues, a model route per class, a claim on the big local
+  engine through a small HTTP contract, an effort notch for Watched (Keyframes, Standard, Dense), per-account pairing on the TV,
+  checkpoints P1 to P9 across four repositories.
 
 ## 2026-11-24 (director's cuts respect the target length, issue 82)
 
