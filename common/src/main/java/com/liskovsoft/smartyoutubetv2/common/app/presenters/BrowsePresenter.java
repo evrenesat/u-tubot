@@ -60,6 +60,10 @@ import com.liskovsoft.smartyoutubetv2.common.prefs.MainUIData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SectionFilterData;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBrowseCache;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotProcessedSection;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSectionError;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.youtubeapi.service.internal.MediaServiceData;
 
@@ -78,6 +82,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.reactivex.Observable;
+import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.Disposable;
 
 public class BrowsePresenter extends BasePresenter<BrowseView> implements SectionPresenter, VideoGroupPresenter, AccountChangeListener {
@@ -92,6 +97,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     private final Map<Integer, Observable<List<MediaGroup>>> mRowMapping;
     private final Map<Integer, Callable<List<SettingsItem>>> mSettingsGridMapping;
     private final Map<Integer, Callable<List<Video>>> mLocalGridMappings;
+    private final Map<Integer, Observable<ProcessedList>> mProcessedMapping;
     private final Map<Integer, BrowseSection> mSectionsMapping;
     private final AppDataSourceManager mDataSourcePresenter;
     private final BrowseProcessorManager mBrowseProcessor;
@@ -144,6 +150,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         mRowMapping = new HashMap<>();
         mSettingsGridMapping = new HashMap<>();
         mLocalGridMappings = new HashMap<>();
+        mProcessedMapping = new HashMap<>();
         mSectionsMapping = new HashMap<>();
         MediaServiceManager.instance().addAccountListener(this);
 
@@ -267,6 +274,17 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         initSettingsGridMapping();
         initLocalGridMapping();
+        initProcessedMapping();
+    }
+
+    /**
+     * The u-tubot Processed section is the built-in flavor's only (u-tubot #66); its content comes from the backend, not YouTube
+     */
+    private void initProcessedMapping() {
+        if (UtubotSettings.isBuiltIn()) {
+            mProcessedMapping.put(UtubotProcessedSection.ID,
+                    UtubotManager.instance(getContext()).processedObserve(UtubotProcessedSection.LIMIT));
+        }
     }
 
     private void initSectionMapping() {
@@ -300,6 +318,14 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         mSectionsMapping.put(MediaGroup.TYPE_USER_PLAYLISTS, new BrowseSection(MediaGroup.TYPE_USER_PLAYLISTS, getContext().getString(R.string.header_playlists), BrowseSection.TYPE_ROW, R.drawable.icon_playlist, false));
         mSectionsMapping.put(MediaGroup.TYPE_NOTIFICATIONS, new BrowseSection(MediaGroup.TYPE_NOTIFICATIONS, getContext().getString(R.string.header_notifications), BrowseSection.TYPE_GRID, R.drawable.icon_notification, false));
         mSectionsMapping.put(MediaGroup.TYPE_PLAYBACK_QUEUE, new BrowseSection(MediaGroup.TYPE_PLAYBACK_QUEUE, getContext().getString(R.string.playback_queue_category_title), BrowseSection.TYPE_GRID, R.drawable.icon_queue, false));
+
+        // Past the built-in entries. The flavor has the u-tubot layer built in: the section comes from the backend, not YouTube
+        if (UtubotSettings.isBuiltIn()) {
+            BrowseSection processed = new BrowseSection(UtubotProcessedSection.ID,
+                    getContext().getString(R.string.utubot_processed_title), BrowseSection.TYPE_GRID, R.drawable.icon_playlist);
+            processed.setMessage(getContext().getString(R.string.utubot_processed_message));
+            mSectionsMapping.put(UtubotProcessedSection.ID, processed);
+        }
 
         if (getSidebarService().isSettingsSectionEnabled()) {
             mSectionsMapping.put(MediaGroup.TYPE_SETTINGS, new BrowseSection(MediaGroup.TYPE_SETTINGS, getContext().getString(R.string.header_settings), BrowseSection.TYPE_SETTINGS_GRID, R.drawable.icon_settings));
@@ -1015,6 +1041,10 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         enableSection(MediaGroup.TYPE_MY_VIDEOS, enable);
         enableSection(MediaGroup.TYPE_NOTIFICATIONS, enable);
 
+        if (UtubotSettings.isBuiltIn()) {
+            enableSection(UtubotProcessedSection.ID, enable);
+        }
+
         // Hidden by default (see SidebarService.initPinnedItems): only ever hidden here
         if (!enable) {
             enableSection(MediaGroup.TYPE_BLOCKED_CHANNELS, false);
@@ -1382,6 +1412,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                 if (mGridMapping.containsKey(section.getId())) {
                     Observable<MediaGroup> group = mGridMapping.get(section.getId());
                     updateVideoGrid(section, group, section.isAuthOnly());
+                } else if (mProcessedMapping.containsKey(section.getId())) {
+                    updateProcessedGrid(section);
                 } else if (mLocalGridMappings.containsKey(section.getId())) {
                     Callable<List<Video>> localVideos = mLocalGridMappings.get(section.getId());
                     updateLocalGrid(section, localVideos);
@@ -1768,6 +1800,88 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                         }, () -> {
                             finishCachedRefresh(section, column);
                             handleLoadError(null);
+                        });
+
+        mActions.add(updateAction);
+    }
+
+    /**
+     * The u-tubot Processed section: its tiles from the backend answer, newest first as it lists them. YouTube's filters and
+     * pages don't apply; its cards are cached as the other grid sections' (see UtubotBrowseCache). Empty and failed loads say
+     * so in a u-tubot message (see UtubotSectionError), and a cached section keeps its cards on a failed refresh.
+     */
+    private void updateProcessedGrid(BrowseSection section) {
+        disposeActions();
+        mInvalidatedCachedSections.remove(section.getId());
+
+        if (getView() == null) {
+            Log.e(TAG, "Browse view has been unloaded from the memory. Low RAM?");
+            getViewManager().startView(BrowseView.class);
+            return;
+        }
+
+        Observable<ProcessedList> processed = mProcessedMapping.get(section.getId());
+
+        if (processed == null) {
+            return;
+        }
+
+        Log.d(TAG, "updateProcessedGrid: Start loading section: " + section.getTitle());
+
+        boolean cached = mCachedContentShown && mCachedShownGroups != null;
+
+        getView().showProgressBar(!cached);
+
+        if (!cached) {
+            VideoGroup clear = VideoGroup.from(section);
+            clear.setAction(VideoGroup.ACTION_REPLACE);
+            getView().updateSection(clear);
+        }
+
+        Disposable updateAction = processed.observeOn(AndroidSchedulers.mainThread())
+                .subscribe(
+                        list -> {
+                            if (getView() == null) {
+                                Log.e(TAG, "Browse view has been unloaded from the memory. Low RAM?");
+                                getViewManager().startView(BrowseView.class);
+                                return;
+                            }
+
+                            getView().showProgressBar(false);
+
+                            VideoGroup videoGroup = UtubotProcessedSection.toGroup(getContext(), section, list);
+
+                            if (cached) {
+                                int oldId = findCachedGroupId(videoGroup.getPosition());
+
+                                if (oldId != -1) {
+                                    videoGroup.setId(oldId);
+                                }
+                            }
+
+                            Video focusedBefore = mCurrentVideo;
+                            getView().updateSection(videoGroup);
+
+                            if (cached) {
+                                restoreCachedFocusedItem(videoGroup, focusedBefore);
+                            }
+
+                            mBrowseProcessor.process(videoGroup);
+                            saveCachedGroup(section, videoGroup);
+
+                            if (videoGroup.isEmpty()) {
+                                getView().showError(UtubotSectionError.empty(getContext()));
+                            }
+                        },
+                        error -> {
+                            Log.e(TAG, "updateProcessedGrid error: %s", error.getMessage());
+                            if (handleCachedRefreshError(error, section, -1)) {
+                                return;
+                            }
+                            getView().showProgressBar(false);
+                            getView().showError(UtubotSectionError.failed(getContext(), error));
+                        }, () -> {
+                            finishCachedRefresh(section, -1);
                         });
 
         mActions.add(updateAction);

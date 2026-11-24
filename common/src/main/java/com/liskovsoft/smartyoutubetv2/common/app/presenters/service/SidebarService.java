@@ -12,6 +12,8 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs.ProfileChangeListener;
 import com.liskovsoft.smartyoutubetv2.common.prefs.GeneralData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotProcessedSection;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -335,6 +337,12 @@ public class SidebarService implements ProfileChangeListener {
         mDefaultSections.put(R.string.header_playlists, MediaGroup.TYPE_USER_PLAYLISTS);
         mDefaultSections.put(R.string.my_videos, MediaGroup.TYPE_MY_VIDEOS);
         mDefaultSections.put(R.string.playback_queue_category_title, MediaGroup.TYPE_PLAYBACK_QUEUE);
+
+        // Past the other entries: the built-in flavor only (u-tubot #66), next to Settings, which it keeps last
+        if (UtubotSettings.isBuiltIn()) {
+            mDefaultSections.put(R.string.utubot_processed_title, UtubotProcessedSection.ID);
+        }
+
         mDefaultSections.put(R.string.header_settings, MediaGroup.TYPE_SETTINGS);
     }
 
