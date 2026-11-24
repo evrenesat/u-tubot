@@ -22,6 +22,11 @@
 - Review round 3 (CI): the backend job's 15-minute cap let a stalled Ubuntu mirror spend 14:54 downloading `ffmpeg` and ended run
   45356658576 inside the install, before pytest. The job now has 30 minutes, skips the install when `ffmpeg` is already on the
   runner and retries the apt download; `test_ci_config.py` pins the budget and both install guards.
+- Review round 4: a prompt generation guards the summary cache, like the connection generation. A summary disk read or backend
+  answer that started before a prompt import, refresh or default change and completes after it sees the new generation: it is
+  neither put into the memory nor written to disk nor shown (a cached hit taken under the old generation is not served either).
+  `UtubotPromptChangeCacheTest` drops a filled summary with each prompt change, gates a stored-summary read and a backend answer
+  through a refresh and asserts they are not kept or shown.
 
 ## 2026-11-24 (browse cache review round 4)
 
