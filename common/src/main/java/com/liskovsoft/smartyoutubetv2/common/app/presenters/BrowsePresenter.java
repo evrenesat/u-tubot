@@ -1878,6 +1878,10 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                             if (handleCachedRefreshError(error, section, -1)) {
                                 return;
                             }
+                            // E.g. the app is closing while the backend answers
+                            if (getView() == null) {
+                                return;
+                            }
                             getView().showProgressBar(false);
                             getView().showError(UtubotSectionError.failed(getContext(), error));
                         }, () -> {

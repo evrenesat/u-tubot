@@ -7,6 +7,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.data.SettingsGroup;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.VideoGroup;
 import com.liskovsoft.smartyoutubetv2.common.app.models.errors.ErrorFragmentData;
+import com.liskovsoft.smartyoutubetv2.common.app.presenters.base.BasePresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.service.SidebarService;
 import com.liskovsoft.smartyoutubetv2.common.app.views.BrowseView;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
@@ -30,6 +31,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -129,6 +131,23 @@ public class BrowsePresenterProcessedTest {
 
         assertEquals("Can't load the processed videos: the backend is down", mView.lastError.getMessage());
         assertFalse(mView.lastProgress);
+    }
+
+    @Test
+    public void aFailedAnswerWithTheViewGoneDoesNotRaiseAnError() throws Exception {
+        putMapping(UtubotProcessedSection.ID, Observable.error(new RuntimeException("the backend is down")));
+
+        mPresenter.onSectionFocused(UtubotProcessedSection.ID);
+        setViewGone();
+        ShadowLooper.idleMainLooper();
+
+        assertEquals(0, mView.errors);
+    }
+
+    private void setViewGone() throws Exception {
+        Field field = BasePresenter.class.getDeclaredField("mView");
+        field.setAccessible(true);
+        field.set(mPresenter, new WeakReference<>(null));
     }
 
     private void resetSidebar() {
