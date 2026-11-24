@@ -103,18 +103,14 @@ public final class UtubotProcessedSection {
             return null;
         }
 
-        String state = JobState.READY;
-
         for (ProcessedCaption caption : item.captions) {
             if (caption.isReady()) {
-                state = JobState.READY;
-                break;
+                return context.getString(R.string.utubot_captions_status, JobState.READY);
             }
-
-            state = caption.state;
         }
 
-        return context.getString(R.string.utubot_captions_status, state);
+        // Newest first: the latest job's state when none has captions to show
+        return context.getString(R.string.utubot_captions_status, item.captions.get(0).state);
     }
 
     /**
