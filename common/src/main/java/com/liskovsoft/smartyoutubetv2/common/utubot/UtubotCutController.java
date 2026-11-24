@@ -582,8 +582,10 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         getPlayer().showControls(false);
 
+        boolean cutEnd = isCutEnd(mCut, skippedFromMs);
         long backToMs = skippedFromMs;
-        OptionItem back = UiOptionItem.from(getContext().getString(R.string.utubot_cut_back), option -> {
+        OptionItem back = UiOptionItem.from(getContext().getString(
+                cutEnd ? R.string.utubot_cut_watch_rest : R.string.utubot_cut_back), option -> {
             dialogPresenter.goBack();
             getPlayer().setPositionMs(backToMs);
         });
@@ -594,7 +596,21 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         dialogPresenter.enableOverlay(true);
         dialogPresenter.enableExpandable(false);
         dialogPresenter.setId(CUT_DIALOG_ID);
-        dialogPresenter.showDialog(getContext().getString(R.string.utubot_cut_skipped, formatLength(skippedMs)));
+        dialogPresenter.showDialog(cutEnd ? getContext().getString(R.string.utubot_cut_end)
+                : getContext().getString(R.string.utubot_cut_skipped, formatLength(skippedMs)));
+    }
+
+    /**
+     * The last dropped range of the cut reaches the video end: this jump ends the cut rather than skipping a middle drop
+     */
+    public static boolean isCutEnd(@Nullable Cut cut, long fromMs) {
+        if (cut == null || cut.durationMs <= 0 || cut.skipRangesMs == null || cut.skipRangesMs.isEmpty()) {
+            return false;
+        }
+
+        long[] last = cut.skipRangesMs.get(cut.skipRangesMs.size() - 1);
+
+        return last[1] == cut.durationMs && fromMs >= last[0] && fromMs < last[1];
     }
 
     private String readyText(Cut cut) {
