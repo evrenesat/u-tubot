@@ -34,6 +34,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.reactivex.Observable;
@@ -152,6 +153,39 @@ public class BrowsePresenterCacheTest {
     }
 
     @Test
+    public void localeChangeInvalidatesTheCacheThroughThePresenter() throws Exception {
+        BrowseSection section = musicSection();
+        seed(section, Collections.singletonList(group(section, LIKED_MUSIC, 0, 7_000, "old-one")), now(), false);
+
+        assertEquals(1, mCache.count());
+
+        // The sections were made in another language (see onViewInitialized)
+        setField("mSectionsLocale", new Locale("zz", "ZZ"));
+        mPresenter.onViewInitialized();
+
+        assertEquals(0, mCache.count());
+    }
+
+    @Test
+    public void cachedGridRefreshRestoresTheFocusedCard() throws Exception {
+        BrowseSection section = sectionOf(MediaGroup.TYPE_SUBSCRIPTIONS);
+        String target = "target0";
+
+        seed(section, Collections.singletonList(group(section, "Subscriptions", -1, 9_000, target)), now() - 20 * MINUTE, true);
+        putMapping("mGridMapping", MediaGroup.TYPE_SUBSCRIPTIONS,
+                Observable.just(mediaGroup("Subscriptions", 15, "target", MediaGroup.TYPE_SUBSCRIPTIONS)));
+        setField("mCurrentSection", section);
+        setField("mCurrentVideo", mCache.groups(section, identity()).get(0).getVideos().get(0));
+
+        updateCurrentSection();
+        awaitFocusedCard(target);
+
+        assertEquals(0, mView.errors);
+        assertTrue(mView.hasGroup(9_000, "Subscriptions", 15));
+        assertTrue(mView.hasSelected(target));
+    }
+
+    @Test
     public void accountChangeInvalidatesTheCacheThroughThePresenter() throws Exception {
         BrowseSection section = musicSection();
         seed(section, Collections.singletonList(group(section, LIKED_MUSIC, 0, 7_000, "old-one")), now(), false);
@@ -186,17 +220,33 @@ public class BrowsePresenterCacheTest {
     }
 
     private BrowseSection musicSection() throws Exception {
+        return sectionOf(MediaGroup.TYPE_MUSIC);
+    }
+
+    private BrowseSection sectionOf(int sectionId) throws Exception {
         Field field = BrowsePresenter.class.getDeclaredField("mSections");
         field.setAccessible(true);
         List<BrowseSection> sections = (List<BrowseSection>) field.get(mPresenter);
 
         for (BrowseSection section : sections) {
-            if (section.getId() == MediaGroup.TYPE_MUSIC) {
+            if (section.getId() == sectionId) {
                 return section;
             }
         }
 
-        throw new IllegalStateException("Music isn't in the sections");
+        throw new IllegalStateException(sectionId + " isn't in the sections");
+    }
+
+    private void setField(String fieldName, Object value) throws Exception {
+        Field field = BrowsePresenter.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(mPresenter, value);
+    }
+
+    private void updateCurrentSection() throws Exception {
+        Method method = BrowsePresenter.class.getDeclaredMethod("updateCurrentSection", boolean.class);
+        method.setAccessible(true);
+        method.invoke(mPresenter, false);
     }
 
     private void seed(BrowseSection section, List<VideoGroup> groups, long loadedAt, boolean stale) throws Exception {
@@ -233,6 +283,22 @@ public class BrowsePresenterCacheTest {
         }
 
         throw new AssertionError("the refresh didn't save the whole section");
+    }
+
+    private void awaitFocusedCard(String videoId) throws Exception {
+        long deadline = System.currentTimeMillis() + 5_000;
+
+        while (System.currentTimeMillis() < deadline) {
+            ShadowLooper.idleMainLooper();
+
+            if (mView.hasSelected(videoId)) {
+                return;
+            }
+
+            Thread.sleep(20);
+        }
+
+        throw new AssertionError("the refresh didn't restore the focused card");
     }
 
     private void awaitFirstChunk() throws Exception {
@@ -280,6 +346,10 @@ public class BrowsePresenterCacheTest {
     }
 
     private static MediaGroup mediaGroup(String title, int count, String videoPrefix) {
+        return mediaGroup(title, count, videoPrefix, MediaGroup.TYPE_MUSIC);
+    }
+
+    private static MediaGroup mediaGroup(String title, int count, String videoPrefix, int type) {
         List<MediaItem> items = new ArrayList<>();
 
         for (int i = 0; i < count; i++) {
@@ -290,7 +360,7 @@ public class BrowsePresenterCacheTest {
                 (proxy, method, args) -> {
                     switch (method.getName()) {
                         case "getType":
-                            return MediaGroup.TYPE_MUSIC;
+                            return type;
                         case "getTitle":
                             return title;
                         case "getMediaItems":
@@ -448,6 +518,16 @@ public class BrowsePresenterCacheTest {
 
         private void countRefresh() {
             refreshSubscriptions++;
+        }
+
+        private boolean hasSelected(String videoId) {
+            for (Video video : mSelectedItems) {
+                if (videoId.equals(video.videoId)) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private boolean hasGroup(int id, String title, int size) {
