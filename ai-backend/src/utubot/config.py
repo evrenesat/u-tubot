@@ -186,6 +186,12 @@ class CutsConfig(BaseModel):
     cached per (video, preset or prompt, model, transcript).
     """
 
+    # The mode a request uses when neither it nor the user's setting names one. Watched is
+    # only available when its vision model is configured; until then it resolves to quick.
+    default_mode: Literal["quick", "watched"] = "quick"
+    # A cut of a non-YouTube source is shown only when the playing length is within this many
+    # milliseconds of the release length the cut was built for.
+    release_duration_tolerance_ms: int = Field(default=2000, ge=0)
     # Tokens (chars / chars_per_token) one request may carry. Set it to about 80% of the context
     # of the `[llm.cuts]` alias; a transcript over it is cut by map/reduce instead of one pass.
     max_input_tokens: int = 80000
@@ -526,6 +532,7 @@ class UserPolicy(BaseModel):
     models: dict[str, str] = Field(default_factory=dict)
     auto_transcribe: Literal["off", "on_dwell", "on_open"] = "on_open"
     auto_transcribe_max_minutes: int = Field(30, ge=1, le=MAX_TRANSCRIBE_MINUTES)
+    cut_mode: Literal["quick", "watched"] | None = None
     summary_delay_ms: int = Field(700, ge=0, le=MAX_SUMMARY_DELAY_MS)
     summary_panel: bool | None = None
     auto_captions: bool | None = None

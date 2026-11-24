@@ -325,7 +325,8 @@ class TestCreateAndBuild:
         assert r.status_code == 200
         doc = await wait_ready(cuts_env, r.json()["request_id"])
         assert doc["state"] == "ready"
-        assert doc["cut"]["source"] == "prompt" and doc["cut"]["preset_id"] is None
+        assert doc["cut"]["source"] == {"kind": "youtube", "key": "youtube:abcdefghijk"}
+        assert doc["cut"]["preset_id"] is None and doc["cut"]["mode"] == "quick"
         assert doc["cut"]["label"].startswith("Only the part")
         # The prompt went to the model verbatim.
         assert "Only the part where they open the box" in cuts_env.llm.cut_calls[-1]
@@ -662,6 +663,46 @@ class TestCapsAndConfig:
     async def test_features_flag_follows_config(self, cuts_env):
         me = (await cuts_env.client.get("/v1/me")).json()
         assert me["features"]["cuts"] is True
+        assert me["features"]["cuts_watched"] is False
+
+
+class TestModes:
+    async def test_presets_report_the_modes_and_the_default(self, cuts_env):
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+        assert state["default_mode"] == "quick"
+        modes = {m["id"]: m for m in state["modes"]}
+        assert modes["quick"] == {
+            "id": "quick",
+            "label": "Quick",
+            "default": True,
+            "available": True,
+        }
+        assert modes["watched"]["available"] is False and modes["watched"]["default"] is False
+        assert "not configured" in modes["watched"]["reason"]
+        entry = {p["id"]: p for p in state["presets"]}
+        assert (
+            entry["cut-no-filler"]["state"] == "none"
+            and entry["cut-no-filler"]["by_mode"]["quick"]["state"] == "none"
+        )
+        assert entry["cut-no-filler"]["by_mode"]["watched"] == {
+            "state": "unavailable",
+            "reason": "Watched cuts are not configured on this server.",
+        }
+
+    async def test_watched_request_is_refused_while_quick_is_recorded(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        refused = await post_cut(cuts_env, preset="cut-no-filler", mode="watched")
+        assert refused.status_code == 409
+        assert refused.json()["error"] == "Watched cuts are not configured on this server."
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Intro"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        made = await post_cut(cuts_env, preset="cut-no-filler", mode="quick")
+        assert made.status_code == 200
+        doc = await wait_ready(cuts_env, made.json()["request_id"])
+        assert doc["mode"] == "quick" and doc["cut"]["mode"] == "quick"
 
     async def test_too_long_transcript_is_refused(self, cuts_env):
         set_transcript(cuts_env.fetcher)

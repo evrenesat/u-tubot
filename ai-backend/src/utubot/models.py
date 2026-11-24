@@ -70,12 +70,14 @@ class CutCreateRequest(BaseModel):
     preset: str | None = Field(None, max_length=64)
     prompt: str | None = Field(None, max_length=2000)
     await_prompt: bool = False
+    mode: Literal["quick", "watched"] | None = None
 
 
 class CutPromptBody(BaseModel):
     """The description a phone sends to fill a waiting cut request."""
 
     prompt: str = Field(max_length=2000)
+    mode: Literal["quick", "watched"] | None = None
 
 
 class CutPresetSave(BaseModel):

@@ -162,6 +162,8 @@ max_tokens = 2000
 
 # How the cut engine works. All defaults shown.
 # [cuts]
+# default_mode = "quick"           # mode a request uses when neither it nor the user names one; watched is unavailable until configured
+# release_duration_tolerance_ms = 2000  # non-YouTube source: how far the playing length may differ from the release length
 # max_input_tokens = 80000         # one request's size (chars/4); keep it at ~80% of the [llm.cuts] alias's context.
 #                                  # A longer transcript is cut by map/reduce (excerpts, then one final choice)
 # map_chunk_tokens = 30000         # size of one excerpt in map/reduce (never above max_input_tokens)

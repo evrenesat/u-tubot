@@ -39,7 +39,7 @@ from .config import (
     load_config,
 )
 from .content import ContentService
-from .cuts import CutRefused, CutService
+from .cuts import CutRefused, CutService, watched_available
 from .db import Database
 from .llm import LLMClient
 from .media_archive import ENTRY_LIMIT, MediaArchive
@@ -549,6 +549,7 @@ def create_app(
                 "captions": True,
                 "transcribe": True,
                 "cuts": svc.cuts.configured,
+                "cuts_watched": watched_available(cfg),
                 "speech": svc.speech.configured,
                 "speech_max_s": cfg.speech.max_record_s,
             },
@@ -998,7 +999,7 @@ def create_app(
     async def cuts_presets(video_id: str, user: UserConfig = Depends(current_user)):
         """The cut presets and their state for this video: what the picker on the TV shows."""
         check_video_id(video_id)
-        return svc.cuts.presets_state(user.name, video_id)
+        return svc.cuts.presets_state(user.name, video_id, user.policy.cut_mode)
 
     @app.post("/v1/videos/{video_id}/cuts")
     async def cuts_create(
@@ -1021,6 +1022,8 @@ def create_app(
             preset=body.preset,
             prompt=body.prompt,
             await_prompt=body.await_prompt,
+            mode=body.mode,
+            user_mode=user.policy.cut_mode,
         )
         return {"request_id": row["id"], "state": row["state"]}
 
@@ -1043,7 +1046,7 @@ def create_app(
         request_id: str, body: CutPromptBody, user: UserConfig = Depends(current_user)
     ):
         """Fill a waiting request with the typed (or spoken) description; the build starts."""
-        return svc.cuts.fill(request_id, user.name, body.prompt)
+        return svc.cuts.fill(request_id, user.name, body.prompt, body.mode, user.policy.cut_mode)
 
     @app.delete("/v1/cut-requests/{request_id}")
     async def cuts_dismiss(request_id: str, user: UserConfig = Depends(current_user)):

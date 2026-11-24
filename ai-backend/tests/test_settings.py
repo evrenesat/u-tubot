@@ -26,7 +26,16 @@ async def test_document_shape_defaults_and_overrides(env):
     doc = (await env.client.get("/v1/me/settings")).json()
     assert doc["user"] == "owner" and doc["version"] == 0 and doc["overrides"] == {}
     s = doc["settings"]
-    assert set(s) == {"models", "prompts", "filtering", "summaries", "transcripts", "tv"}
+    assert set(s) == {
+        "models",
+        "prompts",
+        "filtering",
+        "summaries",
+        "transcripts",
+        "tv",
+        "cuts",
+    }
+    assert s["cuts"] == {"cut_mode": "quick"}
     assert s["transcripts"] == {
         "auto_transcribe": "on_open",
         "auto_transcribe_max_minutes": 30,
@@ -46,6 +55,20 @@ async def test_document_shape_defaults_and_overrides(env):
     assert s["summaries"] == {"language": "en", "auto_long": False}
     assert doc["defaults"]["filtering"]["hide_topics"] == ["reaction videos"]
     assert doc["choices"]["auto_transcribe"] == ["off", "on_dwell", "on_open"]
+    assert doc["choices"]["cut_mode"] == ["quick", "watched"]
+
+
+async def test_cut_mode_follows_the_server_default_and_quick_until_watched_exists(env):
+    doc = (await put(env, {"settings": {"cuts": {"cut_mode": "quick"}}})).json()
+    assert doc["settings"]["cuts"]["cut_mode"] == "quick"
+    # Watched is not configured, so a stored watched choice resolves to quick.
+    doc = (await put(env, {"settings": {"cuts": {"cut_mode": "watched"}}})).json()
+    assert doc["overrides"]["cuts"]["cut_mode"] == "watched"
+    assert doc["settings"]["cuts"]["cut_mode"] == "quick"
+    env.cfg.cuts.default_mode = "watched"
+    doc = (await put(env, {"settings": {"cuts": {"cut_mode": None}}})).json()
+    assert doc["settings"]["cuts"]["cut_mode"] == "quick"
+    env.cfg.cuts.default_mode = "quick"
 
 
 async def test_put_merges_and_versions(env):

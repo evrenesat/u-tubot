@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from .auth import Auth, VersionConflict, build_policy, describe_validation
 from .config import MODEL_TASKS, TRANSLATE_OFF, Config, LLMTask, UserPolicy
+from .cuts import watched_available
 from .modelcatalog import ModelCatalog, ModelNotListed
 from .prompts import DEFAULT_BUILTIN_KEY, PromptStore
 
@@ -37,6 +38,7 @@ SECTION_FIELDS: dict[str, tuple[str, ...]] = {
     "summaries": ("language", "auto_long"),
     "transcripts": ("auto_transcribe", "auto_transcribe_max_minutes", "captions_translate_to"),
     "tv": ("summary_delay_ms", "summary_panel", "auto_captions", "update_checks"),
+    "cuts": ("cut_mode",),
 }
 PROMPT_KEYS = ("default", "panel_default")
 SECTIONS = ("models", "prompts", *SECTION_FIELDS)
@@ -78,6 +80,10 @@ def resolved_fields(cfg: Config, policy: UserPolicy) -> dict[str, Any]:
             values[name] = getattr(setup, name)
     if values["captions_translate_to"] is None:
         values["captions_translate_to"] = cfg.captions.translate_to or TRANSLATE_OFF
+    if values["cut_mode"] is None:
+        values["cut_mode"] = cfg.cuts.default_mode
+    if values["cut_mode"] == "watched" and not watched_available(cfg):
+        values["cut_mode"] = "quick"
     return values
 
 
@@ -147,6 +153,7 @@ class SettingsService:
             "choices": {
                 "tasks": list(MODEL_TASKS),
                 "auto_transcribe": ["off", "on_dwell", "on_open"],
+                "cut_mode": ["quick", "watched"],
             },
         }
 

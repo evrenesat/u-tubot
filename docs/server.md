@@ -402,6 +402,7 @@ open pages cannot overwrite each other; scripts using a bearer token may leave i
 | `summaries` | `language`, `auto_long` |
 | `transcripts` | `auto_transcribe` (`off`, `on_dwell`, `on_open`, default `on_open`), `auto_transcribe_max_minutes` (default 30), `captions_translate_to` (subtitle language: a code such as `en`, or `off` to keep the spoken language; unset follows `[captions] translate_to`) |
 | `tv` | `summary_delay_ms`, `summary_panel`, `auto_captions`, `update_checks` |
+| `cuts` | `cut_mode` (`quick`, `watched`; default `quick`, an unavailable `watched` resolves to `quick`) |
 
 **Precedence**, for each setting, highest first:
 
@@ -414,7 +415,8 @@ open pages cannot overwrite each other; scripts using a bearer token may leave i
 A setting still unset at that point follows the server setting it mirrors, so there is one place to change it for everyone:
 `auto_long` follows `[summary] auto_long`; `mark_only`, `summary_panel` and `auto_captions` follow `[setup.defaults]` (the values a
 TV applies when it imports `/setup.json`); a task without a model follows its `[llm.<task>]` table (`glance` follows `[llm.glance]`,
-else `[llm.summary]`); the prompt defaults follow `builtin/tldr` and `[summary] panel_prompt`. When a model is actually used a prompt's
+else `[llm.summary]`); the prompt defaults follow `builtin/tldr` and `[summary] panel_prompt`; `cut_mode` follows `[cuts] default_mode`.
+When a model is actually used a prompt's
 own `model` (in the prompt set) wins over the user's model for that task, which wins over `[llm.<task>]`.
 
 **One source of truth.** The policy fields (everything except the prompt defaults) live in the user's single override row of
@@ -443,6 +445,13 @@ the rest with its sponsor-skip engine, and the phone can judge a cut from its pa
 the TV plays it. Requests start on the TV ("Director's cut…" in the video menu, or "Describe on
 phone…" which shows a QR code) or on the phone (the Cuts tab, paste a link, pick a preset chip
 or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#directors-cuts-addendum-2026-11-20).
+
+Cut modes are `quick` (the model cuts from the transcript alone) and `watched` (the model sees the
+video). This checkpoint builds only `quick`: `watched` is advertised in `modes` but unavailable,
+`GET /v1/me` reports `features.cuts_watched: false`, and a request that explicitly asks for it
+answers `409`. The server default is `[cuts] default_mode`; a user's `cuts.cut_mode` setting
+overrides it, and both downgrade an unavailable `watched` to `quick` instead of refusing an
+omitted mode.
 
 - Requests are rows in `cut_requests` (`waiting` → `building`/`needs_transcript` → `ready`/
   `failed`, or `dismissed`); the phone queue is `GET /v1/cut-requests`, the TV long-polls
@@ -523,7 +532,7 @@ read-only view over rows it already has rather than a new history table. Wire de
 - `captions` lists each caption job in the client-facing states `waiting`/`processing`/`ready`/
   `failed`/`cancelled` with language, translation target, progress and error. `cuts` lists each
   request with its state, `preset_id`, the built-in or saved preset label (null for a typed
-  prompt, which rides in `prompt`) and error.
+  prompt, which rides in `prompt`), its `mode` and error.
 - `summary` is true when any stored summary exists for the video; summaries are shared per video.
 - `updated_at` is the newest change among the item's caption jobs and cut requests. The title
   comes from cached video metadata, else the newest caption job's title. The thumbnail is the

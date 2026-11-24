@@ -435,42 +435,66 @@ it the build routes (`POST /v1/videos/{id}/cuts`, `PUT /v1/cut-requests/{id}`) a
 `409 {"error":"Cuts are not configured on this server (no [llm.cuts] model)."}`, the read
 routes answer `200` with `"configured": false`, and `GET /v1/me` features carries `"cuts": false`.
 
-- `GET /v1/videos/{id}/cuts` -> `{"configured":bool,"presets":[{"id","label","state",
-  "request_id"?,"error"?,"cut"?}]}`. State is `none` | `waiting` | `building` |
-  `needs_transcript` | `ready` | `failed` for this video; `ready` carries the cut document.
+Cut modes are `quick` (the model cuts from the transcript alone) and `watched` (the model sees the
+video). Checkpoint 1 only builds `quick`: `watched` is advertised but unavailable, and
+`GET /v1/me` features carries `"cuts_watched": false` until a server enables it. The server's
+default comes from `[cuts] default_mode`; a user's choice is the `cuts.cut_mode` setting. A request
+that explicitly asks for `watched` while it is unavailable answers
+`409 {"error":"Watched cuts are not configured on this server."}`. An omitted mode uses the user's
+setting, else the server default, downgrading an unavailable `watched` to `quick`.
+
+- `GET /v1/videos/{id}/cuts` -> `{"configured":bool,"default_mode":"quick"|"watched",
+  "modes":[{"id","label","default","available","reason"?}],
+  "presets":[{"id","label","state","request_id"?,"error"?,"cut"?,
+  "by_mode":{"quick":{...},"watched":{...}}}]}`. The top-level preset state is for
+  `default_mode`; `by_mode` repeats it per mode, with `{"state":"unavailable","reason":...}` for a
+  mode that cannot be built. State is `none` | `waiting` | `building` | `needs_transcript` |
+  `ready` | `failed` for this video; `ready` carries the cut document. The read route reports the
+  downgrade but never answers `409`.
 - `POST /v1/videos/{id}/cuts` body `{"preset":"<preset id>"}` | `{"prompt":"<what to keep>"}` |
-  `{"await_prompt":true}` -> `{"request_id","state"}`. `preset`/`prompt` are mutually exclusive
-  (sending both answers `400`); `await_prompt` creates a `waiting` request the phone fills (the
-  TV's "Describe on phone…").
+  `{"await_prompt":true}`, plus optional `"mode":"quick"|"watched"` ->
+  `{"request_id","state"}`. `preset`/`prompt` are mutually exclusive (sending both answers
+  `400`); `await_prompt` creates a `waiting` request the phone fills (the TV's "Describe on
+  phone…"). An unknown mode is a `400`.
   The caller's known video facts ride as query params (`title`, `channel`, `duration_s`,
   `is_live`) so the phone queue can show them before the backend learns them itself.
-  Duplicate active requests (same video + preset/prompt/waiting) return the existing row; a
+  Duplicate active requests (same video + preset/prompt/waiting + mode) return the existing row; a
   `failed` row never blocks a new request, so asking for the same preset again starts a fresh
   build and keeps the failure in the history. A per-user cap on concurrent builds answers `429`.
 - `GET /v1/cuts/{request_id}?wait_ms=3000` long-polls (default `cuts.default_wait_ms` 3000 ms,
   cap 20000 ms, omit `wait_ms` to take the default) while `waiting`/`building` and returns the
   request document below.
 - `GET /v1/cut-requests` -> `{"requests":[...]}` newest first (max 100), the phone queue.
-- `PUT /v1/cut-requests/{id}` `{"prompt"}` fills a `waiting` request and starts the build
-  (`409` when it is not waiting any more). `DELETE /v1/cut-requests/{id}` dismisses a request
-  (a building one is stopped); dismissed requests leave the queue.
+- `PUT /v1/cut-requests/{id}` `{"prompt"}`, with optional `"mode"`, fills a `waiting` request and
+  starts the build (`409` when it is not waiting any more, or when the mode is `watched` and
+  unavailable); an omitted mode keeps the row's mode. `DELETE /v1/cut-requests/{id}` dismisses a
+  request (a building one is stopped); dismissed requests leave the queue.
 - `GET /cuts/{request_id}` (no auth): `302` to `/#/cuts/{request_id}`, the QR target that opens
   the request's cut sheet in the web UI.
 
 Request document (both the queue cards and the single request):
-`{"id","video_id","state","source","preset_id","prompt","error","created_at","updated_at",
-"title"?,"channel"?,"duration_s"?,"stage"?,"progress"?,"cut"?,"job_id"?,"instruction"?,"raw_answer"?}`.
-`stage` (`transcript`|`model`|`checking`, and for a video too long for one request `map`|`reduce`;
-clients show an unknown stage as its name) rides while building; `progress` (`{"done","of"}`,
-additive) rides during `map` and counts the excerpts answered; `cut` once ready; `job_id`
-opens the build report in the jobs API; `raw_answer` is the model's answer, trimmed. A video whose
+`{"id","video_id","state","source","mode","preset_id","prompt","error","created_at","updated_at",
+"title"?,"channel"?,"duration_s"?,"stage"?,"progress"?,"fallback"?,"cut"?,"job_id"?,
+"instruction"?,"raw_answer"?}`.
+`source` stays the requester origin (`"API token"`, `"prompt"`, `"preset"`), not the video
+source. `stage` (`transcript`|`model`|`checking`, and for a video too long for one request
+`map`|`reduce`; clients show an unknown stage as its name) rides while building; `progress`
+(`{"done","of"}`, additive) rides during `map` and counts the excerpts answered; `fallback`
+(`{"mode","state","cut"?}`) marks a `watched` request that fell back to `quick`; `cut` once
+ready; `job_id` opens the build report in the jobs API; `raw_answer` is the model's answer,
+trimmed. A video whose
 transcript does not fit one model request (`[cuts] max_input_tokens`) is cut by map/reduce: excerpts
 on chapter boundaries propose ranked candidate parts, one final call picks the cut with the same
 length selection; no video is refused for being long.
 
 The cut document (`cut`): `{"version","video_id","transcript_hash","duration_ms","label",
 "summary","parts":[{"label","start_ms","end_ms"}],"skip_ranges_ms":[[from,to]...],"kept_ms",
-"kept_s"?,"target_s"?,"source","preset_id","model","built_at"}`. `kept_s` is `kept_ms` in seconds
+"kept_s"?,"target_s"?,"source","transitions"?,"mode","preset_id","model","built_at"}`.
+`source` is `{"kind","key","release_key"?,"release_duration_ms"?}` naming the media the cut was
+built for (`kind:"youtube"`, `key:"youtube:<video id>"` for YouTube; older saved cuts carried a
+plain string such as `"preset"` and clients must ignore both forms). `transitions` (additive) is
+the optional list of editorial transitions the next modes use; clients that do not know it ignore
+it. `mode` is the cut mode used (`"quick"` for every cut checkpoint 1 builds). `kept_s` is `kept_ms` in seconds
 (one decimal) and `target_s` the preset's target length in seconds, `null` for typed prompts, saved
 presets and videos already short enough (both additive; older cuts lack them, clients read `kept_ms`). All times are milliseconds of the video the cut was
 built for (`duration_ms`); a client does not apply a cut whose video length differs by more than
@@ -608,8 +632,8 @@ Item:
               "state":"waiting|processing|ready|failed|cancelled",
               "progress":1.0,"error":null,"created_at":1763899900.0,"updated_at":1763900000.0}],
  "cuts":[{"request_id":"...","state":"waiting|building|needs_transcript|ready|failed",
-          "preset_id":"cut-demo","preset_label":"Only the demo","prompt":null,"error":null,
-          "created_at":1763899800.0,"updated_at":1763899900.0}]}
+          "preset_id":"cut-demo","preset_label":"Only the demo","prompt":null,"mode":"quick",
+          "error":null,"created_at":1763899800.0,"updated_at":1763899900.0}]}
 ```
 
 Captions and cuts are newest first. `state` for caption jobs is the client-facing job state used
@@ -681,10 +705,12 @@ The phone web UI (`GET /`, static files under `/ui/`) uses the same API as the a
                 "inflated_min_duration_s":300,"answer_in_label":false,"mark_only":false},
    "summaries":{"language":"en","auto_long":false},
    "transcripts":{"auto_transcribe":"on_open","auto_transcribe_max_minutes":30,"captions_translate_to":"en"},
-   "tv":{"summary_delay_ms":700,"summary_panel":false,"auto_captions":true,"update_checks":true}},
+   "tv":{"summary_delay_ms":700,"summary_panel":false,"auto_captions":true,"update_checks":true},
+   "cuts":{"cut_mode":"quick"}},
  "overrides":{"models":{"glance":"llama3.2:3b"}},
  "defaults":{ "...": "the same shape: what applies with no override" },
- "choices":{"tasks":["glance","summary","answer","triage","analysis"],"auto_transcribe":["off","on_dwell","on_open"]}}
+ "choices":{"tasks":["glance","summary","answer","triage","analysis"],"auto_transcribe":["off","on_dwell","on_open"],
+            "cut_mode":["quick","watched"]}}
 ```
 
 `settings` is what applies (a TV reads this); `overrides` only what the user changed; `defaults` what a reset returns to. The
@@ -692,6 +718,7 @@ precedence (override, `[users.policy]`, `[default_policy]`, built-in, then the s
 [docs/server.md](../docs/server.md#per-user-settings). `version` rises by one on every change, also through `PUT /v1/me/policy` and
 the prompt-default calls. `auto_transcribe` is `off`, `on_dwell` or `on_open`; the TV settings are `summary_delay_ms` (0-10000),
 `summary_panel`, `auto_captions`, `update_checks`; thresholds are 0-1.01; at most 50 topics of at most 80 characters.
+`cuts.cut_mode` is `quick` or `watched` (see the cuts addendum; an unavailable `watched` resolves to `quick`).
 
 `PUT /v1/me/settings` (admins: `PUT /v1/users/{name}/settings`) takes a partial document and returns the new one:
 

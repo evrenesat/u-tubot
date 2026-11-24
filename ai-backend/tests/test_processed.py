@@ -124,6 +124,7 @@ async def test_mixed_items_are_one_per_video_newest_first(env):
     cut = first["cuts"][0]
     assert cut["state"] == "ready" and cut["preset_id"] == "cut-demo"
     assert cut["preset_label"] == "Only the demo"
+    assert cut["mode"] == "quick"
 
     second = videos[1]
     assert second["title"] == "Title from the job"

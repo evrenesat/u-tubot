@@ -44,6 +44,7 @@ override, then `[users.policy]`, then `[default_policy]`, then the built-in defa
 | `summary_panel` | unset | TV: side panel on by default; unset follows `[setup.defaults] summary_panel` |
 | `auto_captions` | unset | TV: offer u·tubot captions automatically; unset follows `[setup.defaults] auto_captions` |
 | `update_checks` | `true` | TV: ask the server for newer app versions |
+| `cut_mode` | unset | director's cuts built `quick` (from the transcript) or `watched` (from the video); unset follows `[cuts] default_mode` (`quick`). An unavailable `watched` resolves to `quick`; see [server.md](server.md#directors-cuts) |
 
 Thresholds accept 0 to 1.01 (at most 50 topics of at most 80 characters each; blanks and duplicates are dropped). Hiding wins over
 marking. Raise a threshold to see fewer marks; set a hide threshold to `1.01` to never hide on that score.

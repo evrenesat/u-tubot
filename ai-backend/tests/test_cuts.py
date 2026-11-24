@@ -8,6 +8,7 @@ from utubot.cuts import (
     CutFormatError,
     CutRefused,
     Part,
+    SourceRef,
     Unit,
     build_units,
     candidate_units,
@@ -22,6 +23,7 @@ from utubot.cuts import (
     plan_chunks,
     select_for_target,
     serialize_units,
+    source_matches,
     split_candidates,
     target_band,
     transcript_hash,
@@ -206,12 +208,14 @@ class TestDocument:
             summary="s",
             label="No filler",
             duration_s=20.0,
-            source="preset",
+            source=SourceRef("youtube", "youtube:v"),
             preset_id="cut-no-filler",
         )
         assert doc["skip_ranges_ms"] == [[0, 2000], [8000, 10000], [12000, 20000]]
         assert doc["kept_ms"] == 8000 and doc["duration_ms"] == 20000
         assert doc["parts"][0] == {"label": "a", "start_ms": 2000, "end_ms": 8000}
+        assert doc["source"] == {"kind": "youtube", "key": "youtube:v"}
+        assert doc["mode"] == "quick"
 
     def test_duration_falls_back_to_the_last_part(self):
         doc = cut_document(
@@ -222,7 +226,7 @@ class TestDocument:
             summary="",
             label="l",
             duration_s=None,
-            source="prompt",
+            source=SourceRef("youtube", "youtube:v"),
             preset_id=None,
         )
         assert doc["duration_ms"] == 9000 and doc["skip_ranges_ms"] == [[0, 5000]]
@@ -231,6 +235,42 @@ class TestDocument:
         a = transcript_hash([(0.0, 1.0, "x")])
         b = transcript_hash([(0.0, 1.0, "y")])
         assert a != b and a == transcript_hash([(0.0, 1.0, "x")])
+
+    def test_source_and_transitions_are_optional_additive_fields(self):
+        doc = cut_document(
+            video_id="v",
+            thash="h",
+            model="m",
+            parts=[Part("a", 0, 1000)],
+            summary="",
+            label="l",
+            duration_s=10.0,
+            source={"kind": "local", "key": "local:one", "release_duration_ms": 9000},
+            transitions=[{"at_ms": 1000, "kind": "fade"}],
+            preset_id=None,
+            mode="watched",
+        )
+        assert doc["source"] == {"kind": "local", "key": "local:one", "release_duration_ms": 9000}
+        assert doc["transitions"] == [{"at_ms": 1000, "kind": "fade"}]
+        assert doc["mode"] == "watched"
+
+    def test_source_matches_key_and_release(self):
+        youtube = SourceRef("youtube", "youtube:v")
+        same = SourceRef("youtube", "youtube:v", release_duration_ms=60_000)
+        assert source_matches(youtube, same, 2000)
+        assert not source_matches(
+            same, SourceRef("youtube", "youtube:v", release_duration_ms=70_000), 2000
+        )
+        assert source_matches(
+            SourceRef("local", "local:one", "dvd", 60_000),
+            SourceRef("local", "local:one", "dvd", 61_500),
+            2000,
+        )
+        assert not source_matches(
+            SourceRef("local", "local:one", "dvd", 60_000),
+            SourceRef("local", "local:one", "bluray", 60_000),
+            2000,
+        )
 
 
 class TestPromptFiltering:
@@ -395,7 +435,7 @@ class TestTargetLength:
             summary="",
             label="Highlights",
             duration_s=660,
-            source="preset",
+            source=SourceRef("youtube", "youtube:v"),
             preset_id="cut-highlights-5",
             target_s=300,
         )

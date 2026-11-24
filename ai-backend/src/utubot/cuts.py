@@ -94,6 +94,59 @@ def removal_summary(
     return f"Removed {cut_clock(removed_ms)}, {percent} % of the video"
 
 
+MODE_LABELS = {"quick": "Quick", "watched": "Watched"}
+WATCHED_REASON = "Watched cuts are not configured on this server."
+
+
+@dataclass(frozen=True)
+class SourceRef:
+    """What a cut is built from: a YouTube video, or another release (scheme:id:season)."""
+
+    kind: str
+    key: str
+    release_key: str | None = None
+    release_duration_ms: int | None = None
+
+    def as_doc(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"kind": self.kind, "key": self.key}
+        if self.release_key is not None:
+            out["release_key"] = self.release_key
+        if self.release_duration_ms is not None:
+            out["release_duration_ms"] = self.release_duration_ms
+        return out
+
+
+def watched_available(cfg: Config | None = None) -> bool:  # noqa: ARG001 (cp1 has no vision model)
+    """Watched cuts need `[llm.cuts_vision]`; until checkpoint 3/4 the answer is always no."""
+    return False
+
+
+def source_ref(row: Any) -> SourceRef:
+    """The source columns of a request or cut row; null columns mean the YouTube video.
+
+    This is the only reader of `source_kind`/`source_key`/`release_*`, so a missing column
+    raises here instead of leaking into the cut logic.
+    """
+    kind = row["source_kind"] or "youtube"
+    key = row["source_key"]
+    if not key:
+        key = f"{kind}:{row['video_id']}"
+    return SourceRef(kind, key, row["release_key"], row["release_duration_ms"])
+
+
+def source_matches(left: SourceRef, right: SourceRef, tolerance_ms: int) -> bool:
+    """Same source and release, and a length within the configured tolerance."""
+    if left.key != right.key:
+        return False
+    if left.release_key or right.release_key:
+        if left.release_key != right.release_key:
+            return False
+    if left.release_duration_ms is not None and right.release_duration_ms is not None:
+        if abs(left.release_duration_ms - right.release_duration_ms) > tolerance_ms:
+            return False
+    return True
+
+
 CUT_SYSTEM = (
     "You build director's cuts of YouTube videos for a TV viewer: you choose which numbered "
     "transcript units to keep so the video plays the way the task asks. Reply ONLY with JSON: "
@@ -820,10 +873,12 @@ def cut_document(
     summary: str,
     label: str,
     duration_s: float | None,
-    source: str,
+    source: SourceRef | dict[str, Any] | None,
     preset_id: str | None,
     built_at: float | None = None,
     target_s: int | None = None,
+    transitions: list[dict[str, Any]] | None = None,
+    mode: str = "quick",
 ) -> dict[str, Any]:
     """The wire document the phone and the TV read: kept parts, skip ranges in ms, the transcript
     hash and the length the cut was built for (the TV refuses a cut whose length differs)."""
@@ -831,7 +886,7 @@ def cut_document(
     if not duration_ms and parts:
         duration_ms = parts[-1].end_ms
     kept_ms = sum(p.end_ms - p.start_ms for p in parts)
-    return {
+    doc = {
         "version": CUT_DOC_VERSION,
         "video_id": video_id,
         "transcript_hash": thash,
@@ -843,11 +898,16 @@ def cut_document(
         "kept_ms": kept_ms,
         "kept_s": round(kept_ms / 1000.0, 1),
         "target_s": target_s,
-        "source": source,
         "preset_id": preset_id,
         "model": model,
+        "mode": mode,
         "built_at": built_at or time.time(),
     }
+    if source is not None:
+        doc["source"] = source.as_doc() if isinstance(source, SourceRef) else dict(source)
+    if transitions is not None:
+        doc["transitions"] = transitions
+    return doc
 
 
 class CutService:
@@ -931,6 +991,21 @@ class CutService:
             )
         return prompt
 
+    def _refuse_watched(self) -> None:
+        if not watched_available(self.cfg):
+            raise CutRefused(WATCHED_REASON)
+
+    def _resolve_mode(self, requested: str | None, user_mode: str | None) -> str:
+        """The mode a request actually runs in; an explicit unavailable mode is refused."""
+        if requested is not None:
+            if requested == "watched":
+                self._refuse_watched()
+            return requested
+        mode = user_mode or self.cfg.cuts.default_mode
+        if mode == "watched" and not watched_available(self.cfg):
+            return "quick"
+        return mode
+
     # ---- the queue ------------------------------------------------------------------------------
 
     def create(
@@ -942,11 +1017,19 @@ class CutService:
         preset: str | None = None,
         prompt: str | None = None,
         await_prompt: bool = False,
+        mode: str | None = None,
+        user_mode: str | None = None,
+        source_kind: str = "youtube",
+        source_key: str | None = None,
+        release_key: str | None = None,
+        release_duration_ms: int | None = None,
     ) -> dict[str, Any]:
         """Queue a cut. Exactly one of `preset` / `prompt`; `await_prompt` creates an empty
         request the phone fills later. An identical active request is returned as-is."""
         if not self.configured:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
+        mode = self._resolve_mode(mode, user_mode)
+        source_key = source_key or f"{source_kind}:{video_id}"
         prompt = self._validate_prompt(prompt)
         if prompt is not None and preset is not None:
             raise CutRefused("A cut takes a preset or a description, not both.", status=400)
@@ -957,7 +1040,16 @@ class CutService:
                 raise CutRefused(f"Unknown cut preset {preset}.")
         if await_prompt and preset is not None:
             raise CutRefused("A request that waits for a description cannot name a preset.")
-        existing = self._active_same(user, video_id, preset, prompt, await_prompt)
+        existing = self._active_same(
+            user,
+            video_id,
+            preset,
+            prompt,
+            await_prompt,
+            mode=mode,
+            source_key=source_key,
+            release_key=release_key,
+        )
         if existing is not None:
             return existing
         if not await_prompt:
@@ -973,7 +1065,8 @@ class CutService:
         )
         self.db.execute(
             "INSERT INTO cut_requests(id,user,video_id,source,preset_id,prompt,state,job_id,"
-            "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "created_at,updated_at,source_kind,source_key,release_key,release_duration_ms,mode)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 request_id,
                 user,
@@ -985,6 +1078,11 @@ class CutService:
                 job_id,
                 now,
                 now,
+                source_kind,
+                source_key,
+                release_key,
+                release_duration_ms,
+                mode,
             ],
         )
         origin = events.current_origin()
@@ -1010,31 +1108,50 @@ class CutService:
         return self._row(request_id)  # type: ignore[return-value]
 
     def _active_same(
-        self, user: str, video_id: str, preset: str | None, prompt: str | None, await_prompt: bool
+        self,
+        user: str,
+        video_id: str,
+        preset: str | None,
+        prompt: str | None,
+        await_prompt: bool,
+        *,
+        mode: str,
+        source_key: str,
+        release_key: str | None,
     ) -> dict[str, Any] | None:
         states = (*BUILDING_STATES, "waiting")
         marks = ",".join("?" * len(states))
+        same = (
+            f" AND COALESCE(source_key,'youtube:'||video_id)=? AND COALESCE(release_key,'')=?"
+            f" AND mode=? AND state IN ({marks}) ORDER BY created_at DESC LIMIT 1"
+        )
+        tail = [source_key, release_key or "", mode, *states]
         if await_prompt:
             row = self.db.one(
                 f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id IS NULL"
-                f" AND prompt IS NULL AND state IN ({marks}) ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, *states],
+                f" AND prompt IS NULL{same}",
+                [user, video_id, *tail],
             )
         elif prompt is not None:
             row = self.db.one(
-                f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND prompt=?"
-                f" AND state IN ({marks}) ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, prompt, *states],
+                f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND prompt=?{same}",
+                [user, video_id, prompt, *tail],
             )
         else:
             row = self.db.one(
-                f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id=?"
-                f" AND state IN ({marks}) ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, preset, *states],
+                f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id=?{same}",
+                [user, video_id, preset, *tail],
             )
         return dict(row) if row else None
 
-    def fill(self, request_id: str, user: str, prompt: str) -> dict[str, Any]:
+    def fill(
+        self,
+        request_id: str,
+        user: str,
+        prompt: str,
+        mode: str | None = None,
+        user_mode: str | None = None,
+    ) -> dict[str, Any]:
         """A waiting request gets its description from the phone; the build starts."""
         if not self.configured:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
@@ -1046,10 +1163,11 @@ class CutService:
         prompt = self._validate_prompt(prompt)
         if prompt is None:
             raise CutRefused("The description of the cut is empty.")
+        chosen_mode = self._resolve_mode(mode, user_mode) if mode is not None else row["mode"]
         self._check_cap(user)
         self.db.execute(
-            "UPDATE cut_requests SET prompt=?, state='building', updated_at=? WHERE id=?",
-            [prompt, time.time(), request_id],
+            "UPDATE cut_requests SET prompt=?, mode=?, state='building', updated_at=? WHERE id=?",
+            [prompt, chosen_mode, time.time(), request_id],
         )
         self.jobs.events.record(
             row["job_id"],
@@ -1100,6 +1218,7 @@ class CutService:
             "video_id": row["video_id"],
             "state": row["state"],
             "source": row["source"],
+            "mode": row["mode"],
             "preset_id": row["preset_id"],
             "prompt": row["prompt"],
             "error": row["error"],
@@ -1179,37 +1298,70 @@ class CutService:
 
     # ---- the picker -----------------------------------------------------------------------------
 
-    def presets_state(self, user: str, video_id: str) -> dict[str, Any]:
+    def presets_state(
+        self, user: str, video_id: str, user_mode: str | None = None
+    ) -> dict[str, Any]:
         """Every preset with its state for this video: what the TV's picker and the phone show."""
+        available = watched_available(self.cfg)
+        default_mode = user_mode or self.cfg.cuts.default_mode
+        if default_mode == "watched" and not available:
+            default_mode = "quick"
         out = []
         for prompt in self.presets(user):
-            entry: dict[str, Any] = {"id": prompt.id, "label": prompt.label}
-            row = self.db.one(
-                "SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id=?"
-                " AND state IN ('waiting','building','needs_transcript')"
-                " ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, prompt.id],
+            by_mode = {
+                mode: self._preset_state(user, video_id, prompt, mode) for mode in MODE_LABELS
+            }
+            out.append(
+                {
+                    "id": prompt.id,
+                    "label": prompt.label,
+                    **by_mode[default_mode],
+                    "by_mode": by_mode,
+                }
             )
-            if row:
-                entry.update(state=row["state"], request_id=row["id"])
-            else:
-                cut = self._ready_cut(video_id, prompt)
-                if cut is not None:
-                    entry.update(state="ready", cut=cut)
-                else:
-                    failed = self.db.one(
-                        "SELECT id, error FROM cut_requests WHERE user=? AND video_id=?"
-                        " AND preset_id=? AND state='failed' ORDER BY created_at DESC LIMIT 1",
-                        [user, video_id, prompt.id],
-                    )
-                    if failed:
-                        entry.update(state="failed", request_id=failed["id"], error=failed["error"])
-                    else:
-                        entry.update(state="none")
-            out.append(entry)
-        return {"configured": self.configured, "presets": out}
+        modes = [
+            {
+                "id": mode,
+                "label": label,
+                "default": mode == default_mode,
+                "available": available if mode == "watched" else True,
+                **({} if mode != "watched" or available else {"reason": WATCHED_REASON}),
+            }
+            for mode, label in MODE_LABELS.items()
+        ]
+        return {
+            "configured": self.configured,
+            "default_mode": default_mode,
+            "modes": modes,
+            "presets": out,
+        }
 
-    def _ready_cut(self, video_id: str, prompt: Prompt) -> dict[str, Any] | None:
+    def _preset_state(self, user: str, video_id: str, prompt: Prompt, mode: str) -> dict[str, Any]:
+        if mode == "watched" and not watched_available(self.cfg):
+            return {"state": "unavailable", "reason": WATCHED_REASON}
+        row = self.db.one(
+            "SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id=?"
+            " AND mode=? AND state IN ('waiting','building','needs_transcript')"
+            " ORDER BY created_at DESC LIMIT 1",
+            [user, video_id, prompt.id, mode],
+        )
+        if row:
+            return {"state": row["state"], "request_id": row["id"]}
+        cut = self._ready_cut(video_id, prompt, mode)
+        if cut is not None:
+            return {"state": "ready", "cut": cut}
+        failed = self.db.one(
+            "SELECT id, error FROM cut_requests WHERE user=? AND video_id=?"
+            " AND preset_id=? AND mode=? AND state='failed' ORDER BY created_at DESC LIMIT 1",
+            [user, video_id, prompt.id, mode],
+        )
+        if failed:
+            return {"state": "failed", "request_id": failed["id"], "error": failed["error"]}
+        return {"state": "none"}
+
+    def _ready_cut(
+        self, video_id: str, prompt: Prompt, mode: str = "quick"
+    ) -> dict[str, Any] | None:
         """The stored cut for this preset, unless the transcript or the `[llm.cuts]` model
         changed since it was built."""
         model = self.cfg.llm.cuts.model if self.cfg.llm.cuts else ""
@@ -1219,8 +1371,16 @@ class CutService:
         )
         row = self.db.one(
             "SELECT json, transcript_hash FROM cuts WHERE video_id=? AND version=? AND model=?"
+            " AND COALESCE(source_key,'youtube:'||video_id)=?"
+            " AND COALESCE(release_key,'')='' AND mode=?"
             " ORDER BY created_at DESC LIMIT 1",
-            [video_id, self._version(prompt.id, prompt.template, target_s), model],
+            [
+                video_id,
+                self._version(prompt.id, prompt.template, target_s),
+                model,
+                f"youtube:{video_id}",
+                mode,
+            ],
         )
         if row is None:
             return None
@@ -1298,7 +1458,9 @@ class CutService:
 
     async def _run_build(self, row: dict[str, Any], trace: events.JobTrace) -> None:
         request_id, video_id = row["id"], row["video_id"]
-        instruction, preset_id, source = self._instruction(row)
+        instruction, preset_id, _source = self._instruction(row)
+        ref = source_ref(row)
+        mode = row["mode"] or "quick"
         with events.stage(STAGE_TRANSCRIPT, video_id=video_id):
             transcript = await self._ensure_transcript(request_id, row)
             units = build_units(transcript.segments or [], self.cfg.cuts)
@@ -1326,7 +1488,7 @@ class CutService:
         target_s = self.target_for(preset_id, duration_s, instruction, saved)
         version = self._version(preset_id, instruction, target_s)
         model = self.cfg.llm.cuts.model if self.cfg.llm.cuts else ""
-        cache_key = self._cache_key(video_id, version, model, thash)
+        cache_key = self._cache_key(video_id, version, model, thash, source=ref, mode=mode)
         hit = self.db.one("SELECT json FROM cuts WHERE cache_key=?", [cache_key])
         if hit is not None:
             events.emit(STAGE_MODEL, events.SKIPPED, reason="cached")
@@ -1382,9 +1544,10 @@ class CutService:
                     summary=summary,
                     label=self._label(preset_id, row),
                     duration_s=duration_s,
-                    source=source,
+                    source=ref,
                     preset_id=preset_id,
                     target_s=target_s,
+                    mode=mode,
                 )
                 events.emit(
                     STAGE_CHECKING,
@@ -1396,7 +1559,9 @@ class CutService:
                 )
             self.db.execute(
                 "INSERT OR REPLACE INTO cuts(cache_key,video_id,version,preset_id,prompt,model,"
-                "transcript_hash,json,duration_s,kept_s,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "transcript_hash,json,duration_s,kept_s,created_at,source_kind,source_key,"
+                "release_key,release_duration_ms,mode)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     cache_key,
                     video_id,
@@ -1409,6 +1574,11 @@ class CutService:
                     duration_s,
                     doc["kept_ms"] / 1000.0,
                     time.time(),
+                    ref.kind,
+                    ref.key,
+                    ref.release_key,
+                    ref.release_duration_ms,
+                    mode,
                 ],
             )
             self.db.execute(
@@ -1503,8 +1673,23 @@ class CutService:
         return f"{mark}:" + hashlib.sha256(text.encode()).hexdigest()[:16]
 
     @staticmethod
-    def _cache_key(video_id: str, version: str, model: str, thash: str) -> str:
-        return hashlib.sha256(f"{video_id}|{version}|{model}|{thash}".encode()).hexdigest()
+    def _cache_key(
+        video_id: str,
+        version: str,
+        model: str,
+        thash: str,
+        *,
+        source: SourceRef | None = None,
+        mode: str = "quick",
+    ) -> str:
+        part = video_id
+        if source is not None:
+            key = source.key or f"youtube:{video_id}"
+            if key != f"youtube:{video_id}" or source.release_key:
+                part = f"{key}|{source.release_key or ''}"
+        if mode != "quick":
+            part = f"{part}|{mode}"
+        return hashlib.sha256(f"{part}|{version}|{model}|{thash}".encode()).hexdigest()
 
     async def _ensure_transcript(self, request_id: str, row: dict[str, Any]) -> Transcript:
         """A timed transcript for the cut: the cached one, else a queued refresh we wait for.

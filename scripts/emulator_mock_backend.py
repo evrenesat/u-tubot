@@ -32,14 +32,17 @@ seconds (default 20). A ready answer lists the track `tr` ("Turkish (u·tubot)",
 the files of DIR under `/media/` with byte ranges: the local stream the debug build's captions harness plays (docs/development.md).
 
 Director's cuts work like the real ones (ai/CONTRACT.md "Director's cuts"): four presets, requests that build (ready after
-`--cuts-delay` seconds, default 8) or wait for the phone, a cut document whose skips sit at 25-45% and 70-85% of the video:
+`--cuts-delay` seconds, default 8; watched after `--cuts-watched-delay`, default 20, and only with `--cuts-watched`) or wait
+for the phone, and a cut document whose skips sit at 25-45% and 70-85% of the video. Every request and cut carries `mode`;
+presets carry `by_mode`, and the presets answer carries `default_mode` and `modes`:
 
-    POST /v1/videos/ID/cuts                {"preset"} | {"prompt"} | {"await_prompt":true}
-    GET  /v1/videos/ID/cuts                the presets and their states
+    POST /v1/videos/ID/cuts                {"preset"|"prompt"|"await_prompt":true}[,"mode":"quick|watched"]
+    GET  /v1/videos/ID/cuts                the presets, their states in each mode, and the modes
     GET  /v1/cuts/REQUEST?wait_ms=N        the request, long-polled while waiting or building
     GET  /v1/cut-requests                  the queue; PUT/DELETE /v1/cut-requests/REQUEST fill and dismiss
-    GET /__mock/cuts?video=ID&state=ready|none|failed[&preset=ID][&duration=MS][&stage=model]
+    GET /__mock/cuts?video=ID&state=ready|none|failed[&mode=quick|watched][&preset=ID][&duration=MS][&stage=model]
                                            a ready cut without a request (the TV announces it when the video opens)
+    GET /__mock/cuts[?watched=1]           the delays and whether watched is offered
 """
 import argparse
 import json
@@ -65,7 +68,9 @@ CUT_PRESETS = [
     ("cut-demo", "Only the demo"),
     ("cut-highlights-5", "Highlights in 5 min"),
 ]
-CUTS_CONFIG = {"delay": 8.0, "stage": "model"}
+CUTS_CONFIG = {"delay": 8.0, "watched_delay": 20.0, "watched_available": False, "stage": "model"}
+CUT_MODES = (("quick", "Quick"), ("watched", "Watched"))
+WATCHED_REASON = "Watched cuts are not configured on this server."
 CUT_REQUESTS = {}
 CUT_READY = {}
 CUT_LOCK = threading.RLock()
@@ -159,7 +164,7 @@ def cut_state_now(request):
     return state
 
 
-def cut_document(duration_ms, video_id, label="No filler", preset_id="cut-no-filler"):
+def cut_document(duration_ms, video_id, label="No filler", preset_id="cut-no-filler", mode="quick"):
     """A cut of a video of duration_ms: keeps 0-25%, 45-70% and 85-100%, skips the rest"""
     part = [
         (0, round(duration_ms * 0.25), "Start"),
@@ -174,12 +179,13 @@ def cut_document(duration_ms, video_id, label="No filler", preset_id="cut-no-fil
         "duration_ms": duration_ms,
         "label": label,
         "summary": "A cut of the emulator's test video.",
-        "parts": [{"label": l, "start_ms": s, "end_ms": e} for s, e, l in part],
+        "parts": [{"label": label_, "start_ms": s, "end_ms": e} for s, e, label_ in part],
         "skip_ranges_ms": skip,
         "kept_ms": duration_ms - sum(t - f for f, t in skip),
-        "source": "youtube_captions",
+        "source": {"kind": "youtube", "key": f"youtube:{video_id}"},
         "preset_id": preset_id,
         "model": "cutmodel",
+        "mode": mode,
         "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
@@ -190,11 +196,13 @@ def cut_request_doc(request, wait=False):
     while True:
         with CUT_LOCK:
             state = cut_state_now(request)
+            mode = request.get("mode", "quick")
             doc = {
                 "id": request["id"],
                 "video_id": request["video_id"],
                 "state": state,
                 "source": request["source"],
+                "mode": mode,
                 "preset_id": request.get("preset_id"),
                 "prompt": request.get("prompt"),
                 "error": request.get("error"),
@@ -211,9 +219,20 @@ def cut_request_doc(request, wait=False):
                 doc["stage"] = CUTS_CONFIG["stage"] if state == "building" else "transcript"
             if state == "ready":
                 doc["cut"] = cut_document(request.get("duration_ms", 240000), request["video_id"],
-                                          label=cut_label(request), preset_id=request.get("preset_id"))
+                                          label=cut_label(request), preset_id=request.get("preset_id"),
+                                          mode=mode)
+                if mode == "watched":
+                    doc["cut"]["watched"] = {"grids": 0, "model": "cutmodel", "partial": False, "coarse": False}
             if state == "failed":
                 doc["error"] = request.get("error") or "the cut could not be built"
+                if mode == "watched":
+                    quick = preset_state(request["video_id"], request.get("preset_id"), "quick")
+                    fallback = {"mode": "quick", "state": quick}
+                    if quick == "ready":
+                        fallback["cut"] = cut_document(
+                            request.get("duration_ms", 240000), request["video_id"],
+                            label=cut_label(request), preset_id=request.get("preset_id"))
+                    doc["fallback"] = fallback
         if state in ("waiting", "building") and time.time() < deadline:
             time.sleep(0.05)
             continue
@@ -227,16 +246,40 @@ def cut_label(request):
     return "Your cut"
 
 
-def preset_state(video_id, preset_id):
+def preset_state(video_id, preset_id, mode="quick"):
     """The state of a preset for a video: its request's, else the ready cut the __mock control set"""
+    if mode == "watched" and not CUTS_CONFIG["watched_available"]:
+        return "unavailable"
     with CUT_LOCK:
         for request in CUT_REQUESTS.values():
-            if request["video_id"] == video_id and request.get("preset_id") == preset_id:
+            if (request["video_id"] == video_id and request.get("preset_id") == preset_id
+                    and request.get("mode", "quick") == mode):
                 return cut_state_now(request)
-        ready = CUT_READY.get(video_id)
+        ready = CUT_READY.get((video_id, mode))
         if ready and (ready["preset_id"] is None or ready["preset_id"] == preset_id):
             return "ready"
     return "none"
+
+
+def preset_fields(video_id, preset_id, label, mode):
+    """The state fields of one preset in one mode: state, reason, error or cut"""
+    state = preset_state(video_id, preset_id, mode)
+    fields = {"state": state}
+    if state == "unavailable":
+        fields["reason"] = WATCHED_REASON
+        return fields
+    ready = CUT_READY.get((video_id, mode))
+    if state == "ready":
+        if ready is not None and ready.get("failed"):
+            fields["state"] = "failed"
+            fields["error"] = "the cut could not be built"
+        else:
+            cut = cut_document(ready["duration_ms"] if ready else 240000, video_id, label=label,
+                               preset_id=preset_id, mode=mode)
+            if mode == "watched":
+                cut["watched"] = {"grids": 0, "model": "cutmodel", "partial": False, "coarse": False}
+            fields["cut"] = cut
+    return fields
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -291,22 +334,29 @@ class Handler(BaseHTTPRequestHandler):
         await_prompt = bool(body.get("await_prompt"))
         preset = body.get("preset")
         prompt = body.get("prompt")
+        mode = body.get("mode") or "quick"
+        if mode == "watched" and not CUTS_CONFIG["watched_available"]:
+            return self.send_json({"error": WATCHED_REASON}, 409)
         with CUT_LOCK:
             for request in CUT_REQUESTS.values():
                 if request["video_id"] != vid or cut_state_now(request) in ("ready", "failed", "dismissed"):
+                    continue
+                if request.get("mode", "quick") != mode:
                     continue
                 same = (request.get("await_prompt") and await_prompt) or (not await_prompt and (
                         (preset and request.get("preset_id") == preset) or (prompt and request.get("prompt") == prompt)))
                 if same:
                     return self.send_json({"request_id": request["id"], "state": cut_state_now(request)})
-            rid = "cut%d" % (len(CUT_REQUESTS) + 1)
+            rid = f"cut{len(CUT_REQUESTS) + 1}"
+            delay = CUTS_CONFIG["watched_delay"] if mode == "watched" else CUTS_CONFIG["delay"]
             request = {
                 "id": rid, "video_id": vid, "state": "waiting" if await_prompt else "building",
                 "source": "TV", "preset_id": preset, "prompt": prompt, "await_prompt": await_prompt,
+                "mode": mode,
                 "title": (q.get("title") or [None])[0], "channel": (q.get("channel") or [None])[0],
                 "duration_s": float((q.get("duration_s") or [0])[0] or 0) or None,
                 "duration_ms": int(float((q.get("duration_s") or [0])[0] or 240) * 1000),
-                "ready_at": None if await_prompt else time.time() + CUTS_CONFIG["delay"],
+                "ready_at": None if await_prompt else time.time() + delay,
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
             CUT_REQUESTS[rid] = request
@@ -358,9 +408,14 @@ class Handler(BaseHTTPRequestHandler):
                 prompt = (body.get("prompt") or "").strip()
                 if not prompt:
                     return self.send_json({"error": "the prompt is empty"}, 400)
+                chosen_mode = body.get("mode") or request.get("mode", "quick")
+                if chosen_mode == "watched" and not CUTS_CONFIG["watched_available"]:
+                    return self.send_json({"error": WATCHED_REASON}, 409)
+                request["mode"] = chosen_mode
                 request["prompt"] = prompt
                 request["state"] = "building"
-                request["ready_at"] = time.time() + CUTS_CONFIG["delay"]
+                delay = CUTS_CONFIG["watched_delay"] if chosen_mode == "watched" else CUTS_CONFIG["delay"]
+                request["ready_at"] = time.time() + delay
             return self.send_json(cut_request_doc(request))
         return self.send_json({"ok": True})
 
@@ -413,21 +468,28 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/__mock/cuts":
             if "video" not in q:
                 with CUT_LOCK:
-                    return self.send_json({"delay": CUTS_CONFIG["delay"], "stage": CUTS_CONFIG["stage"],
+                    if "watched" in q:
+                        CUTS_CONFIG["watched_available"] = q["watched"][0] not in ("0", "false", "no")
+                    return self.send_json({"delay": CUTS_CONFIG["delay"],
+                                           "watched_delay": CUTS_CONFIG["watched_delay"],
+                                           "watched_available": CUTS_CONFIG["watched_available"],
+                                           "stage": CUTS_CONFIG["stage"],
                                            "requests": len(CUT_REQUESTS)})
             vid = q["video"][0]
             state = q.get("state", ["none"])[0]
+            mode = q.get("mode", ["quick"])[0]
             with CUT_LOCK:
                 if state == "none":
-                    CUT_READY.pop(vid, None)
-                    for rid in [r for r, req in CUT_REQUESTS.items() if req["video_id"] == vid]:
+                    CUT_READY.pop((vid, mode), None)
+                    for rid in [r for r, req in CUT_REQUESTS.items()
+                                if req["video_id"] == vid and req.get("mode", "quick") == mode]:
                         del CUT_REQUESTS[rid]
                 elif state == "ready":
-                    CUT_READY[vid] = {"preset_id": (q.get("preset") or [None])[0],
-                                      "duration_ms": int(q.get("duration", ["240000"])[0])}
+                    CUT_READY[(vid, mode)] = {"preset_id": (q.get("preset") or [None])[0],
+                                              "duration_ms": int(q.get("duration", ["240000"])[0])}
                 elif state == "failed":
-                    CUT_READY[vid] = {"preset_id": (q.get("preset") or [None])[0], "failed": True}
-            return self.send_json({"video": vid, "state": state})
+                    CUT_READY[(vid, mode)] = {"preset_id": (q.get("preset") or [None])[0], "failed": True}
+            return self.send_json({"video": vid, "state": state, "mode": mode})
         if path == "/v1/health":
             return self.send_json({"ok": True, "version": "mock"})
         if path.startswith("/media/") and self.media_dir:
@@ -462,7 +524,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": "not found"}, 404)
         if path == "/v1/me":
             return self.send_json({"user": "emu", "policy": {}, "features": {"assess": True, "insight": True, "captions": True,
-                                                                            "cuts": True}, "admin": False})
+                                                                            "cuts": True,
+                                                                            "cuts_watched": CUTS_CONFIG["watched_available"]},
+                                   "admin": False})
         if path == "/v1/prompts":
             return self.send_json(prompt_list())
         if path == "/v1/cut-requests":
@@ -481,19 +545,24 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             vid = m.group(1)
             with CUT_LOCK:
+                default_mode = "quick"
                 presets = []
                 for pid, label in CUT_PRESETS:
-                    state = preset_state(vid, pid)
-                    preset = {"id": pid, "label": label, "state": state}
-                    ready = CUT_READY.get(vid)
-                    if state == "ready":
-                        if ready is not None and ready.get("failed"):
-                            preset["state"] = "failed"
-                            preset["error"] = "the cut could not be built"
-                        else:
-                            preset["cut"] = cut_document(ready["duration_ms"] if ready else 240000, vid, label=label, preset_id=pid)
+                    preset = {"id": pid, "label": label}
+                    preset.update(preset_fields(vid, pid, label, default_mode))
+                    preset["by_mode"] = {
+                        mode: preset_fields(vid, pid, label, mode) for mode, _ in CUT_MODES
+                    }
                     presets.append(preset)
-            return self.send_json({"configured": True, "presets": presets})
+                modes = []
+                for mode, label in CUT_MODES:
+                    available = mode != "watched" or CUTS_CONFIG["watched_available"]
+                    entry = {"id": mode, "label": label, "default": mode == default_mode, "available": available}
+                    if not available:
+                        entry["reason"] = WATCHED_REASON
+                    modes.append(entry)
+            return self.send_json({"configured": True, "default_mode": default_mode,
+                                   "modes": modes, "presets": presets})
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/summary$", path)
         if m:
             time.sleep(STATE["delay"])
@@ -551,10 +620,14 @@ def main():
     ap.add_argument("--captions-delay", type=float, default=CAPTIONS_CONFIG["delay"],
                     help="seconds a captions job queued by POST /v1/videos/ID/captions takes")
     ap.add_argument("--cuts-delay", type=float, default=CUTS_CONFIG["delay"],
-                    help="seconds a director's cut build takes (default 8)")
+                    help="seconds a quick director's cut build takes (default 8)")
+    ap.add_argument("--cuts-watched-delay", type=float, default=CUTS_CONFIG["watched_delay"],
+                    help="seconds a watched cut build takes (default 20)")
+    ap.add_argument("--cuts-watched", action="store_true", help="offer watched cuts (default off)")
     args = ap.parse_args()
     CAPTIONS_CONFIG.update(vtt=Path(args.vtt), lang=args.lang, label=args.label, delay=args.captions_delay)
-    CUTS_CONFIG["delay"] = args.cuts_delay
+    CUTS_CONFIG.update(delay=args.cuts_delay, watched_delay=args.cuts_watched_delay,
+                       watched_available=args.cuts_watched)
     Handler.static_dir = args.static
     Handler.media_dir = args.media
     Handler.base_url = args.base or f"http://10.0.2.2:{args.port}"

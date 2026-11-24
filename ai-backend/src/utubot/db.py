@@ -100,13 +100,17 @@ CREATE TABLE IF NOT EXISTS cut_requests(
   id TEXT PRIMARY KEY, user TEXT NOT NULL, video_id TEXT NOT NULL, source TEXT NOT NULL DEFAULT '',
   preset_id TEXT, prompt TEXT, state TEXT NOT NULL, error TEXT,
   cut_key TEXT, job_id TEXT, raw_answer TEXT, created_at REAL NOT NULL,
-  updated_at REAL NOT NULL, finished_at REAL);
+  updated_at REAL NOT NULL, finished_at REAL,
+  source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
+  release_duration_ms INTEGER, mode TEXT NOT NULL DEFAULT 'quick');
 CREATE INDEX IF NOT EXISTS cut_requests_user ON cut_requests(user, created_at);
 CREATE INDEX IF NOT EXISTS cut_requests_video ON cut_requests(video_id);
 CREATE TABLE IF NOT EXISTS cuts(
   cache_key TEXT PRIMARY KEY, video_id TEXT NOT NULL, version TEXT NOT NULL,
   preset_id TEXT, prompt TEXT, model TEXT NOT NULL, transcript_hash TEXT NOT NULL,
-  json TEXT NOT NULL, duration_s REAL, kept_s REAL, created_at REAL NOT NULL);
+  json TEXT NOT NULL, duration_s REAL, kept_s REAL, created_at REAL NOT NULL,
+  source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
+  release_duration_ms INTEGER, mode TEXT NOT NULL DEFAULT 'quick');
 CREATE INDEX IF NOT EXISTS cuts_video ON cuts(video_id);
 """
 
@@ -129,6 +133,14 @@ TRANSCRIPT_COLUMNS = {
 }
 CAPTION_COLUMNS = {"job_id": "TEXT", "timing_version": "INTEGER", "timing": "TEXT"}
 ARCHIVE_COLUMNS = {"last_used_at": "REAL"}
+CUT_REQUEST_COLUMNS = {
+    "source_kind": "TEXT NOT NULL DEFAULT 'youtube'",
+    "source_key": "TEXT",
+    "release_key": "TEXT",
+    "release_duration_ms": "INTEGER",
+    "mode": "TEXT NOT NULL DEFAULT 'quick'",
+}
+CUT_COLUMNS = dict(CUT_REQUEST_COLUMNS)
 METADATA_ONLY = "metadata_only"
 
 
@@ -158,6 +170,8 @@ class Database:
         self._add_missing_columns("transcripts", TRANSCRIPT_COLUMNS)
         self._add_missing_columns("captions", CAPTION_COLUMNS)
         self._add_missing_columns("media_archive", ARCHIVE_COLUMNS)
+        self._add_missing_columns("cut_requests", CUT_REQUEST_COLUMNS)
+        self._add_missing_columns("cuts", CUT_COLUMNS)
         # Rows written when a transcript could not be fetched: nothing may be built on a title alone.
         self._conn.execute("DELETE FROM transcripts WHERE source=?", [METADATA_ONLY])
         self._conn.execute("DELETE FROM summaries WHERE source=?", [METADATA_ONLY])
