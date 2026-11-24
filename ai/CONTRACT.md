@@ -366,6 +366,10 @@ Stored for later threshold tuning.
 - Settings: Import setup (first item), enable switches, mark-only switch, pairing, test button.
   Backend URL and token are under Advanced. Private builds can bake defaults
   (`-PutubotUrl=… -PutubotToken=…`); public builds ship with none.
+- Browse sections (Home, Subscriptions, the feeds and grids, u-tubot#65) are cached on the TV, never on this backend: a focus
+  shows the last loaded cards at once from memory or the disk cache, then refreshes in the background only after the named
+  "Browse refresh" minutes (5, 10, 20, 30 or 60; 10 by default); "Refresh section" reloads immediately. An account or locale
+  change clears the cache. No request of this contract is added: the cache is local to the app.
 
 ## Addendum (backend implementation, 2026-11-12)
 

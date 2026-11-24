@@ -7,6 +7,10 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 ## Unreleased
 
+- Switching between browse sections is instant: each section first shows the cards it had the last time, from memory or from a
+  cache kept on the TV across restarts, and only then refreshes in the background, at most every 5, 10, 20, 30 or 60 minutes
+  (Settings, u·tubot, Browse refresh; 10 by default). The refreshed rows update in place and keep the card that had the focus;
+  "Refresh section" still reloads at once. Switching the account or the language/country clears the cache.
 - Server: every transcript and HQ-captions job now has a detail report (web UI: Captions, tap a job; API: `GET /v1/jobs/ID`). It
   shows what was asked for, by which TV or client and why (explicitly or by the automatic-transcription policy), a timeline of every
   stage with its time (audio format and track, chunks, which speech engine took which chunk and why it fell back, speaker labels,

@@ -129,6 +129,35 @@ not visible to the user, which is how an invisible grid shows: `modern_browse_co
 For an update, serve an `update.json` with a higher version (`downloadUrlList_x86` next to `downloadUrlList`) and an APK built with
 `-PutubotVersionName=0.9.0`.
 
+### Checking the browse cache (no YouTube)
+
+A section can be seeded as if it had loaded before: `files/utubot_browse/<section_id>.json` holds `section_type` (the layout that
+made the groups), `identity` (`<locale>|<profile>`, empty profile when signed out), `loaded_at_ms` and `groups`. `0.json` is Home. A
+section whose type changed (Playlists style, History shorts, Channels old look) doesn't replay the old groups: the entry is dropped,
+and a style change while the presenter runs drops an entry made for another layout too (one made for the new layout stays, e.g. at
+the next start). `loaded_at_ms` must be inside the
+refresh window (10 minutes by default) for the focus to show it without a refresh. With the emulator in a network namespace that has
+no route out, open Home by `HomeLauncherActivity` and leave it through another launcher (e.g. `MusicLauncherActivity`), then Home
+again. `adb logcat -s BrowsePresenter` must show `Show cached section Home` on both focuses and must not show
+`loadRowsHeader: Start loading section: Home`. The cards' thumbnail URLs may fail in that namespace; that is not the section's load.
+This exercises a saved cache, not a live YouTube run.
+
+A cached row comes from cards alone, without the page key of its row, so scrolling past the replayed cards waits for the background
+refresh; a loaded row continues as before. A cache entry above 512 KiB isn't kept: the JSON is parsed and written on the section's
+thread, so the cap bounds that work.
+
+A card removed with Hide, Not interested or a playlist removal leaves the section's cache at once; removing all of an author's cards
+drops the section's cache. A card removed while a cached refresh is still loading is kept out of the refresh's completion save too,
+and a cache dropped then isn't written back by that completion. On Channels' uploads multi-grid a fresh cache replays both columns
+without an uploads request: its replayed channels auto-select one, but the presenter keeps the cached uploads, also when "auto load"
+is off. A stale refresh loads the channels, then the uploads, and a failed uploads load shows the cached uploads column again; the
+failed attempt isn't retried until the refresh window passes.
+
+```sh
+$NS adb -P 5038 -s emulator-5554 shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.launchers.HomeLauncherActivity
+$NS adb -P 5038 -s emulator-5554 shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.launchers.MusicLauncherActivity
+```
+
 ### Checking the HQ captions
 
 No test or check may contact YouTube. The app's own screens play YouTube videos only, so debug builds of the `stutubot` flavor include

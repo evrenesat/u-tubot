@@ -72,6 +72,38 @@ public class UtubotPanelSettingsTest {
     }
 
     @Test
+    public void theBrowseRefreshStartsAtTenMinutesWithFiveChoices() {
+        assertEquals(BrowseCachePolicy.DEFAULT_REFRESH_MINUTES, mSettings.getBrowseRefreshMinutes());
+        assertEquals(5, BrowseCachePolicy.REFRESH_MINUTES_CHOICES.length);
+    }
+
+    @Test
+    public void aChosenBrowseRefreshIsKept() {
+        for (int minutes : BrowseCachePolicy.REFRESH_MINUTES_CHOICES) {
+            mSettings.setBrowseRefreshMinutes(minutes);
+
+            assertEquals(minutes, mSettings.getBrowseRefreshMinutes());
+        }
+
+        mSettings.setBrowseRefreshMinutes(15);
+        assertEquals(60, mSettings.getBrowseRefreshMinutes());
+    }
+
+    @Test
+    public void browseRefreshReadsAsMinutes() {
+        assertEquals("10 min", UtubotSettingsPresenter.formatBrowseRefresh(mActivity, 10));
+        assertEquals("30 min", UtubotSettingsPresenter.formatBrowseRefresh(mActivity, 30));
+    }
+
+    @Test
+    public void theSettingsListShowsBrowseRefreshAfterTheSummaryDelay() {
+        OptionCategory refresh = UtubotSettingsPresenter.instance(mActivity).buildCategories().get(7);
+
+        assertEquals(mActivity.getString(R.string.utubot_browse_refresh), refresh.options.get(0).getTitle().toString());
+        assertEquals("10 min", refresh.options.get(0).getDescription().toString());
+    }
+
+    @Test
     public void theSettingsListShowsTheCurrentDelayRightAfterTheSummaryPanel() {
         mSettings.setPanelDelayMs(3000);
 
