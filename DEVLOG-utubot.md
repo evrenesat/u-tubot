@@ -22,6 +22,10 @@
   claims", not yet reviewed: prime and normal users, class-ordered queues, a model route per class, a claim on the big local
   engine through a small HTTP contract, an effort notch for Watched (Keyframes, Standard, Dense), per-account pairing on the TV,
   checkpoints P1 to P9 across four repositories.
+- Revision 5 answers the phase 2 review (five high, eight medium findings; the plan's P.7): a claim is waited for at most three
+  minutes and then ends in the Quick offer, the server refuses to start if a local or claimed route could reach the cloud, the
+  claimed route never falls through, the claim contract is frozen first as its own file (checkpoint P0), renewal runs on a timer
+  against the service's clock, TV account pairing fails closed, and the decisions are renumbered D-P1 to D-P11.
 
 ## 2026-11-24 (director's cuts respect the target length, issue 82)
 
