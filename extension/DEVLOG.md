@@ -1,5 +1,14 @@
 # u·tubot browser extension devlog
 
+## 2026-11-24 (checkpoint 1: mock backend controls)
+
+- `scripts/emulator_mock_backend.py`: every control of the plan's section 8, added at once: the request log (`/__mock/requests` and
+  its `clear=1`), `OPTIONS` 405 (logged), `--host` and `--user`, `/__mock/setup?backend=`, `/__mock/hold`, `/__mock/assess`
+  (per-video verdict, delay, failure), the panel prompt's status and a `reason` on a failed answer, the prompt writes and
+  `/v1/processed` with its `items|empty|fail` switch. The existing defaults are unchanged.
+- `ai-backend/tests/test_emulator_mock.py`: one test per control plus a replay of the existing defaults, started on two loopback
+  addresses with `--base`. `docs/development.md` ("Mock backend controls") lists them for the extension.
+
 ## 2026-11-24 (checkpoint 0: skeleton and CI)
 
 - `extension/` skeleton: the base, Firefox and Chromium manifests and the five variants of `build.mjs`; `src/shared/api.js`,
