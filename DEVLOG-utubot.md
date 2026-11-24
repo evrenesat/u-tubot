@@ -1,5 +1,13 @@
 # u·tubot devlog
 
+## 2026-11-24 (director's cut modes plan)
+
+- `ai/CUT_MODES_PLAN.md`: the two-part plan for two director's-cut modes. Quick is today's transcript-based cut and stays the
+  default; Watched adds what is on screen (a small video copy in the media archive, shot boundaries, sampled frames described
+  by a local vision model, scene lines joined with the transcript units, the same editor model and the #82 length selection).
+  Mode is a server default, a per-user default and a per-request field, shown in the TV picker, the phone cut sheet and the
+  extension's Cut tab. Checkpoints 0 to 7, six owner decisions, a list of what could not be verified. Nothing is implemented.
+
 ## 2026-11-24 (director's cuts respect the target length, issue 82)
 
 - The cut picker titles a ready preset with the cut's real length, "Highlights in 5 min · 5:02" (`UtubotCutController.presetTitle`,
