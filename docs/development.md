@@ -129,6 +129,26 @@ not visible to the user, which is how an invisible grid shows: `modern_browse_co
 For an update, serve an `update.json` with a higher version (`downloadUrlList_x86` next to `downloadUrlList`) and an APK built with
 `-PutubotVersionName=0.9.0`.
 
+### Mock backend controls
+
+`scripts/emulator_mock_backend.py` answers the extension's and the TV's calls from the same state. Beside the state URLs above, the
+extension's tests use these controls (all are local, no real service is contacted):
+
+| Control | Answer |
+|---|---|
+| `--host ADDRESS` (repeatable, default `0.0.0.0`) | listens on each address; the extension's e2e passes `127.0.0.2` and `127.0.0.3`, two origins of the same server |
+| `--user NAME` (default `emu`) | `POST /v1/pair` and `GET /v1/me` answer that user |
+| `GET /__mock/requests[?clear=1]` | the logged requests: `method`, `path`, `query`, and whether `authorization`, `cookie` or `origin` was present (never a header value); `/__mock/*` calls are not logged |
+| `GET /__mock/setup?backend=URL` | `/setup.json` answers that `backend_url`; an empty value returns to the server's own base |
+| `GET /__mock/hold?path=PREFIX&seconds=S` | holds later requests whose path starts with `PREFIX` for `S` seconds (`seconds=0` clears); the stale-answer tests use it |
+| `GET /__mock/assess?video=ID&action=none\|mark\|hide[&label=TEXT][&status=ready\|pending][&answer=TEXT]` | one video's verdict; `?delay=S` delays every answer, `?fail=500` answers that status (`fail=0` clears) |
+| `GET /__mock/set?panel=ok\|400\|404` | the status of a `prompt=panel` summary; `?reason=private` adds that reason to a `failed` answer |
+| `POST /v1/prompts/import {"url"}`, `POST /v1/prompts/refresh`, `PUT /v1/prompts/default {"key"}` | an imported set (id = the URL's last path part), `{"ok":true}`, the changed default (`404` for an unknown key) |
+| `GET /__mock/processed?state=items\|empty\|fail` | `GET /v1/processed?limit=N` answers two canned videos with loopback thumbnails, nothing, or an error |
+
+`OPTIONS` answers `405` and is logged. The tests of the controls are in `ai-backend/tests/test_emulator_mock.py`; the TV recipes above
+replay the same defaults.
+
 ### Checking the browse cache (no YouTube)
 
 A section can be seeded as if it had loaded before: `files/utubot_browse/<section_id>.json` holds `section_type` (the layout that
