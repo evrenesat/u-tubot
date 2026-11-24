@@ -1,5 +1,17 @@
 # DEVLOG
 
+## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
+
+- Problem: only built-in presets had a target length, so the owner's saved "half" preset kept 75 % and 82 %.
+- `cuts.py`: `parse_length_intent` (English: half, a third, a quarter, N %, N minutes/min, under N minutes, shorter by half; positions such
+  as "the first half", "skip the first 5 minutes" and conflicting lengths give None), `length_target_s`, `effective_target_s(..., length)`;
+  `CutService.target_for` takes the built-in target, else the saved preset's explicit length, else the parsed text (built-in wording is never
+  parsed). One-pass and map/reduce use the target as before; the cache version already carries it, so an earlier untargeted cut rebuilds once.
+- `prompts.py` / `app.py` / `models.py`: `Prompt.length_min` / `length_frac` (additive, in the content hash only when set); `POST/GET
+  /v1/cut-presets` take and return them.
+- Web UI: "Length of the preset" field on the cut sheet (`10 min` or `50%`), saved presets list their length.
+- Tests: `tests/test_cuts_length.py`.
+
 ## 2026-11-24 (director's cuts: map/reduce for long videos, issue 95)
 
 - Problem: a long video failed with "too long to cut in one pass (no map/reduce yet)": the whole transcript went in one request and

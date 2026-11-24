@@ -70,6 +70,25 @@ function thumb(videoId) {
   return img;
 }
 
+// "10", "10 min" -> minutes; "50%" -> fraction kept; "" -> no length; anything else -> false.
+export function parseLength(raw) {
+  const text = raw.trim().toLowerCase();
+  if (!text) return {};
+  const pct = text.match(/^(\d+(?:\.\d+)?)\s*%$/);
+  if (pct) {
+    const frac = Number(pct[1]) / 100;
+    return frac >= 0.05 && frac <= 0.95 ? { length_frac: frac } : false;
+  }
+  const min = text.match(/^(\d+(?:\.\d+)?)\s*(?:m|min|mins|minutes?)?$/);
+  return min && Number(min[1]) > 0 ? { length_min: Number(min[1]) } : false;
+}
+
+function presetLength(p) {
+  if (p.length_min) return " · " + p.length_min + " min";
+  if (p.length_frac) return " · " + Math.round(p.length_frac * 100) + " %";
+  return "";
+}
+
 function ms(msValue) {
   return fmtDuration((msValue || 0) / 1000);
 }
@@ -263,7 +282,7 @@ async function queue(view) {
     return h(
       "div",
       { class: "row between nowrap" },
-      h("span", { text: p.label }),
+      h("span", { text: p.label + presetLength(p) }),
       button(
         "Delete",
         async () => {
@@ -516,6 +535,7 @@ async function sheet(view, requestId) {
   // The preset name field also lives across redraws, so a name typed while the metadata arrives
   // survives the poll.
   let nameBox = null;
+  let lengthBox = null;
 
   function stopMic() {
     if (mic) {
@@ -569,11 +589,17 @@ async function sheet(view, requestId) {
       toast("Name the preset first.", "bad");
       return;
     }
+    const length = parseLength((lengthBox && lengthBox.value) || "");
+    if (length === false) {
+      toast("Length: a number of minutes (10) or a percentage (50%), 5 to 95 %.", "bad");
+      return;
+    }
     try {
-      await api("/v1/cut-presets", { method: "POST", body: { label, prompt: text } });
+      await api("/v1/cut-presets", { method: "POST", body: { label, prompt: text, ...length } });
       presets = null;
       waitingSig = null;
       nameBox.value = "";
+      if (lengthBox) lengthBox.value = "";
       toast("Saved; it is a chip on this sheet now.");
       await draw();
     } catch (err) {
@@ -610,6 +636,7 @@ async function sheet(view, requestId) {
       // of hitting the "same sheet" early return forever.
       box = null;
       nameBox = null;
+    lengthBox = null;
       waitingSig = null;
       stopMic();
       mount(host, h("h1", { class: "page-title", text: "Cut" }), card(null, note(errorText(err), "bad"), h("a", { class: "btn sec", href: "#/cuts" }, h("span", { text: "Back to the queue" }))));
@@ -670,6 +697,11 @@ async function sheet(view, requestId) {
             nameBox || (nameBox = textInput("", { placeholder: "Preset name", maxlength: 60 })),
             "Only you see the saved preset, and only on the phone; it becomes a chip here.",
           ),
+          field(
+            "Length of the preset (optional)",
+            lengthBox || (lengthBox = textInput("", { placeholder: "10 min or 50%", maxlength: 12 })),
+            "Minutes kept, or the share of the video kept. Empty: read from the description (half, 10 minutes ...).",
+          ),
           button("Save as preset", () => savePreset(), { kind: "sec", full: true }),
           sheetActions(
             req,
@@ -687,6 +719,7 @@ async function sheet(view, requestId) {
     }
     box = null;
     nameBox = null;
+    lengthBox = null;
     waitingSig = null;
     stopMic();
     if (req.state === "building" || req.state === "needs_transcript") {

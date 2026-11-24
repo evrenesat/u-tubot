@@ -88,6 +88,15 @@ LANG_RE = LANG_CODE_RE
 TRANSLATE_OFF = TRANSLATE_OFF_VALUES
 
 
+def _saved_preset_doc(p: Prompt) -> dict[str, Any]:
+    doc: dict[str, Any] = {"id": p.id, "label": p.label}
+    if p.length_min:
+        doc["length_min"] = p.length_min
+    if p.length_frac:
+        doc["length_frac"] = p.length_frac
+    return doc
+
+
 def resolve_translate_to(requested: str | None, default: str) -> str | None:
     """The translation target of a captions job.
 
@@ -1013,20 +1022,18 @@ def create_app(
     @app.get("/v1/cut-presets")
     async def cut_presets(user: UserConfig = Depends(current_user)):
         """The owner's own cut presets: saved on the phone, listed with their built-ins."""
-        return {
-            "presets": [
-                {"id": p.id, "label": p.label} for p in svc.prompts.own_cut_presets(user.name)
-            ]
-        }
+        return {"presets": [_saved_preset_doc(p) for p in svc.prompts.own_cut_presets(user.name)]}
 
     @app.post("/v1/cut-presets")
     async def cut_preset_save(body: CutPresetSave, user: UserConfig = Depends(current_user)):
         """Save a description as the owner's preset, so the cut sheet offers it as a chip."""
         try:
-            prompt = svc.prompts.save_cut_preset(user.name, body.label, body.prompt)
+            prompt = svc.prompts.save_cut_preset(
+                user.name, body.label, body.prompt, body.length_min, body.length_frac
+            )
         except PromptError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return {"preset": {"id": prompt.id, "label": prompt.label}}
+        return {"preset": _saved_preset_doc(prompt)}
 
     @app.delete("/v1/cut-presets/{preset_id}")
     async def cut_preset_delete(preset_id: str, user: UserConfig = Depends(current_user)):

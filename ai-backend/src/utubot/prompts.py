@@ -30,6 +30,8 @@ CUT_SET_ID = "cut-presets"
 CUT_SET_NAME = "My cuts"
 MAX_CUT_PRESETS = 20
 MAX_CUT_LABEL = 60
+MIN_LENGTH_MIN, MAX_LENGTH_MIN = 0.5, 600.0
+MIN_LENGTH_FRAC, MAX_LENGTH_FRAC = 0.05, 0.95
 SET_FORMAT_VERSION = 1
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 TEMPLATE_VARS = (
@@ -158,6 +160,23 @@ class Prompt(BaseModel):
     max_tokens: int = 700
     model: str | None = None
     task: str = TASK_SUMMARY
+    # A saved cut preset's explicit length: minutes kept, or the fraction of the video kept.
+    length_min: float | None = None
+    length_frac: float | None = None
+
+    @field_validator("length_min")
+    @classmethod
+    def _length_min(cls, v: float | None) -> float | None:
+        if v is not None and not MIN_LENGTH_MIN <= v <= MAX_LENGTH_MIN:
+            raise ValueError(f"length_min must be {MIN_LENGTH_MIN}..{MAX_LENGTH_MIN}")
+        return v
+
+    @field_validator("length_frac")
+    @classmethod
+    def _length_frac(cls, v: float | None) -> float | None:
+        if v is not None and not MIN_LENGTH_FRAC <= v <= MAX_LENGTH_FRAC:
+            raise ValueError(f"length_frac must be {MIN_LENGTH_FRAC}..{MAX_LENGTH_FRAC}")
+        return v
 
     @field_validator("id")
     @classmethod
@@ -198,6 +217,8 @@ class Prompt(BaseModel):
         parts: list[Any] = [self.system, self.template, self.max_tokens, self.model]
         if self.task != TASK_SUMMARY:
             parts.append(self.task)
+        if self.length_min or self.length_frac:
+            parts.append([self.length_min, self.length_frac])
         blob = json.dumps(parts, ensure_ascii=False)
         return hashlib.sha256(blob.encode()).hexdigest()
 
@@ -554,7 +575,14 @@ class PromptStore:
             return []
         return [p for p in found[0].prompts if p.task == TASK_CUTS]
 
-    def save_cut_preset(self, user: str, label: str, prompt: str) -> Prompt:
+    def save_cut_preset(
+        self,
+        user: str,
+        label: str,
+        prompt: str,
+        length_min: float | None = None,
+        length_frac: float | None = None,
+    ) -> Prompt:
         """Save a description as the user's own cut preset. The same label and description
         replace the earlier copy instead of piling duplicates."""
         label = (label or "").strip()
@@ -567,14 +595,12 @@ class PromptStore:
             raise PromptError("a saved preset needs the description of the cut")
         if len(prompt) > MAX_TEXT_CHARS:
             raise PromptError(f"the description is longer than {MAX_TEXT_CHARS} characters")
-        made = Prompt(
-            id="cut-mine-" + hashlib.sha256((label + "\0" + prompt).encode()).hexdigest()[:12],
-            label=label,
-            system="",
-            template=prompt,
-            max_tokens=2500,
-            task=TASK_CUTS,
-        )
+        if length_min and length_frac:
+            raise PromptError("give the length in minutes or as a fraction, not both")
+        try:
+            made = self._cut_prompt(label, prompt, length_min, length_frac)
+        except ValidationError as exc:
+            raise PromptError(exc.errors()[0]["msg"].removeprefix("Value error, ")) from exc
         own = self.own_cut_presets(user)
         if not any(p.id == made.id for p in own) and len(own) >= MAX_CUT_PRESETS:
             raise PromptError(f"at most {MAX_CUT_PRESETS} saved presets; delete one first")
@@ -589,6 +615,21 @@ class PromptStore:
         )
         self.save_set(user, pset, from_cut_store=True)
         return made
+
+    @staticmethod
+    def _cut_prompt(
+        label: str, prompt: str, length_min: float | None, length_frac: float | None
+    ) -> Prompt:
+        return Prompt(
+            id="cut-mine-" + hashlib.sha256((label + "\0" + prompt).encode()).hexdigest()[:12],
+            label=label,
+            system="",
+            template=prompt,
+            max_tokens=2500,
+            task=TASK_CUTS,
+            length_min=length_min or None,
+            length_frac=length_frac or None,
+        )
 
     def delete_cut_preset(self, user: str, prompt_id: str) -> bool:
         """Remove one saved preset; the last one deletes the set."""

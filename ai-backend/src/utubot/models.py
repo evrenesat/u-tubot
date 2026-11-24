@@ -83,6 +83,8 @@ class CutPresetSave(BaseModel):
 
     label: str = Field(min_length=1, max_length=60)
     prompt: str = Field(min_length=1, max_length=2000)
+    length_min: float | None = None
+    length_frac: float | None = None
 
 
 class PairRequest(BaseModel):

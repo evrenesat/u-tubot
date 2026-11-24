@@ -486,6 +486,15 @@ fraction guard; a video no longer than the band's top is cut without a target. C
 length (`kept_ms`) next to the preset label, for example "Highlights in 5 min · 5:02" (TV picker; the
 browser extension's cut checkpoints show the same, plan section 3).
 
+Length of saved presets and typed prompts (addendum, 2026-11-24): the same band and rank selection
+apply to any cut that has a target. The target is, in order: a built-in preset's `preset_target_s`;
+a saved preset's explicit `length_min` / `length_frac` (a fraction needs the video's duration); the
+length the description asks for, read by a small English parser (`half`, `a third`, `a quarter`,
+`N %`, `N minutes`, `N min`, `under N minutes`, `shorter by half`; "the first half", "skip the first
+5 minutes" or two different lengths give no target). Built-in presets' own wording is never read. The
+cache version includes the target, so a cut built before this rebuilds once; `target_s` in the cut
+document is the effective target (`null` without one).
+
 ## Voice prompts (addendum, 2026-11-21)
 
 The phone's spoken cut description becomes text through modelgate only: this backend posts the
@@ -527,8 +536,12 @@ description), so saving the same name and description replaces the earlier copy.
 preset cannot be deleted from this list, and a user may keep at most 20 saved presets. A built
 cut carries the saved label (`label` in the cut document), not the id.
 
-- `GET /v1/cut-presets` -> `{"presets":[{"id","label"}]}` in saved order, the owner's own only.
-- `POST /v1/cut-presets` `{"label","prompt"}` -> `{"preset":{"id","label"}}`. The label is 1..60
+- `GET /v1/cut-presets` -> `{"presets":[{"id","label","length_min"?,"length_frac"?}]}` in saved
+  order, the owner's own only.
+- `POST /v1/cut-presets` `{"label","prompt","length_min"?,"length_frac"?}` ->
+  `{"preset":{"id","label","length_min"?,"length_frac"?}}`. `length_min` (0.5..600 minutes kept) or
+  `length_frac` (0.05..0.95 of the video kept), not both; `0`/absent means none (see Target length,
+  "Length of saved presets and typed prompts"). The label is 1..60
   characters, the description 1..2000 (the same cap as a typed prompt); empty or too long
   answers `400 {"error":"<plain reason>"}`. The description becomes the preset's task text.
 - `DELETE /v1/cut-presets/{preset_id}` -> `{"ok":true}`; `404` for an unknown id (a built-in id
