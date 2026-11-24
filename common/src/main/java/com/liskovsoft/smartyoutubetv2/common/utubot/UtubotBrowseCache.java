@@ -37,6 +37,7 @@ public final class UtubotBrowseCache {
     private static final int CHUNK_BYTES = 4096;
     private static final String TAG = UtubotBrowseCache.class.getSimpleName();
     private static final String KEY_SECTION = "section_id";
+    private static final String KEY_SECTION_TYPE = "section_type";
     private static final String KEY_IDENTITY = "identity";
     private static final String KEY_LOADED_AT = "loaded_at_ms";
     private static final String KEY_GROUPS = "groups";
@@ -58,11 +59,13 @@ public final class UtubotBrowseCache {
 
     private static final class Entry {
         private final long loadedAtMs;
+        private final int sectionType;
         private final String identity;
         private final String groupsJson;
 
-        private Entry(long loadedAtMs, String identity, String groupsJson) {
+        private Entry(long loadedAtMs, int sectionType, String identity, String groupsJson) {
             this.loadedAtMs = loadedAtMs;
+            this.sectionType = sectionType;
             this.identity = identity;
             this.groupsJson = groupsJson;
         }
@@ -84,8 +87,8 @@ public final class UtubotBrowseCache {
         return mRoot;
     }
 
-    public synchronized State state(int sectionId, String identity, long nowMs, int minutes) {
-        Entry entry = entry(sectionId, identity);
+    public synchronized State state(int sectionId, int sectionType, String identity, long nowMs, int minutes) {
+        Entry entry = entry(sectionId, sectionType, identity);
 
         if (entry == null) {
             return State.MISSING;
@@ -102,7 +105,7 @@ public final class UtubotBrowseCache {
             return null;
         }
 
-        Entry entry = entry(section.getId(), identity);
+        Entry entry = entry(section.getId(), section.getType(), identity);
 
         if (entry == null) {
             return null;
@@ -146,8 +149,8 @@ public final class UtubotBrowseCache {
         }
 
         try {
-            JSONObject entry = new JSONObject().put(KEY_SECTION, section.getId()).put(KEY_IDENTITY, identity)
-                    .put(KEY_LOADED_AT, nowMs).put(KEY_GROUPS, array);
+            JSONObject entry = new JSONObject().put(KEY_SECTION, section.getId()).put(KEY_SECTION_TYPE, section.getType())
+                    .put(KEY_IDENTITY, identity).put(KEY_LOADED_AT, nowMs).put(KEY_GROUPS, array);
             byte[] bytes = entry.toString().getBytes(StandardCharsets.UTF_8);
 
             if (bytes.length > MAX_ENTRY_BYTES) {
@@ -157,7 +160,7 @@ public final class UtubotBrowseCache {
             }
 
             writeAtomically(fileOf(section.getId()), bytes);
-            mEntries.put(section.getId(), new Entry(nowMs, identity, array.toString()));
+            mEntries.put(section.getId(), new Entry(nowMs, section.getType(), identity, array.toString()));
             mAttempts.put(section.getId(), nowMs);
         } catch (JSONException | IOException e) {
             Log.e(TAG, "Can't keep the cache of section %s: %s", section.getId(), e.getMessage());
@@ -172,7 +175,7 @@ public final class UtubotBrowseCache {
             return;
         }
 
-        Entry entry = entry(section.getId(), identity);
+        Entry entry = entry(section.getId(), section.getType(), identity);
         JSONArray array = new JSONArray();
 
         try {
@@ -263,14 +266,19 @@ public final class UtubotBrowseCache {
         return -1;
     }
 
-    private Entry entry(int sectionId, String identity) {
+    private Entry entry(int sectionId, int sectionType, String identity) {
         Entry entry = mEntries.get(sectionId);
 
         if (entry != null && BrowseCachePolicy.matchesIdentity(entry.identity, identity)) {
-            return entry;
+            if (entry.sectionType == sectionType) {
+                return entry;
+            }
+
+            // The section's layout changed after this entry was made: its groups are for another fragment
+            discard(sectionId);
         }
 
-        entry = readEntry(sectionId, identity);
+        entry = readEntry(sectionId, sectionType, identity);
 
         if (entry != null) {
             mEntries.put(sectionId, entry);
@@ -280,7 +288,7 @@ public final class UtubotBrowseCache {
     }
 
     @Nullable
-    private Entry readEntry(int sectionId, String identity) {
+    private Entry readEntry(int sectionId, int sectionType, String identity) {
         File file = fileOf(sectionId);
 
         if (!file.isFile()) {
@@ -295,9 +303,19 @@ public final class UtubotBrowseCache {
                 return null;
             }
 
+            int storedType = entry.optInt(KEY_SECTION_TYPE, -1);
+
+            if (storedType != sectionType) {
+                // The section's layout changed while the app was closed: the disk entry is for another fragment
+                if (!file.delete()) {
+                    Log.e(TAG, "Can't delete %s", file);
+                }
+                return null;
+            }
+
             JSONArray groups = entry.optJSONArray(KEY_GROUPS);
 
-            return groups != null ? new Entry(entry.optLong(KEY_LOADED_AT, 0), storedIdentity, groups.toString()) : null;
+            return groups != null ? new Entry(entry.optLong(KEY_LOADED_AT, 0), storedType, storedIdentity, groups.toString()) : null;
         } catch (IOException | JSONException e) {
             Log.e(TAG, "Damaged cache file of section %s: %s", sectionId, e.getMessage());
             if (!file.delete()) {

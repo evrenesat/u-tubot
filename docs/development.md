@@ -131,8 +131,10 @@ For an update, serve an `update.json` with a higher version (`downloadUrlList_x8
 
 ### Checking the browse cache (no YouTube)
 
-A section can be seeded as if it had loaded before: `files/utubot_browse/<section_id>.json` holds `identity`
-(`<locale>|<profile>`, empty profile when signed out), `loaded_at_ms` and `groups`. `0.json` is Home. `loaded_at_ms` must be inside the
+A section can be seeded as if it had loaded before: `files/utubot_browse/<section_id>.json` holds `section_type` (the layout that
+made the groups), `identity` (`<locale>|<profile>`, empty profile when signed out), `loaded_at_ms` and `groups`. `0.json` is Home. A
+section whose type changed (Playlists style, History shorts, Channels old look) doesn't replay the old groups: the entry is dropped,
+and the presenter drops it too when the style changes while it runs. `loaded_at_ms` must be inside the
 refresh window (10 minutes by default) for the focus to show it without a refresh. With the emulator in a network namespace that has
 no route out, open Home by `HomeLauncherActivity` and leave it through another launcher (e.g. `MusicLauncherActivity`), then Home
 again. `adb logcat -s BrowsePresenter` must show `Show cached section Home` on both focuses and must not show
@@ -144,9 +146,11 @@ refresh; a loaded row continues as before. A cache entry above 512 KiB isn't kep
 thread, so the cap bounds that work.
 
 A card removed with Hide, Not interested or a playlist removal leaves the section's cache at once; removing all of an author's cards
-drops the section's cache. On Channels' uploads multi-grid a fresh cache replays both columns without an uploads request: its
-replayed channels auto-select one, but the presenter keeps the cached uploads. A stale refresh loads the channels, then the uploads,
-and a failed uploads load shows the cached uploads column again; the failed attempt isn't retried until the refresh window passes.
+drops the section's cache. A card removed while a cached refresh is still loading is kept out of the refresh's completion save too,
+and a cache dropped then isn't written back by that completion. On Channels' uploads multi-grid a fresh cache replays both columns
+without an uploads request: its replayed channels auto-select one, but the presenter keeps the cached uploads, also when "auto load"
+is off. A stale refresh loads the channels, then the uploads, and a failed uploads load shows the cached uploads column again; the
+failed attempt isn't retried until the refresh window passes.
 
 ```sh
 $NS adb -P 5038 -s emulator-5554 shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.launchers.HomeLauncherActivity

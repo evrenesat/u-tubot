@@ -54,8 +54,8 @@ public class UtubotBrowseCacheTest {
 
         cache.save(section, Collections.singletonList(group(section, "Home", -1, "aaa")), IDENTITY, loadedAt);
 
-        assertEquals(UtubotBrowseCache.State.FRESH, cache.state(section.getId(), IDENTITY, loadedAt + 5 * MINUTE - 1, 5));
-        assertEquals(UtubotBrowseCache.State.STALE, cache.state(section.getId(), IDENTITY, loadedAt + 5 * MINUTE, 5));
+        assertEquals(UtubotBrowseCache.State.FRESH, cache.state(section.getId(), section.getType(), IDENTITY, loadedAt + 5 * MINUTE - 1, 5));
+        assertEquals(UtubotBrowseCache.State.STALE, cache.state(section.getId(), section.getType(), IDENTITY, loadedAt + 5 * MINUTE, 5));
 
         List<VideoGroup> groups = cache.groups(section, IDENTITY);
 
@@ -82,6 +82,36 @@ public class UtubotBrowseCacheTest {
     }
 
     @Test
+    public void aLayoutChangeDoesNotReplayTheOldGroups() {
+        UtubotBrowseCache cache = new UtubotBrowseCache(mRoot);
+        BrowseSection rows = section(BrowseSection.TYPE_ROW, "Playlists");
+        BrowseSection grid = section(BrowseSection.TYPE_GRID, "Playlists");
+        long loadedAt = 1_000_000;
+
+        cache.save(rows, Collections.singletonList(group(rows, "Playlists", 0, "aaa")), IDENTITY, loadedAt);
+
+        assertNull(cache.groups(grid, IDENTITY));
+        assertEquals(UtubotBrowseCache.State.MISSING, cache.state(grid.getId(), grid.getType(), IDENTITY, loadedAt + 1, 5));
+        assertFalse(new File(mRoot, grid.getId() + ".json").exists());
+        // The entry made for the rows layout is gone: it can't be replayed after switching back either
+        assertNull(cache.groups(rows, IDENTITY));
+    }
+
+    @Test
+    public void aDiskEntryOfAnotherLayoutIsNotReadAfterARestart() {
+        BrowseSection rows = section(BrowseSection.TYPE_ROW, "Playlists");
+        BrowseSection grid = section(BrowseSection.TYPE_GRID, "Playlists");
+
+        new UtubotBrowseCache(mRoot).save(rows, Collections.singletonList(group(rows, "Playlists", 0, "aaa")), IDENTITY, 1_000_000);
+
+        UtubotBrowseCache restarted = new UtubotBrowseCache(mRoot);
+
+        assertNull(restarted.groups(grid, IDENTITY));
+        assertEquals(UtubotBrowseCache.State.MISSING, restarted.state(grid.getId(), grid.getType(), IDENTITY, 1_000_001, 5));
+        assertNull(restarted.groups(rows, IDENTITY));
+    }
+
+    @Test
     public void anotherLocaleOrAccountDoesNotReadTheCache() {
         UtubotBrowseCache cache = new UtubotBrowseCache(mRoot);
         BrowseSection section = section();
@@ -90,7 +120,7 @@ public class UtubotBrowseCacheTest {
 
         assertNull(cache.groups(section, "tr_TR|owner"));
         assertNull(cache.groups(section, "en_US|partner"));
-        assertEquals(UtubotBrowseCache.State.MISSING, cache.state(section.getId(), "tr_TR|owner", 1_000_000, 5));
+        assertEquals(UtubotBrowseCache.State.MISSING, cache.state(section.getId(), section.getType(), "tr_TR|owner", 1_000_000, 5));
         assertNotNull(cache.groups(section, IDENTITY));
     }
 
@@ -123,8 +153,8 @@ public class UtubotBrowseCacheTest {
         cache.save(section, Collections.singletonList(group(section, "Home", -1, "aaa")), IDENTITY, loadedAt);
         cache.markAttempt(section.getId(), loadedAt + 4 * MINUTE);
 
-        assertEquals(UtubotBrowseCache.State.FRESH, cache.state(section.getId(), IDENTITY, loadedAt + 4 * MINUTE + 1, 5));
-        assertEquals(UtubotBrowseCache.State.STALE, cache.state(section.getId(), IDENTITY, loadedAt + 9 * MINUTE, 5));
+        assertEquals(UtubotBrowseCache.State.FRESH, cache.state(section.getId(), section.getType(), IDENTITY, loadedAt + 4 * MINUTE + 1, 5));
+        assertEquals(UtubotBrowseCache.State.STALE, cache.state(section.getId(), section.getType(), IDENTITY, loadedAt + 9 * MINUTE, 5));
     }
 
     @Test
@@ -195,7 +225,7 @@ public class UtubotBrowseCacheTest {
         assertEquals(2, groups.get(0).getVideos().size());
         assertEquals("aaa", groups.get(0).getVideos().get(0).videoId);
         assertEquals("bbb", groups.get(0).getVideos().get(1).videoId);
-        assertEquals(UtubotBrowseCache.State.FRESH, cache.state(section.getId(), IDENTITY, loadedAt + MINUTE + 1, 5));
+        assertEquals(UtubotBrowseCache.State.FRESH, cache.state(section.getId(), section.getType(), IDENTITY, loadedAt + MINUTE + 1, 5));
         assertEquals("aaa", aaa.videoId);
     }
 
@@ -243,8 +273,8 @@ public class UtubotBrowseCacheTest {
         cache.save(subscriptions, Collections.singletonList(group(subscriptions, "Subscriptions", -1, "bbb")), IDENTITY, now - 20 * MINUTE);
         cache.markAttempt(home.getId(), now + MINUTE);
 
-        assertEquals(UtubotBrowseCache.State.FRESH, cache.state(home.getId(), IDENTITY, now + 6 * MINUTE, 10));
-        assertEquals(UtubotBrowseCache.State.STALE, cache.state(subscriptions.getId(), IDENTITY, now + 6 * MINUTE, 10));
+        assertEquals(UtubotBrowseCache.State.FRESH, cache.state(home.getId(), home.getType(), IDENTITY, now + 6 * MINUTE, 10));
+        assertEquals(UtubotBrowseCache.State.STALE, cache.state(subscriptions.getId(), subscriptions.getType(), IDENTITY, now + 6 * MINUTE, 10));
     }
 
     @Test
@@ -291,7 +321,7 @@ public class UtubotBrowseCacheTest {
         UtubotBrowseCache cache = new UtubotBrowseCache(mRoot);
         BrowseSection section = section();
 
-        assertEquals(UtubotBrowseCache.State.MISSING, cache.state(section.getId(), IDENTITY, 1_000_000, 5));
+        assertEquals(UtubotBrowseCache.State.MISSING, cache.state(section.getId(), section.getType(), IDENTITY, 1_000_000, 5));
         assertNull(cache.groups(section, IDENTITY));
         assertEquals(0, cache.count());
         assertFalse(new File(mRoot, section.getId() + ".json").exists());
@@ -299,6 +329,10 @@ public class UtubotBrowseCacheTest {
 
     private static BrowseSection section() {
         return new BrowseSection(MediaGroup.TYPE_HOME, "Home", BrowseSection.TYPE_ROW, 0);
+    }
+
+    private static BrowseSection section(int type, String title) {
+        return new BrowseSection(MediaGroup.TYPE_USER_PLAYLISTS, title, type, 0);
     }
 
     private static VideoGroup group(BrowseSection section, String title, int position, String... videoIds) {

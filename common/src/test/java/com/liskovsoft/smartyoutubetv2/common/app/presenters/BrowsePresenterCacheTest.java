@@ -17,6 +17,7 @@ import com.liskovsoft.smartyoutubetv2.common.prefs.MainUIData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.WatchLaterData;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBrowseCache;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
+import com.liskovsoft.youtubeapi.service.internal.MediaServiceData;
 
 import org.junit.After;
 import org.junit.Before;
@@ -46,6 +47,7 @@ import io.reactivex.subjects.PublishSubject;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -333,6 +335,157 @@ public class BrowsePresenterCacheTest {
     }
 
     @Test
+    public void freshCacheWithAutoLoadOffKeepsTheUploadsColumn() throws Exception {
+        MainUIData.instance(mView).setUploadsOldLookEnabled(false);
+        MainUIData.instance(mView).setUploadsAutoLoadEnabled(false);
+        BrowseSection section = sectionOf(MediaGroup.TYPE_CHANNEL_UPLOADS);
+        VideoGroup channels = channelGroup(section, "Channels", 0, 7_300, "channel-one", "channel-two");
+        VideoGroup uploads = group(section, "Uploads", 1, 7_400, "upload-one", "upload-two");
+
+        seed(section, cachedGroups(section, channels, uploads), now(), false);
+        mUploadsPresenter.setError(new RuntimeException("no uploads request on a fresh cache"));
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_CHANNEL_UPLOADS);
+        // The replayed channels make the view auto-select its first channel even when auto load is off
+        mPresenter.onVideoItemSelected(channels.getVideos().get(0));
+
+        assertEquals(0, mUploadsPresenter.calls());
+        assertEquals(0, mView.errors);
+        assertTrue(mView.hasGroup(7_300, "Channels", 2));
+        assertTrue(mView.hasGroup(7_400, "Uploads", 2));
+        List<VideoGroup> cached = mCache.groups(section, identity());
+        assertNotNull(cached);
+        assertEquals(2, cached.size());
+        assertEquals("Uploads", cached.get(1).getTitle());
+    }
+
+    @Test
+    public void aPlaylistsStyleChangeDoesNotReplayTheCachedRows() throws Exception {
+        MainUIData.instance(mView).setPlaylistsStyle(MainUIData.PLAYLISTS_STYLE_ROWS);
+        mPresenter.updatePlaylistsStyle();
+        BrowseSection section = sectionOf(MediaGroup.TYPE_USER_PLAYLISTS);
+        assertEquals(BrowseSection.TYPE_ROW, section.getType());
+        seed(section, Collections.singletonList(group(section, "Playlists", 0, 9_600, "old-playlist")), now(), false);
+
+        MainUIData.instance(mView).setPlaylistsStyle(MainUIData.PLAYLISTS_STYLE_GRID);
+        mPresenter.updatePlaylistsStyle();
+        assertEquals(BrowseSection.TYPE_GRID, section.getType());
+        assertNull(mCache.groups(section, identity()));
+
+        AtomicInteger gridLoads = new AtomicInteger();
+        putMapping("mGridMapping", MediaGroup.TYPE_USER_PLAYLISTS, Observable.defer(() -> {
+            gridLoads.incrementAndGet();
+            return Observable.just(mediaGroup("Playlists", 3, "playlist", MediaGroup.TYPE_USER_PLAYLISTS));
+        }));
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_USER_PLAYLISTS);
+        awaitTitle("Playlists", 3);
+
+        assertEquals(1, gridLoads.get());
+        assertEquals(0, mView.errors);
+        assertFalse(mView.hasGroup(9_600, "Playlists", 1));
+    }
+
+    @Test
+    public void aChannelsOldLookChangeDoesNotReplayTheCachedColumns() throws Exception {
+        MainUIData.instance(mView).setUploadsOldLookEnabled(false);
+        BrowseSection section = sectionOf(MediaGroup.TYPE_CHANNEL_UPLOADS);
+        assertEquals(BrowseSection.TYPE_MULTI_GRID, section.getType());
+        VideoGroup channels = channelGroup(section, "Channels", 0, 9_900, "old-channel");
+        VideoGroup uploads = group(section, "Uploads", 1, 9_901, "old-upload");
+        seed(section, cachedGroups(section, channels, uploads), now(), false);
+
+        // Channels "old look" makes the section a grid again at the next start; the multi-grid cache is for other columns
+        section.setType(BrowseSection.TYPE_GRID);
+        AtomicInteger gridLoads = new AtomicInteger();
+        putMapping("mGridMapping", MediaGroup.TYPE_CHANNEL_UPLOADS, Observable.defer(() -> {
+            gridLoads.incrementAndGet();
+            return Observable.just(mediaGroup("Channels", 3, "new-channel", MediaGroup.TYPE_CHANNEL_UPLOADS));
+        }));
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_CHANNEL_UPLOADS);
+        awaitTitle("Channels", 3);
+
+        assertEquals(1, gridLoads.get());
+        assertEquals(0, mView.errors);
+        assertFalse(mView.hasGroup(9_900, "Channels", 1));
+        assertFalse(mView.hasGroup(9_901, "Uploads", 1));
+        List<VideoGroup> cached = mCache.groups(section, identity());
+        assertNotNull(cached);
+        assertEquals("Channels", cached.get(0).getTitle());
+        assertEquals(3, cached.get(0).getVideos().size());
+    }
+
+    @Test
+    public void aHistoryStyleChangeDoesNotReplayTheCachedRows() throws Exception {
+        MediaServiceData.instance().setContentHidden(MediaServiceData.CONTENT_SHORTS_HISTORY_ROW, false);
+        BrowseSection section = sectionOf(MediaGroup.TYPE_HISTORY);
+
+        try {
+            assertEquals(BrowseSection.TYPE_ROW, section.getType());
+            seed(section, Collections.singletonList(group(section, "History", 0, 9_700, "old-video")), now(), false);
+
+            MediaServiceData.instance().setContentHidden(MediaServiceData.CONTENT_SHORTS_HISTORY_ROW, true);
+            mPresenter.updateHistoryStyle();
+
+            assertEquals(BrowseSection.TYPE_GRID, section.getType());
+            assertNull(mCache.groups(section, identity()));
+        } finally {
+            MediaServiceData.instance().setContentHidden(MediaServiceData.CONTENT_SHORTS_HISTORY_ROW, false);
+            mPresenter.updateHistoryStyle();
+        }
+    }
+
+    @Test
+    public void aCardRemovedDuringAnInFlightRefreshIsNotSavedBack() throws Exception {
+        BrowseSection section = musicSection();
+        seed(section, Collections.singletonList(group(section, LIKED_MUSIC, 0, 9_500, "keep-one", "remove-one")),
+                now() - 20 * MINUTE, true);
+        PublishSubject<List<MediaGroup>> rows = PublishSubject.create();
+        putMapping("mRowMapping", MediaGroup.TYPE_MUSIC, rows);
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_MUSIC);
+
+        // The refresh's first part arrives and still carries the card
+        rows.onNext(Collections.singletonList(mediaGroupWithIds(LIKED_MUSIC, MediaGroup.TYPE_MUSIC, "keep-one", "remove-one")));
+        awaitGroup(9_500, LIKED_MUSIC, 2);
+        Video hidden = mCache.groups(section, identity()).get(0).getVideos().get(1);
+        assertEquals("remove-one", hidden.videoId);
+        mPresenter.removeItem(hidden);
+
+        rows.onNext(Collections.singletonList(mediaGroupWithIds(MUSIC, MediaGroup.TYPE_MUSIC, "new-two")));
+        awaitTitle(MUSIC, 1);
+        rows.onComplete();
+
+        List<VideoGroup> cached = mCache.groups(section, identity());
+        assertNotNull(cached);
+        assertEquals(2, cached.size());
+        assertEquals(1, cached.get(0).getVideos().size());
+        assertEquals("keep-one", cached.get(0).getVideos().get(0).videoId);
+        assertEquals("new-two", cached.get(1).getVideos().get(0).videoId);
+        assertEquals(0, mView.errors);
+    }
+
+    @Test
+    public void aCacheDroppedByAuthorRemovalDuringAnInFlightRefreshStaysEmpty() throws Exception {
+        BrowseSection section = musicSection();
+        seed(section, Collections.singletonList(group(section, LIKED_MUSIC, 0, 9_800, "author-one", "author-two")),
+                now() - 20 * MINUTE, true);
+        PublishSubject<List<MediaGroup>> rows = PublishSubject.create();
+        putMapping("mRowMapping", MediaGroup.TYPE_MUSIC, rows);
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_MUSIC);
+        Video authorCard = mCache.groups(section, identity()).get(0).getVideos().get(0);
+        removeItemAuthor(authorCard);
+
+        rows.onNext(Collections.singletonList(mediaGroup(LIKED_MUSIC, 6, "new")));
+        rows.onComplete();
+
+        assertEquals(0, mCache.count());
+        assertNull(mCache.groups(section, identity()));
+    }
+
+    @Test
     public void accountChangeInvalidatesTheCacheThroughThePresenter() throws Exception {
         BrowseSection section = musicSection();
         seed(section, Collections.singletonList(group(section, LIKED_MUSIC, 0, 7_000, "old-one")), now(), false);
@@ -460,6 +613,33 @@ public class BrowsePresenterCacheTest {
         throw new AssertionError("the refresh didn't save the whole section");
     }
 
+    private void awaitTitle(String title, int size) {
+        long deadline = System.currentTimeMillis() + 5_000;
+
+        while (System.currentTimeMillis() < deadline) {
+            ShadowLooper.idleMainLooper();
+
+            if (mView.hasTitle(title, size)) {
+                return;
+            }
+
+            try {
+                Thread.sleep(20);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        throw new AssertionError("the section didn't load");
+    }
+
+    private void removeItemAuthor(Video item) throws Exception {
+        Method method = BrowsePresenter.class.getDeclaredMethod("removeItemAuthor", Video.class);
+        method.setAccessible(true);
+        method.invoke(mPresenter, item);
+    }
+
     private void awaitFocusedCard(String videoId) throws Exception {
         long deadline = System.currentTimeMillis() + 5_000;
 
@@ -543,10 +723,20 @@ public class BrowsePresenterCacheTest {
     }
 
     private static MediaGroup mediaGroup(String title, int count, String videoPrefix, int type) {
-        List<MediaItem> items = new ArrayList<>();
+        String[] videoIds = new String[count];
 
         for (int i = 0; i < count; i++) {
-            items.add(mediaItem(i, title + " " + i, videoPrefix + i));
+            videoIds[i] = videoPrefix + i;
+        }
+
+        return mediaGroupWithIds(title, type, videoIds);
+    }
+
+    private static MediaGroup mediaGroupWithIds(String title, int type, String... videoIds) {
+        List<MediaItem> items = new ArrayList<>();
+
+        for (int i = 0; i < videoIds.length; i++) {
+            items.add(mediaItem(i, title + " " + i, videoIds[i]));
         }
 
         return (MediaGroup) Proxy.newProxyInstance(MediaGroup.class.getClassLoader(), new Class[]{MediaGroup.class},

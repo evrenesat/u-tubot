@@ -124,6 +124,14 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
      * while a fresh cache replay keeps them (see onVideoItemSelected).
      */
     private boolean mCachedRefreshStarted;
+    /**
+     * Cards removed while a cached refresh is still loading: the load's groups still carry them, so its saves filter them out.
+     */
+    private final Map<Integer, Set<String>> mRemovedCardsBySection = new HashMap<>();
+    /**
+     * Sections whose cache was dropped while a cached refresh is still loading: the refresh must not write its groups back.
+     */
+    private final Set<Integer> mInvalidatedCachedSections = new HashSet<>();
 
     private BrowsePresenter(Context context) {
         super(context);
@@ -558,13 +566,15 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         BrowseSection section = mSectionsMapping.get(categoryId);
 
-        if (section != null) {
+        if (section != null && section.getType() != categoryType) {
             section.setType(categoryType);
+            invalidateCachedSection(section);
         }
 
         for (BrowseSection category : mSections) {
-            if (category.getId() == categoryId) {
+            if (category.getId() == categoryId && category.getType() != categoryType) {
                 category.setType(categoryType);
+                invalidateCachedSection(category);
                 break;
             }
         }
@@ -585,8 +595,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         if (belongsToChannelUploadsMultiGrid(item)) {
             // A fresh cache replay shows both columns: the view auto-selects a channel as its channels arrive, but its uploads
-            // are already there, so no network load until a background refresh of the section has started
-            if (mCachedContentShown && !mCachedRefreshStarted && getMainUIData().isUploadsAutoLoadEnabled()) {
+            // are already there, so no network load until a background refresh of the section has started. This holds when
+            // auto load is off too: the cached uploads column must not be cleared by the auto-selection.
+            if (mCachedContentShown && !mCachedRefreshStarted) {
                 mCurrentVideo = item;
                 return;
             }
@@ -641,6 +652,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
             return;
         }
 
+        // A refresh that is still loading has the card in its own groups too: its completion save is told to leave it out
+        if (mCachedRefreshStarted) {
+            rememberRemovedCard(mCurrentSection, item);
+        }
+
         List<VideoGroup> groups = mCachedContentShown && mCachedShownGroups != null ?
                 mCachedShownGroups : mBrowseCache.groups(mCurrentSection, getBrowseCacheIdentity());
 
@@ -657,7 +673,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                 continue;
             }
 
-            group.remove(item);
+            Video card = findCard(group, item);
+
+            if (card != null) {
+                group.remove(card);
+            }
 
             if (group.getSize() != size) {
                 changed = true;
@@ -670,12 +690,111 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     private void invalidateCachedSection() {
-        if (mBrowseCache == null || mCurrentSection == null || !isCacheableSection(mCurrentSection)) {
+        invalidateCachedSection(mCurrentSection);
+    }
+
+    private void invalidateCachedSection(BrowseSection section) {
+        if (mBrowseCache == null || section == null || !isCacheableSection(section)) {
             return;
         }
 
-        mBrowseCache.save(mCurrentSection, new ArrayList<>(), getBrowseCacheIdentity(), System.currentTimeMillis());
-        discardCachedState();
+        // Dropped while its refresh is still loading: the completion must not write the section's groups back
+        if (mCachedRefreshStarted && mCurrentSection != null && section.getId() == mCurrentSection.getId()) {
+            mInvalidatedCachedSections.add(section.getId());
+        }
+
+        mBrowseCache.save(section, new ArrayList<>(), getBrowseCacheIdentity(), System.currentTimeMillis());
+
+        if (mCurrentSection != null && mCurrentSection.getId() == section.getId()) {
+            discardCachedState();
+        }
+    }
+
+    private void rememberRemovedCard(BrowseSection section, Video item) {
+        String key = cardKey(item);
+
+        if (key == null) {
+            return;
+        }
+
+        Set<String> keys = mRemovedCardsBySection.get(section.getId());
+
+        if (keys == null) {
+            keys = new HashSet<>();
+            mRemovedCardsBySection.put(section.getId(), keys);
+        }
+
+        keys.add(key);
+    }
+
+    private static String cardKey(Video video) {
+        if (video == null) {
+            return null;
+        }
+
+        if (!TextUtils.isEmpty(video.videoId)) {
+            return "v:" + video.videoId;
+        }
+
+        if (!TextUtils.isEmpty(video.channelId)) {
+            return "c:" + video.channelId;
+        }
+
+        if (!TextUtils.isEmpty(video.channelGroupId)) {
+            return "g:" + video.channelGroupId;
+        }
+
+        if (!TextUtils.isEmpty(video.playlistId)) {
+            return "p:" + video.playlistId;
+        }
+
+        return null;
+    }
+
+    @Nullable
+    private static Video findCard(VideoGroup group, Video item) {
+        String key = cardKey(item);
+
+        if (key == null) {
+            return null;
+        }
+
+        for (Video video : group.getVideos()) {
+            if (key.equals(cardKey(video))) {
+                return video;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * A cached refresh's groups without the cards removed while it loaded. The groups are changed in place; the empty ones
+     * stay (a multi-grid's column is replaced by an empty one).
+     */
+    private void removeCardsDuringRefresh(BrowseSection section, List<VideoGroup> groups) {
+        Set<String> removed = mRemovedCardsBySection.get(section.getId());
+
+        if (removed == null || groups == null) {
+            return;
+        }
+
+        for (VideoGroup group : groups) {
+            for (Video video : new ArrayList<>(group.getVideos())) {
+                if (removed.contains(cardKey(video))) {
+                    group.remove(video);
+                }
+            }
+        }
+    }
+
+    private boolean isCacheWriteBlocked(BrowseSection section) {
+        return section == null || mInvalidatedCachedSections.contains(section.getId());
+    }
+
+    private void clearCachedLoadMarks(int sectionId) {
+        mRemovedCardsBySection.remove(sectionId);
+        mInvalidatedCachedSections.remove(sectionId);
     }
 
     @Override
@@ -1089,7 +1208,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     private UtubotBrowseCache.State browseCacheState(BrowseSection section) {
-        return mBrowseCache.state(section.getId(), getBrowseCacheIdentity(), System.currentTimeMillis(),
+        return mBrowseCache.state(section.getId(), section.getType(), getBrowseCacheIdentity(), System.currentTimeMillis(),
                 browseRefreshMinutes());
     }
 
@@ -1105,10 +1224,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     private void saveCachedGroups(BrowseSection section, List<VideoGroup> groups) {
-        if (mBrowseCache == null || !isCacheableSection(section)) {
+        if (mBrowseCache == null || !isCacheableSection(section) || isCacheWriteBlocked(section)) {
             return;
         }
 
+        removeCardsDuringRefresh(section, groups);
         mBrowseCache.save(section, groups, getBrowseCacheIdentity(), System.currentTimeMillis());
     }
 
@@ -1116,6 +1236,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         if (mBrowseCache == null || !isCacheableSection(section) || group == null) {
             return;
         }
+
+        removeCardsDuringRefresh(section, Collections.singletonList(group));
 
         if (section.getType() == BrowseSection.TYPE_MULTI_GRID) {
             saveCachedGroups(section, UtubotBrowseCache.mergeByPosition(mBrowseCache.groups(section, getBrowseCacheIdentity()), group));
@@ -1126,10 +1248,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     private void appendCachedGroup(BrowseSection section, VideoGroup group) {
-        if (mBrowseCache == null || !isCacheableSection(section)) {
+        if (mBrowseCache == null || !isCacheableSection(section) || isCacheWriteBlocked(section)) {
             return;
         }
 
+        removeCardsDuringRefresh(section, Collections.singletonList(group));
         mBrowseCache.append(section, group, getBrowseCacheIdentity(), System.currentTimeMillis());
     }
 
@@ -1186,6 +1309,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
             return;
         }
 
+        clearCachedLoadMarks(section.getId());
         discardCachedState();
     }
 
@@ -1336,6 +1460,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         Log.d(TAG, "updateRowsHeader: Start loading section: " + section.getTitle());
 
         disposeActions();
+        // A cache dropped by the last, aborted refresh is rebuilt by this one
+        mInvalidatedCachedSections.remove(section.getId());
 
         if (getView() == null) {
             Log.e(TAG, "Browse view has been unloaded from the memory. Low RAM?");
@@ -1523,6 +1649,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
     private void updateVideoGrid(BrowseSection section, Observable<MediaGroup> group, int column) {
         disposeActions();
+        // A cache dropped by the last, aborted refresh is rebuilt by this one
+        mInvalidatedCachedSections.remove(section.getId());
 
         if (getView() == null) {
             Log.e(TAG, "Browse view has been unloaded from the memory. Low RAM?");

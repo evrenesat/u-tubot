@@ -1,5 +1,21 @@
 # u·tubot devlog
 
+## 2026-11-24 (browse cache review round 3)
+
+- A cache entry now carries the section type that made its groups: a section whose layout changed (Playlists style, History shorts
+  history, Channels old look after a restart) doesn't replay the old groups into another fragment. The entry is dropped on the read
+  (memory or disk), and `updateCategoryType` drops the cache of the section it changes, so a settings change while the presenter runs
+  doesn't leave a fresh cache for the new layout either. Tests: `UtubotBrowseCacheTest` for a layout change in memory and on disk
+  after a restart, `BrowsePresenterCacheTest` for Playlists style, History shorts and Channels old look.
+- A card removed, hidden or taken from a playlist while a cached refresh is still loading is kept out of that refresh's completion
+  save (the load's groups still carry it), and a cache dropped by a removed author during that refresh isn't written back by the
+  completion either. `BrowsePresenterCacheTest` drives a two-part refresh with the card removed after its first part, and an author
+  removal before the completion.
+- On a fresh cache replay of Channels with "auto load" off, the view's auto-selection no longer clears the cached uploads column:
+  the replay keeps both columns there too (`BrowsePresenterCacheTest`).
+- Docs: `docs/development.md` ("Checking the browse cache") and `ai/APP_INTEGRATION.md` state the layout check and the refresh-save
+  filtering.
+
 ## 2026-11-24 (browse cache review round 2)
 
 - A cached refresh that completes after the view is gone, or after the cached rows are dropped (an account change), no longer
