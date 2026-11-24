@@ -408,7 +408,7 @@ class CutService:
 
     @property
     def watched_available(self) -> tuple[bool, str | None]:
-        from .watch.service import watched_available
+        from .watch import watched_available
 
         return watched_available(self.cfg)
 
@@ -483,7 +483,7 @@ class CutService:
             user_cfg = self.auth.user_config(user)
             policy = user_cfg.policy.cut_mode if user_cfg is not None else None
         chosen = mode or policy or self.cfg.cuts.default_mode
-        from .watch.service import watched_not_configured
+        from .watch import watched_not_configured
 
         if chosen == "watched":
             reason = watched_not_configured(self.cfg)
@@ -729,7 +729,11 @@ class CutService:
             else None
         )
         fallback: dict[str, Any] = {"mode": "quick", "state": "none"}
-        ready = self._ready_cut(row["video_id"], saved or prompt, "quick") if preset_id else None
+        ready = (
+            self._ready_cut(row["video_id"], saved or prompt, "quick")
+            if (preset_id or prompt)
+            else None
+        )
         if ready is not None:
             fallback.update(state="ready", cut=ready)
             return fallback
@@ -808,7 +812,7 @@ class CutService:
     def presets_state(self, user: str, video_id: str) -> dict[str, Any]:
         """Every preset with its state for this video and each mode; what the pickers show."""
         default = self.resolve_mode(user, None)
-        from .watch.service import watched_available
+        from .watch import watched_available
 
         ok, reason = watched_available(self.cfg)
         minutes = self._meta(video_id).get("duration_s")

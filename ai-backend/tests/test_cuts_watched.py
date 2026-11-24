@@ -4,9 +4,12 @@ import pytest
 
 from tests.synth_video import ffmpeg_available, make_video
 from utubot.config import LLMTask
+from utubot.watch import watched_deps_installed
 
 VID = "abcdefghijk"
-pytestmark = pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg is required")
+pytestmark = pytest.mark.skipif(
+    not watched_deps_installed() or not ffmpeg_available(), reason="ffmpeg and Pillow are required"
+)
 
 
 @pytest.fixture
@@ -74,6 +77,8 @@ class TestWatchedBuild:
         assert call["model"] == "visionmodel"
         assert call["images"] and call["images"][0].startswith("data:image/jpeg;base64,")
         assert "Scene timing" in call["text"]
+        me = (await watched_env.client.get("/v1/me")).json()
+        assert me["features"]["cuts_watched"] is True
         labels = watched_env.svc.db.all(
             "SELECT * FROM scene_labels WHERE source_key=? ORDER BY start_ms", [f"youtube:{VID}"]
         )
@@ -98,7 +103,32 @@ class TestWatchedBuild:
         doc = await wait_ready(watched_env, second.json()["request_id"])
         assert doc["state"] == "ready"
         assert len(watched_env.llm.describe_calls) == described
-        assert (watched_env.svc.cfg.media_dir / "watched").exists()
+        assert not list((watched_env.svc.cfg.media_dir / "watched").rglob("*.jpg"))
+
+    async def test_failure_offers_the_ready_quick_cut_when_one_exists(self, watched_env, tmp_path):
+        await store_video(watched_env, tmp_path)
+        set_transcript(watched_env.fetcher)
+        watched_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 4, "label": "The demo"}],
+            "summary": "s",
+            "kept_s": 20,
+        }
+        quick = await watched_env.client.post(
+            f"/v1/videos/{VID}/cuts", json={"preset": "cut-demo", "mode": "quick"}
+        )
+        quick_doc = await wait_ready(watched_env, quick.json()["request_id"])
+        assert quick_doc["state"] == "ready", quick_doc.get("error")
+        watched_env.llm.describe_answer = lambda text, images: {
+            "visual_summary": "x",
+            "kind": "film_scene",
+            "on_screen_text": "",
+            "same_as_previous": False,
+        }
+        r = await post_watched(watched_env)
+        doc = await wait_ready(watched_env, r.json()["request_id"])
+        assert doc["state"] == "failed"
+        assert doc["fallback"]["mode"] == "quick" and doc["fallback"]["state"] == "ready"
+        assert doc["fallback"]["cut"]["mode"] == "quick"
 
     async def test_a_second_watched_build_waits_in_line(self, watched_env, tmp_path):
         await store_video(watched_env, tmp_path)
@@ -164,12 +194,26 @@ class TestWatchedBuild:
         assert doc["fallback"] == {"mode": "quick", "state": "none"}
         assert watched_env.svc.archive.lookup(VID, "video") is None
 
+    async def test_missing_pillow_is_a_plain_unavailable_reason(self, env, monkeypatch):
+        import importlib.util
+
+        def no_pillow(name):
+            return None if name == "PIL" else importlib.util.find_spec(name)
+
+        monkeypatch.setattr(importlib.util, "find_spec", no_pillow)
+        state = (await env.client.get(f"/v1/videos/{VID}/cuts")).json()
+        watched = next(mode for mode in state["modes"] if mode["id"] == "watched")
+        assert watched["available"] is False and "not installed" in watched["reason"]
+        assert (await env.client.get("/v1/me")).json()["features"]["cuts_watched"] is False
+
     async def test_watched_listed_unavailable_without_a_vision_model(self, env):
         env.cfg.llm.cuts = LLMTask(model="cutmodel")
         state = (await env.client.get(f"/v1/videos/{VID}/cuts")).json()
         watched = next(mode for mode in state["modes"] if mode["id"] == "watched")
         assert watched["available"] is False and "not configured" in watched["reason"]
         assert state["default_mode"] == "quick"
+        me = (await env.client.get("/v1/me")).json()
+        assert me["features"]["cuts_watched"] is False
         r = await env.client.post(
             f"/v1/videos/{VID}/cuts", json={"preset": "cut-demo", "mode": "watched"}
         )

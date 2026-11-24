@@ -1,7 +1,9 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import pytest
-from PIL import Image
+
+Image = pytest.importorskip("PIL.Image")
 
 from tests.synth_video import CUTS, DURATION_S, ffmpeg_available, make_video
 from utubot.config import CutsConfig
