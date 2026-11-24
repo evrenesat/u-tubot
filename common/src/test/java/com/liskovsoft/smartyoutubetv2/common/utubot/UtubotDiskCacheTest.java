@@ -198,6 +198,30 @@ public class UtubotDiskCacheTest {
     }
 
     @Test
+    public void clearingTheSummariesBeforeTheScopeIsOpenedClearsTheStoredOnes() {
+        mCache.putSummary("panel", summary("aaaaaaaaaaa", "ready", "- one"));
+
+        new UtubotDiskCache(mRoot, mNow::get).clearSummaries();
+
+        assertNull(restart().getSummary("aaaaaaaaaaa", "panel"));
+    }
+
+    @Test
+    public void clearingTheSummariesWhileAnotherScopeIsOpenClearsTheOneThatWillBeUsed() throws IOException {
+        mCache.putSummary("panel", summary("aaaaaaaaaaa", "ready", "- one"));
+        String other = UtubotDiskCache.scopeOf("https://b.example", "token", "1.0");
+        File from = new File(new File(new File(mRoot, SCOPE), "summaries"), "aaaaaaaaaaa-" + UtubotDiskCache.promptHash("panel") + ".json");
+        File to = new File(new File(mRoot, other), "summaries");
+        assertTrue(to.mkdirs());
+        Files.copy(from.toPath(), new File(to, from.getName()).toPath());
+
+        mCache.clearSummaries();
+
+        assertFalse(to.exists());
+        assertNull(restart().getSummary("aaaaaaaaaaa", "panel"));
+    }
+
+    @Test
     public void aDamagedFileIsDroppedWithoutAnError() throws IOException {
         mCache.putVerdicts(Collections.singletonList(verdict("aaaaaaaaaaa", "ready")));
         mCache.putSummary("panel", summary("aaaaaaaaaaa", "ready", "- one"));

@@ -293,11 +293,19 @@ public final class UtubotDiskCache {
     }
 
     /**
-     * Forgets every summary: the default prompt or the prompt sets changed, so a stored text may not be the answer to the same request anymore
+     * Forgets every summary of every scope: the default prompt or the prompt sets changed, so a stored text may not be the answer to the
+     * same request anymore. A scope that has not been opened yet (or the connection it names is the previous one) is cleared too: a
+     * summary stored by an earlier run must not come back when its scope opens.
      */
     public synchronized void clearSummaries() {
-        if (mScope != null) {
-            deleteRecursively(new File(new File(mRoot, mScope), SUMMARIES_DIRECTORY));
+        File[] scopes = mRoot.listFiles();
+
+        if (scopes == null) {
+            return;
+        }
+
+        for (File scope : scopes) {
+            deleteRecursively(new File(scope, SUMMARIES_DIRECTORY));
         }
     }
 
