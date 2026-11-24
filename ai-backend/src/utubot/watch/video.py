@@ -9,16 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import yt_dlp
 
 from ..captions import events
 from ..config import Config
 from ..db import Database
-from ..media_archive import MediaArchive, KIND_VIDEO
-from ..transcripts import TranscriptService, VIDEO_URL
+from ..llm import BACKGROUND
+from ..media_archive import KIND_VIDEO, MediaArchive
+from ..transcripts import VIDEO_URL, TranscriptService
 from ..youtube import (
     CLASS_MEDIA,
     MEDIA_CLASSES,
@@ -29,7 +31,6 @@ from ..youtube import (
     YoutubeVideoError,
     classify_failure,
 )
-from ..llm import BACKGROUND
 
 log = logging.getLogger("utubot.watch")
 

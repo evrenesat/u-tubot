@@ -15,9 +15,9 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ..config import Config
 from ..llm import INTERACTIVE, LLMClient, LLMError
@@ -151,6 +151,7 @@ async def describe_scenes(
     *,
     existing_tdt: dict[str, Any] | None = None,
     progress: Callable[[float], None] | None = None,
+    on_segment: Callable[[dict[str, Any]], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> DescribingResult:
     """Describe every grid in order, resuming the seen segments of `existing_tdt`."""
@@ -239,7 +240,7 @@ async def describe_scenes(
                     error = str(exc2)
         except DescribeFormatError as exc:
             error = f"invalid answer after one retry: {exc.problem}"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             error = "the vision request took too long"
         elapsed = round(time.monotonic() - started, 3)
         seconds.append(elapsed)
@@ -261,8 +262,20 @@ async def describe_scenes(
                 kind=scene.kind,
                 seen=True,
             )
+        if on_segment is not None:
+            on_segment(
+                assemble(
+                    video_sha256=video_sha256,
+                    settings_key=settings_key(watched),
+                    model=task.model,
+                    prompt_hash=p_hash,
+                    scene_cuts=plan.scene_cuts,
+                    rows=plan.manifest,
+                    analyses=analyses,
+                )
+            )
         if progress is not None:
-            progress((len(records)) / max(1, len(plan.manifest)))
+            progress(len(records) / max(1, len(plan.manifest)))
     seen_count = len(analyses)
     unseen = len(plan.manifest) - seen_count
     partial = unseen > 0
@@ -296,9 +309,7 @@ async def describe_scenes(
 
 def tdt_cache_key(cfg: Config, video_sha256: str, model: str, thash: str) -> str:
     watched = cfg.cuts.watched
-    blob = (
-        f"{video_sha256}|{settings_key(watched)}|{model}|{prompt_hash(watched)}|{thash}"
-    )
+    blob = f"{video_sha256}|{settings_key(watched)}|{model}|{prompt_hash(watched)}|{thash}"
     return hashlib.sha256(blob.encode()).hexdigest()
 
 

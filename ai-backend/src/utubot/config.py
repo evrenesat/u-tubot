@@ -241,6 +241,7 @@ class WatchedCutsConfig(BaseModel):
     eta_grids_per_minute: float = Field(3.5, gt=0)
     eta_grid_stage_s_per_minute: float = Field(3.0, ge=0)
     eta_s_per_grid: float = Field(14.0, gt=0)
+    eta_fixed_s: float = Field(20.0, ge=0)
     eta_window: int = Field(20, ge=1)
     progress_weight_video: float = 0.05
     progress_weight_grids: float = 0.10

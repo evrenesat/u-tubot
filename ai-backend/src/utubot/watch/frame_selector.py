@@ -270,10 +270,9 @@ def window_activity(
         for frame in window_frames
     ]
     mean_motion_norm = sum(motion_norms) / len(motion_norms)
-    high_motion_fraction = (
-        sum(frame.motion >= thresholds["motion_high"] for frame in window_frames)
-        / len(window_frames)
-    )
+    high_motion_fraction = sum(
+        frame.motion >= thresholds["motion_high"] for frame in window_frames
+    ) / len(window_frames)
     region_count = _count_intersecting_regions(regions, start, end)
     cut_density = min(1.0, len(window_cuts) / max(1.0, duration / CUT_DENSITY_WINDOW_S))
     region_density = min(1.0, region_count / max(1.0, duration / REGION_DENSITY_WINDOW_S))
@@ -502,9 +501,7 @@ def select_chunk_frames(
 
     def replacement(target_index: int) -> SelectedFrame | None:
         target = selections[target_index]
-        others = [
-            sel for index, sel in enumerate(selections) if index != target_index
-        ]
+        others = [sel for index, sel in enumerate(selections) if index != target_index]
         for frame, score in bins[target.bin_index]:
             if frame.index == target.frame_index or frame.index in used:
                 continue

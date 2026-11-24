@@ -118,7 +118,8 @@ CREATE TABLE IF NOT EXISTS video_scenes(
   cache_key TEXT PRIMARY KEY, video_id TEXT NOT NULL,
   source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
   release_duration_ms INTEGER, video_sha256 TEXT NOT NULL, settings_key TEXT NOT NULL,
-  scene_cuts TEXT NOT NULL, manifest TEXT NOT NULL, created_at REAL NOT NULL);
+  scene_cuts TEXT NOT NULL, manifest TEXT NOT NULL, coarse INTEGER NOT NULL DEFAULT 0,
+  cap_steps INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS video_scenes_video ON video_scenes(video_id);
 CREATE TABLE IF NOT EXISTS scene_descriptions(
   cache_key TEXT PRIMARY KEY, video_id TEXT NOT NULL,

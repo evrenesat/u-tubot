@@ -19,13 +19,16 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from .auth import Auth
 from .captions import events
 from .captions.jobs import JobQueue
-from .config import Config
+from .config import WATCHED_MODES, Config
 from .db import Database
 from .llm import INTERACTIVE, LLMClient, LLMError
+from .media_archive import MediaArchive
 from .prompts import Prompt, PromptStore
 from .transcripts import SOURCE_ASR, Transcript, TranscriptService, fmt_ts
+from .youtube import YoutubeGate
 
 log = logging.getLogger("utubot.cuts")
 
@@ -336,6 +339,7 @@ def cut_document(
         "source": source,
         "preset_id": preset_id,
         "model": model,
+        "mode": "quick",
         "built_at": built_at or time.time(),
     }
 
@@ -352,9 +356,14 @@ class CutService:
         transcripts: TranscriptService,
         prompts: PromptStore,
         jobs: JobQueue,
+        auth: Auth | None = None,
+        archive: MediaArchive | None = None,
+        gate: YoutubeGate | None = None,
     ):
         self.cfg, self.db, self.llm = cfg, db, llm
         self.transcripts, self.prompts, self.jobs = transcripts, prompts, jobs
+        self.auth, self.archive, self.gate = auth, archive, gate
+        self._watched_running = 0
         self._tasks: dict[str, asyncio.Task] = {}
         # One build in flight per cache key: a second request with the same key waits on the
         # leader's future instead of calling the model again (shared builds, plan v2).
@@ -365,6 +374,12 @@ class CutService:
     @property
     def configured(self) -> bool:
         return self.cfg.llm.cuts is not None
+
+    @property
+    def watched_available(self) -> tuple[bool, str | None]:
+        from .watch.service import watched_available
+
+        return watched_available(self.cfg)
 
     def presets(self, user: str) -> list[Prompt]:
         return self.prompts.cut_prompts(user)
@@ -422,6 +437,32 @@ class CutService:
 
     # ---- the queue ------------------------------------------------------------------------------
 
+    def resolve_mode(self, user: str, mode: str | None) -> str:
+        """The request's mode: explicit, else the user's default, else the server's default.
+
+        A user default of watched on a server without it resolves to quick; an explicit
+        watched request is refused with the server's plain reason.
+        """
+        if mode is not None and mode not in WATCHED_MODES:
+            raise CutRefused(
+                f"Unknown cut mode {mode}; use {', '.join(WATCHED_MODES)}.", status=400
+            )
+        policy = None
+        if self.auth is not None:
+            user_cfg = self.auth.user_config(user)
+            policy = user_cfg.policy.cut_mode if user_cfg is not None else None
+        chosen = mode or policy or self.cfg.cuts.default_mode
+        from .watch.service import watched_not_configured
+
+        if chosen == "watched":
+            reason = watched_not_configured(self.cfg)
+            if reason is None:
+                return chosen
+            if mode is not None:
+                raise CutRefused(reason, status=409)
+            return "quick"
+        return chosen
+
     def create(
         self,
         user: str,
@@ -431,11 +472,13 @@ class CutService:
         preset: str | None = None,
         prompt: str | None = None,
         await_prompt: bool = False,
+        mode: str | None = None,
     ) -> dict[str, Any]:
         """Queue a cut. Exactly one of `preset` / `prompt`; `await_prompt` creates an empty
         request the phone fills later. An identical active request is returned as-is."""
         if not self.configured:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
+        chosen_mode = self.resolve_mode(user, mode)
         prompt = self._validate_prompt(prompt)
         if prompt is not None and preset is not None:
             raise CutRefused("A cut takes a preset or a description, not both.", status=400)
@@ -446,7 +489,7 @@ class CutService:
                 raise CutRefused(f"Unknown cut preset {preset}.")
         if await_prompt and preset is not None:
             raise CutRefused("A request that waits for a description cannot name a preset.")
-        existing = self._active_same(user, video_id, preset, prompt, await_prompt)
+        existing = self._active_same(user, video_id, preset, prompt, await_prompt, chosen_mode)
         if existing is not None:
             return existing
         if not await_prompt:
@@ -462,7 +505,7 @@ class CutService:
         )
         self.db.execute(
             "INSERT INTO cut_requests(id,user,video_id,source,preset_id,prompt,state,job_id,"
-            "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "created_at,updated_at,mode,source_kind,source_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 request_id,
                 user,
@@ -474,6 +517,9 @@ class CutService:
                 job_id,
                 now,
                 now,
+                chosen_mode,
+                "youtube",
+                f"youtube:{video_id}",
             ],
         )
         origin = events.current_origin()
@@ -491,6 +537,7 @@ class CutService:
                 "preset": preset,
                 "prompt": prompt,
                 "await_prompt": await_prompt,
+                "mode": chosen_mode,
             },
             ts=now,
         )
@@ -499,37 +546,50 @@ class CutService:
         return self._row(request_id)  # type: ignore[return-value]
 
     def _active_same(
-        self, user: str, video_id: str, preset: str | None, prompt: str | None, await_prompt: bool
+        self,
+        user: str,
+        video_id: str,
+        preset: str | None,
+        prompt: str | None,
+        await_prompt: bool,
+        mode: str = "quick",
     ) -> dict[str, Any] | None:
         states = (*BUILDING_STATES, "waiting")
         marks = ",".join("?" * len(states))
         if await_prompt:
             row = self.db.one(
                 f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id IS NULL"
-                f" AND prompt IS NULL AND state IN ({marks}) ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, *states],
+                f" AND prompt IS NULL AND mode=? AND state IN ({marks})"
+                " ORDER BY created_at DESC LIMIT 1",
+                [user, video_id, mode, *states],
             )
         elif prompt is not None:
             row = self.db.one(
-                f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND prompt=?"
+                f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND prompt=? AND mode=?"
                 f" AND state IN ({marks}) ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, prompt, *states],
+                [user, video_id, prompt, mode, *states],
             )
         else:
             row = self.db.one(
                 f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id=?"
-                f" AND state IN ({marks}) ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, preset, *states],
+                f" AND mode=? AND state IN ({marks}) ORDER BY created_at DESC LIMIT 1",
+                [user, video_id, preset, mode, *states],
             )
         return dict(row) if row else None
 
-    def fill(self, request_id: str, user: str, prompt: str) -> dict[str, Any]:
+    def fill(
+        self, request_id: str, user: str, prompt: str, mode: str | None = None
+    ) -> dict[str, Any]:
         """A waiting request gets its description from the phone; the build starts."""
         if not self.configured:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
         row = self._row(request_id)
         if row is None or row["user"] != user:
             raise CutRefused("No such cut request.", status=404)
+        if mode is not None and mode != (row["mode"] or "quick"):
+            raise CutRefused(
+                "The request was created for another mode; start a new request instead.", status=400
+            )
         if row["state"] != "waiting":
             raise CutRefused("This cut request is not waiting for a description any more.")
         prompt = self._validate_prompt(prompt)
@@ -594,6 +654,7 @@ class CutService:
             "error": row["error"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "mode": row["mode"] or "quick",
             **{
                 k: v
                 for k, v in self._meta(row["video_id"]).items()
@@ -602,11 +663,73 @@ class CutService:
         }
         if row["state"] in BUILDING_STATES and row["job_id"]:
             out["stage"] = self._last_stage(row["job_id"])
+            out["progress"] = float(row["progress"] or 0.0)
+            out["eta_s"] = self._eta(row)
+        if row["state"] == "failed" and (row["mode"] or "quick") == "watched":
+            out["fallback"] = self._fallback(row)
         if row["state"] == "ready" and row["cut_key"]:
             cut = self.db.one("SELECT json FROM cuts WHERE cache_key=?", [row["cut_key"]])
             if cut:
                 out["cut"] = json.loads(cut["json"])
         return out
+
+    def _eta(self, row: dict[str, Any]) -> int | None:
+        """The estimate still ahead, from the duration and the progress the build writes."""
+        meta = self._meta(row["video_id"])
+        duration = float(meta.get("duration_s") or 0.0)
+        if not duration:
+            return None
+        watched = self.cfg.cuts.watched
+        minutes = duration / 60.0
+        total = (
+            watched.eta_s_per_grid * watched.eta_grids_per_minute * minutes
+            + watched.eta_grid_stage_s_per_minute * minutes
+            + watched.eta_fixed_s
+        )
+        done = float(row["progress"] or 0.0)
+        return max(1, int(round(total * max(0.0, 1.0 - done))))
+
+    def _fallback(self, row: dict[str, Any]) -> dict[str, Any]:
+        """The Quick state of the same preset or description, for the one-press offer."""
+        preset_id, prompt = row["preset_id"], row["prompt"]
+        saved = (
+            next((p for p in self.presets(row["user"]) if p.id == preset_id), None)
+            if preset_id
+            else None
+        )
+        fallback: dict[str, Any] = {"mode": "quick", "state": "none"}
+        ready = self._ready_cut(row["video_id"], saved or prompt, "quick") if preset_id else None
+        if ready is not None:
+            fallback.update(state="ready", cut=ready)
+            return fallback
+        active = self.db.one(
+            "SELECT id, state FROM cut_requests WHERE user=? AND video_id=? AND mode='quick'"
+            + (
+                " AND preset_id=? AND state IN ('waiting','building','needs_transcript')"
+                if preset_id
+                else " AND prompt=? AND state IN ('waiting','building','needs_transcript')"
+            )
+            + " ORDER BY created_at DESC LIMIT 1",
+            [row["user"], row["video_id"], preset_id or prompt],
+        )
+        if active:
+            fallback.update(state=active["state"], request_id=active["id"])
+            return fallback
+        failed = self.db.one(
+            "SELECT id, error FROM cut_requests WHERE user=? AND video_id=? AND mode='quick'"
+            + (" AND preset_id=?" if preset_id else " AND prompt=?")
+            + " AND state='failed' ORDER BY created_at DESC LIMIT 1",
+            [row["user"], row["video_id"], preset_id or prompt],
+        )
+        if failed:
+            fallback.update(state="failed", request_id=failed["id"])
+        return fallback
+
+    def _set_progress(self, request_id: str, value: float) -> None:
+        self.db.execute(
+            "UPDATE cut_requests SET progress=?, updated_at=? WHERE id=?",
+            [float(value), time.time(), request_id],
+        )
 
     def _last_stage(self, job_id: str) -> str | None:
         row = self.db.one(
@@ -652,43 +775,91 @@ class CutService:
     # ---- the picker -----------------------------------------------------------------------------
 
     def presets_state(self, user: str, video_id: str) -> dict[str, Any]:
-        """Every preset with its state for this video: what the TV's picker and the phone show."""
+        """Every preset with its state for this video and each mode; what the pickers show."""
+        default = self.resolve_mode(user, None)
+        from .watch.service import watched_available
+
+        ok, reason = watched_available(self.cfg)
+        minutes = self._meta(video_id).get("duration_s")
+        eta = None
+        if ok and minutes:
+            watched = self.cfg.cuts.watched
+            eta = int(
+                round(
+                    watched.eta_s_per_grid * watched.eta_grids_per_minute * float(minutes) / 60
+                    + watched.eta_grid_stage_s_per_minute * float(minutes) / 60
+                    + watched.eta_fixed_s
+                )
+            )
+        modes = [
+            {"id": "quick", "label": "Quick", "default": default == "quick", "available": True},
+            {
+                "id": "watched",
+                "label": "Watched"
+                + (f" · about {max(1, round((eta or 0) / 60))} min" if eta else ""),
+                "default": default == "watched",
+                "available": ok,
+                "reason": reason,
+                "eta_s": eta,
+            },
+        ]
         out = []
         for prompt in self.presets(user):
-            entry: dict[str, Any] = {"id": prompt.id, "label": prompt.label}
-            row = self.db.one(
-                "SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id=?"
-                " AND state IN ('waiting','building','needs_transcript')"
-                " ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, prompt.id],
-            )
-            if row:
-                entry.update(state=row["state"], request_id=row["id"])
-            else:
-                cut = self._ready_cut(video_id, prompt)
-                if cut is not None:
-                    entry.update(state="ready", cut=cut)
-                else:
-                    failed = self.db.one(
-                        "SELECT id, error FROM cut_requests WHERE user=? AND video_id=?"
-                        " AND preset_id=? AND state='failed' ORDER BY created_at DESC LIMIT 1",
-                        [user, video_id, prompt.id],
-                    )
-                    if failed:
-                        entry.update(state="failed", request_id=failed["id"], error=failed["error"])
-                    else:
-                        entry.update(state="none")
+            quick = self._preset_state(user, video_id, prompt, "quick")
+            watched = self._preset_state(user, video_id, prompt, "watched")
+            top = quick if default == "quick" else watched
+            entry: dict[str, Any] = {
+                "id": prompt.id,
+                "label": prompt.label,
+                **top,
+                "by_mode": {"quick": quick, "watched": watched},
+            }
             out.append(entry)
-        return {"configured": self.configured, "presets": out}
+        return {
+            "configured": self.configured,
+            "default_mode": default,
+            "modes": modes,
+            "presets": out,
+        }
 
-    def _ready_cut(self, video_id: str, prompt: Prompt) -> dict[str, Any] | None:
+    def _preset_state(self, user: str, video_id: str, prompt: Prompt, mode: str) -> dict[str, Any]:
+        row = self.db.one(
+            "SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id=? AND mode=?"
+            " AND state IN ('waiting','building','needs_transcript')"
+            " ORDER BY created_at DESC LIMIT 1",
+            [user, video_id, prompt.id, mode],
+        )
+        if row:
+            return {"state": row["state"], "request_id": row["id"]}
+        cut = self._ready_cut(video_id, prompt, mode)
+        if cut is not None:
+            return {"state": "ready", "cut": cut}
+        failed = self.db.one(
+            "SELECT id, error FROM cut_requests WHERE user=? AND video_id=?"
+            " AND preset_id=? AND mode=? AND state='failed'"
+            " ORDER BY created_at DESC LIMIT 1",
+            [user, video_id, prompt.id, mode],
+        )
+        if failed:
+            return {"state": "failed", "request_id": failed["id"], "error": failed["error"]}
+        return {"state": "none"}
+
+    def _ready_cut(
+        self, video_id: str, prompt: Prompt | str | None, mode: str = "quick"
+    ) -> dict[str, Any] | None:
         """The stored cut for this preset, unless the transcript or the `[llm.cuts]` model
         changed since it was built."""
         model = self.cfg.llm.cuts.model if self.cfg.llm.cuts else ""
+        if isinstance(prompt, Prompt):
+            version = self._version(prompt.id, prompt.template)
+        elif isinstance(prompt, str):
+            version = self._version(None, prompt)
+        else:
+            return None
         row = self.db.one(
             "SELECT json, transcript_hash FROM cuts WHERE video_id=? AND version=? AND model=?"
-            " ORDER BY created_at DESC LIMIT 1",
-            [video_id, self._version(prompt.id, prompt.template), model],
+            " AND mode=? ORDER BY created_at DESC LIMIT 1",
+            [video_id, version, model, mode],
         )
         if row is None:
             return None
@@ -722,10 +893,36 @@ class CutService:
         task.add_done_callback(lambda _t: self._tasks.pop(request_id, None))
         task.add_done_callback(lambda t: t.cancelled() or t.exception())
 
+    async def _acquire_watched(self, request_id: str, trace: events.JobTrace) -> bool:
+        """One watched build at a time server-wide; others wait and say `in_line`."""
+        limit = max(1, self.cfg.cuts.watched.max_concurrent)
+        if self._dismissed(request_id):
+            return False
+        if self._watched_running < limit:
+            self._watched_running += 1
+            return True
+        trace.emit(
+            events.IN_LINE,
+            events.OK,
+            message="A watched cut is already being built; this request waits its turn.",
+        )
+        while self._watched_running >= limit:
+            await asyncio.sleep(self.cfg.cuts.poll_s)
+            if self._dismissed(request_id):
+                return False
+        self._watched_running += 1
+        return True
+
     async def _build(self, request_id: str) -> None:
         row = self._row(request_id)
         if row is None or row["state"] not in ("building", "needs_transcript"):
             return
+        watched_slot = False
+        if (row["mode"] or "quick") == "watched":
+            trace = events.JobTrace(row["job_id"], self.jobs.events)
+            watched_slot = await self._acquire_watched(request_id, trace)
+            if not watched_slot:
+                return
         self.db.execute(
             "UPDATE jobs SET status='running', updated_at=? WHERE id=? AND status='queued'",
             [time.time(), row["job_id"]],
@@ -747,6 +944,8 @@ class CutService:
             self._fail(request_id, row["job_id"], "The cut could not be built; try again.")
         finally:
             events.unbind(token)
+            if watched_slot:
+                self._watched_running = max(0, self._watched_running - 1)
 
     def _fail(self, request_id: str, job_id: str, message: str) -> None:
         row = self._row(request_id)
@@ -766,6 +965,23 @@ class CutService:
 
     async def _run_build(self, row: dict[str, Any], trace: events.JobTrace) -> None:
         request_id, video_id = row["id"], row["video_id"]
+        if (row["mode"] or "quick") == "watched":
+            from .watch.service import WatchedBuilder
+
+            builder = WatchedBuilder(
+                self.cfg,
+                self.db,
+                self.llm,
+                self.transcripts,
+                self.prompts,
+                self.jobs,
+                self.archive,
+                self.gate,
+            )
+            doc, cache_key = await builder.build(self, request_id, row, trace)
+            if not self._dismissed(request_id):
+                self._finish(request_id, row, cache_key, doc)
+            return
         instruction, preset_id, source = self._instruction(row)
         with events.stage(STAGE_TRANSCRIPT, video_id=video_id):
             transcript = await self._ensure_transcript(request_id, row)
@@ -863,7 +1079,8 @@ class CutService:
                 )
             self.db.execute(
                 "INSERT OR REPLACE INTO cuts(cache_key,video_id,version,preset_id,prompt,model,"
-                "transcript_hash,json,duration_s,kept_s,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "transcript_hash,json,duration_s,kept_s,created_at,mode,source_kind,source_key,"
+                "release_key,release_duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     cache_key,
                     video_id,
@@ -876,6 +1093,11 @@ class CutService:
                     duration_s,
                     doc["kept_ms"] / 1000.0,
                     time.time(),
+                    "quick",
+                    row["source_kind"] or "youtube",
+                    row["source_key"] or f"youtube:{video_id}",
+                    row["release_key"],
+                    row["release_duration_ms"],
                 ],
             )
             self.db.execute(

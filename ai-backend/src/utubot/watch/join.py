@@ -51,13 +51,11 @@ def watched_units(
 ) -> list[Unit]:
     """Speech units plus `(no speech)` units for silent gaps; ids are one sequence."""
     speech = build_units(segments, cuts_cfg)
-    spans: list[tuple[float, float, str]] = [
-        (unit.start, unit.end, unit.text) for unit in speech
-    ]
+    spans: list[tuple[float, float, str]] = [(unit.start, unit.end, unit.text) for unit in speech]
     tdt_segments = [segment for segment in tdt.get("segments") or [] if isinstance(segment, dict)]
-    boundaries = sorted(
-        float(segment["start"]) for segment in tdt_segments
-    ) + sorted(float(segment["end"]) for segment in tdt_segments)
+    boundaries = sorted(float(segment["start"]) for segment in tdt_segments) + sorted(
+        float(segment["end"]) for segment in tdt_segments
+    )
     duration = float(duration_s or (spans[-1][1] if spans else 0.0))
     at = 0.0
     gaps: list[tuple[float, float]] = []
@@ -145,7 +143,7 @@ def watched_serialize(
     body: list[tuple[float, str]] = []
     for scene in scenes:
         text = f" {scene.visual_summary}" if scene.visual_summary else ""
-        shown = f"; text: \"{scene.on_screen_text}\"" if scene.on_screen_text else ""
+        shown = f'; text: "{scene.on_screen_text}"' if scene.on_screen_text else ""
         body.append(
             (
                 scene.start,

@@ -6,6 +6,23 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 
+DESCRIBE_MARK = "You describe one moment of a video"
+
+
+def _describe_system(body: dict[str, Any]) -> bool:
+    system = body.get("messages", [{}])[0].get("content", "")
+    return isinstance(system, str) and DESCRIBE_MARK in system
+
+
+def _text_of(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    return "\n".join(
+        part.get("text", "")
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "text"
+    )
+
 
 class MockOpenAI:
     def __init__(self) -> None:
@@ -40,6 +57,12 @@ class MockOpenAI:
         self.cut_answer: Any = None
         self.cut_answers: list[Any] = []
         self.cut_calls: list[str] = []
+        # Watched describe answers: one per grid in order; a callable gets (user text, images).
+        self.describe_answer: Any = None
+        self.describe_answers: list[Any] = []
+        self.describe_calls: list[dict[str, Any]] = []
+        self.describe_bad_json_first = 0
+        self.describe_400_first = 0
         self.app = self._build()
 
     def _build(self) -> FastAPI:
@@ -54,6 +77,9 @@ class MockOpenAI:
             )
             from fastapi.responses import JSONResponse
 
+            if self.describe_400_first > 0 and _describe_system(body):
+                self.describe_400_first -= 1
+                return JSONResponse({"error": "context too long"}, status_code=400)
             if body["model"] in self.busy_models or self.busy_first > 0:
                 if self.busy_first > 0 and body["model"] not in self.busy_models:
                     self.busy_first -= 1
@@ -132,7 +158,9 @@ class MockOpenAI:
 
     def respond(self, body: dict[str, Any]) -> str:
         system = body["messages"][0]["content"]
-        user = body["messages"][-1]["content"]
+        user = _text_of(body["messages"][-1]["content"])
+        if _describe_system(body):
+            return self._describe_respond(body)
         if "triage YouTube videos" in system:
             return self._wrap(self._triage(body["messages"][1]["content"]))
         if "analyse a YouTube video from its transcript" in system:
@@ -163,6 +191,39 @@ class MockOpenAI:
         if "director's cut" in system:
             return self._wrap(json.dumps(self.cut_respond(system, user)))
         return f"SUMMARY[{body['model']}] " + user[-60:].replace("\n", " ")
+
+    def _describe_respond(self, body: dict[str, Any]) -> str:
+        content = body["messages"][-1]["content"]
+        text = _text_of(content)
+        images = (
+            [
+                part["image_url"]["url"]
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "image_url"
+            ]
+            if isinstance(content, list)
+            else []
+        )
+        self.describe_calls.append({"text": text, "images": images, "model": body["model"]})
+        if self.describe_bad_json_first > 0:
+            self.describe_bad_json_first -= 1
+            return "not a json answer at all"
+        if self.describe_answers:
+            answer = self.describe_answers.pop(0)
+        else:
+            answer = self.describe_answer
+        if callable(answer):
+            answer = answer(text, images)
+        if answer is not None:
+            value = answer
+        else:
+            value = {
+                "visual_summary": "A desk with a terminal; a build runs and stops.",
+                "kind": "screen",
+                "on_screen_text": "error: linker failed",
+                "same_as_previous": False,
+            }
+        return json.dumps(value)
 
     def cut_respond(self, system: str, user: str) -> Any:
         self.cut_calls.append(user)

@@ -200,7 +200,7 @@ def build_services(
         content=ContentService(cfg, db, llm, transcripts, prompts, transcription),
         jobs=jobs,
         reports=reports,
-        cuts=CutService(cfg, db, llm, transcripts, prompts, jobs),
+        cuts=CutService(cfg, db, llm, transcripts, prompts, jobs, auth, archive, gate),
         speech=SpeechService(cfg, transport=llm_transport),
         gate=gate,
         transcription=transcription,
@@ -532,6 +532,7 @@ def create_app(
                 "captions": True,
                 "transcribe": True,
                 "cuts": svc.cuts.configured,
+                "cuts_watched": svc.cuts.watched_available[0],
                 "speech": svc.speech.configured,
                 "speech_max_s": cfg.speech.max_record_s,
             },
@@ -969,6 +970,7 @@ def create_app(
             preset=body.preset,
             prompt=body.prompt,
             await_prompt=body.await_prompt,
+            mode=body.mode,
         )
         return {"request_id": row["id"], "state": row["state"]}
 
@@ -991,7 +993,7 @@ def create_app(
         request_id: str, body: CutPromptBody, user: UserConfig = Depends(current_user)
     ):
         """Fill a waiting request with the typed (or spoken) description; the build starts."""
-        return svc.cuts.fill(request_id, user.name, body.prompt)
+        return svc.cuts.fill(request_id, user.name, body.prompt, body.mode)
 
     @app.delete("/v1/cut-requests/{request_id}")
     async def cuts_dismiss(request_id: str, user: UserConfig = Depends(current_user)):

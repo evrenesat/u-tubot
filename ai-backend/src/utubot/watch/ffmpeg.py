@@ -155,7 +155,9 @@ def stream_raw(
         raise FfmpegError(f"ffmpeg failed: {trimmed(stderr)}")
 
 
-def video_duration(video_path: str, *, cancel: threading.Event | None, threads: int, timeout_s: float) -> float:
+def video_duration(
+    video_path: str, *, cancel: threading.Event | None, threads: int, timeout_s: float
+) -> float:
     text = capture(
         "ffprobe",
         [
@@ -195,24 +197,30 @@ def video_duration(video_path: str, *, cancel: threading.Event | None, threads: 
         raise FfmpegError("ffprobe could not read the video duration") from None
 
 
-def video_dimensions(video_path: str, *, cancel: threading.Event | None, threads: int, timeout_s: float) -> tuple[int, int]:
-    text = capture(
-        "ffprobe",
-        [
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height",
-            "-of",
-            "csv=p=0",
-            video_path,
-        ],
-        cancel=cancel,
-        threads=threads,
-        timeout_s=timeout_s,
-    ).strip().splitlines()[0]
+def video_dimensions(
+    video_path: str, *, cancel: threading.Event | None, threads: int, timeout_s: float
+) -> tuple[int, int]:
+    text = (
+        capture(
+            "ffprobe",
+            [
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0",
+                video_path,
+            ],
+            cancel=cancel,
+            threads=threads,
+            timeout_s=timeout_s,
+        )
+        .strip()
+        .splitlines()[0]
+    )
     parts = text.split(",")
     try:
         return int(parts[0]), int(parts[1])
@@ -220,7 +228,14 @@ def video_dimensions(video_path: str, *, cancel: threading.Event | None, threads
         raise FfmpegError("ffprobe could not read the frame size") from None
 
 
-def scene_cuts(video_path: str, threshold: float, *, cancel: threading.Event | None, threads: int, timeout_s: float) -> list[float]:
+def scene_cuts(
+    video_path: str,
+    threshold: float,
+    *,
+    cancel: threading.Event | None,
+    threads: int,
+    timeout_s: float,
+) -> list[float]:
     """Shot boundaries from ffmpeg's own scene score; parsed from stderr's showinfo lines."""
     text = capture(
         "ffmpeg",

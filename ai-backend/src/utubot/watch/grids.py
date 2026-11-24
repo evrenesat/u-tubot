@@ -211,9 +211,7 @@ def _budget_split(
         activity = "calm"
         if window_frames:
             activity = str(
-                window_activity(
-                    frames, cuts, [], thresholds, start, end
-                )["activity_class"]
+                window_activity(frames, cuts, [], thresholds, start, end)["activity_class"]
             )
         chunks.append(
             ChunkWindow(
@@ -337,9 +335,7 @@ def render_manifest(
                 for index, at in enumerate(row.selected_timestamps):
                     target = frame_dir / f"temp_chunk{index}_frame{index}.jpg"
                     temp.append(target)
-                    futures.append(
-                        pool.submit(_extract_frame, video_path, at, target, cfg, cancel)
-                    )
+                    futures.append(pool.submit(_extract_frame, video_path, at, target, cfg, cancel))
                 for future in futures:
                     future.result()
             create_grid(temp, path, cfg)
@@ -357,6 +353,8 @@ def build_grid_plan(
     cancel: threading.Event | None = None,
     cached_scene_cuts: list[float] | None = None,
     cached_manifest: list[dict[str, Any]] | None = None,
+    cached_coarse: bool = False,
+    cached_cap_steps: int = 0,
 ) -> GridPlan:
     """The whole grid stage, blocking (the caller runs it in one worker thread)."""
     grid_dir.mkdir(parents=True, exist_ok=True)
@@ -380,7 +378,8 @@ def build_grid_plan(
             ],
             manifest=rows,
             grid_dir=grid_dir,
-            coarse=any(row.activity_class == "budget" for row in rows),
+            coarse=cached_coarse,
+            cap_steps=cached_cap_steps,
         )
     scene_cuts = ffmpeg.scene_cuts(
         video_path,
@@ -430,9 +429,7 @@ def build_grid_plan(
                 source_scene_cut_times=chunk.source_scene_cut_times,
             )
         )
-    diagnostics = build_diagnostics_summary(
-        chunks, thresholds, len(frames), low_count
-    ).to_dict()
+    diagnostics = build_diagnostics_summary(chunks, thresholds, len(frames), low_count).to_dict()
     diagnostics.update(
         {
             "video_duration": duration,

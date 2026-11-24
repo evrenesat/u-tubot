@@ -69,9 +69,7 @@ def parse_description(data: Any) -> SceneAnalysis:
         raise DescribeFormatError("'visual_summary' is missing or empty")
     summary = " ".join(summary.split())
     if len(summary) > SUMMARY_MAX_CHARS:
-        raise DescribeFormatError(
-            f"'visual_summary' is longer than {SUMMARY_MAX_CHARS} characters"
-        )
+        raise DescribeFormatError(f"'visual_summary' is longer than {SUMMARY_MAX_CHARS} characters")
     kind = str(data.get("kind") or "").strip().lower()
     if kind not in KINDS:
         raise DescribeFormatError(f"'kind' must be one of {', '.join(KINDS)}")
@@ -152,7 +150,9 @@ def assemble(
     }
 
 
-def validate_tdt(payload: dict[str, Any], expected_rows: list[ManifestRow] | None = None) -> list[str]:
+def validate_tdt(
+    payload: dict[str, Any], expected_rows: list[ManifestRow] | None = None
+) -> list[str]:
     """Errors of a TDT payload; empty means it may be stored."""
     errors: list[str] = []
     if not isinstance(payload, dict):

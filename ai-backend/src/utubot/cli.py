@@ -10,6 +10,7 @@ from . import appchannel, appsync
 from .auth import Auth, PairError, append_user, hash_token, new_token
 from .config import load_config
 from .db import Database
+from .media_archive import KIND_AUDIO, KIND_VIDEO, MediaArchive, MediaArchiveError, MediaArchiveFull
 from .prompts import PromptError, validate_prompt_set
 from .webauth import WebAuth
 
@@ -263,6 +264,31 @@ def cmd_captions_regen(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_media_import(args: argparse.Namespace) -> int:
+    from .app import check_video_id
+
+    cfg = load_config(args.config)
+    db = Database(cfg.db_path)
+    archive = MediaArchive(cfg, db)
+    source = Path(args.file)
+    if not source.is_file():
+        print(f"error: {source} does not exist", file=sys.stderr)
+        return 1
+    try:
+        check_video_id(args.video_id)
+        archive.require_room()
+        entry = archive.store(args.video_id, source, kind=args.kind)
+    except (ValueError, MediaArchiveFull, MediaArchiveError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        db.close()
+    print(
+        f"stored {entry['kind']} for {args.video_id}: {entry['size']} bytes, {entry['sha256'][:12]}"
+    )
+    return 0
+
+
 def cmd_prompts_validate(args: argparse.Namespace) -> int:
     try:
         with open(args.file, encoding="utf-8") as fh:
@@ -397,6 +423,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     regen.add_argument("--dry-run", action="store_true", help="list the tracks, queue nothing")
     regen.set_defaults(func=cmd_captions_regen)
+    media = sub.add_parser("media", help="put a local file into the media archive").add_subparsers(
+        dest="sub", required=True
+    )
+    imp = media.add_parser(
+        "import",
+        help="store an already-downloaded file for a video (no network; works in offline mode)",
+    )
+    imp.add_argument("video_id")
+    imp.add_argument("file")
+    imp.add_argument(
+        "--kind",
+        choices=[KIND_VIDEO, KIND_AUDIO],
+        default=KIND_VIDEO,
+        help="the pipeline class this file serves (default: video)",
+    )
+    imp.set_defaults(func=cmd_media_import)
     args = parser.parse_args(argv)
     return args.func(args)
 
