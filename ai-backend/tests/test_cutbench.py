@@ -81,6 +81,22 @@ class TestFixtures:
 
 
 class TestScorer:
+    def test_the_model_message_carries_the_fixture_chapters(self):
+        transcript = TRANSCRIPTS[0]
+        request = transcript.requests[0]
+        units = build_units(transcript.segments, CFG)
+        by_start = sorted(units, key=lambda u: u.start)
+        parts = []
+        for a, b in request.keep:
+            first = next(u.n for u in by_start if u.start >= a - 0.01)
+            last = next(u.n for u in reversed(by_start) if u.end <= b + 0.01)
+            parts.append((first, last))
+        calls: list = []
+        score_request(transcript, request, fake_model(answer(parts), calls=calls), "fake")
+        message = calls[0][1]["content"]
+        assert "Chapters:" in message
+        assert "- 00:00 Intro" in message
+
     def test_a_perfect_answer_scores_full(self):
         transcript = TRANSCRIPTS[0]
         request = transcript.requests[0]
@@ -123,6 +139,46 @@ class TestScorer:
         assert result.excess > 0.3  # but nearly the whole video survived
         assert result.score < 0
 
+    def test_an_invalid_range_answer_gets_the_engine_repair_round(self):
+        transcript = TRANSCRIPTS[0]
+        request = transcript.requests[0]
+        units = build_units(transcript.segments, CFG)
+        by_start = sorted(units, key=lambda u: u.start)
+        parts = []
+        for a, b in request.keep:
+            first = next(u.n for u in by_start if u.start >= a - 0.01)
+            last = next(u.n for u in reversed(by_start) if u.end <= b + 0.01)
+            parts.append((first, last))
+        calls: list = []
+
+        def model_fn(messages):
+            calls.append(messages)
+            if len(calls) == 1:
+                return answer([(0, 2)]), {}
+            return answer(parts), {}
+
+        result = score_request(transcript, request, model_fn, "fake")
+        assert result.format_error is None, result.row()
+        assert result.repairs == 1
+        assert len(calls) == 2
+        assert "Your previous answer was rejected" in calls[1][-1]["content"]
+        assert result.keep > 0.9, result.row()
+
+    def test_two_unparsable_answers_are_a_format_error_not_a_crash(self):
+        transcript = TRANSCRIPTS[0]
+        request = transcript.requests[0]
+        calls: list = []
+
+        def model_fn(messages):
+            calls.append(messages)
+            return "not json at all", {}
+
+        result = score_request(transcript, request, model_fn, "fake")
+        assert result.format_error == "the answer was not the JSON object"
+        assert result.repairs == 1
+        assert len(calls) == 2
+        assert result.score == 0.0
+
     def test_format_failure_after_repair_scores_zero(self):
         transcript = TRANSCRIPTS[0]
         request = transcript.requests[1]
@@ -135,8 +191,9 @@ class TestScorer:
             return '{"parts": [], "summary": "x", "kept_s": 1}', {}
 
         result = score_request(transcript, request, model_fn, "fake")
-        assert result.format_error and result.repairs == 1
-        assert len(calls) == 2
+        # the unparsable answer is retried, then the empty parts answer gets the range repair
+        assert result.format_error and result.repairs == 2
+        assert len(calls) == 3
         assert result.score == 0.0
 
     def test_score_all_runs_the_whole_set(self):

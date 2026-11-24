@@ -27,6 +27,8 @@ from .cuts import (
     build_units,
     effective_target_s,
     finalize_parts,
+    keep_guards,
+    parse_chapters,
     parse_cut_answer,
     select_for_target,
     serialize_units,
@@ -745,7 +747,20 @@ def _one_pass(
         {"role": "user", "content": message},
     ]
     data = _ask(model_fn, messages, out)
-    parts = parse_cut_answer(data, units)
+    try:
+        parts = parse_cut_answer(data, units)
+    except CutFormatError as exc:
+        # The engine's one repair round: the model sees why its answer was rejected.
+        out.repairs += 1
+        repair = [
+            *messages,
+            {
+                "role": "user",
+                "content": f"Your previous answer was rejected: {exc.problem} {CUT_JSON_RULES}",
+            },
+        ]
+        data = _ask(model_fn, repair, out)
+        parts = parse_cut_answer(data, units)
     if target_s:
         duration_s = meta.get("duration_s")
         parts, _total_s = select_for_target(
@@ -769,7 +784,7 @@ def score_request(
         "channel": transcript.channel,
         "duration_s": transcript.duration_s,
     }
-    chapters = []
+    chapters = parse_chapters(transcript.description)
     out = RequestResult(transcript=transcript.id, request=request.name, model=model)
     target_s = request.target_s or effective_target_s(cfg, request.preset_id, transcript.duration_s)
     out.target_s = target_s
@@ -782,6 +797,10 @@ def score_request(
             _data, parts = asyncio.run(
                 engine.pick_parts(units, chapters, meta, request.instruction, target_s)
             )
+    except ValueError:
+        out.format_error = "the answer was not the JSON object"
+        out.wall_s = time.monotonic() - started
+        return out
     except CutFormatError as exc:
         out.format_error = exc.problem
         out.wall_s = time.monotonic() - started
@@ -792,10 +811,16 @@ def score_request(
         return out
     out.wall_s = time.monotonic() - started
     try:
-        guard = target_s is None and not (request.preset_id or "").endswith("highlights-5")
-        guard_max = guard and request.preset_id is None
+        min_guard, max_guard = keep_guards(request.preset_id)
+        if target_s is not None:
+            min_guard = max_guard = False
         kept, _kept_s = finalize_parts(
-            parts, cfg, guard=guard, guard_max=guard_max, duration_s=transcript.duration_s
+            parts,
+            cfg,
+            guard=True,
+            duration_s=transcript.duration_s,
+            min_guard=min_guard,
+            guard_max=max_guard,
         )
     except CutRefused as exc:
         out.refused = exc.message
