@@ -63,14 +63,26 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             return size() > MAX_CAPTIONS_CACHE;
         }
     };
+    private final UtubotDiskCache mDisk;
+    /** The scope of the disk cache for the connection of the settings, null until the backend told its version */
+    private volatile String mDiskScope;
+    /** The connection generation that opened {@link #mDiskScope}; the fast path answers only for it */
+    private volatile int mDiskScopeGeneration;
+    /** Incremented by every connection change: the disk calls of the old connection must not touch the new one's cache */
+    private volatile int mConnectionGeneration;
     private String mSessionPrompt;
     private PromptList mPrompts;
     private UtubotCaptionsFollower mCaptionsFollower;
     private UtubotCutFollower mCutsFollower;
 
     private UtubotManager(Context context) {
+        this(context, UtubotSettings.instance(context), UtubotDiskCache.instance(context));
+    }
+
+    UtubotManager(Context context, UtubotSettings settings, UtubotDiskCache disk) {
         mContext = context.getApplicationContext();
-        mSettings = UtubotSettings.instance(mContext);
+        mSettings = settings;
+        mDisk = disk;
         mSettings.addConnectionListener(this::onConnectionChanged);
     }
 
@@ -93,25 +105,29 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     /**
      * Another backend or another token: the verdicts, summaries, captions and prompts of the old connection are not the new one's
      */
-    private void onConnectionChanged() {
-        mVerdicts.clear();
+    void onConnectionChanged() {
+        UtubotCaptionsFollower follower;
+        UtubotCutFollower cutsFollower;
 
+        synchronized (this) {
+            // Under the same lock the disk scope is set: a disk call that checks the generation is serialized with the switch
+            mConnectionGeneration++;
+            mDiskScope = null;
+            mDiskScopeGeneration = 0;
+            mVerdicts.clear();
+            mPrompts = null;
+            mSessionPrompt = null;
+            follower = mCaptionsFollower;
+            cutsFollower = mCutsFollower;
+        }
+
+        // After the generation: a disk hit that started before it cannot put its answer into these cleared maps
         synchronized (mSummaries) {
             mSummaries.clear();
         }
 
         synchronized (mCaptions) {
             mCaptions.clear();
-        }
-
-        UtubotCaptionsFollower follower;
-        UtubotCutFollower cutsFollower;
-
-        synchronized (this) {
-            mPrompts = null;
-            mSessionPrompt = null;
-            follower = mCaptionsFollower;
-            cutsFollower = mCutsFollower;
         }
 
         if (follower != null) {
@@ -174,15 +190,119 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
     private boolean assess(List<VideoMeta> metas, String section, int waitMs, int hardTimeoutMs) throws IOException {
         UtubotClient client = newClient();
-        List<Verdict> verdicts = client.assess(metas, section, waitMs, hardTimeoutMs);
+        int generation = mConnectionGeneration;
+        List<VideoMeta> unknown = metas;
 
-        if (isCurrent(client)) {
-            for (Verdict verdict : verdicts) {
-                mVerdicts.put(verdict);
+        // The verdicts of earlier sessions come in with the scope: the videos they know are not asked again
+        if (useDiskCache(client)) {
+            unknown = new ArrayList<>();
+
+            for (VideoMeta meta : metas) {
+                if (mVerdicts.get(meta.videoId) == null) {
+                    unknown.add(meta);
+                }
+            }
+
+            if (unknown.isEmpty()) {
+                return true;
+            }
+        }
+
+        List<Verdict> verdicts = client.assess(unknown, section, waitMs, hardTimeoutMs);
+
+        if (isCurrent(client) && generation == mConnectionGeneration) {
+            synchronized (this) {
+                // The switch clears the verdicts under this lock: a stale answer never comes into the new connection's memory
+                if (isCurrent(client) && generation == mConnectionGeneration) {
+                    for (Verdict verdict : verdicts) {
+                        mVerdicts.put(verdict);
+                    }
+                }
+            }
+
+            synchronized (mDisk) {
+                // The scope and the generation are read under the lock of the switch: a stale answer never lands in the new scope
+                synchronized (this) {
+                    if (mDiskScope != null && mDiskScopeGeneration == generation && generation == mConnectionGeneration && isCurrent(client)) {
+                        mDisk.putVerdicts(verdicts);
+                    }
+                }
             }
         }
 
         return true;
+    }
+
+    /**
+     * Opens the disk cache for the connection of the client, once per connection: it asks the backend for its version (a new version
+     * starts with an empty cache) and puts the stored verdicts into the session's. Blocking: only on an io thread. A backend that does
+     * not answer leaves the cache closed for now (the next call tries again) and the request goes on without it.
+     *
+     * @return the disk cache is open for the connection of the client
+     */
+    private boolean useDiskCache(UtubotClient client) {
+        if (mDiskScope != null) {
+            // Only the connection that opened the scope uses it: a stale call of the old one may have set it back after a switch
+            return mDiskScopeGeneration == mConnectionGeneration && isCurrent(client);
+        }
+
+        int generation = mConnectionGeneration;
+
+        try {
+            String scope = UtubotDiskCache.scopeOf(mSettings.getUrl(), mSettings.getToken(), client.serverVersion());
+
+            if (!isCurrent(client) || generation != mConnectionGeneration) {
+                return false;
+            }
+
+            synchronized (mDisk) {
+                // The switch may have landed while the version was on the wire: the scope of the old connection must not be opened
+                // (it deletes the directories of the other scopes) nor its verdicts come into the memory the switch cleared
+                if (!isCurrent(client) || generation != mConnectionGeneration) {
+                    return false;
+                }
+
+                mDisk.useScope(scope);
+                List<Verdict> verdicts = mDisk.loadVerdicts();
+
+                if (!isCurrent(client) || generation != mConnectionGeneration) {
+                    return false;
+                }
+
+                synchronized (this) {
+                    // The verdicts and the scope are set together under the lock of the switch: an older call never opens its scope
+                    // after the new connection cleared memory and the scope
+                    if (!isCurrent(client) || generation != mConnectionGeneration) {
+                        return false;
+                    }
+
+                    for (Verdict verdict : verdicts) {
+                        if (mVerdicts.get(verdict.videoId) == null) {
+                            mVerdicts.put(verdict);
+                        }
+                    }
+
+                    mDiskScope = scope;
+                    mDiskScopeGeneration = generation;
+                }
+            }
+
+            return true;
+        } catch (IOException | RuntimeException error) {
+            Log.d(TAG, "The disk cache stays closed: %s", error.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * The default prompt or the prompt sets changed: no summary of before is the answer to the same request anymore
+     */
+    private void forgetSummaries() {
+        synchronized (mSummaries) {
+            mSummaries.clear();
+        }
+
+        mDisk.clearSummaries();
     }
 
     /**
@@ -317,6 +437,26 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
     private Summary pollSummary(UtubotClient client, String videoId, @Nullable String promptKey, @Nullable VideoMeta meta, String cacheKey)
             throws IOException {
+        int generation = mConnectionGeneration;
+
+        if (useDiskCache(client) && generation == mConnectionGeneration) {
+            Summary stored = mDisk.getSummary(videoId, promptKey);
+
+            if (stored != null) {
+                // The switch may have landed while the read was on the disk: the answer of the old connection is returned to its
+                // request, but it is not kept for the new connection
+                if (isCurrent(client) && generation == mConnectionGeneration) {
+                    synchronized (mSummaries) {
+                        if (isCurrent(client) && generation == mConnectionGeneration) {
+                            mSummaries.put(cacheKey, stored);
+                        }
+                    }
+                }
+
+                return stored;
+            }
+        }
+
         Summary summary = client.summary(videoId, promptKey, meta, SUMMARY_WAIT_MS);
 
         // A transcript state comes back at once: the view shows it and decides (it waits, retries, or asks the user)
@@ -324,9 +464,20 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             summary = client.summary(videoId, promptKey, meta, SUMMARY_WAIT_MS);
         }
 
-        if (summary.isReady() && !summary.isTransient() && isCurrent(client)) {
+        if (summary.isReady() && !summary.isTransient() && isCurrent(client) && generation == mConnectionGeneration) {
             synchronized (mSummaries) {
-                mSummaries.put(cacheKey, summary);
+                if (isCurrent(client) && generation == mConnectionGeneration) {
+                    mSummaries.put(cacheKey, summary);
+                }
+            }
+
+            synchronized (mDisk) {
+                // The scope and the generation are read under the lock of the switch: a stale answer never lands in the new scope
+                synchronized (this) {
+                    if (mDiskScope != null && mDiskScopeGeneration == generation && generation == mConnectionGeneration && isCurrent(client)) {
+                        mDisk.putSummary(promptKey, summary);
+                    }
+                }
             }
         }
 
@@ -340,6 +491,14 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     public Observable<Transcript> transcribeObserve(Video video) {
         VideoMeta meta = UtubotMeta.from(video);
         return cancellable(client -> client.transcribe(video.videoId, meta));
+    }
+
+    @Override
+    public Observable<Boolean> forgetFailuresObserve(String videoId) {
+        return cancellable(client -> {
+            client.forgetFailures(videoId);
+            return true;
+        });
     }
 
     @Override
@@ -432,8 +591,13 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     /**
      * The list on the backend changed (or may have): the next request reads it again
      */
-    private synchronized void forgetPrompts() {
-        mPrompts = null;
+    private void forgetPrompts() {
+        synchronized (this) {
+            mPrompts = null;
+        }
+
+        // The default prompt may have changed: a stored summary is the answer to the old one
+        forgetSummaries();
     }
 
     //endregion

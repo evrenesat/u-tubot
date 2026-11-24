@@ -12,6 +12,12 @@ and nothing was downloaded), and `store` warns when a file pushes the usage over
 entries is an explicit admin act (`remove`) — the archive never deletes on its own, its root is
 refused when it sits inside the media scratch directory, and the scratch sweep of `media_dir`
 never sees these files.
+
+The one exception is the owner's opt-in `[archive] eviction = "lru"`: `require_room` (and `store`,
+when a file overshoots) then frees the least recently used entries until the usage fits the quota
+again. An entry used within `evict_protect_s` (a job may be reading it) and the file just stored
+are never evicted; when that is not enough the download is refused as before. Every `lookup` hit
+stamps `last_used_at`, which is what "recently used" means.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ SHA_PREFIX = 12
 STATE_OK = "ok"
 STATE_WARN = "warn"
 STATE_FULL = "full"
+EVICT_LRU = "lru"
 
 
 class MediaArchiveFull(RuntimeError):
@@ -112,7 +119,12 @@ class MediaArchive:
                 "DELETE FROM media_archive WHERE video_id=? AND sha256=?", [video_id, row["sha256"]]
             )
             return None
-        return dict(row)
+        now = time.time()
+        self.db.execute(
+            "UPDATE media_archive SET last_used_at=? WHERE video_id=? AND sha256=?",
+            [now, video_id, row["sha256"]],
+        )
+        return {**dict(row), "last_used_at": now}
 
     def path_of(self, entry: dict[str, Any]) -> Path:
         return self.root / entry["path"]
@@ -166,6 +178,9 @@ class MediaArchive:
         if quota <= 0:
             return
         usage = self.usage()
+        if usage >= quota and self.cfg.archive.eviction == EVICT_LRU:
+            self.evict_to_fit(quota - 1)
+            usage = self.usage()
         if usage >= quota:
             log.warning("media archive full: %d of %d bytes; refusing new downloads", usage, quota)
             raise MediaArchiveFull(usage, quota)
@@ -253,6 +268,8 @@ class MediaArchive:
             src.unlink(missing_ok=True)
         except OSError:
             pass
+        if self.cfg.archive.eviction == EVICT_LRU and self.cfg.archive.quota_bytes > 0:
+            self.evict_to_fit(self.cfg.archive.quota_bytes, keep=(video_id, sha256))
         if self.cfg.archive.quota_bytes > 0 and self.usage() > self.cfg.archive.quota_bytes:
             log.warning(
                 "media archive over its quota: %d of %d bytes (the file was kept anyway)",
@@ -284,15 +301,18 @@ class MediaArchive:
     # ---- admin cleanup -------------------------------------------------------------------------
 
     def remove(self, video_id: str) -> tuple[int, int]:
-        """Remove one video's entries and their files (an admin act; nothing does this by itself).
+        """Remove one video's entries and their files (an admin act).
 
         A file that another entry still uses stays. Returns (entries, bytes) that went away.
         """
         rows = self.db.all("SELECT * FROM media_archive WHERE video_id=?", [video_id])
+        return self._drop(rows)
+
+    def _drop(self, rows: list[Any]) -> tuple[int, int]:
         for row in rows:
             self.db.execute(
                 "DELETE FROM media_archive WHERE video_id=? AND sha256=?",
-                [video_id, row["sha256"]],
+                [row["video_id"], row["sha256"]],
             )
         removed = 0
         freed = 0
@@ -302,12 +322,43 @@ class MediaArchive:
                 "SELECT COUNT(*) AS n FROM media_archive WHERE path=?", [row["path"]]
             )
             if still["n"]:
-                log.info("media archive: a file of %s is still in use; kept", video_id)
+                log.info("media archive: a file of %s is still in use; kept", row["video_id"])
             elif path.is_file():
                 path.unlink(missing_ok=True)
                 freed += int(row["size"])
             removed += 1
         return removed, freed
+
+    def evict_to_fit(self, target: int, keep: tuple[str, str] | None = None) -> tuple[int, int]:
+        """Free least recently used entries until the usage is at most `target` bytes.
+
+        Only with `eviction = "lru"`. Skips `keep` (video id, sha256) and every entry used (or,
+        never looked up, fetched) within `evict_protect_s`. Returns (entries, bytes) freed.
+        """
+        if self.cfg.archive.eviction != EVICT_LRU:
+            return 0, 0
+        cutoff = time.time() - self.cfg.archive.evict_protect_s
+        total_entries = 0
+        total_freed = 0
+        rows = self.db.all(
+            "SELECT * FROM media_archive WHERE IFNULL(last_used_at, fetched_at) < ?"
+            " ORDER BY IFNULL(last_used_at, fetched_at) ASC",
+            [cutoff],
+        )
+        for row in rows:
+            if self.usage() <= target:
+                break
+            if keep and (row["video_id"], row["sha256"]) == keep:
+                continue
+            entries, freed = self._drop([row])
+            total_entries += entries
+            total_freed += freed
+            log.info(
+                "media archive: evicted the least recently used file of %s (%d bytes)",
+                row["video_id"],
+                int(row["size"]),
+            )
+        return total_entries, total_freed
 
     def sweep_scratch(self) -> None:
         """Left-over staging files (a crash between copy and rename) go; recorded rows never."""

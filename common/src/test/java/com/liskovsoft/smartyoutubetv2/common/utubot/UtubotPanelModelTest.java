@@ -56,6 +56,14 @@ public class UtubotPanelModelTest {
         final List<Transcript> pollAnswers = new ArrayList<>();
         Observable<Transcript> transcribeAnswer = Observable.never();
         int polls;
+        final List<String> forgets = new ArrayList<>();
+        Observable<Boolean> forgetAnswer = Observable.just(true);
+
+        @Override
+        public Observable<Boolean> forgetFailuresObserve(String videoId) {
+            forgets.add(videoId + "@" + calls.size());
+            return forgetAnswer;
+        }
 
         @Nullable
         @Override
@@ -635,6 +643,55 @@ public class UtubotPanelModelTest {
         mTimer.advance(60_000);
 
         assertEquals(1, mSource.calls.size());
+    }
+
+    @Test
+    public void theRetryOfTheUserMakesTheBackendForgetTheFailureBeforeAsking() {
+        mView.show(video("aaaaaaaaaaa", "First"));
+        Summary failed = new Summary();
+        failed.status = "failed";
+        failed.error = "boom";
+        mSource.last().answer.onNext(failed);
+
+        mView.retry();
+
+        // The failure is forgotten while only the first request had been asked, then the second one follows
+        assertEquals(java.util.Collections.singletonList("aaaaaaaaaaa@1"), mSource.forgets);
+        assertEquals(2, mSource.calls.size());
+    }
+
+    @Test
+    public void aFailureOfTheForgetCallDoesNotStopTheRetry() {
+        mView.show(video("aaaaaaaaaaa", "First"));
+        mSource.last().answer.onNext(new Summary());
+        mSource.forgetAnswer = Observable.error(new java.io.IOException("down"));
+
+        mView.retry();
+
+        assertEquals(2, mSource.calls.size());
+    }
+
+    @Test
+    public void theRetryIsNotAskedWhileTheBackendForgets() {
+        mView.show(video("aaaaaaaaaaa", "First"));
+        mSource.last().answer.onNext(new Summary());
+        mSource.forgetAnswer = Observable.never();
+
+        mView.retry();
+
+        assertEquals(1, mSource.calls.size());
+        assertEquals(Phase.LOADING, lastState().phase);
+    }
+
+    @Test
+    public void theWaitOfADelayedAnswerDoesNotForgetAnything() {
+        mView.show(video("aaaaaaaaaaa", "First"));
+        mSource.last().answer.onNext(delayed(2));
+
+        mTimer.advance(2_000);
+
+        assertEquals(2, mSource.calls.size());
+        assertTrue(mSource.forgets.isEmpty());
     }
 
     @Test

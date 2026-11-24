@@ -131,19 +131,24 @@ class ArchiveConfig(BaseModel):
     one row per video in the `media_archive` table. `quota_bytes` (0: no limit) is a ceiling the
     archive never frees by itself: when the usage reaches it new downloads are refused (the job
     fails with a clear message) until an admin removes entries; at `warn_frac` of the quota a
-    warning is logged. Nothing in the archive is ever deleted automatically.
+    warning is logged. Nothing in the archive is ever deleted automatically, unless the owner turns
+    on `eviction = "lru"`: then a download that would start past the quota first frees the least
+    recently used entries (never one used within `evict_protect_s`, a running job may be reading it)
+    and is refused only when that is not enough.
     """
 
     path: str = ""
     quota_bytes: int = Field(0, ge=0)
     warn_frac: float = Field(0.9, ge=0.0, le=1.0)
+    eviction: Literal["never", "lru"] = "never"
+    evict_protect_s: int = Field(3600, ge=0)
 
 
 class TranscriptConfig(BaseModel):
     cache_ttl_s: int = 30 * 86400
     no_captions_ttl_s: int = 3 * 86400
-    video_failure_ttl_s: int = 3600
-    empty_track_retry_s: int = 3600
+    video_failure_ttl_s: int = 900
+    empty_track_retry_s: int = 900
     meta_retry_s: int = 600
     fetch_timeout_s: float = 60.0
     prefer_manual: bool = True
@@ -161,7 +166,7 @@ class SummaryConfig(BaseModel):
     wait_ms_cap: int = 60000
     adhoc_ttl_s: int = 3600
     max_summary_chars: int = 1200
-    failure_cooldown_s: int = 30
+    failure_cooldown_s: int = 120
     condensed_max_tokens: int = 700
     max_import_bytes: int = 256 * 1024
     import_timeout_s: float = 15.0

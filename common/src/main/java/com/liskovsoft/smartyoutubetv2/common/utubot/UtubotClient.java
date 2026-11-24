@@ -151,6 +151,13 @@ public class UtubotClient {
     }
 
     /**
+     * The version the backend reports (`GET /v1/health`, no token needed), empty when it reports none
+     */
+    public String serverVersion() throws IOException {
+        return parse(() -> new JSONObject(send(builder("/health", false), 0)).optString("version", ""));
+    }
+
+    /**
      * Exchanges a pairing code for a user token. No token needed.
      */
     public PairResult pair(String code, String device) throws IOException {
@@ -253,6 +260,14 @@ public class UtubotClient {
         HttpUrl.Builder url = urlBuilder("/videos/" + videoId + "/transcribe");
         addMeta(url, meta);
         return parse(() -> UtubotParser.parseTranscript(send(authorized(url).post(json(new JSONObject())), 0)));
+    }
+
+    /**
+     * The Retry action (`POST /v1/videos/{id}/retry`): the backend forgets what it remembers about a failure of the video, so the next
+     * request really tries again. Stored successes stay.
+     */
+    public void forgetFailures(String videoId) throws IOException {
+        parse(() -> new JSONObject(send(builder("/videos/" + videoId + "/retry", true).post(json(new JSONObject())), 0)).optBoolean("ok"));
     }
 
     /**

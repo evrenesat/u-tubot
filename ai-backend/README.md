@@ -44,9 +44,11 @@ option. Highlights:
   (`max_concurrent`, `min_interval_s`, `jitter_s`, `cooldown_base_s`, `cooldown_max_s`, `captions_cooldown_max_s`), the JavaScript runtime for yt-dlp
 (`js_runtime_path`, `remote_components`), the offline dev-proxy mode (`offline`, `fixtures_dir`: no request reaches YouTube, answers come from
   caches and recorded fixtures — for tests, the emulator and E2E runs, see `../docs/development.md`, "Offline mode"); `[transcripts] no_captions_ttl_s`.
-- `[archive]` the media archive (`path`, `quota_bytes`, `warn_frac`): every downloaded audio or video file is kept
-  content-addressed by its sha256 and reused instead of being downloaded again; the quota only warns and stops, it never deletes
-  (Admin → Media archive frees space).
+- `[archive]` the media archive (`path`, `quota_bytes`, `warn_frac`, `eviction` (`never`, the default, or `lru`) and
+  `evict_protect_s`): every downloaded audio or video file is kept content-addressed by its sha256 and reused instead of being
+  downloaded again; by default the quota only warns and stops, it never deletes (Admin → Media archive frees space); with
+  `eviction = "lru"` it first frees the least recently used entries outside `evict_protect_s`, and a file that overshoots the
+  quota right after it was stored is kept with a warning.
 - `[setup]`, `[app]` the public `/setup.json` (TVs import it by address), the landing page download codes and the GitHub
   update channel (`github_repo`, `signing_cert_sha256`, `apksigner_path`; `utubot app sync-github`, see `../docs/server.md`, Updates).
 - `[captions]` the ASR engine chain (`[[captions.asr_engines]]`: `openai`-compatible servers and local `faster_whisper`, picked by health,

@@ -219,6 +219,17 @@ chosen speech engine's chunked recognition time.
 `400` when the video cannot be transcribed (live, or longer than the configured maximum), `429` when the user
 already has the maximum number of active transcriptions (`[captions] transcribe_max_active_per_user`, 5).
 
+### `POST /v1/videos/{id}/retry`
+The Retry action. Forgets everything the backend remembers about a *failure* of this video, so the next request really tries again:
+a failed or delayed transcript fetch, the "no captions" memory, and failed summary, insight, answer and analysis tasks. Stored successes
+(transcript, summaries, captions, analyses) stay. Nothing is generated here: the client asks again right after (summary, insight, assess).
+`{"ok":true,"cleared":{"fetch":2,"tasks":1,"analysis":0}}` (counts of memories dropped). Same auth and rate limits as other `/v1` routes.
+
+Failure policy (what a client may rely on): successes are cached and versioned by their key (prompt content hash, language, model);
+failures are short-lived. A busy language model (`error` = "the language model is busy, ...") is never remembered, any other model failure
+for `[summary] failure_cooldown_s` (2 min), a video that cannot be read for `[transcripts] video_failure_ttl_s` (15 min). A client keeps
+no failure longer than that either, and always offers Retry.
+
 ### `GET /v1/videos/{id}/transcript`
 Where the transcript stands. Cheap: never contacts YouTube.
 
@@ -352,7 +363,10 @@ Stored for later threshold tuning.
   polled a `pending` summary, one long poll) until the transcript is `ok`, then asks for the summary again.
   `transcribing`: "Transcribing… N% (~M min)" (the `estimate_s` when given) and the same follow-up, with nothing to press when the
   server started the job itself. `failed`: show `error`; offer the action again only with
-  `can_transcribe`, and no Retry when `reason` is present. None of these answers is kept by the app. The AI answer shows
+  `can_transcribe`, and no Retry when `reason` is present. None of these answers is kept by the app. Retry (the user's action, not the
+  countdown of a `delayed` answer) first calls `POST /v1/videos/{id}/retry`, whatever it answers, then asks again. The app keeps only ready
+  verdicts and summaries on disk, per backend address, token and backend version (`version` of `GET /v1/health`) for 3 days, and drops them with
+  a prompt import, refresh or default change. The AI answer shows
   the same states for an insight, counts a delay down and follows a running transcription like the view does (the transcription the user
   starts is started from the Summary view of the video). `message` is shown as the server wrote it in the panel, the view and the answer;
   the app's own wording is only the fallback. Every `insight`, `summary` and `transcribe` call carries `title`, `channel` and `duration_s`.
@@ -653,8 +667,10 @@ read from the archive first and download only when the media is missing, so a vi
 
 - `GET /v1/admin/archive?video_id=&limit=` -> `{"files","usage_bytes","quota_bytes","state":"ok|warn|full","entries":[...rows...]}`.
 - `DELETE /v1/admin/archive/{video_id}` -> `{"ok":true,"removed","bytes_freed","stage_cache_rows_removed"}`; `404` when nothing is stored for it. This is the
-  only cleanup: nothing in the archive is ever deleted automatically. At `quota_bytes` (0: no limit) new downloads are refused
-  (the job fails with "The media archive is full...") until an admin removes entries; at `warn_frac` (0.9) a warning is logged.
+  default cleanup: by default nothing in the archive is ever deleted automatically. At `quota_bytes` (0: no limit) new downloads are refused
+  (the job fails with "The media archive is full...") until an admin removes entries; with `[archive] eviction = "lru"` a download at the quota
+  instead frees the least recently used entries outside `evict_protect_s` first (a stored file that overshoots the quota is kept with a warning);
+  at `warn_frac` (0.9) a warning is logged.
 - `GET /v1/admin/status` also carries `"archive":{"files","usage_bytes","quota_bytes","state"}`.
 
 Every response carries `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and

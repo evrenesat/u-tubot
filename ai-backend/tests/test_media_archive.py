@@ -332,3 +332,73 @@ def test_a_failing_store_keeps_the_scratch_file(tmp_path, cfg):
         arc.store(VID, src, work=cfg.media_dir / VID)
     assert exc.value.work == cfg.media_dir / VID
     assert src.is_file(), "nothing was recorded, so the download must survive"
+
+
+# ---- opt-in LRU eviction ---------------------------------------------------------------------
+
+
+def lru_archive(tmp_path, cfg, quota: int, protect_s: int = 0) -> MediaArchive:
+    cfg.archive.quota_bytes = quota
+    cfg.archive.eviction = "lru"
+    cfg.archive.evict_protect_s = protect_s
+    return archive_of(cfg, Database(tmp_path / "t.sqlite"))
+
+
+def age(arc: MediaArchive, video_id: str, seconds: float) -> None:
+    arc.db.execute(
+        "UPDATE media_archive SET fetched_at=?, last_used_at=NULL WHERE video_id=?",
+        [time.time() - seconds, video_id],
+    )
+
+
+def test_eviction_is_off_by_default_and_a_full_archive_still_refuses(tmp_path, cfg):
+    cfg.archive.quota_bytes = len(MEDIA)
+    arc = archive_of(cfg, Database(tmp_path / "t.sqlite"))
+    arc.store(VID, write_media(tmp_path, "a", MEDIA))
+    age(arc, VID, 10_000)
+    with pytest.raises(MediaArchiveFull):
+        arc.require_room()
+    assert arc.lookup(VID) is not None
+
+
+def test_lru_frees_the_least_recently_used_entry_to_make_room(tmp_path, cfg):
+    arc = lru_archive(tmp_path, cfg, quota=2 * len(MEDIA) + 1)
+    old = arc.store(VID, write_media(tmp_path, "a", MEDIA))
+    newer = arc.store(OTHER, write_media(tmp_path, "b", MEDIA + b"1"))
+    age(arc, VID, 5000)
+    age(arc, OTHER, 100)
+    arc.require_room()  # at the quota: the oldest goes
+    assert arc.lookup(VID) is None and not arc.path_of(old).exists()
+    assert arc.lookup(OTHER) is not None and arc.path_of(newer).is_file()
+
+
+def test_a_lookup_counts_as_use(tmp_path, cfg):
+    arc = lru_archive(tmp_path, cfg, quota=2 * len(MEDIA) + 1)
+    arc.store(VID, write_media(tmp_path, "a", MEDIA))
+    arc.store(OTHER, write_media(tmp_path, "b", MEDIA + b"1"))
+    age(arc, VID, 5000)  # fetched long ago ...
+    age(arc, OTHER, 4000)
+    assert arc.lookup(VID) is not None  # ... but read just now
+    arc.require_room()
+    assert arc.lookup(VID) is not None, "recently read: kept"
+    assert arc.lookup(OTHER) is None, "the one nobody read is evicted"
+
+
+def test_a_recently_used_entry_is_protected_and_the_download_is_then_refused(tmp_path, cfg):
+    arc = lru_archive(tmp_path, cfg, quota=len(MEDIA), protect_s=3600)
+    arc.store(VID, write_media(tmp_path, "a", MEDIA))
+    with pytest.raises(MediaArchiveFull):
+        arc.require_room()
+    assert arc.lookup(VID) is not None
+
+
+def test_a_big_file_evicts_older_ones_but_never_itself(tmp_path, cfg):
+    arc = lru_archive(tmp_path, cfg, quota=100)
+    arc.store(VID, write_media(tmp_path, "a", b"a" * 60))
+    arc.store(OTHER, write_media(tmp_path, "b", b"b" * 30))
+    age(arc, VID, 5000)
+    age(arc, OTHER, 4000)
+    big = arc.store(THIRD, write_media(tmp_path, "c", b"c" * 90))
+    assert arc.path_of(big).is_file()
+    assert arc.lookup(VID) is None and arc.lookup(OTHER) is None
+    assert arc.usage() == 90

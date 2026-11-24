@@ -87,9 +87,10 @@ default; without the table every cuts route reports "not configured". Pick it wi
 `max_background_queue` (`5`), and the yt-dlp JavaScript runtime (`js_runtime`, `js_runtime_path`, `remote_components`).
 
 **`[archive]`**: the media archive, see [Media archive](#media-archive): `path` (empty: `<data dir>/archive`), `quota_bytes`
-(`0`: no limit) and `warn_frac` (`0.9`).
+(`0`: no limit), `warn_frac` (`0.9`), `eviction` (`never`, the default, or `lru`, see [Media archive](#media-archive)) and
+`evict_protect_s` (`3600`).
 
-**`[transcripts]`**: `cache_ttl_s`, `no_captions_ttl_s` (default 3 days), `video_failure_ttl_s` (1 h), `empty_track_retry_s` (1 h), `meta_retry_s` (10 min), `fetch_timeout_s`, `default_language`, `cookies_file`
+**`[transcripts]`**: `cache_ttl_s`, `no_captions_ttl_s` (default 3 days), `video_failure_ttl_s` (15 min), `empty_track_retry_s` (15 min), `meta_retry_s` (10 min), `fetch_timeout_s`, `default_language`, `cookies_file`
 (only if YouTube blocks the host), `skip_if_longer_than_s`. (`max_concurrency` is gone: `[youtube] max_concurrent` replaces it;
 an old entry is ignored.)
 
@@ -166,7 +167,7 @@ still worked, now it only pauses caption fetches.
   result could not be stored fails (recorded, `failed`) instead of ending silently.
 - **Problems of one video stay with that video.** A 403 or 410 on a caption or media URL and members-only, age-gated, private or
   unavailable videos are failures of that video (`transcript_status: "failed"` with a `reason`), remembered for
-  `transcripts.video_failure_ttl_s` (1 h) so they are not re-fetched; they never touch the breaker.
+  `transcripts.video_failure_ttl_s` (15 min) so they are not re-fetched; they never touch the breaker.
 - **Long downloads do not hold the gate.** Audio downloads take the gate only to start (a paced slot, released when the first bytes
   arrive), so a 20 minute download never stalls an interactive metadata or caption fetch. A video that yt-dlp reports as live or
   longer than `captions.max_duration_s` (3 h) is refused from the real info before anything is downloaded, and audio larger than
@@ -183,7 +184,7 @@ still worked, now it only pauses caption fetches.
 
 | Situation | Response |
 |---|---|
-| 429, cooldown, bot check, network error, empty or incomplete YouTube answer, a caption file that parses to nothing, when the audio cannot stand in (below) | `status: "pending"`, `transcript_status: "delayed"`, a user-facing `error` ("YouTube is limiting transcript downloads; retrying in ~N min") and `retry_after_s`. Never cached as "no captions"; ask again after `retry_after_s` (a caption file that parses to nothing is held for `transcripts.empty_track_retry_s`, 1 h). |
+| 429, cooldown, bot check, network error, empty or incomplete YouTube answer, a caption file that parses to nothing, when the audio cannot stand in (below) | `status: "pending"`, `transcript_status: "delayed"`, a user-facing `error` ("YouTube is limiting transcript downloads; retrying in ~N min") and `retry_after_s`. Never cached as "no captions"; ask again after `retry_after_s` (a caption file that parses to nothing is held for `transcripts.empty_track_retry_s`, 15 min). |
 | The caption API is limited (cooldown, probe out, 429/403 just now) and a speech engine can take the video while `media` is healthy | like "no captions" below, with the message "Captions are temporarily unavailable from YouTube; transcribe the audio instead (~N s)?": started by the policy (`pending` + `transcribing`) or offered (`needs_transcript`). Never `delayed`, never remembered. |
 | Private, members-only, age-gated or unavailable video, 403/410 on its caption or media URL, too long or live | `status: "failed"`, `transcript_status: "failed"`, `error`, `reason`, `can_transcribe`. |
 | YouTube lists no captions (from a complete yt-dlp answer) | `status: "needs_transcript"`, `transcript_status: "none"`, `can_transcribe`, `message` and `estimate_s`. The TV offers "Transcribe in background?". |
@@ -226,12 +227,43 @@ bytes are stored once; the scratch copy under `data_dir/media` is removed when t
 Pipelines read from the archive first: a job whose video is already archived never contacts YouTube for its audio (no gate wait,
 the report shows "From the media archive"), and only a miss leads to a download, which the job then stores. Removing entries is
 an explicit admin act — *Admin → Media archive* in the web UI (usage against the quota, one row per video with format, size,
-sha256 and age, a *Remove* button) or `DELETE /v1/admin/archive/{video_id}` (`GET /v1/admin/archive` lists it). Nothing in the
-archive is ever deleted automatically, and the scratch sweep of `data_dir/media` never touches it.
+sha256 and age, a *Remove* button) or `DELETE /v1/admin/archive/{video_id}` (`GET /v1/admin/archive` lists it). Unless the owner turns
+on LRU eviction below, nothing in the archive is ever deleted automatically, and the scratch sweep of `data_dir/media` never touches it.
 
-The quota (`[archive] quota_bytes`, `0`: no limit) never frees space by itself. At `warn_frac` (`0.9`) of the quota a warning is
+Optional LRU eviction (`[archive] eviction = "lru"`, default `never`): a download that would start at or past the quota first frees the
+least recently used entries (a `lookup` hit stamps `last_used_at`; an entry never read counts from its fetch time) until the usage is
+below it. Entries used within `evict_protect_s` (1 h; a job may be reading one) and the file just stored are never evicted; when that is not
+enough the download is refused as without eviction. A file that overshoots the quota right after it was stored is kept anyway (the store
+logs a warning, it does not fail the job), and the eviction after the store frees what it can without touching the protected entries.
+Turning it on is the owner's decision: the default keeps the "nothing is deleted by itself" rule.
+
+## Cache and failures
+
+Everything generated or downloaded for a video is kept per video and reused: metadata, transcripts (captions or audio), HQ captions and
+their pipeline stages, triage and deep analysis, summaries (key: video, prompt key, prompt content hash, language; the model is part of
+the content hash), condensed text, insights, verdicts, and the media archive. Successes are never re-made while their key matches.
+
+Failures are the opposite, short-lived and always bypassable:
+
+| What | Remembered for | Config |
+|---|---|---|
+| Language model busy (429/503, connection refused) | never | - |
+| Other model failure of a summary, insight or answer | 2 min | `[summary] failure_cooldown_s` |
+| Video that cannot be read (private, members-only, too long, ...) | 15 min | `[transcripts] video_failure_ttl_s` |
+| Caption file that parses to nothing | 15 min | `[transcripts] empty_track_retry_s` |
+| "No captions" (a complete answer, not an error) | 3 days | `[transcripts] no_captions_ttl_s` |
+
+`POST /v1/videos/{id}/retry` (any signed-in user; the TV app's Retry action) drops every one of these memories for the video at once,
+including "no captions", and keeps the stored successes.
+
+Admin: `GET /v1/admin/videos/{id}/artifacts` lists what is stored for a video (per kind: rows, bytes, newest write) and
+`DELETE /v1/admin/videos/{id}/artifacts[?kind=summary&kind=...]` removes the named kinds (all but the media archive when none is named;
+`kind=archive` removes the archived media, as `DELETE /v1/admin/archive/{id}` does). Kinds: `metadata`, `transcript`, `captions`,
+`triage`, `analysis`, `summary`, `condensed`, `insight`, `pipeline`, `verdict`, `archive`.
+
+The quota (`[archive] quota_bytes`, `0`: no limit) never frees space by itself unless `eviction = "lru"`. At `warn_frac` (`0.9`) of the quota a warning is
 logged; at the quota new downloads are refused — the job fails with "The media archive is full; an admin must free space in it
-(nothing is deleted automatically)" — while archived media keeps serving every pipeline. A download whose storage fails (the
+(nothing is deleted automatically)" — unless the LRU eviction freed enough room first; while archived media keeps serving every pipeline. A download whose storage fails (the
 archive disk is out of space or gone) fails the job and keeps the file in its scratch directory instead of deleting it.
 
 ## Users, pairing, devices
