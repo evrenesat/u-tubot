@@ -1,14 +1,15 @@
 # Director's cuts: quick and watched modes (plan)
 
 Status: draft, revision 5 (revision 4 added Phase 2 at the end and the vision-model shortlist of the owner's model
-research; revision 5 answers the phase 2 review and revision 6 its re-check, P.7; revision 2 made the watched mode reuse the owner's earlier scene-analysis code; revision 3
+research; revision 5 answers the phase 2 review and revision 6 its re-check, P.7; revision 7 adds 2.13; revision 2 made the watched mode reuse the owner's earlier scene-analysis code; revision 3
 answers the plan review, section 6). Waits for the owner's decisions (Part 1). Nothing is implemented.
 Scope: two ways to build a director's cut. **Quick** is today's cut, made from the transcript only, and stays the default.
 **Watched** is made from what is on screen plus what is said: the server downloads a small copy of the video, turns it into
 timestamped 2x2 picture grids, has a vision model describe each grid, and gives the editor model the descriptions together
 with the transcript. The mode is a server default, a per-user default and a per-request choice, in the TV app and in the
 browser extension.
-Related: #82 (target length is not enforced), #83 (quality review of the caption-based cut), #34 (media archive),
+Related: #82 (target length is not enforced), #83 (quality review of the caption-based cut), #34 (media archive), #88 and #89
+(later features that shape the data model now, 2.13),
 `ai/CONTRACT.md` ("Director's cuts"), `ai/BROWSER_EXTENSION_PLAN.md` (parity rule), and the `scene-analyser` directory of
 the owner's public repository `evrenesat/r2t4` (the analysis engine reused here).
 
@@ -458,6 +459,7 @@ request document says so. A partial watched cut (`"partial": true`) is applied n
 - `GET /v1/processed`: each cut entry gains `mode`.
 - Settings document: `cut_mode`.
 - Admin: `GET /v1/admin/videos/{id}/tdt` returns the stored TDT (for the job page and for debugging); admin only.
+- Source columns, the optional `source` and `transitions` fields of the cut document and the table `scene_labels`: 2.13.
 - Database (additive, `test_db_migrations.py`): `cut_requests.mode TEXT NOT NULL DEFAULT 'quick'`, `cut_requests.progress
   REAL`, `cuts.mode TEXT NOT NULL DEFAULT 'quick'`, tables `video_scenes`, `scene_descriptions`.
 
@@ -544,6 +546,59 @@ stage sequence and `progress`, `/__mock/cuts?...&mode=` and a `state=failed&mode
 - The mock's HTTP 400 case covers the halved-context retry.
 - Per checkpoint, see the table.
 
+### 2.13 Data model ready for #88 and #89
+
+Two later features shape the tables now; neither is built here. #88: director's cuts for films and episodes watched in
+another player (skip lists per title, content filters by category, promptable per title, the same scene analysis). #89:
+generated transitions between kept scenes. Everything below is additive, and nothing a current client reads changes.
+
+**A cut belongs to a source, not to a YouTube id.**
+
+- `source_kind TEXT NOT NULL DEFAULT 'youtube'`, `source_key TEXT`, `release_key TEXT`, `release_duration_ms INTEGER` on
+  `cut_requests` and `cuts` (checkpoint 1) and, from their creation, on `video_scenes` (checkpoint 2) and
+  `scene_descriptions` (checkpoint 3).
+- `source_key` is one canonical string: `youtube:<video id>`, or for a title `<scheme>:<id>[:s<season>e<episode>]`
+  (`imdb:tt0123456:s01e03`). `release_key` tells releases of the same title apart (a fingerprint of the file the analysis
+  was made from, or `dur:<ms>` when there is none); it is null for YouTube. A row with `source_key` null is read as
+  `youtube:<video_id>`, so old rows need no rewrite. `video_id` stays, filled as today.
+- Matching a cut to what is playing: same `source_key`, and the playing length within
+  `[cuts] release_duration_tolerance_ms = 2000` of `release_duration_ms` (the 2 s rule clients already apply to
+  `duration_ms`); with a `release_key`, that must match too.
+- Cache keys: the YouTube keys stay byte-for-byte as they are. Keys of other sources use `source_key|release_key` where
+  `video` stands today. One helper, `source_ref(row)`, is the only place that reads these columns.
+- The cut document gains an optional `"source":{"kind","key","release_key"?,"release_duration_ms"?}`; absent means the
+  YouTube `video_id` as today.
+
+**Scene labels, so a filter is a query.**
+
+- A TDT segment's `labels` object (2.2, already open) gets an optional list
+  `"content":[{"category","intensity","confidence"}]`: `category` from a versioned vocabulary (`LABEL_VOCAB_VERSION`;
+  first set: `violence`, `gore`, `sex`, `nudity`, `language`, `drugs`, `frightening`, `flashing`, taken from
+  scene-analyser's warnings and the usual rating symbols), `intensity` 0 to 3, `confidence` 0 to 1. The validator
+  accepts the list and checks its values; the phase 1 describe prompt does not ask for it, so YouTube TDTs carry none.
+- A table `scene_labels(descriptions_key, source_key, release_key, segment_id, start_ms, end_ms, category, intensity,
+  confidence, vocab_version)`, indexed by `(source_key, release_key, category)`, written from the TDT whenever one is
+  stored (checkpoint 3). A content filter is then
+  `SELECT start_ms, end_ms ... WHERE category IN (...) AND intensity >= ? AND confidence >= ?` turned into skip ranges
+  by the existing `skip_ranges_ms`: no model call, and a new filter needs no new analysis.
+- The TDT stays the record; `scene_labels` can be rebuilt from it (a test does).
+
+**A transition slot per boundary.**
+
+- The cut document gains an optional `"transitions":[{"after_part":<index>,"type","duration_ms","asset":{"ref",
+  "sha256"?},"engine","engine_version","status"}]`, `status` one of `none`, `pending`, `ready`, `failed`. One entry per
+  boundary between two kept parts at most; `asset.ref` is an opaque server-side reference, never a URL with a token.
+- It lives inside the stored cut JSON, so no column is needed; `CUT_DOC_VERSION` stays 1. `skip_ranges_ms` and `parts`
+  never depend on it. `ai/CONTRACT.md` says: a client that cannot show transitions ignores the field and skips as
+  today.
+
+**Where it lands and how it is tested.** Checkpoint 1 adds the source columns, `source_ref`, the two optional document
+fields and the contract text; checkpoints 2 and 3 create their tables with the source columns, and 3 adds `scene_labels`
+and the label list. Tests: a database made by the schema of `main` with stored cuts, requests and their rows is opened by
+the new code and every old row reads and is served exactly as before (same JSON, same cache hit); a cut document with
+`source` and `transitions` passes the TV's cut parser and the web UI unchanged (parser test in checkpoint 1); a stored
+TDT with a `content` list fills `scene_labels`, and one without fills nothing.
+
 ## 3. New and changed files (backend)
 
 - `src/utubot/watch/__init__.py`; `watch/video.py` (download, archive); `watch/ffmpeg.py` (blocking calls with cancel,
@@ -571,9 +626,9 @@ plan (Fast: straightforward from this plan; Heavy: the tricky parts).
 | # | Scope | Done when | Tests | Tier |
 |---|---|---|---|---|
 | 0 | Gates, not work of this plan: owner decision 7 answered (needed by 2); #82 merged (its own Heavy-tier task; needed by 4 and 5, see 2.3) | the decision is recorded in this plan; `main` has the server-side length selection | #82's own | n/a |
-| 1 | Mode plumbing with quick only: contract text, `mode` on requests and cuts, `modes` and `by_mode`, `default_mode`, `UserPolicy.cut_mode`, additive columns, watched listed as unavailable, mock backend modes, parity-matrix row | old request bodies answer exactly as before (replayed in a test); `mode:"watched"` answers the 409; settings round trip; quick cache keys unchanged (a stored row from before is still served) | `test_cuts_api.py`, `test_settings.py`, `test_db_migrations.py`, `test_emulator_mock.py` | Fast |
-| 2 | Video and grids, no model: `watch/video.py`; `frame_selector.py` and `grids.py` copied with headers and `THIRD_PARTY.md`, adapted to config; `watch/ffmpeg.py` and the worker thread; the quiet-stretch rule and the cap with its budget split; `utubot media import`; archive `kind=video`, limits, disk checks, scratch cleanup, archive remove hook | on the synthetic clip: every hard cut is a chunk end or in that chunk's cut list within 0.5 s, every chunk is 4 to 15 s except the joined still stretch (one grid for 30 s), each grid is 2x2 with cells of at most 512 px, the manifest matches scene-analyser's record; the cap holds on generated chunk lists including a 90-minute one with a cut every 4 s (budget split, 240 grids); a long poll answers within its `wait_ms` while the grid stage runs; cancelling a build ends the child `ffmpeg`; `media import` works offline; a second run downloads nothing and reuses the manifest; grids are gone after the stage; over-limit and full-archive cases fail before a download. Recorded by the owner's server for one talking video and one screen recording: grids per minute, stage time, video size | `test_watch_video.py`, `test_watch_selector.py`, `test_watch_grids.py`, `test_media_archive.py`, `test_cli_media.py` | Heavy |
-| 3 | First step: the bake-off of 2.11 for the three shortlisted models (owner's machine, engine window needed), result and pick recorded before anything else is built. Then: content parts in `llm.py`, `[llm.cuts_vision]`, `memory.py` and `tdt.py` copied with their ported tests, `describe.py` (sequential, bounded context, records, resume, timeout), the cloud rule; `grid_bench.py`; the model pick | mock: one request per grid in order, context never over the limit on a two-hour transcript, one retry then `not_seen`, HTTP 400 retried once with half the context, the 20 % rule, resume after a restart at the next grid, TDT validated and cached per key, same-provider fallback rule; on the owner's engines: the bake-off table, the scores of step 2, the long run of at least 100 grids at full context, the pick, the eta and timeout values and the model's real prompt limit recorded; if none passes, stop and report | `test_watch_describe.py`, `test_watch_memory.py`, `test_watch_tdt.py`, `test_llm_parts.py`, config tests | Heavy |
+| 1 | Mode plumbing with quick only: the source columns and the two optional cut-document fields of 2.13 (old rows read unchanged, tested against a database made by the schema of `main`; the TV parser ignores `source` and `transitions`); contract text, `mode` on requests and cuts, `modes` and `by_mode`, `default_mode`, `UserPolicy.cut_mode`, additive columns, watched listed as unavailable, mock backend modes, parity-matrix row | old request bodies answer exactly as before (replayed in a test); `mode:"watched"` answers the 409; settings round trip; quick cache keys unchanged (a stored row from before is still served) | `test_cuts_api.py`, `test_settings.py`, `test_db_migrations.py`, `test_emulator_mock.py` | Fast |
+| 2 | Video and grids, no model: `video_scenes` created with the source columns of 2.13; `watch/video.py`; `frame_selector.py` and `grids.py` copied with headers and `THIRD_PARTY.md`, adapted to config; `watch/ffmpeg.py` and the worker thread; the quiet-stretch rule and the cap with its budget split; `utubot media import`; archive `kind=video`, limits, disk checks, scratch cleanup, archive remove hook | on the synthetic clip: every hard cut is a chunk end or in that chunk's cut list within 0.5 s, every chunk is 4 to 15 s except the joined still stretch (one grid for 30 s), each grid is 2x2 with cells of at most 512 px, the manifest matches scene-analyser's record; the cap holds on generated chunk lists including a 90-minute one with a cut every 4 s (budget split, 240 grids); a long poll answers within its `wait_ms` while the grid stage runs; cancelling a build ends the child `ffmpeg`; `media import` works offline; a second run downloads nothing and reuses the manifest; grids are gone after the stage; over-limit and full-archive cases fail before a download. Recorded by the owner's server for one talking video and one screen recording: grids per minute, stage time, video size | `test_watch_video.py`, `test_watch_selector.py`, `test_watch_grids.py`, `test_media_archive.py`, `test_cli_media.py` | Heavy |
+| 3 | First step: the bake-off of 2.11 for the three shortlisted models (owner's machine, engine window needed), result and pick recorded before anything else is built. Then: `scene_descriptions` with the source columns, `scene_labels` and the optional label list of 2.13 (filled from a TDT with labels, rebuilt from the TDT in a test); content parts in `llm.py`, `[llm.cuts_vision]`, `memory.py` and `tdt.py` copied with their ported tests, `describe.py` (sequential, bounded context, records, resume, timeout), the cloud rule; `grid_bench.py`; the model pick | mock: one request per grid in order, context never over the limit on a two-hour transcript, one retry then `not_seen`, HTTP 400 retried once with half the context, the 20 % rule, resume after a restart at the next grid, TDT validated and cached per key, same-provider fallback rule; on the owner's engines: the bake-off table, the scores of step 2, the long run of at least 100 grids at full context, the pick, the eta and timeout values and the model's real prompt limit recorded; if none passes, stop and report | `test_watch_describe.py`, `test_watch_memory.py`, `test_watch_tdt.py`, `test_llm_parts.py`, config tests | Heavy |
 | 4 | The watched build: `join.py`, `service.py`, branch in `CutService`, snap, #82 selection reused, queue slot, progress and eta, timeouts, failures and `fallback`, job-report stages, admin TDT route and status | end to end on the synthetic clip with the mock models: a watched request goes through every stage to a ready cut whose kept ranges include the silent part; restart mid-build resumes and reuses the caches; second preset skips stages 2 to 4; each failure row of 2.8 produces its document; the band holds after snap | `test_cuts_watched.py`, `test_watch_join.py`, `test_job_report.py` | Heavy |
 | 5 | Evaluation: cutbench TDTs, three visual fixtures, `--mode`, report columns; the labelled-set runner; the gate | bench numbers for both modes recorded in `fixtures/cuts/`; gate result stated; labelled-set run recorded (numbers, grids per minute, times, a readable sample) by the owner's server | `test_cutbench.py` | Fast |
 | 6 | Clients: TV picker row, follower over long builds, texts, labels, failure dialog; web UI control, progress, settings, failure offer; extension side per 2.10 | TV unit tests for the picker model and parser with the new fields; emulator run against the mock (`--cuts-watched-delay`) recorded: pick Watched, keep playing, ready announcement, Apply; failed case shows "Use Quick"; web UI tests for the control and the progress view | `UtubotCut*Test`, `test_webui.py`, emulator recipe in `docs/development.md` | Fast |

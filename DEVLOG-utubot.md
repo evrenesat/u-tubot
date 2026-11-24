@@ -29,6 +29,9 @@
 - Revision 6 answers the phase 2 re-check: nothing on the big engine is paused or switched for a claim any more. The claim
   service waits a bounded time for running work and tells the backend its deadline (`ready_by`); the backend shows the minutes
   left, gives up with the Quick offer and always deletes a claim it stops waiting for. The claimed route gets its own key.
+- Revision 7 adds section 2.13, the data model for two later features (issues 88 and 89): cuts keyed by a source (a YouTube id
+  or a title id with a release fingerprint and a duration tolerance), per-scene content labels in a queryable table, and an
+  optional transition slot per boundary in the cut document. The columns land in checkpoint 1 with a test that old rows read.
 
 ## 2026-11-24 (director's cuts respect the target length, issue 82)
 
