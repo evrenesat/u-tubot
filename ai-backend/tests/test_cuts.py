@@ -346,6 +346,12 @@ class TestPromptFiltering:
             "cut-highlights-5",
         }
 
+    def test_highlights_preset_names_the_payoffs_and_the_filler(self):
+        by_id = {p.id: p for p in BUILTIN_SET.prompts}
+        text = by_id["cut-highlights-5"].template.lower()
+        for word in ("payoff", "demos", "results", "conclusions", "intros", "sponsor", "recaps"):
+            assert word in text, word
+
     def test_describe_hides_cut_presets_from_summary_pickers(self, tmp_path):
         from utubot.config import Config
         from utubot.db import Database
