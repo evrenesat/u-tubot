@@ -59,6 +59,8 @@ import com.liskovsoft.smartyoutubetv2.common.prefs.HomeRowsData.Row;
 import com.liskovsoft.smartyoutubetv2.common.prefs.MainUIData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SectionFilterData;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBrowseCache;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.youtubeapi.service.internal.MediaServiceData;
 
 import java.util.ArrayList;
@@ -70,6 +72,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -98,6 +102,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     private final Map<VideoGroup, String> mAddedHomeRowChannelIds = Collections.synchronizedMap(new IdentityHashMap<>());
     private final Runnable mRefreshSection = this::refresh;
     private final Runnable mUpdateSections = this::updateSections;
+    private final Runnable mReplayCachedGroups = this::replayCachedGroups;
+    private final UtubotBrowseCache mBrowseCache;
     /**
      * The section shows the videos of one of its channels: a load error doesn't reload the whole section, in a skin that keeps
      * it (see SkinTraits)
@@ -109,6 +115,25 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     private int mBootSectionIndex;
     private int mBootstrapSectionId = -1;
     private Locale mSectionsLocale;
+    private boolean mCachedContentShown;
+    private List<VideoGroup> mCachedShownGroups;
+    private BrowseSection mCachedReplaySection;
+    private List<VideoGroup> mCachedReplayGroups;
+    /**
+     * A background load of a section whose cached cards are on screen: the multi-grid's uploads are loaded from the network too,
+     * while a fresh cache replay keeps them (see onVideoItemSelected).
+     */
+    private boolean mCachedRefreshStarted;
+    // The next channel selection of a cached multi-grid is the view's auto-selection, whose uploads are already shown
+    private boolean mSkipCachedUploadsSelection;
+    /**
+     * Cards removed while a cached refresh is still loading: the load's groups still carry them, so its saves filter them out.
+     */
+    private final Map<Integer, Set<String>> mRemovedCardsBySection = new HashMap<>();
+    /**
+     * Sections whose cache was dropped while a cached refresh is still loading: the refresh must not write its groups back.
+     */
+    private final Set<Integer> mInvalidatedCachedSections = new HashSet<>();
 
     private BrowsePresenter(Context context) {
         super(context);
@@ -124,6 +149,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         mBrowseProcessor = new BrowseProcessorManager(getContext(), this::syncItem);
         mActions = new ArrayList<>();
+        mBrowseCache = UtubotSettings.isBuiltIn() ? UtubotBrowseCache.instance(context) : null;
         WatchLaterManager.instance(context).setOnEdited(this::onWatchLaterEdited);
         initSectionMappings();
         // Read above: the Home rows and the pinned items refer to the groups by the ids they have now, before the sections are made
@@ -156,6 +182,12 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         // Recreated in another language or country, another account's (see LocaleData): the titles are in the old one
         if (!Helpers.equals(LocaleUtility.getCurrentLocale(getContext()), mSectionsLocale)) {
+            // An in-flight cached refresh would save the old locale's rows after the cache is cleared
+            disposeActions();
+
+            if (mBrowseCache != null) {
+                mBrowseCache.invalidate();
+            }
             initSectionMappings();
             updateChannelSorting();
             updatePlaylistsStyle();
@@ -185,7 +217,18 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     private void refreshIfNeeded() {
-        if (getView() == null || !isHomeSection() || mLastUpdateTimeMs == -1 || System.currentTimeMillis() - mLastUpdateTimeMs < 3 * 60 * 60 * 1_000) {
+        if (getView() == null) {
+            return;
+        }
+
+        if (mBrowseCache != null) {
+            if (mCurrentSection != null && browseCacheState(mCurrentSection) == UtubotBrowseCache.State.STALE) {
+                refreshFromCache(mCurrentSection);
+            }
+            return;
+        }
+
+        if (!isHomeSection() || mLastUpdateTimeMs == -1 || System.currentTimeMillis() - mLastUpdateTimeMs < 3 * 60 * 60 * 1_000) {
             return;
         }
 
@@ -525,15 +568,37 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         BrowseSection section = mSectionsMapping.get(categoryId);
 
-        if (section != null) {
+        if (section != null && section.getType() != categoryType) {
             section.setType(categoryType);
+            invalidateCachedSectionIfLayoutChanged(section);
         }
 
         for (BrowseSection category : mSections) {
-            if (category.getId() == categoryId) {
+            if (category.getId() == categoryId && category.getType() != categoryType) {
                 category.setType(categoryType);
+                invalidateCachedSectionIfLayoutChanged(category);
                 break;
             }
+        }
+    }
+
+    /**
+     * The cache of the previous type is read with the new one and dropped, so it can't be replayed into another fragment. A cache
+     * already made for the new type stays (e.g. a grid cache at the next start, when the sections are made as rows first).
+     */
+    private void invalidateCachedSectionIfLayoutChanged(BrowseSection section) {
+        if (mBrowseCache == null || section == null || !isCacheableSection(section)) {
+            return;
+        }
+
+        if (mBrowseCache.groups(section, getBrowseCacheIdentity()) != null) {
+            return;
+        }
+
+        // Dropped while its refresh is still loading: the completion must not write the old layout's groups under the new type
+        if (mCachedRefreshStarted && mCurrentSection != null && section.getId() == mCurrentSection.getId()) {
+            mInvalidatedCachedSections.add(section.getId());
+            discardCachedState();
         }
     }
 
@@ -551,6 +616,18 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         }
 
         if (belongsToChannelUploadsMultiGrid(item)) {
+            // A fresh cache replay shows both columns: the view auto-selects a channel as its channels arrive, but its uploads
+            // are already there, so that one selection loads nothing. This holds when auto load is off too: the cached uploads
+            // column must not be cleared by the auto-selection. Every later selection is the user's and loads its channel.
+            if (mSkipCachedUploadsSelection) {
+                mSkipCachedUploadsSelection = false;
+
+                if (mCachedContentShown && !mCachedRefreshStarted) {
+                    mCurrentVideo = item;
+                    return;
+                }
+            }
+
             if (getMainUIData().isUploadsAutoLoadEnabled()) {
                 updateChannelUploadsMultiGrid(item);
             } else {
@@ -577,6 +654,173 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         } else {
             VideoActionPresenter.instance(getContext()).apply(item);
         }
+    }
+
+    @Override
+    public void removeItem(Video item) {
+        removeVideoFromCachedSection(item);
+        super.removeItem(item);
+    }
+
+    @Override
+    protected void removeItemAuthor(Video item) {
+        // An author's cards go at once: the cache of the section is dropped instead of patching every row
+        invalidateCachedSection();
+        super.removeItemAuthor(item);
+    }
+
+    /**
+     * A card hidden, removed or taken from a playlist at once is taken out of the cache of the section too: the next focus must
+     * not replay it (see the Hide, Not interested and playlist-remove callbacks below)
+     */
+    private void removeVideoFromCachedSection(Video item) {
+        if (mBrowseCache == null || mCurrentSection == null || item == null || !isCacheableSection(mCurrentSection)) {
+            return;
+        }
+
+        // A refresh that is still loading has the card in its own groups too: its completion save is told to leave it out
+        if (mCachedRefreshStarted) {
+            rememberRemovedCard(mCurrentSection, item);
+        }
+
+        List<VideoGroup> groups = mCachedContentShown && mCachedShownGroups != null ?
+                mCachedShownGroups : mBrowseCache.groups(mCurrentSection, getBrowseCacheIdentity());
+
+        if (groups == null) {
+            return;
+        }
+
+        boolean changed = false;
+
+        for (VideoGroup group : groups) {
+            int size = group.getSize();
+
+            if (size <= 0) {
+                continue;
+            }
+
+            Video card = findCard(group, item);
+
+            if (card != null) {
+                group.remove(card);
+            }
+
+            if (group.getSize() != size) {
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            mBrowseCache.save(mCurrentSection, groups, getBrowseCacheIdentity(), System.currentTimeMillis());
+        }
+    }
+
+    private void invalidateCachedSection() {
+        invalidateCachedSection(mCurrentSection);
+    }
+
+    private void invalidateCachedSection(BrowseSection section) {
+        if (mBrowseCache == null || section == null || !isCacheableSection(section)) {
+            return;
+        }
+
+        // Dropped while its refresh is still loading: the completion must not write the section's groups back
+        if (mCachedRefreshStarted && mCurrentSection != null && section.getId() == mCurrentSection.getId()) {
+            mInvalidatedCachedSections.add(section.getId());
+        }
+
+        mBrowseCache.save(section, new ArrayList<>(), getBrowseCacheIdentity(), System.currentTimeMillis());
+
+        if (mCurrentSection != null && mCurrentSection.getId() == section.getId()) {
+            discardCachedState();
+        }
+    }
+
+    private void rememberRemovedCard(BrowseSection section, Video item) {
+        String key = cardKey(item);
+
+        if (key == null) {
+            return;
+        }
+
+        Set<String> keys = mRemovedCardsBySection.get(section.getId());
+
+        if (keys == null) {
+            keys = new HashSet<>();
+            mRemovedCardsBySection.put(section.getId(), keys);
+        }
+
+        keys.add(key);
+    }
+
+    private static String cardKey(Video video) {
+        if (video == null) {
+            return null;
+        }
+
+        if (!TextUtils.isEmpty(video.videoId)) {
+            return "v:" + video.videoId;
+        }
+
+        if (!TextUtils.isEmpty(video.channelId)) {
+            return "c:" + video.channelId;
+        }
+
+        if (!TextUtils.isEmpty(video.channelGroupId)) {
+            return "g:" + video.channelGroupId;
+        }
+
+        if (!TextUtils.isEmpty(video.playlistId)) {
+            return "p:" + video.playlistId;
+        }
+
+        return null;
+    }
+
+    @Nullable
+    private static Video findCard(VideoGroup group, Video item) {
+        String key = cardKey(item);
+
+        if (key == null) {
+            return null;
+        }
+
+        for (Video video : group.getVideos()) {
+            if (key.equals(cardKey(video))) {
+                return video;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * A cached refresh's groups without the cards removed while it loaded. The groups are changed in place; the empty ones
+     * stay (a multi-grid's column is replaced by an empty one).
+     */
+    private void removeCardsDuringRefresh(BrowseSection section, List<VideoGroup> groups) {
+        Set<String> removed = mRemovedCardsBySection.get(section.getId());
+
+        if (removed == null || groups == null) {
+            return;
+        }
+
+        for (VideoGroup group : groups) {
+            for (Video video : new ArrayList<>(group.getVideos())) {
+                if (removed.contains(cardKey(video))) {
+                    group.remove(video);
+                }
+            }
+        }
+    }
+
+    private boolean isCacheWriteBlocked(BrowseSection section) {
+        return section == null || mInvalidatedCachedSections.contains(section.getId());
+    }
+
+    private void clearCachedLoadMarks(int sectionId) {
+        mRemovedCardsBySection.remove(sectionId);
+        mInvalidatedCachedSections.remove(sectionId);
     }
 
     @Override
@@ -858,7 +1102,14 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     public String findAddedHomeRowChannelId(Video video) {
         VideoGroup group = video != null ? video.getGroup() : null;
 
-        return group != null ? mAddedHomeRowChannelIds.get(group) : null;
+        if (group == null) {
+            return null;
+        }
+
+        String channelId = mAddedHomeRowChannelIds.get(group);
+
+        // The rows of the cache aren't made by a load: they carry it
+        return channelId != null ? channelId : group.getAddedHomeRowChannelId();
     }
 
     /**
@@ -871,7 +1122,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     public void refresh(boolean focusOnContent) {
-        updateCurrentSection();
+        updateCurrentSection(true);
         if (focusOnContent && getView() != null) {
             getView().focusOnContent();
         }
@@ -882,6 +1133,10 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     private void updateCurrentSection() {
+        updateCurrentSection(false);
+    }
+
+    private void updateCurrentSection(boolean forceRefresh) {
         disposeActions();
 
         if (getView() == null || mCurrentSection == null) {
@@ -889,7 +1144,233 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         }
 
         Log.d(TAG, "Update section %s", mCurrentSection.getTitle());
+
+        if (mBrowseCache != null && !forceRefresh && showCachedSection(mCurrentSection)) {
+            if (browseCacheState(mCurrentSection) == UtubotBrowseCache.State.STALE) {
+                startCachedRefresh(mCurrentSection);
+            }
+            return;
+        }
+
+        discardCachedState();
         updateSection(mCurrentSection);
+    }
+
+    private boolean showCachedSection(BrowseSection section) {
+        if (!isCacheableSection(section)) {
+            return false;
+        }
+
+        List<VideoGroup> groups = mBrowseCache.groups(section, getBrowseCacheIdentity());
+
+        if (groups == null || getView() == null) {
+            return false;
+        }
+
+        Log.d(TAG, "Show cached section %s", section.getTitle());
+        getView().showProgressBar(false);
+        mCachedContentShown = true;
+        mCachedShownGroups = groups;
+        mCachedReplaySection = section;
+        mCachedReplayGroups = groups;
+        mCachedRefreshStarted = false;
+        mSkipCachedUploadsSelection = section.getType() == BrowseSection.TYPE_MULTI_GRID && section.getId() == MediaGroup.TYPE_CHANNEL_UPLOADS;
+
+        for (VideoGroup group : groups) {
+            group.setAction(VideoGroup.ACTION_REPLACE);
+            getView().updateSection(group);
+        }
+
+        // A header transition may be computing its layout, and the rows' update is then dropped. Retry after it.
+        if (getView().isEmpty()) {
+            Utils.postDelayed(mReplayCachedGroups, 500);
+        }
+
+        return true;
+    }
+
+    private void replayCachedGroups() {
+        if (!mCachedContentShown || getView() == null || mCurrentSection != mCachedReplaySection || mCachedReplayGroups == null) {
+            return;
+        }
+
+        for (VideoGroup group : mCachedReplayGroups) {
+            group.setAction(VideoGroup.ACTION_REPLACE);
+            getView().updateSection(group);
+        }
+    }
+
+    private void startCachedRefresh(BrowseSection section) {
+        mCachedRefreshStarted = true;
+        mBrowseCache.markAttempt(section.getId(), System.currentTimeMillis());
+        updateSection(section);
+    }
+
+    private void refreshFromCache(BrowseSection section) {
+        if (!isCacheableSection(section)) {
+            return;
+        }
+
+        List<VideoGroup> groups = mBrowseCache.groups(section, getBrowseCacheIdentity());
+
+        if (groups == null) {
+            return;
+        }
+
+        mCachedContentShown = true;
+        mCachedShownGroups = groups;
+        mCachedRefreshStarted = true;
+        mBrowseCache.markAttempt(section.getId(), System.currentTimeMillis());
+        Log.d(TAG, "Refresh cached section %s", section.getTitle());
+        updateSection(section);
+    }
+
+    private boolean isCacheableSection(BrowseSection section) {
+        if (section == null || section.getId() == MediaGroup.TYPE_HIDDEN_VIDEOS || mLocalGridMappings.containsKey(section.getId())) {
+            return false;
+        }
+
+        switch (section.getType()) {
+            case BrowseSection.TYPE_GRID:
+            case BrowseSection.TYPE_SHORTS_GRID:
+            case BrowseSection.TYPE_ROW:
+            case BrowseSection.TYPE_MULTI_GRID:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private UtubotBrowseCache.State browseCacheState(BrowseSection section) {
+        return mBrowseCache.state(section.getId(), section.getType(), getBrowseCacheIdentity(), System.currentTimeMillis(),
+                browseRefreshMinutes());
+    }
+
+    private int browseRefreshMinutes() {
+        return UtubotSettings.instance(getContext()).getBrowseRefreshMinutes();
+    }
+
+    private String getBrowseCacheIdentity() {
+        Account account = MediaServiceManager.instance().getSelectedAccount();
+        String profile = account != null && !account.isEmpty() ? account.getProfileName() : "";
+
+        return LocaleUtility.getCurrentLocale(getContext()).toString() + "|" + profile;
+    }
+
+    private void saveCachedGroups(BrowseSection section, List<VideoGroup> groups) {
+        if (mBrowseCache == null || !isCacheableSection(section) || isCacheWriteBlocked(section)) {
+            return;
+        }
+
+        removeCardsDuringRefresh(section, groups);
+        mBrowseCache.save(section, groups, getBrowseCacheIdentity(), System.currentTimeMillis());
+    }
+
+    private void saveCachedGroup(BrowseSection section, VideoGroup group) {
+        if (mBrowseCache == null || !isCacheableSection(section) || group == null) {
+            return;
+        }
+
+        removeCardsDuringRefresh(section, Collections.singletonList(group));
+
+        if (section.getType() == BrowseSection.TYPE_MULTI_GRID) {
+            saveCachedGroups(section, UtubotBrowseCache.mergeByPosition(mBrowseCache.groups(section, getBrowseCacheIdentity()), group));
+            return;
+        }
+
+        saveCachedGroups(section, Collections.singletonList(group));
+    }
+
+    private void appendCachedGroup(BrowseSection section, VideoGroup group) {
+        if (mBrowseCache == null || !isCacheableSection(section) || isCacheWriteBlocked(section)) {
+            return;
+        }
+
+        removeCardsDuringRefresh(section, Collections.singletonList(group));
+        mBrowseCache.append(section, group, getBrowseCacheIdentity(), System.currentTimeMillis());
+    }
+
+    /**
+     * @param column the multi-grid column of the failed load (0 channels, 1 uploads), or -1 when the load isn't a column's
+     */
+    private boolean handleCachedRefreshError(Throwable error, BrowseSection section, int column) {
+        mCachedRefreshStarted = false;
+        // No channels are coming to be auto-selected: the next selection is the user's
+        mSkipCachedUploadsSelection = false;
+
+        if (!mCachedContentShown || getView() == null) {
+            return false;
+        }
+
+        getView().showProgressBar(false);
+
+        // The cached cards are still on screen: the flag stays set, so they're protected as cached until the section is left
+        // or loaded again. A multi-grid clears its other column as its refreshed column arrives, so the cached uploads are shown
+        // again when their load fails.
+        if (section.getType() == BrowseSection.TYPE_MULTI_GRID && column == 1) {
+            restoreCachedColumn(1);
+        }
+
+        Log.d(TAG, "Keep the cached section %s: %s", mCurrentSection != null ? mCurrentSection.getTitle() : null, error);
+
+        return true;
+    }
+
+    /**
+     * A cached column of a multi-grid on screen again, e.g. its uploads after their refresh failed (the channels' arrival cleared
+     * the view's uploads column)
+     */
+    private void restoreCachedColumn(int column) {
+        if (mCachedShownGroups == null || getView() == null) {
+            return;
+        }
+
+        for (VideoGroup oldGroup : mCachedShownGroups) {
+            if (oldGroup.getPosition() == column) {
+                oldGroup.setAction(VideoGroup.ACTION_REPLACE);
+                getView().updateSection(oldGroup);
+                return;
+            }
+        }
+    }
+
+    /**
+     * The load of the section is whole: the cards on screen are its content of now, not cached ones. A multi-grid writes a column
+     * at a time, so the other column's cached cards stay protected until that column is loaded too.
+     *
+     * @param column the multi-grid column of this load (0 channels, 1 uploads), or -1 when the load isn't a column's
+     */
+    private void finishCachedRefresh(BrowseSection section, int column) {
+        if (section.getType() == BrowseSection.TYPE_MULTI_GRID && column != 1) {
+            return;
+        }
+
+        clearCachedLoadMarks(section.getId());
+        discardCachedState();
+    }
+
+    private void discardCachedState() {
+        mCachedContentShown = false;
+        mCachedShownGroups = null;
+        mCachedReplaySection = null;
+        mCachedReplayGroups = null;
+        mCachedRefreshStarted = false;
+        mSkipCachedUploadsSelection = false;
+        Utils.removeCallbacks(mReplayCachedGroups);
+    }
+
+    private void restoreCachedFocusedItem(VideoGroup group, Video focusedBefore) {
+        if (focusedBefore == null || getView() == null || group == null) {
+            return;
+        }
+
+        for (Video video : group.getVideos()) {
+            if (Helpers.equals(video.videoId, focusedBefore.videoId) && Helpers.equals(video.playlistId, focusedBefore.playlistId)) {
+                getView().selectSectionItem(video);
+                mCurrentVideo = video;
+                break;
+            }
+        }
     }
 
     private void updateSection(BrowseSection section) {
@@ -943,6 +1424,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         videoGroup.setTitle(section.getTitle());
         getView().updateSection(videoGroup);
         getView().showProgressBar(false);
+        saveCachedGroups(section, Collections.singletonList(videoGroup));
     }
 
     /**
@@ -1015,6 +1497,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         Log.d(TAG, "updateRowsHeader: Start loading section: " + section.getTitle());
 
         disposeActions();
+        // A cache dropped by the last, aborted refresh is rebuilt by this one
+        mInvalidatedCachedSections.remove(section.getId());
 
         if (getView() == null) {
             Log.e(TAG, "Browse view has been unloaded from the memory. Low RAM?");
@@ -1022,11 +1506,15 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
             return;
         }
         
-        getView().showProgressBar(true);
+        boolean cached = mCachedContentShown && mCachedShownGroups != null;
 
-        VideoGroup firstGroup = VideoGroup.from(section);
-        firstGroup.setAction(VideoGroup.ACTION_REPLACE);
-        getView().updateSection(firstGroup);
+        getView().showProgressBar(!cached);
+
+        if (!cached) {
+            VideoGroup firstGroup = VideoGroup.from(section);
+            firstGroup.setAction(VideoGroup.ACTION_REPLACE);
+            getView().updateSection(firstGroup);
+        }
 
         if (groups == null) {
             // No group. Maybe just clear.
@@ -1043,6 +1531,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         AtomicInteger groupIndex = new AtomicInteger(-1);
         // The rows of this load share it: a video is kept by the first row that has it
         DuplicateFilter duplicateFilter = DuplicatesData.instance(getContext()).isSectionEnabled(section.getId()) ? new DuplicateFilter() : null;
+        // Sections emit their rows in parts (e.g. Music: its "Liked music" row, then its rows; Playlists: one per playlist).
+        // The cache of the whole section is written once, from all the parts of this load. Its stale rows are taken out then too:
+        // a part that hasn't arrived yet mustn't have its cached rows cleared.
+        List<VideoGroup> loadedGroups = new ArrayList<>();
+        Set<Integer> usedCachedIds = new HashSet<>();
 
         Disposable updateAction = HiddenVideoResolver.resolveGroups(getContext(), VideoCategoryManager.instance(getContext()).resolveGroups(groups), section)
                 // The rows that lost their videos to Hide content get the next ones before they're shown
@@ -1060,11 +1553,30 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
                             for (VideoGroup videoGroup : videoGroups) {
                                 appendLocalHistory(videoGroup, isShortsRow(videoGroup), false);
+
+                                if (cached) {
+                                    int oldId = UtubotBrowseCache.findOldId(mCachedShownGroups, videoGroup);
+
+                                    if (oldId != -1) {
+                                        videoGroup.setId(oldId);
+                                        videoGroup.setAction(VideoGroup.ACTION_REPLACE);
+                                        usedCachedIds.add(oldId);
+                                    }
+                                }
+
+                                Video focusedBefore = mCurrentVideo;
                                 getView().updateSection(videoGroup);
+
+                                if (cached && videoGroup.getAction() == VideoGroup.ACTION_REPLACE) {
+                                    restoreCachedFocusedItem(videoGroup, focusedBefore);
+                                }
+
                                 mBrowseProcessor.process(videoGroup);
                                 MediaServiceManager.instance().warmUpPlaybackIfNeeded(videoGroup);
 
                                 continueGroupIfNeeded(videoGroup, false);
+
+                                loadedGroups.add(videoGroup);
                             }
 
                             // With the rows of the account, not popping in after them: History emits its rows together
@@ -1072,8 +1584,21 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                         },
                         error -> {
                             Log.e(TAG, "updateRowsHeader error: %s", error.getMessage());
+                            if (handleCachedRefreshError(error, section, -1)) {
+                                return;
+                            }
                             handleLoadError(error);
                         }, () -> {
+                            if (cached) {
+                                removeStaleCachedRows(section, usedCachedIds);
+                            }
+
+                            // Once, with every part: the first parts keep their rows in the cache, and a failure of a later one
+                            // leaves the cache of the last whole load.
+                            saveCachedGroups(section, loadedGroups);
+
+                            finishCachedRefresh(section, -1);
+
                             // The account's History has no video: the ones watched here instead, as the History grid had them
                             if (isHistorySection() && getView() != null && getView().isEmpty() && !VideoStateService.instance(getContext()).isEmpty()) {
                                 updateLocalHistoryRows();
@@ -1167,6 +1692,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
     private void updateVideoGrid(BrowseSection section, Observable<MediaGroup> group, int column) {
         disposeActions();
+        // A cache dropped by the last, aborted refresh is rebuilt by this one
+        mInvalidatedCachedSections.remove(section.getId());
 
         if (getView() == null) {
             Log.e(TAG, "Browse view has been unloaded from the memory. Low RAM?");
@@ -1176,12 +1703,17 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         Log.d(TAG, "updateGridHeader: Start loading section: " + section.getTitle());
 
-        getView().showProgressBar(true);
+        boolean cached = mCachedContentShown && mCachedShownGroups != null;
+
+        getView().showProgressBar(!cached);
 
         // Stay on the same group in case of multiple subscribe calls
         VideoGroup baseGroup = VideoGroup.from(section, column);
         baseGroup.setAction(VideoGroup.ACTION_REPLACE);
-        getView().updateSection(baseGroup);
+
+        if (!cached) {
+            getView().updateSection(baseGroup);
+        }
 
         if (group == null) {
             // No group. Maybe just clear.
@@ -1203,18 +1735,75 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                             VideoGroup videoGroup = VideoGroup.from(baseGroup, mediaGroup);
                             // The grid of History with Hide Shorts History: the videos watched here, its shorts hidden too
                             appendLocalHistory(videoGroup, false, videoGroup.isEmpty());
+
+                            if (cached) {
+                                int oldId = findCachedGroupId(videoGroup.getPosition());
+
+                                videoGroup.setAction(VideoGroup.ACTION_REPLACE);
+
+                                if (oldId != -1) {
+                                    videoGroup.setId(oldId);
+                                }
+                            }
+
+                            Video focusedBefore = mCurrentVideo;
                             getView().updateSection(videoGroup);
+
+                            if (cached) {
+                                restoreCachedFocusedItem(videoGroup, focusedBefore);
+                            }
+
                             mBrowseProcessor.process(videoGroup);
                             MediaServiceManager.instance().warmUpPlaybackIfNeeded(videoGroup);
+                            saveCachedGroup(section, videoGroup);
 
                             continueGroupIfNeeded(videoGroup);
                         },
                         error -> {
                             Log.e(TAG, "updateGridHeader error: %s", error.getMessage());
+                            if (handleCachedRefreshError(error, section, column)) {
+                                return;
+                            }
                             handleLoadError(error);
-                        }, () -> handleLoadError(null));
+                        }, () -> {
+                            finishCachedRefresh(section, column);
+                            handleLoadError(null);
+                        });
 
         mActions.add(updateAction);
+    }
+
+    private int findCachedGroupId(int position) {
+        if (mCachedShownGroups == null) {
+            return -1;
+        }
+
+        for (VideoGroup oldGroup : mCachedShownGroups) {
+            if (oldGroup.getPosition() == position) {
+                return oldGroup.getId();
+            }
+        }
+
+        return -1;
+    }
+
+    private void removeStaleCachedRows(BrowseSection section, Set<Integer> usedCachedIds) {
+        // The view or the cached rows may be gone when the whole load completes (the app is closing, or another account is
+        // selected)
+        if (mCachedShownGroups == null || getView() == null) {
+            return;
+        }
+
+        for (VideoGroup oldGroup : mCachedShownGroups) {
+            if (usedCachedIds.contains(oldGroup.getId())) {
+                continue;
+            }
+
+            VideoGroup stale = VideoGroup.from(section, oldGroup.getPosition());
+            stale.setId(oldGroup.getId());
+            stale.setAction(VideoGroup.ACTION_REPLACE);
+            getView().updateSection(stale);
+        }
     }
 
     private void continueGroup(VideoGroup group) {
@@ -1268,6 +1857,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                             VideoGroup videoGroup = VideoGroup.from(group, continueGroup);
                             getView().updateSection(videoGroup);
                             mBrowseProcessor.process(videoGroup);
+                            BrowseSection section = videoGroup.getSection();
+                            appendCachedGroup(section != null ? section : getCurrentSection(), videoGroup);
 
                             // Nothing new to show: the row would stop at the card that asked for the page
                             if (videoGroup.getSize() == size && videoGroup.getDuplicateCount() > duplicateCount
@@ -1595,6 +2186,15 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     @Override
     public void onAccountChanged(Account account) {
         Log.d(TAG, "On account changed");
+
+        // An in-flight cached refresh would save the rows of the old account (or remove its stale ones) after the cache is cleared
+        disposeActions();
+
+        if (mBrowseCache != null) {
+            mBrowseCache.invalidate();
+        }
+
+        discardCachedState();
 
         if (getView() == null) {
             return;

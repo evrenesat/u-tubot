@@ -31,8 +31,10 @@ public class UtubotSettings {
     private static final String KEY_ANSWER_IN_MENU = "answer_in_menu";
     private static final String KEY_PANEL = "summary_panel";
     private static final String KEY_AUTO_CAPTIONS = "auto_captions";
+    private static final String KEY_AUTO_CUTS = "auto_cuts";
     private static final String KEY_WAIT_MS = "wait_ms";
     private static final String KEY_PANEL_DELAY_MS = "panel_delay_ms";
+    private static final String KEY_BROWSE_REFRESH_MINUTES = "browse_refresh_minutes";
     private static final String KEY_PAIR_PROMPT_DONE = "pair_prompt_done";
     private static final String KEY_SETUP_PROMPT_DONE = "setup_prompt_done";
     private static final String KEY_UPDATE_URL = "update_url";
@@ -306,6 +308,14 @@ public class UtubotSettings {
         mPrefs.edit().putBoolean(KEY_AUTO_CAPTIONS, enabled).apply();
     }
 
+    public boolean isApplyReadyCutsEnabled() {
+        return mPrefs.getBoolean(KEY_AUTO_CUTS, false);
+    }
+
+    public void setApplyReadyCutsEnabled(boolean enabled) {
+        mPrefs.edit().putBoolean(KEY_AUTO_CUTS, enabled).apply();
+    }
+
     /**
      * The pairing dialog was shown (and closed or used) once: it doesn't open by itself again
      */
@@ -337,6 +347,16 @@ public class UtubotSettings {
     public void setPanelDelayMs(int delayMs) {
         if (isPanelDelayChoice(delayMs)) {
             mPrefs.edit().putInt(KEY_PANEL_DELAY_MS, delayMs).apply();
+        }
+    }
+
+    public int getBrowseRefreshMinutes() {
+        return BrowseCachePolicy.clampMinutes(mPrefs.getInt(KEY_BROWSE_REFRESH_MINUTES, BrowseCachePolicy.DEFAULT_REFRESH_MINUTES));
+    }
+
+    public void setBrowseRefreshMinutes(int minutes) {
+        if (BrowseCachePolicy.isChoice(minutes)) {
+            mPrefs.edit().putInt(KEY_BROWSE_REFRESH_MINUTES, minutes).apply();
         }
     }
 

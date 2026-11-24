@@ -73,6 +73,8 @@ if (new File("${projectDir}/google-services.json").exists() && (getGradle().getS
     apply plugin: 'com.google.firebase.crashlytics'
 }
 
+apply from: rootProject.file('gradle/robolectric-offline.gradle')
+
 android {
     namespace 'com.liskovsoft.smartyoutubetv2.tv'
     // FIX: Default interface methods are only supported starting with Android N (--min-api 24)

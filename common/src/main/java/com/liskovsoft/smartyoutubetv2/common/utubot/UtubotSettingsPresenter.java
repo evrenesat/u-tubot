@@ -79,8 +79,12 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
                 option -> mSettings.setSummaryPanelEnabled(option.isSelected()), mSettings.isSummaryPanelEnabled())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_panel_delay),
                 formatDelay(context, mSettings.getPanelDelayMs()), option -> showPanelDelays())));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_browse_refresh),
+                formatBrowseRefresh(context, mSettings.getBrowseRefreshMinutes()), option -> showBrowseRefresh())));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_captions), context.getString(R.string.utubot_auto_captions_desc),
                 option -> mSettings.setAutoCaptionsEnabled(option.isSelected()), mSettings.isAutoCaptionsEnabled())));
+        categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_cuts), context.getString(R.string.utubot_auto_cuts_desc),
+                option -> mSettings.setApplyReadyCutsEnabled(option.isSelected()), mSettings.isApplyReadyCutsEnabled())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_prompts), option -> showPrompts())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_test_connection), option -> testConnection())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_advanced), context.getString(R.string.utubot_advanced_desc),
@@ -103,6 +107,20 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
         dialog.showDialog(context.getString(R.string.utubot_panel_delay));
     }
 
+    private void showBrowseRefresh() {
+        Context context = getContext();
+        AppDialogPresenter dialog = AppDialogPresenter.instance(context);
+        List<OptionItem> options = new ArrayList<>();
+
+        for (int minutes : BrowseCachePolicy.REFRESH_MINUTES_CHOICES) {
+            options.add(UiOptionItem.from(formatBrowseRefresh(context, minutes), option -> mSettings.setBrowseRefreshMinutes(minutes),
+                    minutes == mSettings.getBrowseRefreshMinutes()));
+        }
+
+        dialog.appendRadioCategory(context.getString(R.string.utubot_browse_refresh), options);
+        dialog.showDialog(context.getString(R.string.utubot_browse_refresh));
+    }
+
     /**
      * "1 s", "1.8 s"
      */
@@ -111,6 +129,13 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
         String text = seconds == Math.floor(seconds) ? String.valueOf((int) seconds) : String.valueOf(seconds);
 
         return context.getString(R.string.utubot_panel_delay_value, text);
+    }
+
+    /**
+     * "10 min"
+     */
+    static String formatBrowseRefresh(Context context, int minutes) {
+        return context.getString(R.string.utubot_browse_refresh_value, String.valueOf(minutes));
     }
 
     private void showAdvanced() {

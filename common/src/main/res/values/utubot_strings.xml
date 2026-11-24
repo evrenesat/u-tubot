@@ -30,8 +30,12 @@
     <string name="utubot_summary_panel_desc">A side panel with a short summary of the focused video</string>
     <string name="utubot_panel_delay">Summary delay</string>
     <string name="utubot_panel_delay_value">%s s</string>
+    <string name="utubot_browse_refresh">Browse refresh</string>
+    <string name="utubot_browse_refresh_value">%s min</string>
     <string name="utubot_auto_captions">Select HQ captions automatically</string>
     <string name="utubot_auto_captions_desc">Turns on the u·tubot captions when the video has them</string>
+    <string name="utubot_auto_cuts">Apply ready cuts automatically</string>
+    <string name="utubot_auto_cuts_desc">Turns on a director\'s cut that is already ready when the video opens</string>
     <string name="utubot_test_connection">Test connection</string>
     <string name="utubot_testing">Testing the connection…</string>
     <string name="utubot_test_ok">Connected: backend %1$s, user %2$s</string>
@@ -113,6 +117,7 @@
     <string name="utubot_cut">Director\'s cut</string>
     <string name="utubot_cut_menu">Director\'s cut…</string>
     <string name="utubot_cut_ready">Director\'s cut ready: %1$s%2$s</string>
+    <string name="utubot_cut_apply">Apply</string>
     <string name="utubot_cut_ready_length">, %s</string>
     <string name="utubot_cut_skipped">Skipped %s</string>
     <string name="utubot_cut_back">Back</string>
