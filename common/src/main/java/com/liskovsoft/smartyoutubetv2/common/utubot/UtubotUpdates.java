@@ -79,7 +79,7 @@ public final class UtubotUpdates {
         }
 
         Log.d(TAG, "Checking for updates");
-        AppUpdatePresenter.instance(BrowsePresenter.instance(appContext).getContext()).start(false);
+        AppUpdatePresenter.instance(BrowsePresenter.instance(appContext).getContext()).startAutomatic();
 
         return true;
     }

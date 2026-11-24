@@ -35,6 +35,7 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
     private final Runnable mRetryCheck = this::forceCheck;
     private boolean mIsForceCheck;
     private boolean mIsForceCheckRunning;
+    private boolean mIsInstalling;
     private int mFailedAttempts;
 
     public AppUpdatePresenter(Context context) {
@@ -112,6 +113,26 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         }
     }
 
+    /**
+     * A check the app makes by itself (the schedule after the start and every few hours): it always asks the channel, not
+     * gated by the shared checker's 15 minute/60 second "recently checked" window, and only when update notifications are on.
+     * It returns whether a check was started.
+     */
+    boolean startAutomatic() {
+        if (mIsForceCheckRunning || !mUpdateChecker.isUpdateCheckEnabled()) {
+            return false;
+        }
+
+        if (getUpdateUrls().length == 0) {
+            return false;
+        }
+
+        mIsForceCheck = false;
+        mUpdateChecker.forceCheckForUpdates(getUpdateUrls());
+
+        return true;
+    }
+
     void forceCheck() {
         mUpdateChecker.forceCheckForUpdates(getUpdateUrls());
     }
@@ -127,7 +148,14 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         if (mIsForceCheck) {
             finishForceCheck();
             showUpdateDialog(versionName, changelog, apkPath);
-        } else if (UtubotSettings.isBuiltIn() || GeneralData.instance(getContext()).isOldUpdateNotificationsEnabled()) {
+        } else if (UtubotSettings.isBuiltIn()) {
+            // The user dismissed this version already: the automatic notification stays silent until the next one
+            if (UtubotSettings.instance(getContext()).isUpdateDismissed(versionName)) {
+                return;
+            }
+
+            showUpdateDialog(versionName, changelog, apkPath);
+        } else if (GeneralData.instance(getContext()).isOldUpdateNotificationsEnabled()) {
             showUpdateDialog(versionName, changelog, apkPath);
         } else {
             pinUpdateSection(versionName, changelog, apkPath);
@@ -158,7 +186,7 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         onFinish();
     }
 
-    private void showUpdateDialog(String versionName, List<String> changelog, String apkPath) {
+    void showUpdateDialog(String versionName, List<String> changelog, String apkPath) {
         if (getContext() == null) {
             return;
         }
@@ -169,18 +197,46 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
             return;
         }
 
+        mIsInstalling = false;
         mSettingsPresenter.appendSingleButton(
                 UiOptionItem.from(getContext().getString(R.string.install_update), optionItem -> {
+                    mIsInstalling = true;
                     GeneralData.instance(getContext()).setChangelog(changelog);
                     mUpdateChecker.installUpdate();
                 }, false));
+
+        if (UtubotSettings.isBuiltIn()) {
+            // Dismissing it once suppresses this version: the automatic check offers only a newer one until then
+            mSettingsPresenter.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.update_not_now), optionItem -> {
+                setUpdateDismissed(versionName);
+                mSettingsPresenter.closeDialog();
+            }, false));
+        }
+
         mSettingsPresenter.appendStringsCategory(getContext().getString(R.string.update_changelog), createChangelogOptions(changelog));
         //mSettingsPresenter.appendSingleSwitch(UiOptionItem.from(getContext().getString(R.string.show_again), optionItem -> {
         //    mUpdateChecker.enableUpdateCheck(optionItem.isSelected());
         //}, mUpdateChecker.isUpdateCheckEnabled()));
 
         //mSettingsPresenter.setOnFinish(getOnFinish());
-        mSettingsPresenter.showDialog(String.format("%s %s", getContext().getString(R.string.app_name), versionName), AppUpdatePresenter::unhold);
+        mSettingsPresenter.showDialog(String.format("%s %s", getContext().getString(R.string.app_name), versionName),
+                !UtubotSettings.isBuiltIn() ? AppUpdatePresenter::unhold
+                        : () -> {
+                            if (!mIsInstalling) {
+                                setUpdateDismissed(versionName);
+                            }
+                            AppUpdatePresenter.unhold();
+                        });
+    }
+
+    /**
+     * Back or "Not now" closes the dialog without installing: the dismissed version isn't offered by an automatic check again.
+     * A newer version clears it by being different.
+     */
+    private void setUpdateDismissed(String versionName) {
+        if (UtubotSettings.isBuiltIn()) {
+            UtubotSettings.instance(getContext()).setDismissedUpdateVersion(versionName);
+        }
     }
 
     boolean canShowUpdateDialog() {

@@ -1,6 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import android.app.Activity;
+import android.content.pm.PackageInfo;
 import android.net.Uri;
 
 import com.liskovsoft.appupdatechecker2.AppUpdateCheckerListener;
@@ -11,6 +12,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowPackageManager;
 
 import java.util.Collections;
 import java.util.List;
@@ -19,6 +21,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.robolectric.Shadows.shadowOf;
 
 /**
  * The APK addresses of update.json are held to the rule of the backend address before the shared downloader sees them: https, or
@@ -131,5 +134,35 @@ public class UtubotUpdateCheckerTest {
 
         assertEquals(AppUpdateCheckerListener.LATEST_VERSION, mError.getMessage());
         assertEquals(0, mFound);
+    }
+
+    /**
+     * The channel's versionCode decides (u-tubot#80): a version name can be shared while the code already grew, and a channel
+     * that offers a higher code is an update even when the shared checker judged the names equal.
+     */
+    @Test
+    public void theVersionCodeDecidesWhenBothAreKnown() {
+        assertTrue("higher code, same name", UtubotUpdateChecker.isNewer(3010, 3011, false));
+        assertTrue("higher code, older name", UtubotUpdateChecker.isNewer(3010, 3011, false));
+        assertFalse("same code, newer name", UtubotUpdateChecker.isNewer(3010, 3010, true));
+        assertFalse("older code, newer name", UtubotUpdateChecker.isNewer(3010, 3009, true));
+        assertFalse("same code, same name", UtubotUpdateChecker.isNewer(3010, 3010, false));
+    }
+
+    @Test
+    public void aManifestWithoutACodeFallsBackToTheNameComparison() {
+        assertTrue("no channel code", UtubotUpdateChecker.isNewer(3010, 0, true));
+        assertFalse("no channel code, older name", UtubotUpdateChecker.isNewer(3010, 0, false));
+        assertTrue("no installed code", UtubotUpdateChecker.isNewer(0, 3011, true));
+    }
+
+    @Test
+    public void theInstalledCodeIsReadFromTheApp() {
+        PackageInfo info = mActivity.getPackageManager().getPackageInfo(mActivity.getPackageName(), 0);
+        info.versionCode = 3010;
+        ShadowPackageManager manager = shadowOf(mActivity.getPackageManager());
+        manager.installPackage(info);
+
+        assertEquals(3010, new UtubotUpdateChecker(mActivity, mListener).getInstalledVersionCode());
     }
 }

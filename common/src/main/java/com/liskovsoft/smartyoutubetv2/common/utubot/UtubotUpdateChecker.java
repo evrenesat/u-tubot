@@ -1,6 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 
 import androidx.annotation.Nullable;
@@ -10,6 +11,7 @@ import com.liskovsoft.appupdatechecker2.AppUpdateCheckerListener;
 import com.liskovsoft.sharedutils.mylogger.Log;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
@@ -31,8 +33,19 @@ public class UtubotUpdateChecker extends AppUpdateChecker {
     @Override
     public void onChangelogReceived(boolean isLatestVersion, String latestVersionName, int latestVersionNumber, List<String> changelog,
                                     Uri[] downloadUris) {
-        if (isLatestVersion || downloadUris == null) {
-            super.onChangelogReceived(isLatestVersion, latestVersionName, latestVersionNumber, changelog, downloadUris);
+        // The channel's versionCode is what decides, as the backend publishes one per release: a version name can be shared
+        // (the build's -dev suffix, or an older manifest) while the code already grew.
+        boolean isNewer = isNewer(getInstalledVersionCode(), latestVersionNumber, !isLatestVersion);
+
+        if (!isNewer) {
+            super.onChangelogReceived(true, latestVersionName, latestVersionNumber, null, downloadUris);
+            return;
+        }
+
+        if (downloadUris == null) {
+            // No address to fetch: reported the way the shared checker would, without a notification
+            super.onChangelogReceived(false, latestVersionName, latestVersionNumber,
+                    changelog != null ? changelog : Collections.emptyList(), null);
             return;
         }
 
@@ -44,7 +57,31 @@ public class UtubotUpdateChecker extends AppUpdateChecker {
             return;
         }
 
-        super.onChangelogReceived(isLatestVersion, latestVersionName, latestVersionNumber, changelog, allowed);
+        super.onChangelogReceived(false, latestVersionName, latestVersionNumber,
+                changelog != null ? changelog : Collections.emptyList(), allowed);
+    }
+
+    /**
+     * Whether the channel's version is newer than the installed one. With both codes known (they are always on this channel),
+     * the code decides; a manifest without one falls back to the version name comparison the shared checker made.
+     */
+    static boolean isNewer(int installedVersionCode, int latestVersionCode, boolean isNameNewer) {
+        if (installedVersionCode > 0 && latestVersionCode > 0) {
+            return latestVersionCode > installedVersionCode;
+        }
+
+        return isNameNewer;
+    }
+
+    /**
+     * The installed app's versionCode, 0 when it can't be read (the name comparison is used then)
+     */
+    int getInstalledVersionCode() {
+        try {
+            return getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), 0).versionCode;
+        } catch (PackageManager.NameNotFoundException e) {
+            return 0;
+        }
     }
 
     /**

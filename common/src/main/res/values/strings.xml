@@ -47,6 +47,7 @@
     <string name="video_buffer_size_highest">Highest</string>
     <string name="update_changelog">Changelog</string>
     <string name="install_update">Install update</string>
+    <string name="update_not_now">Not now</string>
     <string name="section_is_empty">Oops! There is nothing in here</string>
     <string name="dialog_add_to_playlist">Add/Remove from playlist</string>
     <string name="msg_signed_users_only">Signed users only</string>
