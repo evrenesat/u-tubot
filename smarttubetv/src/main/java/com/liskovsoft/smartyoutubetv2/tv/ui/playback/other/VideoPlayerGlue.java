@@ -55,6 +55,7 @@ import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.ThumbsUpAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.VideoSpeedAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.VideoStatsAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.VideoZoomAction;
+import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotCutAction;
 import com.liskovsoft.smartyoutubetv2.tv.util.ViewUtil;
 
 import java.util.HashMap;
@@ -137,6 +138,10 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
         putAction(new FlipAction(context));
         putAction(new SoundOffAction(context));
         putAction(new NextFrameAction(context));
+
+        if (UtubotCutAction.isAvailable(context)) {
+            putAction(new UtubotCutAction(context));
+        }
     }
 
     @Override
@@ -243,6 +248,9 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_VIDEO_STATS)) {
             adapter.add(mActions.get(R.id.action_video_stats));
+        }
+        if (UtubotCutAction.isAvailable(getContext())) {
+            adapter.add(mActions.get(R.id.action_utubot_cut));
         }
     }
 
