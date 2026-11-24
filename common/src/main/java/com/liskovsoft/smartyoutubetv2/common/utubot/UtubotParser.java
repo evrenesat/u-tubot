@@ -16,6 +16,10 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Me;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Prompt;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedCaption;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedCut;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedItem;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptSet;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Summary;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Transcript;
@@ -366,6 +370,121 @@ public final class UtubotParser {
         }
 
         return ranges;
+    }
+
+    //endregion
+
+    //region Processed videos
+
+    /**
+     * The caller's recently processed videos (`GET /v1/processed`): one item per video, newest first
+     */
+    public static ProcessedList parseProcessed(String body) throws JSONException {
+        JSONObject json = new JSONObject(body);
+        ProcessedList list = new ProcessedList();
+        JSONArray videos = json.optJSONArray("videos");
+
+        if (videos != null) {
+            List<ProcessedItem> parsed = new ArrayList<>();
+
+            for (int i = 0; i < videos.length(); i++) {
+                JSONObject videoJson = videos.optJSONObject(i);
+
+                if (videoJson == null) {
+                    continue;
+                }
+
+                String videoId = videoJson.optString("video_id", null);
+
+                if (videoId == null) {
+                    continue;
+                }
+
+                ProcessedItem item = new ProcessedItem();
+                item.videoId = videoId;
+                item.title = optString(videoJson, "title");
+                item.thumbnail = optString(videoJson, "thumbnail");
+                item.updatedAt = videoJson.optDouble("updated_at", 0);
+                item.summary = videoJson.optBoolean("summary");
+                item.captions = parseProcessedCaptions(videoJson.optJSONArray("captions"));
+                item.cuts = parseProcessedCuts(videoJson.optJSONArray("cuts"));
+                parsed.add(item);
+            }
+
+            list.videos = parsed;
+        }
+
+        return list;
+    }
+
+    private static List<ProcessedCaption> parseProcessedCaptions(@Nullable JSONArray array) {
+        if (array == null) {
+            return Collections.emptyList();
+        }
+
+        List<ProcessedCaption> captions = new ArrayList<>();
+
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject json = array.optJSONObject(i);
+
+            if (json == null) {
+                continue;
+            }
+
+            String jobId = json.optString("job_id", null);
+
+            if (jobId == null) {
+                continue;
+            }
+
+            ProcessedCaption caption = new ProcessedCaption();
+            caption.jobId = jobId;
+            caption.lang = optString(json, "lang");
+            caption.translateTo = optString(json, "translate_to");
+            caption.state = json.optString("state", caption.state);
+            caption.progress = json.optDouble("progress", caption.progress);
+            caption.error = optString(json, "error");
+            caption.createdAt = json.optDouble("created_at", caption.createdAt);
+            caption.updatedAt = json.optDouble("updated_at", caption.updatedAt);
+            captions.add(caption);
+        }
+
+        return captions;
+    }
+
+    private static List<ProcessedCut> parseProcessedCuts(@Nullable JSONArray array) {
+        if (array == null) {
+            return Collections.emptyList();
+        }
+
+        List<ProcessedCut> cuts = new ArrayList<>();
+
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject json = array.optJSONObject(i);
+
+            if (json == null) {
+                continue;
+            }
+
+            String requestId = optString(json, "request_id");
+
+            if (requestId == null) {
+                continue;
+            }
+
+            ProcessedCut cut = new ProcessedCut();
+            cut.requestId = requestId;
+            cut.state = json.optString("state", cut.state);
+            cut.presetId = optString(json, "preset_id");
+            cut.presetLabel = optString(json, "preset_label");
+            cut.prompt = optString(json, "prompt");
+            cut.error = optString(json, "error");
+            cut.createdAt = json.optDouble("created_at", cut.createdAt);
+            cut.updatedAt = json.optDouble("updated_at", cut.updatedAt);
+            cuts.add(cut);
+        }
+
+        return cuts;
     }
 
     //endregion
