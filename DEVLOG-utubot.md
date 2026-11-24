@@ -6,8 +6,8 @@
   android-all jars from Maven Central during the test run). `gradle/robolectric-offline.gradle` (applied in `common` and
   `smarttubetv`) now resolves the instrumented jars for sdk 28, 30, 33 and 34 as Gradle dependencies, copies them to
   `build/robolectric-deps` (`copyRobolectricDependencies`) and sets `robolectric.offline=true` plus `robolectric.dependency.dir`
-  for every test task, the jars coming from the Google mirror of Maven Central first (Central answers 429 to them from the CI runners)
-  and cached by the workflow. Add the artifact to that list when a test uses a new `@Config(sdk = ...)`.
+  for every test task. Cause of the red CI: Maven Central answers 429 (Too Many Requests) to the GitHub runners, for poms and for the 150 MB jars; the CI action now installs a Gradle init script that sends every Central repository to Google's mirror
+  The workflow also caches the jars. Add the artifact to that list when a test uses a new `@Config(sdk = ...)`.
 
 ## 2026-11-23 (director's cuts playable from lists and the player; u-tubot#64)
 

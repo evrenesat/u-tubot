@@ -1,0 +1,20 @@
+// CI only: sends every Maven Central repository (build classpath, plugins and dependencies) to Google's mirror of it.
+def mirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+def centralUrls = ['https://repo.maven.apache.org/maven2', 'https://repo1.maven.org/maven2']
+
+def redirect = { repositories ->
+    repositories.configureEach { repository ->
+        if (repository instanceof MavenArtifactRepository && centralUrls.contains(repository.url.toString().replaceAll('/$', ''))) {
+            repository.url = mirror
+        }
+    }
+}
+
+gradle.settingsEvaluated { settings ->
+    redirect(settings.pluginManagement.repositories)
+    redirect(settings.dependencyResolutionManagement.repositories)
+}
+gradle.beforeProject { project ->
+    redirect(project.buildscript.repositories)
+    redirect(project.repositories)
+}
