@@ -34,18 +34,21 @@ class ArtifactKind:
 
 
 KINDS: tuple[ArtifactKind, ...] = (
-    ArtifactKind("metadata", "video_meta", "LENGTH(json)", "fetched_at"),
+    ArtifactKind("metadata", "video_meta", "LENGTH(CAST(json AS BLOB))", "fetched_at"),
     ArtifactKind(
-        "transcript", "transcripts", "LENGTH(text)+IFNULL(LENGTH(segments),0)", "fetched_at"
+        "transcript",
+        "transcripts",
+        "LENGTH(CAST(text AS BLOB))+IFNULL(LENGTH(CAST(segments AS BLOB)),0)",
+        "fetched_at",
     ),
-    ArtifactKind("captions", "captions", "LENGTH(vtt)", "created_at"),
-    ArtifactKind("triage", "triage", "LENGTH(json)", "created_at"),
-    ArtifactKind("analysis", "deep", "LENGTH(json)", "created_at"),
-    ArtifactKind("summary", "summaries", "LENGTH(text)", "created_at"),
-    ArtifactKind("condensed", "condensed", "LENGTH(text)", "created_at"),
-    ArtifactKind("insight", "insights", "LENGTH(json)", "created_at"),
-    ArtifactKind("pipeline", "stage_cache", "LENGTH(json)", "created_at"),
-    ArtifactKind("verdict", "verdicts", "LENGTH(json)", "updated_at"),
+    ArtifactKind("captions", "captions", "LENGTH(CAST(vtt AS BLOB))", "created_at"),
+    ArtifactKind("triage", "triage", "LENGTH(CAST(json AS BLOB))", "created_at"),
+    ArtifactKind("analysis", "deep", "LENGTH(CAST(json AS BLOB))", "created_at"),
+    ArtifactKind("summary", "summaries", "LENGTH(CAST(text AS BLOB))", "created_at"),
+    ArtifactKind("condensed", "condensed", "LENGTH(CAST(text AS BLOB))", "created_at"),
+    ArtifactKind("insight", "insights", "LENGTH(CAST(json AS BLOB))", "created_at"),
+    ArtifactKind("pipeline", "stage_cache", "LENGTH(CAST(json AS BLOB))", "created_at"),
+    ArtifactKind("verdict", "verdicts", "LENGTH(CAST(json AS BLOB))", "updated_at"),
 )
 BY_NAME = {k.name: k for k in KINDS}
 KIND_NAMES = tuple(BY_NAME) + (KIND_ARCHIVE,)
