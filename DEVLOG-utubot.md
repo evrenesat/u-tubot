@@ -23,6 +23,8 @@
   path, no cut and plain play, only the section's cards are Processed). The steps 1-3 tests (parser, client, tiles, presenter) stay.
 - Docs: README Features and docs/install.md "Using it" list the section; docs/server.md and docs/captions.md say what its tiles show
   and that opening one selects the HQ captions.
+- Verified with JDK 25: `:common:testStutubotDebugUnitTest` (1628 tests, 0 failures, 0 errors, 7 skipped),
+  `:smarttubetv:assembleStutubotDebug`, and in `ai-backend` `uv run pytest -q` (1048 passed) and `uv run ruff check` (clean).
 
 ## 2026-11-24 (Processed sidebar section, issue 66 step 3)
 
