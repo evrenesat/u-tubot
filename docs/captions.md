@@ -250,8 +250,9 @@ the key optional). Nothing in an existing config needs to change. Entries in `as
 
 Audio longer than the engine's `max_chunk_s` is cut into chunks that overlap by `asr_chunk_overlap_s` (2 s), so a word on a cut is whole
 in one of the two. Chunks run in parallel up to `max_parallel`. When they are stitched back, each chunk keeps only what lies on its side
-of the middle of every overlap, and text that both sides still said (at least two words repeated at the seam) is dropped once.
-Timestamps are offset to the full audio. A progress report is `finished chunks / total chunks` of the ASR step; the whole job is
+of the middle of every overlap, and text that both sides still said is dropped once. Segment text needs at least two repeated words at
+the seam; words use their real times instead, so the same bare token starting within 0.3 s on both sides is one word (a single doubled
+word is dropped too). Timestamps are offset to the full audio. A progress report is `finished chunks / total chunks` of the ASR step; the whole job is
 about 2 % download start, 20 % downloaded, 25 % converted, then the ASR step up to 85 %.
 
 A transcript made this way is stored with its segments (start, end, text), the language Whisper detected most (by audio seconds), the

@@ -100,6 +100,13 @@
    the end of the previous overlapping row, so YouTube's automatic rolling windows no longer show
    the repeated tail twice. Word comparison ignores case and punctuation; a repeat after a gap is
    kept. Exact duplicate rows are still dropped. Tests in `tests/test_align.py`.
+## 2026-11-24 (captions seam dedupe by word time, u-tubot #51)
+
+- `chunking.dedupe_words` now decides a seam repeat by bare token and start time (`DEDUPE_START_S`, 0.3 s) instead of needing two
+  identical words in the text sequence, so a single word doubled across a chunk seam is dropped once and a word the chunks time
+  differently is not matched by text alone. `dedupe_segments` keeps its two-word rule (segments have no per-word times).
+- Tests: a single doubled word at the seam, the same token said at a different time kept, and only one copy of a repeated word dropped.
+  `docs/captions.md` (Chunking and stitching) updated.
 
 ## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
 

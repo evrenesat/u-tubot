@@ -18,6 +18,7 @@ from .types import Segment, Word
 MIN_TAIL_S = 3.0
 DEDUPE_MAX_WORDS = 12
 DEDUPE_MIN_WORDS = 2
+DEDUPE_START_S = 0.3
 NON_WORD_RE = re.compile(r"[^\w]+", re.UNICODE)
 
 
@@ -161,20 +162,41 @@ def dedupe_segments(
     return out
 
 
+def _seam_match(previous: list[Word], word: Word) -> int | None:
+    """The last word in `previous` said at about the same time as `word` (same bare token), if any."""
+    token = bare(word.text)
+    for index in range(len(previous) - 1, -1, -1):
+        old = previous[index]
+        if bare(old.text) == token and abs(old.start - word.start) <= DEDUPE_START_S:
+            return index
+    return None
+
+
 def dedupe_words(
     parts: list[list[Word]], spans: list[Span], stats: StitchStats | None = None
 ) -> list[Word]:
+    """Join chunk words; a word the previous chunk already said at the same time is dropped.
+
+    Words repeat in ordinary speech, so a seam repeat is decided by time rather than by the text
+    sequence: the same bare token starting within `DEDUPE_START_S` on both sides is one word.
+    """
     out: list[Word] = []
     for index, items in enumerate(parts):
         if not items:
             continue
         if out and index > 0 and items[0].start < spans[index - 1].end:
-            tail = [bare(w.text) for w in out[-DEDUPE_MAX_WORDS:]]
-            head = [bare(w.text) for w in items[:DEDUPE_MAX_WORDS]]
-            repeat = _repeat_length(tail, head)
-            if stats is not None:
-                stats.repeated_words += repeat
-            items = items[repeat:]
+            previous = out[-DEDUPE_MAX_WORDS:]
+            kept: list[Word] = []
+            for word in items:
+                if word.start < spans[index - 1].end:
+                    match = _seam_match(previous, word)
+                    if match is not None:
+                        previous.pop(match)
+                        if stats is not None:
+                            stats.repeated_words += 1
+                        continue
+                kept.append(word)
+            items = kept
         out.extend(items)
     return out
 
