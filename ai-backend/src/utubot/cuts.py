@@ -30,7 +30,7 @@ from .db import Database
 from .llm import INTERACTIVE, LLMClient, LLMError
 from .media_archive import MediaArchive
 from .prompts import CUT_PRESET_INSTRUCTIONS, Prompt, PromptStore
-from .transcripts import SOURCE_ASR, Transcript, TranscriptService, fmt_ts
+from .transcripts import ROLLING_MIN_WORDS, SOURCE_ASR, Transcript, TranscriptService, fmt_ts
 from .youtube import YoutubeGate
 
 log = logging.getLogger("utubot.cuts")
@@ -234,10 +234,26 @@ def _effective_end(index: int, segments: list[tuple[float, float, str]]) -> floa
     return segments[index + 1][0] if index + 1 < len(segments) else start
 
 
+def _drop_rolling_repeat(text: str, previous: str) -> str:
+    """A caption rolling window repeats the tail of the previous fragment at the start of this
+    one; only that repeated run is dropped, like `transcripts.parse_json3_words` does."""
+    words = text.split()
+    previous_words = previous.split()
+    for k in range(min(len(previous_words), len(words)), 0, -1):
+        if k >= ROLLING_MIN_WORDS and previous_words[-k:] == words[:k]:
+            return " ".join(words[k:])
+    return text
+
+
+def _ends_sentence(text: str) -> bool:
+    """A sentence end character ends a unit, also when a quote or bracket closes the sentence."""
+    return text.rstrip(" '\"”’)]}」』").endswith(tuple(SENTENCE_END))
+
+
 def build_units(segments: list[tuple[float, float, str]], cfg) -> list[Unit]:
     """Merge caption fragments into sentence-like units: a new unit starts on a pause over
     `cuts.unit_max_pause_s` or after sentence punctuation, and a unit never grows past
-    `cuts.unit_max_s`."""
+    `cuts.unit_max_s`. Rolling caption fragments do not repeat the previous fragment's tail."""
     max_pause = cfg.unit_max_pause_s
     max_len = cfg.unit_max_s
     units: list[Unit] = []
@@ -253,15 +269,23 @@ def build_units(segments: list[tuple[float, float, str]], cfg) -> list[Unit]:
 
     prev_end: float | None = None
     prev_text = ""
+    prev_raw = ""
     for index, (seg_start, _seg_end, raw) in enumerate(segments):
         text = _clean_text(raw)
         if not text:
             continue
+        raw_text = text
         seg_end = _effective_end(index, segments)
         pause = 0.0 if prev_end is None else seg_start - prev_end
         too_long = start is not None and seg_end - start > max_len
-        if parts and (pause > max_pause or too_long or prev_text.endswith(tuple(SENTENCE_END))):
+        if parts and (pause > max_pause or too_long or _ends_sentence(prev_text)):
             flush()
+        if parts:
+            text = _drop_rolling_repeat(text, prev_raw)
+            if not text:
+                prev_end = max(seg_end, prev_end or 0.0)
+                prev_raw = raw_text
+                continue
         if seg_end - seg_start > max_len:
             # One caption block longer than the cap is split across its own length, evenly by time.
             words = text.split()
@@ -282,6 +306,7 @@ def build_units(segments: list[tuple[float, float, str]], cfg) -> list[Unit]:
                 units.append(Unit(len(units) + 1, at, until, chunk))
                 start, end, prev_text = None, until, chunk
             prev_end = seg_end
+            prev_raw = prev_text or raw_text
             continue
         if start is None:
             start = seg_start

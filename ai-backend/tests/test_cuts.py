@@ -83,6 +83,39 @@ class TestBuildUnits:
         units = build_units(segs((0.0, 2.0, "  "), (2.5, 4.0, "real text")), CFG)
         assert len(units) == 1 and units[0].start == 2.5
 
+    def test_drops_rolling_caption_repeats(self):
+        units = build_units(
+            segs(
+                (0.0, 4.0, "one two three"),
+                (4.0, 8.0, "two three four five"),
+                (8.0, 12.0, "three four five six"),
+            ),
+            CFG,
+        )
+        # Auto captions repeat the tail of the last fragment at the start of the next one.
+        assert [u.text for u in units] == ["one two three four five six"]
+
+    def test_a_repeated_line_after_a_pause_is_kept(self):
+        units = build_units(segs((0.0, 2.0, "Yes."), (5.0, 7.0, "Yes.")), CFG)
+        assert [u.text for u in units] == ["Yes.", "Yes."]
+
+    def test_a_sentence_closed_by_a_quote_or_bracket_ends_a_unit(self):
+        units = build_units(
+            segs(
+                (0.0, 2.0, 'He said "Done."'),
+                (2.5, 4.0, "Then the demo happens."),
+                (4.5, 6.0, "(That was it.)"),
+                (6.5, 8.0, "The result follows."),
+            ),
+            CFG,
+        )
+        assert [u.text for u in units] == [
+            'He said "Done."',
+            "Then the demo happens.",
+            "(That was it.)",
+            "The result follows.",
+        ]
+
     def test_numbering_is_sequential(self):
         units = build_units(
             segs((0.0, 1.0, "a."), (2.0, 3.0, "b."), (4.0, 5.0, "c."), (6.0, 7.0, "d.")), CFG
