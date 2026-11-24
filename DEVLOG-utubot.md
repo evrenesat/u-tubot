@@ -4,7 +4,7 @@
 
 - Every Robolectric test class failed in CI since 23 Nov at `MavenArtifactFetcher` (an `IOException` while Robolectric fetched its
   android-all jars from Maven Central during the test run). `gradle/robolectric-offline.gradle` (applied in `common` and
-  `smarttubetv`) now resolves the instrumented jars for sdk 28, 30 and 33 as Gradle dependencies, copies them to
+  `smarttubetv`) now resolves the instrumented jars for sdk 28, 30, 33 and 34 as Gradle dependencies, copies them to
   `build/robolectric-deps` (`copyRobolectricDependencies`) and sets `robolectric.offline=true` plus `robolectric.dependency.dir`
   for every test task. Add the artifact to that list when a test uses a new `@Config(sdk = ...)`.
 
