@@ -463,6 +463,27 @@ class TestCreateAndBuild:
         assert len(cuts_env.llm.cut_calls) == 1
         assert "Target length: 300 s" in cuts_env.llm.cut_calls[0]
 
+    async def test_changing_the_band_settings_rebuilds_a_targeted_cut(self, cuts_env):
+        set_transcript(cuts_env.fetcher, n=132)
+        cuts_env.llm.cut_answer = {
+            "parts": [
+                {"from": i * 6 + 1, "to": i * 6 + 6, "label": f"P{i}", "rank": 22 - i}
+                for i in range(22)
+            ],
+            "summary": "s",
+        }
+        r = await post_cut(cuts_env, preset="cut-highlights-5")
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "ready", doc
+        calls = len(cuts_env.llm.cut_calls)
+        for name, value in (("length_tolerance", 0.2), ("over_ask_frac", 0.3)):
+            setattr(cuts_env.cfg.cuts, name, value)
+            r = await post_cut(cuts_env, preset="cut-highlights-5")
+            doc = await wait_ready(cuts_env, r.json()["request_id"])
+            assert doc["state"] == "ready", doc
+            assert len(cuts_env.llm.cut_calls) == calls + 1, name
+            calls += 1
+
     async def test_old_format_answer_without_ranks_still_builds(self, cuts_env):
         set_transcript(cuts_env.fetcher, n=132)
         cuts_env.llm.cut_answer = {

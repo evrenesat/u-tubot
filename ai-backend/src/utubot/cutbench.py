@@ -747,7 +747,10 @@ def _one_pass(
     data = _ask(model_fn, messages, out)
     parts = parse_cut_answer(data, units)
     if target_s:
-        parts, _total_s = select_for_target(parts, units, cfg, target_s)
+        duration_s = meta.get("duration_s")
+        parts, _total_s = select_for_target(
+            parts, units, cfg, target_s, float(duration_s) if duration_s else None
+        )
     return data, parts
 
 

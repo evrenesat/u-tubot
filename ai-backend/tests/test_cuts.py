@@ -14,6 +14,7 @@ from utubot.cuts import (
     candidates_from,
     chapters_between,
     cut_document,
+    effective_target_s,
     expand_candidate_parts,
     finalize_parts,
     merge_candidates,
@@ -373,6 +374,38 @@ class TestTargetLength:
         low, high = target_band(300, CFG.length_tolerance)
         assert low <= total <= high
         assert chosen[0].first == 1  # the earliest parts survive
+
+    def test_duplicate_ranks_keep_video_order(self):
+        units = eleven_minute_units()
+        ranks = [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4]
+        spans = [(i * 6 + 1, i * 6 + 6, r) for i, r in enumerate(ranks)]
+        chosen, _ = select_for_target(ranked(units, spans), units, CFG, 300)
+        # The three rank-1 parts come in video order, then the first two rank-2 parts.
+        assert [p.first for p in chosen] == [1, 7, 13, 19, 25]
+
+    def test_out_of_range_ranks_still_make_a_banded_selection(self):
+        units = eleven_minute_units()
+        ranks = [0, -3, 999, 500, 2, 4, 3, 6, 5, 8, 7]
+        spans = [(i * 6 + 1, i * 6 + 6, r) for i, r in enumerate(ranks)]
+        chosen, total = select_for_target(ranked(units, spans), units, CFG, 300)
+        low, high = target_band(300, CFG.length_tolerance)
+        assert low <= total <= high
+        assert [p.start_ms for p in chosen] == sorted(p.start_ms for p in chosen)
+
+    def test_many_close_parts_finalize_inside_the_band(self):
+        units = [Unit(n, n - 1.0, float(n), f"u{n}") for n in range(1, 661)]
+        # 5 s parts with 2 s gaps: padding turns the gaps under merge_gap_s, so finalization
+        # merges them and adds the gaps back to the kept length.
+        spans = [(i * 7 + 1, i * 7 + 5, i + 1) for i in range(93)]
+        chosen, total = select_for_target(ranked(units, spans), units, CFG, 300, duration_s=660.0)
+        kept, kept_s = finalize_parts(chosen, CFG, guard=False, duration_s=660.0)
+        low, high = target_band(300, CFG.length_tolerance)
+        assert kept and low <= kept_s <= high
+        assert total == kept_s
+
+    def test_a_video_at_the_top_of_the_band_needs_no_target(self):
+        assert effective_target_s(CFG, "cut-highlights-5", 345.0) is None
+        assert effective_target_s(CFG, "cut-highlights-5", 345.1) == 300
 
     def test_an_answer_below_the_band_comes_back_whole_and_short(self):
         units = eleven_minute_units()

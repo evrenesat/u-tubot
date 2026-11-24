@@ -581,8 +581,48 @@ def _trim_to(part: Part, units: list[Unit], budget_s: float, cfg) -> Part | None
     )
 
 
+def _finalized_s(parts: list[Part], cfg, duration_s: float) -> float:
+    """The length `finalize_parts` would keep, without changing the caller's parts."""
+    try:
+        _kept, kept_s = finalize_parts(
+            sorted(parts, key=lambda p: p.start_ms),
+            cfg,
+            guard=False,
+            duration_s=duration_s,
+        )
+    except CutRefused:
+        return 0.0
+    return kept_s or 0.0
+
+
+def _trim_to_finalized(
+    part: Part, chosen: list[Part], units: list[Unit], cfg, high: float, duration_s
+):
+    """The leading units of `part` that keep `chosen` at or under `high` after finalizing."""
+    if part.first is None or part.last is None:
+        return None
+    fit = None
+    lo, hi = part.first, part.last
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        trial = Part(
+            part.label,
+            part.start_ms,
+            int(units[mid - 1].end * 1000),
+            part.rank,
+            part.first,
+            mid,
+        )
+        if _finalized_s([*chosen, trial], cfg, duration_s) <= high:
+            fit = trial
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return fit
+
+
 def select_for_target(
-    parts: list[Part], units: list[Unit], cfg, target_s: int
+    parts: list[Part], units: list[Unit], cfg, target_s: int, duration_s: float | None = None
 ) -> tuple[list[Part], float]:
     """Pick parts by importance until the target is met; `(parts in video order, length in s)`.
 
@@ -590,11 +630,17 @@ def select_for_target(
     A part that would push the total past the band is trimmed at a unit boundary to fit; the
     selection stops once the target is reached. A model answer shorter than the band returns
     everything it gave, so the caller can see the shortfall.
-    """
+
+    With `duration_s` the length is measured after `finalize_parts` (the kept length the caller
+    will return), so padding and gap merging cannot push an otherwise fitting selection over
+    the band. The returned parts are still un-finalized: finalizing pads them once more."""
     low, high = target_band(target_s, cfg.length_tolerance)
-    pool_s = sum(_padded_s(p, cfg) for p in parts)
+    if duration_s is None:
+        pool_s = sum(_padded_s(p, cfg) for p in parts)
+    else:
+        pool_s = _finalized_s(parts, cfg, duration_s)
     if pool_s < low:
-        return list(parts), pool_s
+        return sorted(parts, key=lambda p: p.start_ms), pool_s
     order = sorted(
         range(len(parts)),
         key=lambda i: (parts[i].rank if parts[i].rank is not None else len(parts) + i + 1, i),
@@ -605,14 +651,25 @@ def select_for_target(
         if total >= target_s:
             break
         part = parts[i]
-        length = _padded_s(part, cfg)
-        if total + length > high:
-            trimmed = _trim_to(part, units, high - total, cfg)
-            if trimmed is None:
-                continue
-            part, length = trimmed, _padded_s(trimmed, cfg)
-        chosen.append(part)
-        total += length
+        if duration_s is None:
+            length = _padded_s(part, cfg)
+            if total + length > high:
+                trimmed = _trim_to(part, units, high - total, cfg)
+                if trimmed is None:
+                    continue
+                part, length = trimmed, _padded_s(trimmed, cfg)
+            chosen.append(part)
+            total += length
+        else:
+            length = _finalized_s([*chosen, part], cfg, duration_s)
+            if length > high:
+                trimmed = _trim_to_finalized(part, chosen, units, cfg, high, duration_s)
+                if trimmed is None:
+                    continue
+                part = trimmed
+                length = _finalized_s([*chosen, part], cfg, duration_s)
+            chosen.append(part)
+            total = length
     chosen.sort(key=lambda p: p.start_ms)
     return chosen, total
 
@@ -1793,10 +1850,15 @@ class CutService:
             return saved.label
         return PRESET_LABELS.get(preset_id or "", preset_id or "Cut")
 
-    @staticmethod
-    def _version(preset_id: str | None, instruction: str, target_s: int | None = None) -> str:
+    def _version(self, preset_id: str | None, instruction: str, target_s: int | None = None) -> str:
         mark = "cut" if preset_id else "prompt"
-        text = instruction if target_s is None else f"{instruction}|target={target_s}"
+        text = instruction
+        if target_s is not None:
+            cfg = self.cfg.cuts
+            text += (
+                f"|target={target_s}|tolerance={cfg.length_tolerance!r}"
+                f"|over_ask={cfg.over_ask_frac!r}"
+            )
         return f"{mark}:" + hashlib.sha256(text.encode()).hexdigest()[:16]
 
     @staticmethod
@@ -1926,7 +1988,9 @@ class CutEngine:
                 parts = expand_candidate_parts(parts, candidates, units)
             if not target_s:
                 return data, parts
-            chosen, total_s = select_for_target(parts, units, cfg, target_s)
+            duration = meta.get("duration_s")
+            duration_s = float(duration) if duration else None
+            chosen, total_s = select_for_target(parts, units, cfg, target_s, duration_s)
             low, high = target_band(target_s, cfg.length_tolerance)
             if total_s >= low:
                 return data, chosen

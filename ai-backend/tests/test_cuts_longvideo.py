@@ -104,7 +104,7 @@ class TestLongVideos:
         assert doc["state"] == "ready", doc
         cut = doc["cut"]
         assert cut["target_s"] == 300
-        assert 255 <= cut["kept_s"] <= 345 + 5, cut["kept_s"]
+        assert 255 <= cut["kept_s"] <= 345, cut["kept_s"]
         assert cut["duration_ms"] == int(THREE_HOURS_S * 1000)
         starts = [p["start_ms"] for p in cut["parts"]]
         assert starts == sorted(starts)
@@ -183,7 +183,7 @@ class TestLongVideos:
         r = await post_cut(cuts_env, preset="cut-highlights-5")
         doc = await wait_ready(cuts_env, r.json()["request_id"], wait_ms=30000)
         assert doc["state"] == "ready", doc
-        assert 255 <= doc["cut"]["kept_s"] <= 345 + 5
+        assert 255 <= doc["cut"]["kept_s"] <= 345
         events = await events_of(cuts_env, doc)
         rounds = [
             e["detail"] for e in events if e["stage"] == "reduce" and e["detail"].get("round")
