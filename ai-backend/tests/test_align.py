@@ -56,6 +56,12 @@ def test_caption_cues_keep_repeated_text_after_a_gap():
     assert [" ".join(cue.lines) for cue in cues] == ["I don't know", "I don't know"]
 
 
+def test_caption_cues_keep_a_single_shared_word():
+    segments = [(0.0, 4.0, "Hello there"), (4.0, 6.0, "there it is")]
+    cues = caption_cues(segments, CFG)
+    assert [" ".join(cue.lines) for cue in cues] == ["Hello there", "there it is"]
+
+
 def test_caption_cues_re_break_text_that_is_too_long():
     text = " ".join(f"word{i}" for i in range(30))
     cues = caption_cues([(0.0, 30.0, text)], CFG)

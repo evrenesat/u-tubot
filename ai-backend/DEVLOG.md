@@ -96,10 +96,10 @@
 - `ai/CONTRACT.md`: the band is checked after finalization; the cache version carries both settings.
 ## 2026-11-24 (partial rolling caption rows)
 
-1. `align.caption_cues` drops a leading run of words from a caption row that repeats the end of
-   the previous overlapping row (two or more words, or a whole one-word row), so YouTube's
-   automatic rolling windows no longer show the repeated tail twice. Word comparison ignores
-   case and punctuation; a repeat after a gap is kept. Tests in `tests/test_align.py`.
+1. `align.caption_cues` drops a leading run of two or more words from a caption row that repeats
+   the end of the previous overlapping row, so YouTube's automatic rolling windows no longer show
+   the repeated tail twice. Word comparison ignores case and punctuation; a repeat after a gap is
+   kept. Exact duplicate rows are still dropped. Tests in `tests/test_align.py`.
 
 ## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
 

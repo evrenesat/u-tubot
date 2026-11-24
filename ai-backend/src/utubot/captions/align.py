@@ -339,11 +339,11 @@ def _repeated_prefix(previous: str, current: str) -> int:
     """How many leading words of `current` repeat the end of `previous` (a rolling caption row)."""
     previous_words = [bare(word) for word in previous.split()]
     current_words = [bare(word) for word in current.split()]
-    for size in range(min(len(previous_words), len(current_words)), 0, -1):
-        if size < ROLLING_MIN_WORDS and size != len(current_words):
-            continue
+    for size in range(min(len(previous_words), len(current_words)), ROLLING_MIN_WORDS - 1, -1):
         if previous_words[-size:] == current_words[:size]:
             return size
+    if previous_words == current_words:
+        return len(current_words)
     return 0
 
 
