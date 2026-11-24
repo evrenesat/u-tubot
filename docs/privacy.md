@@ -17,6 +17,9 @@ To **your backend** only, over the address in the imported setup:
 The app does **not** send your YouTube account, cookies or watch history to the backend, and never talks to any LLM itself. If the
 backend is unreachable, rows show unfiltered.
 
+The app also keeps on its own storage (`files/utubot_cache`) the ready verdicts and summaries of earlier sessions, scoped by the
+backend address, token and the backend's version, for 3 days; failures and pending answers are never stored.
+
 The app itself (Electric Eel / SmartTube) talks to YouTube as before and checks for updates at the address from your setup (and
 fetches `setup.json` once when you import it). With no setup imported it contacts no u·tubot server.
 
@@ -29,6 +32,8 @@ In `data_dir` (SQLite and `users.toml`):
 - per-video caches shared between users: title analysis, transcripts (text), deep analysis, captions (VTT);
 - per-user: policy overrides, prompt sets, summaries, feedback you submitted, caption jobs;
 - no audio after a caption or transcription job finishes (unless `keep_media = true`), no YouTube credentials;
+- short-lived failure notes for a video (a failed fetch or model task, minutes), which `POST /v1/videos/{id}/retry` clears;
+  successful caches (transcripts, analyses, summaries, captions) stay.
 - whether YouTube has captions for a video (3 days), and the state of the YouTube request gate (a cooldown end time).
 
 Logs may contain client IPs, video ids and errors. Tokens are never logged. Client IPs are used in memory for rate limits.

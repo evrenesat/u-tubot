@@ -47,6 +47,7 @@ public class UtubotAssessFlowTest {
     private final Context mContext = RuntimeEnvironment.getApplication();
     private final AtomicInteger mAssessCalls = new AtomicInteger();
     private volatile boolean mAssessFails;
+    private volatile String mServerVersion = "1.0";
     private TinyHttpServer mServer;
     private UtubotSettings mSettings;
 
@@ -54,6 +55,13 @@ public class UtubotAssessFlowTest {
     public void setUp() throws Exception {
         GlobalPreferences.instance(mContext);
         mServer = new TinyHttpServer();
+        mServer.on("/v1/health", request -> {
+            if (mServerVersion == null) {
+                return new TinyHttpServer.Response(500, "{}");
+            }
+
+            return new TinyHttpServer.Response(200, "{\"ok\":true,\"version\":\"" + mServerVersion + "\"}");
+        });
         mServer.on("/v1/assess", request -> {
             mAssessCalls.incrementAndGet();
 
@@ -168,6 +176,58 @@ public class UtubotAssessFlowTest {
         resolve(createRow(video("good")));
 
         assertEquals(calls, mAssessCalls.get());
+    }
+
+    private void restart() {
+        // A new session: the memory is gone, the disk cache of the same backend version is not
+        UtubotManager.instance(mContext).onConnectionChanged();
+    }
+
+    @Test
+    public void readyVerdictsSurviveARestartOnTheSameBackendVersion() throws Exception {
+        resolve(createRow(video("bad"), video("good")));
+        int calls = mAssessCalls.get();
+
+        restart();
+        VideoGroup group = VideoGroup.from(resolve(createRow(video("bad"), video("good"))).get(0), createSection());
+
+        assertEquals(calls, mAssessCalls.get());
+        assertEquals(1, group.getSize());
+    }
+
+    @Test
+    public void aNewBackendVersionAsksAgain() throws Exception {
+        resolve(createRow(video("good")));
+        int calls = mAssessCalls.get();
+
+        mServerVersion = "1.1";
+        restart();
+        resolve(createRow(video("good")));
+
+        assertEquals(calls + 1, mAssessCalls.get());
+    }
+
+    @Test
+    public void aBackendThatNeverAnswersHealthKeepsEveryVerdictOutOfTheDisk() throws Exception {
+        resolve(createRow(video("good")));
+        int calls = mAssessCalls.get();
+
+        mServerVersion = null;
+        restart();
+        resolve(createRow(video("good")));
+
+        assertEquals(calls + 1, mAssessCalls.get());
+    }
+
+    @Test
+    public void pendingVerdictsAreAskedAgainAfterARestart() throws Exception {
+        resolve(createRow(video("wait")));
+        int calls = mAssessCalls.get();
+
+        restart();
+        resolve(createRow(video("wait")));
+
+        assertEquals(calls + 1, mAssessCalls.get());
     }
 
     private static BrowseSection createSection() {
