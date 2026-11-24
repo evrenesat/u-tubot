@@ -152,7 +152,7 @@ public class UtubotSetupFlowTest {
 
         List<OptionCategory> categories = UtubotSettingsPresenter.instance(mActivity).buildCategories();
 
-        assertEquals(12, categories.size());
+        assertEquals(13, categories.size());
         assertEquals(mActivity.getString(R.string.utubot_import_setup), categories.get(0).options.get(0).getTitle().toString());
         assertEquals(mActivity.getString(R.string.utubot_pair), categories.get(1).options.get(0).getTitle().toString());
     }

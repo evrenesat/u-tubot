@@ -1,5 +1,20 @@
 # u·tubot devlog
 
+## 2026-11-24 (browse cache review round 2)
+
+- A cached refresh that completes after the view is gone, or after the cached rows are dropped (an account change), no longer
+  removes stale rows through a null view or list: the removal is skipped, so completion keeps the cards (or the cache) instead of
+  crashing. An account or locale change also disposes an in-flight cached refresh, so it can't save the old account's or locale's
+  rows after the cache is cleared. Tests complete a refresh with null cached rows, with the view gone, and after an account change.
+- The channel-uploads multi-grid honours a fresh cache: its replayed channels auto-select a channel (see `ModernChannelsView`), but
+  the presenter keeps the replayed uploads and makes no uploads request; only a stale background refresh loads the uploads after
+  its channels. A failed uploads refresh shows the cached uploads column again (the channels' arrival had cleared the view's
+  column), and the failed attempt isn't retried within the refresh window. Tests drive both columns with a fake uploads presenter.
+- A card removed with Hide, Not interested or a playlist removal is taken out of the section's cache at once, so the next focus in
+  the window doesn't replay it; removing an author's cards drops the section's cache because it can't patch every row. Test: the
+  hidden card is gone from the replayed group and from the cache.
+- `BrowsePresenterCacheTest` grew from 6 to 12 tests for these paths; docs: `docs/development.md` ("Checking the browse cache").
+
 ## 2026-11-24 (browse cache review round 1)
 
 - A section that emits its rows in parts (Music: `Liked music`, then the music rows; Playlists: one per playlist) now keeps every

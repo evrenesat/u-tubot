@@ -143,6 +143,11 @@ A cached row comes from cards alone, without the page key of its row, so scrolli
 refresh; a loaded row continues as before. A cache entry above 512 KiB isn't kept: the JSON is parsed and written on the section's
 thread, so the cap bounds that work.
 
+A card removed with Hide, Not interested or a playlist removal leaves the section's cache at once; removing all of an author's cards
+drops the section's cache. On Channels' uploads multi-grid a fresh cache replays both columns without an uploads request: its
+replayed channels auto-select one, but the presenter keeps the cached uploads. A stale refresh loads the channels, then the uploads,
+and a failed uploads load shows the cached uploads column again; the failed attempt isn't retried until the refresh window passes.
+
 ```sh
 $NS adb -P 5038 -s emulator-5554 shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.launchers.HomeLauncherActivity
 $NS adb -P 5038 -s emulator-5554 shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.launchers.MusicLauncherActivity
