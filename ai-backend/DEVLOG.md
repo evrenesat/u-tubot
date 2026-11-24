@@ -1,5 +1,30 @@
 # DEVLOG
 
+## 2026-11-24 (director's cuts: map/reduce for long videos, issue 95)
+
+- Problem: a long video failed with "too long to cut in one pass (no map/reduce yet)": the whole transcript went in one request and
+  `[cuts] max_input_tokens` (24000) refused the rest.
+- `cuts.py`: the model calls moved into `CutEngine` (no request, job or database knowledge, so `cutbench` drives the same code).
+  `CutEngine.pick_parts` goes one pass when `fits`; otherwise `plan_chunks` splits the units into excerpts of at most
+  `map_chunk_tokens` (starting on chapter boundaries, chapters packed while they fit, an oversized chapter split evenly,
+  `map_overlap_units` shared with the previous excerpt). Each excerpt is asked in parallel (`map_parallel`; the provider limiter still
+  caps it) for ranked candidate parts in the #85 answer format, with its share of the target (empty answers allowed), one retry per failed
+  excerpt then "Part i of n ... could not be analysed". Candidates of neighbouring excerpts that share units merge.
+  The reduce call sees candidates as numbered lines (time range, label, rank inside its excerpt, `reduce_excerpt_chars` of text), answers
+  in the same format with `from == to`, and its answer is expanded to one part per candidate over the real units, so
+  `select_for_target` (rank selection, trim, band retry) is the one-pass code. Candidates that exceed `max_input_tokens` are narrowed
+  in rounds (groups keep their share plus the over-ask; `max_reduce_rounds`). Typed prompts: the map collects, the reduce applies the prompt.
+- Cache key and version unchanged (a long cut is as valid as a one-pass cut). Fixed while there: the picker's `_ready_cut` looked up the
+  version without the target length, so a ready `cut-highlights-5` of a video over the band never showed as ready.
+- `[cuts] max_input_tokens` default 24000 -> 80000 (about 80% of a 100k alias; keep it at that share of the `[llm.cuts]` alias's context);
+  new `map_chunk_tokens`, `map_overlap_units`, `map_parallel`, `reduce_excerpt_chars`, `max_reduce_rounds`.
+- Progress: stages `map` (events with `done`/`of`) and `reduce`; the request document gains `progress` (additive, `ai/CONTRACT.md`);
+  the web UI shows "reading the long video in parts (3 of 9)".
+- `cutbench.py`: `LONG_TRANSCRIPT` (3.4 h, two key sections, lowered limits via `cuts_overrides`), `score_all(long_video=True)`,
+  `cut_bench.py --long`; `mock_openai` hands cut answers the first user message (a repair round no longer hides the question).
+- Tests: `test_cuts_longvideo.py` (3 h fake transcript in the band, overlap, typed prompt, one-pass kept, failed excerpt retried and fatal,
+  rounds, rounds exhausted, progress, picker, cache reuse), chunk/candidate units in `test_cuts.py`, long case in `test_cutbench.py`.
+
 ## 2026-11-24 (cuts respect the target length, issue 82)
 
 - Problem: `cut-highlights-5` on a 1005 s video kept 681 s; the length was only a wish in the prompt and the guard is off for it.

@@ -422,8 +422,20 @@ or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#direct
   everything" and "nothing to cut" are refused, not applied). One finished cut is shared per
   (video, preset or prompt, model, transcript) cache key, so a second identical request is
   instant; a changed transcript invalidates it.
+- Long videos: a transcript that fits `[cuts] max_input_tokens` goes in one request. Set that
+  value to about 80% of the context of the `[llm.cuts]` alias (the default 80000 suits a
+  100k-token alias; a small local model needs a lower one). A longer transcript is cut by
+  map/reduce: excerpts of at most `map_chunk_tokens` (starting on chapter boundaries where
+  there are chapters, `map_overlap_units` shared with the previous excerpt) are asked in parallel
+  (`map_parallel`, further capped by the provider's limiter) for ranked candidate parts with
+  their share of the target length; one final call over the candidates (id, time range, label,
+  rank, `reduce_excerpt_chars` of text) picks the cut with the usual rank selection. Candidates
+  that do not fit one call are narrowed in rounds (`max_reduce_rounds`). A failed excerpt is
+  retried once, then the cut fails naming the part. Typed prompts keep their meaning: the map
+  collects candidates for the prompt, the reduce applies it.
 - The stages of a build are in its job report (kind `cuts`): `transcript` → `model` →
-  `checking`, with the model's raw answer trimmed into the row. Cut jobs never appear in the
+  `checking` (long videos: `transcript` → `map` → `reduce` → `checking`; `map` events carry
+  `done`/`of`, and the request document's `progress` mirrors them), with the model's raw answer trimmed into the row. Cut jobs never appear in the
   caption worker's cancel/retry paths — a cut is retried or dismissed from its cut sheet.
 - A description typed on the cut sheet can be saved as the owner's own preset (phone only in
   v1): `POST /v1/cut-presets` stores it in the user's `cut-presets` prompt set, so it becomes a

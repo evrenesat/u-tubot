@@ -161,7 +161,9 @@ class MockOpenAI:
         if "answer a viewer's question" in system:
             return "ANSWER: forty-two"
         if "director's cut" in system:
-            return self._wrap(json.dumps(self.cut_respond(system, user)))
+            # The question is the first user message; a repair round only appends to it.
+            first_user = next(m["content"] for m in body["messages"] if m["role"] == "user")
+            return self._wrap(json.dumps(self.cut_respond(system, first_user)))
         return f"SUMMARY[{body['model']}] " + user[-60:].replace("\n", " ")
 
     def cut_respond(self, system: str, user: str) -> Any:

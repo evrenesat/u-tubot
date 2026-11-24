@@ -1,5 +1,12 @@
 # u·tubot devlog
 
+## 2026-11-24 (director's cuts for long videos, issue 95)
+
+- Cuts no longer refuse long videos: a transcript over `[cuts] max_input_tokens` is read in excerpts (chapter boundaries, small overlap),
+  each excerpt proposes ranked candidate parts, and one final call (rounds when there are too many candidates) picks the cut with the
+  same length selection as a one-pass cut. The default `max_input_tokens` is now 80000; set it to about 80% of the cut alias's context.
+  Progress stages `map` (i of n) and `reduce` ride on the request (`progress`, additive). Details in `ai-backend/DEVLOG.md`.
+
 ## 2026-11-24 (director's cut modes plan)
 
 - `ai/CUT_MODES_PLAN.md`: the two-part plan for two director's-cut modes. Quick is today's transcript-based cut and stays the

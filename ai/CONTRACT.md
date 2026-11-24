@@ -442,9 +442,14 @@ routes answer `200` with `"configured": false`, and `GET /v1/me` features carrie
 
 Request document (both the queue cards and the single request):
 `{"id","video_id","state","source","preset_id","prompt","error","created_at","updated_at",
-"title"?,"channel"?,"duration_s"?,"stage"?,"cut"?,"job_id"?,"instruction"?,"raw_answer"?}`.
-`stage` (`transcript`|`model`|`checking`) rides while building; `cut` once ready; `job_id`
-opens the build report in the jobs API; `raw_answer` is the model's answer, trimmed.
+"title"?,"channel"?,"duration_s"?,"stage"?,"progress"?,"cut"?,"job_id"?,"instruction"?,"raw_answer"?}`.
+`stage` (`transcript`|`model`|`checking`, and for a video too long for one request `map`|`reduce`;
+clients show an unknown stage as its name) rides while building; `progress` (`{"done","of"}`,
+additive) rides during `map` and counts the excerpts answered; `cut` once ready; `job_id`
+opens the build report in the jobs API; `raw_answer` is the model's answer, trimmed. A video whose
+transcript does not fit one model request (`[cuts] max_input_tokens`) is cut by map/reduce: excerpts
+on chapter boundaries propose ranked candidate parts, one final call picks the cut with the same
+length selection; no video is refused for being long.
 
 The cut document (`cut`): `{"version","video_id","transcript_hash","duration_ms","label",
 "summary","parts":[{"label","start_ms","end_ms"}],"skip_ranges_ms":[[from,to]...],"kept_ms",

@@ -923,12 +923,12 @@ def seed_cuts(svc, client: httpx.Client, now: float) -> None:
     )
     db.execute(
         "INSERT INTO jobs(id,user,video_id,lang,status,error,created_at,updated_at,kind,finished_at,priority)"
-        " VALUES('democut0013','owner','aaaaaaaaa10','','failed','This video is too long to cut in one pass (no map/reduce yet).',?,?, 'cuts',?,0)",
+        " VALUES('democut0013','owner','aaaaaaaaa10','','failed','Part 2 of 5 of this long video could not be analysed (the model service did not answer), so no cut was built. Try again.',?,?, 'cuts',?,0)",
         [now - 700, now - 660, now - 660],
     )
     db.execute(
         "INSERT INTO cut_requests(id,user,video_id,source,prompt,state,error,job_id,created_at,updated_at,finished_at)"
-        " VALUES('democut0012','owner','aaaaaaaaa10','Living room TV','Only the part with the lock operation','failed','This video is too long to cut in one pass (no map/reduce yet).','democut0013',?,?,?)",
+        " VALUES('democut0012','owner','aaaaaaaaa10','Living room TV','Only the part with the lock operation','failed','Part 2 of 5 of this long video could not be analysed (the model service did not answer), so no cut was built. Try again.','democut0013',?,?,?)",
         [now - 700, now - 660, now - 660],
     )
     for offset, stage, status, detail in (
@@ -953,14 +953,16 @@ def seed_cuts(svc, client: httpx.Client, now: float) -> None:
             {
                 "seconds": 0.1,
                 "error_class": "CutRefused",
-                "technical": "This video is too long to cut in one pass (no map/reduce yet).",
+                "technical": "Part 2 of 5 of this long video could not be analysed (the model service did not answer), so no cut was built. Try again.",
             },
         ),
         (
             1.3,
             "failed",
             "failed",
-            {"message": "This video is too long to cut in one pass (no map/reduce yet)."},
+            {
+                "message": "Part 2 of 5 of this long video could not be analysed (the model service did not answer), so no cut was built. Try again."
+            },
         ),
     ):
         svc.jobs.events.record("democut0013", stage, status, detail, ts=now - 700 + offset)

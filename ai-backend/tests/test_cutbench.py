@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 
 from utubot.config import CutsConfig
 from utubot.cutbench import (
+    LONG_TRANSCRIPT,
     TRANSCRIPTS,
     BenchRequest,
     score_request,
@@ -189,3 +191,53 @@ class TestLengthAccuracy:
         result = score_request(transcript, request, fake_model(answer([(1, 2)])), "m")
         assert result.length_err is None
         assert summarize([result])["mean_length_err"] is None
+
+
+UNIT_ROW = re.compile(r"^#(\d+) \[[^\]]+\] (.*)$", re.MULTILINE)
+CANDIDATE_ROW = re.compile(r"^#(\d+) \[", re.MULTILINE)
+
+
+def long_video_model(calls: list):
+    """A model that proposes the "decisive" lines of an excerpt and keeps every candidate."""
+
+    def model_fn(messages):
+        calls.append(messages)
+        system, user = messages[0]["content"], messages[1]["content"]
+        if "You finish director's cuts" in system:
+            ids = [int(i) for i in CANDIDATE_ROW.findall(user)]
+            parts = [{"from": i, "to": i, "rank": n + 1} for n, i in enumerate(ids)]
+        else:
+            hits = [int(n) for n, text in UNIT_ROW.findall(user) if "decisive" in text]
+            parts = [{"from": hits[0], "to": hits[-1], "rank": 1}] if hits else []
+        return json.dumps({"parts": parts, "summary": "s", "kept_s": 0}), {"prompt_tokens": 7}
+
+    return model_fn
+
+
+class TestLongVideo:
+    def test_the_fixture_is_three_hours_and_needs_map_reduce(self):
+        assert 2.5 * 3600 < LONG_TRANSCRIPT.duration_s < 3.5 * 3600
+        assert LONG_TRANSCRIPT not in TRANSCRIPTS
+        assert LONG_TRANSCRIPT.cuts_overrides["max_input_tokens"] < CFG.max_input_tokens
+        assert {r.name for r in LONG_TRANSCRIPT.requests} == {"decisive-steps", "highlights-5min"}
+
+    def test_the_long_case_runs_by_map_reduce_and_scores(self):
+        calls: list = []
+        results = [
+            score_request(LONG_TRANSCRIPT, request, long_video_model(calls), "fake")
+            for request in LONG_TRANSCRIPT.requests
+        ]
+        for result in results:
+            assert result.refused is None and result.format_error is None, result.row()
+            assert result.skip == 1.0 and result.prompt_tokens > 0, result.row()
+        assert results[0].keep > 0.9, results[0].row()
+        assert len(calls) > 2 * 5  # several excerpts and a reduce per request
+        assert any("You finish director's cuts" in c[0]["content"] for c in calls)
+        target = next(r for r in results if r.request == "highlights-5min")
+        assert target.target_s == 300 and target.length_err <= CFG.length_tolerance + 0.05
+        assert target.keep > 0.2
+
+    def test_a_dead_model_refuses_the_long_case_instead_of_raising(self):
+        request = LONG_TRANSCRIPT.requests[0]
+        result = score_request(LONG_TRANSCRIPT, request, fake_model("no json here"), "fake")
+        assert result.refused and "Part 1" in result.refused

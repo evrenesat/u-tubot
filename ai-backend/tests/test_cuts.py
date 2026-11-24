@@ -4,18 +4,27 @@ import pytest
 
 from utubot.config import CutsConfig
 from utubot.cuts import (
+    Candidate,
     CutFormatError,
     Part,
     Unit,
     build_units,
+    candidate_units,
+    candidates_from,
+    chapters_between,
     cut_document,
+    expand_candidate_parts,
     finalize_parts,
+    merge_candidates,
     parse_chapters,
     parse_cut_answer,
+    plan_chunks,
     select_for_target,
     serialize_units,
+    split_candidates,
     target_band,
     transcript_hash,
+    unit_line,
 )
 from utubot.prompts import BUILTIN_SET, TASK_CUTS, Prompt, PromptStore
 
@@ -362,3 +371,144 @@ class TestTargetLength:
             target_s=300,
         )
         assert doc["target_s"] == 300 and doc["kept_s"] == 305.0
+
+
+def long_units(n: int, seconds: float = 10.0) -> list[Unit]:
+    return [
+        Unit(i + 1, i * seconds, (i + 1) * seconds, f"Sentence number {i + 1}.") for i in range(n)
+    ]
+
+
+class TestChunks:
+    def test_every_unit_lands_in_exactly_one_core_and_the_overlap_repeats_the_tail(self):
+        units = long_units(200)
+        chunks = plan_chunks(units, [], 2000, 3)
+        assert len(chunks) > 3
+        cores = [u.n for c in chunks for u in c.core]
+        assert cores == [u.n for u in units]
+        for prev, chunk in zip(chunks, chunks[1:], strict=False):
+            shared = [u.n for u in chunk.units if u.n < chunk.core_first]
+            assert shared == [u.n for u in prev.units][-3:]
+        assert [u.n for u in chunks[0].units][0] == 1
+
+    def test_no_excerpt_is_over_the_budget(self):
+        units = long_units(300)
+        budget = 2500
+        for chunk in plan_chunks(units, [], budget, 4):
+            assert sum(len(unit_line(u)) + 1 for u in chunk.units) <= budget
+
+    def test_chunks_start_on_chapter_boundaries(self):
+        units = long_units(120)  # 1200 s
+        chapters = [(0.0, "Intro"), (400.0, "Middle"), (800.0, "End")]
+        # Room for about 45 units: each 40-unit chapter fits alone, two together do not.
+        cost = len(unit_line(units[0])) + 1
+        chunks = plan_chunks(units, chapters, cost * 45, 0)
+        assert [c.core_first for c in chunks] == [1, 41, 81]
+        for chunk in chunks:
+            assert chunk.units[0].n == chunk.core_first
+
+    def test_small_chapters_are_packed_together(self):
+        units = long_units(120)
+        chapters = [(i * 100.0, f"C{i}") for i in range(12)]
+        cost = len(unit_line(units[0])) + 1
+        chunks = plan_chunks(units, chapters, cost * 45, 0)
+        assert len(chunks) == 3
+        assert all(c.core_first - 1 in (0, 40, 80) for c in chunks)
+
+    def test_a_chapter_over_the_budget_is_split_evenly(self):
+        units = long_units(100)
+        cost = len(unit_line(units[0])) + 1
+        chunks = plan_chunks(units, [(0.0, "All")], cost * 30, 0)
+        sizes = [len(c.units) for c in chunks]
+        assert len(chunks) >= 4 and max(sizes) <= 30 and min(sizes) >= 20
+
+    def test_chapters_between_keeps_the_running_one(self):
+        chapters = [(0.0, "A"), (100.0, "B"), (200.0, "C"), (300.0, "D")]
+        assert chapters_between(chapters, 150.0, 250.0) == [(100.0, "B"), (200.0, "C")]
+        assert chapters_between([], 0.0, 10.0) == []
+
+
+class TestCandidates:
+    def parts(self):
+        return [
+            Part("Late", 0, 1000, 2, 1, 2),
+            Part("Best", 2000, 3000, 1, 3, 4),
+            Part("Unranked", 4000, 5000, None, 5, 6),
+        ]
+
+    def test_ranks_count_inside_the_excerpt(self):
+        cands = candidates_from(self.parts())
+        assert [(c.label, c.rank, c.of) for c in cands] == [
+            ("Late", 2, 3),
+            ("Best", 1, 3),
+            ("Unranked", 3, 3),
+        ]
+
+    def test_overlapping_candidates_of_neighbouring_excerpts_become_one(self):
+        a = Candidate(10, 20, "Weak", 3, 4)
+        b = Candidate(18, 30, "Strong", 1, 4)
+        c = Candidate(40, 45, "Other", 2, 4)
+        merged = merge_candidates([c, b, a])
+        assert [(m.first, m.last, m.label) for m in merged] == [
+            (10, 30, "Strong"),
+            (40, 45, "Other"),
+        ]
+
+    def test_candidate_lines_show_range_label_rank_and_a_short_text(self):
+        units = long_units(10)
+        shown = candidate_units([Candidate(2, 4, "Demo", 1, 5)], units, 20)
+        assert [u.n for u in shown] == [1]
+        assert (shown[0].start, shown[0].end) == (10.0, 40.0)
+        assert "Demo (rank 1 of 5 in its excerpt)" in shown[0].text
+        assert shown[0].text.endswith("...")
+
+    def test_a_reduce_answer_expands_to_one_part_per_candidate(self):
+        units = long_units(20)
+        cands = [
+            Candidate(1, 2, "A", 1, 3),
+            Candidate(5, 6, "B", 2, 3),
+            Candidate(9, 10, "C", 3, 3),
+        ]
+        shown = candidate_units(cands, units, 50)
+        data = {"parts": [{"from": 1, "to": 2, "rank": 1}, {"from": 3, "to": 3, "rank": 2}]}
+        parts = expand_candidate_parts(parse_cut_answer(data, shown), cands, units)
+        assert [(p.label, p.start_ms, p.end_ms, p.rank) for p in parts] == [
+            ("A", 0, 20000, 1),
+            ("B", 40000, 60000, 1),
+            ("C", 80000, 100000, 2),
+        ]  # the gap between A and B is not kept
+
+    def test_candidates_split_into_groups_that_fit(self):
+        units = long_units(100)
+        cands = [Candidate(i * 2 + 1, i * 2 + 2, "P", 1, 1) for i in range(40)]
+        groups = split_candidates(cands, units, 600, 30)
+        assert sum(len(g) for g in groups) == 40 and len(groups) > 3
+        assert [c for g in groups for c in g] == cands
+
+
+class TestExcerptParsing:
+    def test_an_excerpt_answer_uses_the_transcript_ids(self):
+        units = long_units(50)[20:30]  # ids 21..30
+        parts = parse_cut_answer({"parts": [{"from": 22, "to": 24, "rank": 1}]}, units)
+        assert (parts[0].first, parts[0].last, parts[0].start_ms) == (22, 24, 210_000)
+        with pytest.raises(CutFormatError, match="21-30"):
+            parse_cut_answer({"parts": [{"from": 5, "to": 8}]}, units)
+
+    def test_an_excerpt_may_have_nothing_to_propose(self):
+        units = long_units(5)
+        assert parse_cut_answer({"parts": []}, units, allow_empty=True) == []
+        with pytest.raises(CutFormatError):
+            parse_cut_answer({"parts": []}, units)
+
+    def test_the_excerpt_note_and_scope_reach_the_prompt(self):
+        text = serialize_units(
+            long_units(3),
+            [],
+            {},
+            "Highlights",
+            60,
+            0.2,
+            note="EXCERPT NOTE",
+            scope="from this excerpt",
+        )
+        assert "EXCERPT NOTE" in text and "Target length: 60 s kept from this excerpt" in text

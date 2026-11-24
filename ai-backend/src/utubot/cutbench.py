@@ -9,18 +9,21 @@ much must-skip time leaked in. No network here: the model is a callable the call
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .config import CutsConfig
+from .config import CutsConfig, LLMTask
 from .cuts import (
     CUT_JSON_RULES,
     CUT_SYSTEM,
+    CutEngine,
     CutFormatError,
     CutRefused,
     Part,
+    Unit,
     build_units,
     effective_target_s,
     finalize_parts,
@@ -28,7 +31,7 @@ from .cuts import (
     select_for_target,
     serialize_units,
 )
-from .llm import extract_json
+from .llm import LLMError, extract_json
 from .prompts import BUILTIN_SET, TASK_CUTS
 
 
@@ -70,6 +73,7 @@ class BenchTranscript:
     description: str
     segments: list[tuple[float, float, str]]
     requests: list[BenchRequest] = field(default_factory=list)
+    cuts_overrides: dict[str, Any] = field(default_factory=dict)  # `[cuts]` values for this fixture
 
 
 # ---- the fixture builder ----------------------------------------------------------------------
@@ -572,6 +576,74 @@ def _fixture_projector() -> BenchTranscript:
     )
 
 
+LONG_SECTION_LINES = 110
+LONG_FILLER_SECTIONS = 13
+LONG_KEY_LINES = 110
+LONG_EDGE_LINES = 60
+LONG_CHUNK_TOKENS = 6000
+LONG_MAX_INPUT_TOKENS = 12000
+
+
+def _fixture_long() -> BenchTranscript:
+    """A three-hour talk generated from templates: filler sections, two short key sections
+    ("decisive" lines) and a sponsor-like intro and outro. The `[cuts]` limits are lowered so
+    the request runs by map/reduce the way a long video does on a small-context model."""
+    named: dict[str, list[str]] = {
+        "intro": [
+            f"Welcome back everyone, today we have a very long walkthrough, part {j}."
+            for j in range(LONG_EDGE_LINES)
+        ]
+    }
+    for k in range(LONG_FILLER_SECTIONS):
+        named[f"filler{k:02d}"] = [
+            f"In part {k} of the walkthrough we cover point {j} at a relaxed pace today."
+            for j in range(LONG_SECTION_LINES)
+        ]
+        if k in (4, 9):
+            key = f"key{len([n for n in named if n.startswith('key')]) + 1}"
+            named[key] = [
+                f"The decisive step {j} of the {key} fix goes exactly like this."
+                for j in range(LONG_KEY_LINES)
+            ]
+    named["outro"] = [
+        f"That is all for this very long one, thanks for watching, goodbye {j}."
+        for j in range(LONG_EDGE_LINES)
+    ]
+    lay = _Layout(named)
+    skip = lay.span("intro", "outro")
+    key = lay.span("key1", "key2")
+    transcript = _make(
+        "bench-long",
+        "A three-hour walkthrough",
+        "Long Talks",
+        "A very long walkthrough.\n",
+        lay,
+        [
+            BenchRequest(
+                name="decisive-steps",
+                instruction="Only the decisive steps of the fixes, nothing else.",
+                preset_id=None,
+                keep=key,
+                skip=skip,
+                budget_s=1500.0,
+            ),
+            BenchRequest(
+                name="highlights-5min",
+                instruction=preset_instruction("cut-highlights-5"),
+                preset_id="cut-highlights-5",
+                keep=key,
+                skip=skip,
+                budget_s=1500.0,
+            ),
+        ],
+    )
+    transcript.cuts_overrides = {
+        "max_input_tokens": LONG_MAX_INPUT_TOKENS,
+        "map_chunk_tokens": LONG_CHUNK_TOKENS,
+    }
+    return transcript
+
+
 TRANSCRIPTS: list[BenchTranscript] = [
     _fixture_router(),
     _fixture_sourdough(),
@@ -579,6 +651,10 @@ TRANSCRIPTS: list[BenchTranscript] = [
     _fixture_charger(),
     _fixture_projector(),
 ]
+
+LONG_TRANSCRIPT = _fixture_long()
+"""The long-video case: run by map/reduce. Kept out of `TRANSCRIPTS` (the model sees many calls
+and the run is slower); `score_all(..., long_video=True)` and `cut_bench.py --long` add it."""
 
 
 # ---- the scorer ---------------------------------------------------------------------------------
@@ -634,6 +710,47 @@ def _overlap_ms(span: tuple[float, float], parts: list[Part]) -> float:
     return total
 
 
+class _BenchLLM:
+    """The engine's model client over the bench's synchronous `model_fn` (long-video requests)."""
+
+    def __init__(self, model_fn: ModelFn, out: RequestResult):
+        self.model_fn, self.out = model_fn, out
+
+    async def chat_json(self, task: LLMTask, messages: list[dict[str, str]], **_: Any) -> Any:
+        text, usage = self.model_fn(messages)
+        self.out.prompt_tokens += int(usage.get("prompt_tokens") or 0)
+        self.out.completion_tokens += int(usage.get("completion_tokens") or 0)
+        try:
+            return extract_json(text)
+        except ValueError:
+            raise LLMError("the answer was not JSON") from None
+
+
+def _one_pass(
+    model_fn: ModelFn,
+    units: list[Unit],
+    chapters: list[tuple[float, str]],
+    meta: dict[str, Any],
+    request: BenchRequest,
+    target_s: int | None,
+    cfg: CutsConfig,
+    out: RequestResult,
+) -> tuple[Any, list[Part]]:
+    """The whole transcript in one request, with the engine's one repair round."""
+    message = serialize_units(
+        units, chapters, meta, request.instruction, target_s, cfg.over_ask_frac
+    )
+    messages = [
+        {"role": "system", "content": CUT_SYSTEM},
+        {"role": "user", "content": message},
+    ]
+    data = _ask(model_fn, messages, out)
+    parts = parse_cut_answer(data, units)
+    if target_s:
+        parts, _total_s = select_for_target(parts, units, cfg, target_s)
+    return data, parts
+
+
 def score_request(
     transcript: BenchTranscript,
     request: BenchRequest,
@@ -642,7 +759,7 @@ def score_request(
     cfg: CutsConfig | None = None,
 ) -> RequestResult:
     """Run one request through the real engine pieces and mark it against the spans."""
-    cfg = cfg or CutsConfig()
+    cfg = (cfg or CutsConfig()).model_copy(update=transcript.cuts_overrides)
     units = build_units(transcript.segments, cfg)
     meta = {
         "title": transcript.title,
@@ -653,25 +770,21 @@ def score_request(
     out = RequestResult(transcript=transcript.id, request=request.name, model=model)
     target_s = request.target_s or effective_target_s(cfg, request.preset_id, transcript.duration_s)
     out.target_s = target_s
-    message = serialize_units(
-        units, chapters, meta, request.instruction, target_s, cfg.over_ask_frac
-    )
-    messages = [
-        {"role": "system", "content": CUT_SYSTEM},
-        {"role": "user", "content": message},
-    ]
+    engine = CutEngine(cfg, lambda: LLMTask(model=model), _BenchLLM(model_fn, out))
     started = time.monotonic()
     try:
-        data = _ask(model_fn, messages, out)
-        parts = parse_cut_answer(data, units)
-        if target_s:
-            parts, _total_s = select_for_target(parts, units, cfg, target_s)
+        if engine.fits(units, chapters, meta, request.instruction, target_s):
+            data, parts = _one_pass(model_fn, units, chapters, meta, request, target_s, cfg, out)
+        else:
+            _data, parts = asyncio.run(
+                engine.pick_parts(units, chapters, meta, request.instruction, target_s)
+            )
     except CutFormatError as exc:
         out.format_error = exc.problem
         out.wall_s = time.monotonic() - started
         return out
-    except CutRefused as exc:
-        out.refused = exc.message
+    except (CutRefused, LLMError) as exc:
+        out.refused = exc.message if isinstance(exc, CutRefused) else "the model did not answer"
         out.wall_s = time.monotonic() - started
         return out
     out.wall_s = time.monotonic() - started
@@ -730,9 +843,11 @@ def score_transcript(
     ]
 
 
-def score_all(model_fn: ModelFn, model: str, cfg: CutsConfig | None = None) -> list[RequestResult]:
+def score_all(
+    model_fn: ModelFn, model: str, cfg: CutsConfig | None = None, *, long_video: bool = False
+) -> list[RequestResult]:
     out: list[RequestResult] = []
-    for transcript in TRANSCRIPTS:
+    for transcript in [*TRANSCRIPTS, *([LONG_TRANSCRIPT] if long_video else [])]:
         out.extend(score_transcript(transcript, model_fn, model, cfg))
     return out
 

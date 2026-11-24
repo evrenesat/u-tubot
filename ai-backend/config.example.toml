@@ -162,7 +162,13 @@ max_tokens = 2000
 
 # How the cut engine works. All defaults shown.
 # [cuts]
-# max_input_tokens = 24000         # transcript units (chars/4) sent to the model in one pass
+# max_input_tokens = 80000         # one request's size (chars/4); keep it at ~80% of the [llm.cuts] alias's context.
+#                                  # A longer transcript is cut by map/reduce (excerpts, then one final choice)
+# map_chunk_tokens = 30000         # size of one excerpt in map/reduce (never above max_input_tokens)
+# map_overlap_units = 4            # units an excerpt shares with the one before it
+# map_parallel = 4                 # excerpts asked at once (the model limiter caps it further)
+# reduce_excerpt_chars = 160       # text shown per candidate in the reduce call
+# max_reduce_rounds = 4            # extra reduce rounds when the candidates still do not fit one call
 # unit_max_pause_s = 0.6           # caption pause that starts a new unit
 # unit_max_s = 15.0                # a unit is never longer than this
 # merge_gap_s = 2.0                # kept parts closer than this are merged into one
