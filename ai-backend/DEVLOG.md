@@ -50,6 +50,16 @@
   60 s highlights request.
 - Tests: ranked selection, trim, old format, retry and failure paths (`test_cuts.py`, `test_cuts_api.py`), length accuracy (`test_cutbench.py`).
 
+## 2026-11-24 (audio stream start offset)
+
+1. The 16 kHz ASR WAV keeps the first audio stream's container `start_time`: a positive offset
+   is filled with `adelay` silence, a negative one is trimmed with `atrim`. `ffmpeg` stage detail
+   gets `start_offset_s` when it is not zero; the captions-score windows use the same origin for
+   their onsets and cached-word comparison.
+2. `ASR_CACHE_VERSION = 4`, because older cached answers were made from unpadded audio and would
+   shift every cue by the container offset. `audio_start_offset`/`start_offset_filter`/
+   `transcode_wav` live in `captions/asr.py`; docs and the affected version assertions are updated.
+
 ## 2026-11-24 (processed videos review round 1)
 
 - `tests/test_processed.py`: a dismissed cut stays out — a video with only dismissed requests is absent, and a video with a caption
