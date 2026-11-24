@@ -1,5 +1,23 @@
 # u·tubot devlog
 
+## 2026-11-24 (Processed sidebar section, issue 66 step 3)
+
+- The built-in flavor has a sidebar section `Processed` past the other entries and before Settings (`UtubotProcessedSection.ID`,
+  a reserved id 26 since `MediaGroup.TYPE_...` lives in the pinned sibling repo), registered in `BrowsePresenter` and
+  `SidebarService` only with `UtubotSettings.isBuiltIn()`; the other flavors keep their sidebar.
+- Its grid loads `GET /v1/processed` through `UtubotManager.processedObserve(50)`, a backend call, not YouTube; the answer is
+  mapped to video tiles in its newest-first order (`UtubotProcessedSection.toGroup`). A tile has its video id, title, thumbnail
+  and the processed line in the second title: "HQ captions: ready" (else the newest caption state), "Cut ready: …" with every
+  ready preset's label or prompt (else the newest cut state), "Summary ready" when one is stored. The endpoint sends no channel,
+  so the tile has none.
+- The section keeps the browse cache of #65 (replay, background refresh, in-place id reuse); an empty answer shows
+  "No processed videos yet" and a failed one "Can't load the processed videos: …" through `UtubotSectionError`, and a cached
+  section keeps its cards when its refresh fails. Opening a tile is unchanged (step 4 is later).
+- Tests: `UtubotProcessedTilesTest` (5: field mapping, each part and its state, ready preset labels, order, empty answer) and
+  `BrowsePresenterProcessedTest` (4: registration, injected answer loaded into the grid, empty and failed states), following
+  `BrowsePresenterCacheTest`'s style. `:common:testStutubotDebugUnitTest` and `:smarttubetv:compileStutubotDebugJavaWithJavac`
+  are green with JDK 25.
+
 ## 2026-11-24 (browse cache review round 4)
 
 - Channels multi-grid on a cached replay: only the view's first auto-selection keeps the cached uploads; every later channel the
