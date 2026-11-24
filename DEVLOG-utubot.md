@@ -1,5 +1,29 @@
 # u·tubot devlog
 
+## 2026-11-24 (browser extension plan, issue 72)
+
+- `ai/BROWSER_EXTENSION_PLAN.md` (first written as `FIREFOX_EXTENSION_PLAN.md`): the two-part plan for a browser extension with
+  parity for the u·tubot features. Firefox on desktop and Android is the main target, Chromium browsers on desktop follow from
+  the same code. Owner decisions, the parity matrix against the TV code, architecture, the no-YouTube test approach, signing
+  and distribution, checkpoints 0 to 21 plus the web UI companion checkpoints C1 to C4. No backend or app change is needed for
+  parity; nothing is implemented yet.
+- Three plan review rounds are answered in the plan's section 14 (extension builds stay off GitHub Releases, explicit
+  permission buttons, every mock-backend control specified, requests without cookies, a fully specified offline test guard,
+  the parity check as its own workflow).
+- Owner additions of the same day: an MVP first (checkpoints 0 to 9: setup, pairing, the playing video's summary, HQ captions,
+  cut skipping, a signed unlisted desktop Firefox build); a Chromium track after it; a "Lessons from existing extensions"
+  section from reading SponsorBlock, its shared library, DeArrow, Return YouTube Dislike and ImprovedTube (navigation events,
+  main video lookup, ad state, timer-driven skipping, recycled cards, hermetic tests), with the site, captions and cuts
+  checkpoints changed to match; the licence rule (MIT stays, GPL code is read for technique and never copied); the mid-term
+  role as companion of the web UI.
+- Re-check of those additions: two owner smoke runs on real YouTube during the MVP (unsigned build, popup diagnostics), a
+  whole-MVP review before the first signed release, the owner's use as its own checkpoint 9b, stale-answer tests in the
+  summary, captions and cuts checkpoints.
+- `AGENTS.md`: the standing rule that every AI feature is specified, built and tested for the TV app and the browser extension,
+  with a transition, and the extension's licence rule. `ai/CONTRACT.md`: the "Clients" section, and the cut paragraph no longer
+  says the TV compares `transcript_hash` (it never did). `.github/pull_request_template.md`: the parity, contract and
+  no-YouTube boxes.
+
 ## 2026-11-24 (Processed section review round 1)
 
 - A backend or token change drops the Processed section's browse cache and cancels a cached refresh still in flight: `BrowsePresenter`

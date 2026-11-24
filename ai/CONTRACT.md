@@ -371,6 +371,21 @@ Stored for later threshold tuning.
   "Browse refresh" minutes (5, 10, 20, 30 or 60; 10 by default); "Refresh section" reloads immediately. An account or locale
   change clears the cache. No request of this contract is added: the cache is local to the app.
 
+## Clients
+
+Two clients speak this contract: the TV app (`stutubot` flavor) and the browser extension (`extension/`, Firefox first, planned in
+`ai/BROWSER_EXTENSION_PLAN.md`; until it is built, that plan's parity matrix is its side of a feature). A feature of this
+contract is built for both. Exceptions, each with its reason:
+
+- The QR sheet of "Describe on phone…": TV only. The extension has a keyboard, takes the description itself
+  (`POST /v1/videos/{id}/cuts {"prompt"}`) and opens the cut sheet (`/cuts/{request_id}`) in a tab.
+- The sponsor-segment merge of a cut jump: TV only. The browser has no built-in sponsor skip.
+- The browse cache: TV only. YouTube's site owns its own loading.
+- `GET /app/update.json`: TV only. Firefox updates extensions itself.
+
+The extension sends the bearer token from its background context only, to the backend's own origin, with no cookies
+(`credentials: "omit"`) and never as `?token=`. It needs no CORS headers from the backend.
+
 ## Addendum (backend implementation, 2026-11-12)
 
 - Public endpoints (no token): `GET /setup.json`, `GET /v1/health`, `POST /v1/pair`,
@@ -434,8 +449,9 @@ opens the build report in the jobs API; `raw_answer` is the model's answer, trim
 The cut document (`cut`): `{"version","video_id","transcript_hash","duration_ms","label",
 "summary","parts":[{"label","start_ms","end_ms"}],"skip_ranges_ms":[[from,to]...],"kept_ms",
 "source","preset_id","model","built_at"}`. All times are milliseconds of the video the cut was
-built for (`duration_ms`); the TV does not apply a cut whose video length differs by more than
-2 s and checks `transcript_hash` against its own transcript. `skip_ranges_ms` is the sorted,
+built for (`duration_ms`); a client does not apply a cut whose video length differs by more than
+2 s. `transcript_hash` identifies the transcript the cut was built from; clients carry it and do not
+compare it (they hold no transcript). `skip_ranges_ms` is the sorted,
 non-overlapping complement of `parts`.
 
 Build rules (mirrored from the backend config, `[cuts]`): caption fragments are merged into
