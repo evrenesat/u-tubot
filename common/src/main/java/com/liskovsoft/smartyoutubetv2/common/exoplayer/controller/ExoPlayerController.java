@@ -31,6 +31,7 @@ import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptions;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptionsFollower;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptionsOpen;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Captions;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
@@ -76,6 +77,11 @@ public class ExoPlayerController implements Player.EventListener {
     private final Context mContext;
     private final ExoMediaSourceFactory mMediaSourceFactory;
     private boolean mUtubotCaptionsSelectPending;
+    /**
+     * The video was opened from a Processed tile (see UtubotCaptionsOpen): its HQ track is selected whatever the automatic setting says
+     * for this playback.
+     */
+    private boolean mUtubotCaptionsSelectRequested;
     /**
      * What was opened before the HQ captions were merged in, to open it again with them when they come while it plays. Null for the
      * sources the captions are not merged into.
@@ -501,7 +507,8 @@ public class ExoPlayerController implements Player.EventListener {
         mUtubotBaseSource = mediaSource;
         MediaSource merged = UtubotCaptions.attach(mContext, mediaSource, video.videoId);
         mUtubotCaptionsAttached = merged != mediaSource;
-        mUtubotCaptionsSelectPending = mUtubotCaptionsAttached && UtubotCaptions.shouldSelect(isUtubotAutoCaptionsEnabled(), false);
+        mUtubotCaptionsSelectPending = mUtubotCaptionsAttached
+                && UtubotCaptions.shouldSelect(isUtubotAutoCaptionsEnabled(), mUtubotCaptionsSelectRequested);
         return merged;
     }
 
@@ -527,7 +534,8 @@ public class ExoPlayerController implements Player.EventListener {
         Log.d(TAG, "HQ captions of %s are ready: opening the source again with them at %s ms", videoId, mPlayer.getCurrentPosition());
 
         mUtubotCaptionsAttached = true;
-        mUtubotCaptionsSelectPending = UtubotCaptions.shouldSelect(isUtubotAutoCaptionsEnabled(), requested);
+        mUtubotCaptionsSelectPending = UtubotCaptions.shouldSelect(isUtubotAutoCaptionsEnabled(),
+                requested || mUtubotCaptionsSelectRequested);
 
         if (requested) {
             MessageHelpers.showMessage(mContext, R.string.utubot_captions_ready);
@@ -569,6 +577,7 @@ public class ExoPlayerController implements Player.EventListener {
         for (MediaTrack track : subtitleTracks) {
             if (track.format != null && UtubotCaptions.isCaptionTrackOf(track.format.id, video.videoId)) {
                 mUtubotCaptionsSelectPending = false;
+                mUtubotCaptionsSelectRequested = false;
                 mTrackSelectorManager.selectTrack(track);
                 mEventListener.onTrackSelected(ExoFormatItem.from(track));
                 return;
@@ -739,6 +748,12 @@ public class ExoPlayerController implements Player.EventListener {
             mUtubotBaseSource = null;
             mUtubotCaptionsAttached = false;
             mUtubotCaptionsSelectPending = false;
+            mUtubotCaptionsSelectRequested = false;
+        }
+
+        // The Processed tile's request for this video: taken once, kept for the playback it starts (also when its captions come later)
+        if (video != null && UtubotCaptionsOpen.take(video.videoId)) {
+            mUtubotCaptionsSelectRequested = true;
         }
 
         if (UtubotSettings.isBuiltIn() && mUtubotCaptionsEnabled) {

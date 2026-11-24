@@ -377,4 +377,72 @@ public final class UtubotModels {
     }
 
     //endregion
+
+    //region Processed videos
+
+    /** The state of a caption job, as `GET /v1/jobs` and `GET /v1/processed` report it */
+    public static final class JobState {
+        public static final String WAITING = "waiting";
+        public static final String PROCESSING = "processing";
+        public static final String READY = "ready";
+        public static final String FAILED = "failed";
+        public static final String CANCELLED = "cancelled";
+
+        private JobState() {
+        }
+    }
+
+    /** One caption job of a processed video */
+    public static final class ProcessedCaption {
+        public String jobId;
+        @Nullable public String lang;
+        @Nullable public String translateTo;
+        public String state = JobState.WAITING;
+        /** 0 to 1: the backend sends a fraction, like `GET /v1/jobs` */
+        public double progress;
+        @Nullable public String error;
+        /** Seconds since the epoch, like the contract's timestamps */
+        public double createdAt;
+        public double updatedAt;
+
+        public boolean isReady() {
+            return JobState.READY.equals(state);
+        }
+    }
+
+    /** One cut request of a processed video */
+    public static final class ProcessedCut {
+        public String requestId;
+        public String state = CutState.WAITING;
+        @Nullable public String presetId;
+        @Nullable public String presetLabel;
+        @Nullable public String prompt;
+        @Nullable public String error;
+        /** Seconds since the epoch, like the contract's timestamps */
+        public double createdAt;
+        public double updatedAt;
+
+        public boolean isReady() {
+            return CutState.READY.equals(state);
+        }
+    }
+
+    /** A video the caller recently processed: its caption jobs and cut requests, and whether a summary is stored */
+    public static final class ProcessedItem {
+        public String videoId;
+        @Nullable public String title;
+        @Nullable public String thumbnail;
+        /** The newest change of its caption jobs and cuts, in seconds since the epoch */
+        public double updatedAt;
+        public boolean summary;
+        public List<ProcessedCaption> captions = Collections.emptyList();
+        public List<ProcessedCut> cuts = Collections.emptyList();
+    }
+
+    /** The answer of `GET /v1/processed`: one item per video, newest last change first */
+    public static final class ProcessedList {
+        public List<ProcessedItem> videos = Collections.emptyList();
+    }
+
+    //endregion
 }

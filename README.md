@@ -35,6 +35,8 @@ build needs one uninstall first.
 - **Your own prompts**: prompt sets are JSON files you host anywhere and import by URL; edit and test them in a web UI.
 - **AI answer** to the question a title poses, from the video menu.
 - **HQ captions** prepared in the background (yt-dlp, Whisper on CPU or a remote API, optional speaker labels).
+- **Processed section**: the videos you recently processed, newest change first; each tile says what is ready (HQ captions, a
+  director's cut, a summary), and opening one plays the video with its HQ captions and offers a ready cut.
 - **Import setup**: type your server's address and the app configures itself, then pairs with a 6-digit code. No tokens on the TV.
 - **Self-update** from your own server, checked automatically, one APK per CPU architecture.
 - **Any LLM**: Ollama, llama.cpp, vLLM, LM Studio, OpenAI, OpenRouter or a router, mixed per task.

@@ -1,11 +1,15 @@
 package com.liskovsoft.smartyoutubetv2.common.app.presenters.service;
 
 import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup;
+import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotProcessedSection;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 
 import org.junit.After;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -99,6 +103,50 @@ public class SidebarServiceTest {
         getService().onProfileChanged(); // read again
 
         assertEquals(SidebarService.BOOT_SECTION_FIRST, getService().getBootSectionId());
+    }
+
+    /**
+     * A sidebar saved before the section existed gains Processed once; the defaults it knew stay as the user left them, so a
+     * hidden or turned-off one isn't added back
+     */
+    @Test
+    public void anOldSavedSidebarGainsTheProcessedSection() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+
+        saveSidebar(Arrays.asList(section(MediaGroup.TYPE_HOME), section(MediaGroup.TYPE_SUBSCRIPTIONS)), false);
+        getService().onProfileChanged();
+
+        List<Integer> ids = getSectionIds();
+        assertTrue(ids.contains(UtubotProcessedSection.ID));
+        assertFalse(ids.contains(MediaGroup.TYPE_HISTORY));
+        assertFalse(ids.contains(MediaGroup.TYPE_PLAYBACK_QUEUE));
+
+        getService().onProfileChanged(); // read again, the known ids are saved now
+
+        assertEquals(1, Collections.frequency(getSectionIds(), UtubotProcessedSection.ID));
+        assertFalse(getSectionIds().contains(MediaGroup.TYPE_HISTORY));
+    }
+
+    /**
+     * A sidebar saved with Processed turned off keeps it off (the known ids include it, so the migration leaves it)
+     */
+    @Test
+    public void aSavedSidebarWithProcessedDisabledKeepsItDisabled() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+
+        assertTrue(getSectionIds().contains(UtubotProcessedSection.ID));
+        getService().enableSection(UtubotProcessedSection.ID, false);
+        getService().onProfileChanged(); // read again
+
+        assertFalse(getSectionIds().contains(UtubotProcessedSection.ID));
+    }
+
+    /**
+     * Written as the versions before the known-id part did: pinned items, boot section, Settings enabled
+     */
+    private static void saveSidebar(List<Video> items, boolean settingsEnabled) {
+        AppPrefs.instance(RuntimeEnvironment.getApplication()).setSidebarData(
+                Helpers.mergeData(Helpers.mergeList(items), MediaGroup.TYPE_HOME, settingsEnabled));
     }
 
     private static Video section(int sectionId) {

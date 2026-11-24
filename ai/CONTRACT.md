@@ -514,6 +514,40 @@ Share target: YouTube -> Share -> u·tubot. Nothing on the server receives the s
   'self'` and the site's own worker, and `Permissions-Policy` allows the microphone for self
   (the Speak button), with camera and geolocation still off.
 
+## Processed videos (addendum, 2026-11-23)
+
+The TV's *Processed* section asks for the videos a user recently processed. This is a read-only
+view: it combines the caller's caption jobs (`jobs`, kind `captions`), the caller's cut requests
+(`cut_requests`) and the shared `summaries` table. No new storage is written.
+
+`GET /v1/processed?limit=50` (auth required; default 50, 1..200, `400` outside the range)
+returns `{"videos":[...]}`, one item per video id, newest last change first. `limit` counts
+videos, not caption or cut entries; a video with several jobs still is one item. A video is
+listed when the caller has at least one caption job or non-dismissed cut request for it. Only
+the caller's rows are combined; another user's caption jobs and cuts never appear. Dismissed
+cut requests are not listed, and a video with only dismissed requests does not appear.
+
+Item:
+
+```json
+{"video_id":"dQw4w9WgXcQ",
+ "title":"...",              // cached metadata title, else the newest caption job's title; null if neither
+ "thumbnail":"https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg", // metadata thumbnail_url/thumbnail, else this standard URL
+ "updated_at":1763900000.0,  // newest updated_at among the item's caption jobs and cut requests
+ "summary":true,             // any stored summary for this video (summaries are shared per video)
+ "captions":[{"job_id":"...","lang":"en","translate_to":"en",
+              "state":"waiting|processing|ready|failed|cancelled",
+              "progress":1.0,"error":null,"created_at":1763899900.0,"updated_at":1763900000.0}],
+ "cuts":[{"request_id":"...","state":"waiting|building|needs_transcript|ready|failed",
+          "preset_id":"cut-demo","preset_label":"Only the demo","prompt":null,"error":null,
+          "created_at":1763899800.0,"updated_at":1763899900.0}]}
+```
+
+Captions and cuts are newest first. `state` for caption jobs is the client-facing job state used
+by `GET /v1/jobs` (raw `queued` is `waiting`, `running` is `processing`). A cut's `preset_label`
+is the built-in or saved preset label; it is null for a prompt request, whose text rides in
+`prompt`. Empty history is `{"videos":[]}`.
+
 ## Setup file (`GET /setup.json`)
 
 Public, rate limited like `/v1/health`. The app's "Import setup" fetches it so nothing is typed

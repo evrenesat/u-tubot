@@ -1,5 +1,67 @@
 # u·tubot devlog
 
+## 2026-11-24 (Processed section review round 1)
+
+- A backend or token change drops the Processed section's browse cache and cancels a cached refresh still in flight: `BrowsePresenter`
+  registers a `UtubotSettings` connection listener (as `UtubotManager` does), so the tiles of the old connection's user can't be
+  replayed under the new one. Test: user A's tiles cached, backend and token changed, focus Processed shows only the new answer.
+- A saved sidebar keeps the ids of the default sections it knew; a restore adds any current default missing from them once, and
+  a section the user turned off stays off. A sidebar saved before the set existed knew every default but
+  `SECTIONS_ADDED_SINCE_KNOWN` (Processed now), so existing installs gain the section. Tests: an old saved sidebar gains Processed
+  once, and a saved sidebar with it turned off keeps it off.
+- Without a configured backend the section shows "Set the u·tubot backend address in the settings first" instead of
+  "Bad backend address: ".
+- Tests: `tests/test_processed.py` covers a dismissed cut staying out (a video with only dismissed requests is absent) and `limit`
+  0/201 being 400; `BrowsePresenterProcessedTest` covers the cached replay after a connection change and the setup hint. Removed an
+  edit artifact from BrowsePresenter's upstream comment.
+- Verified with JDK 25: `:common:testStutubotDebugUnitTest` (1632 tests, 0 failures, 0 errors, 7 skipped), and in `ai-backend`
+  `uv run pytest -q` (1050 passed) and `uv run ruff check` (clean).
+
+## 2026-11-24 (Processed section, issue 66 steps 1-4)
+
+- Backend (step 1): `GET /v1/processed?limit=N` (default 50, at most 200, auth) answers `{"videos":[...]}`, one item per video from
+  the caller's caption jobs and non-dismissed cut requests, newest `updated_at` first; `summary` says whether a stored summary exists.
+  A read-only `ProcessedService` combines rows already there (no new storage); `ai-backend/DEVLOG.md` and `docs/server.md` carry it.
+- TV data layer (step 2): `UtubotModels` gained `ProcessedItem`/`ProcessedList` and their caption and cut entries,
+  `UtubotParser.parseProcessed` and `UtubotClient.processed(limit)` read the endpoint with the bearer token, and
+  `UtubotManager.processedObserve` is cancellable like the cuts one.
+- Sidebar section (step 3): `UtubotProcessedSection` maps the answer to newest-first grid tiles with the processed line under the
+  title ("HQ captions: ready • Cut ready: Only the demo • Summary ready", or the newest state for unfinished work); `BrowsePresenter`
+  and `SidebarService` register it only in the built-in flavor, the browse cache of #65 is reused and empty/failed answers show
+  `UtubotSectionError`.
+- Opening a tile (step 4): `BrowsePresenter.onVideoItemClicked` recognizes the section's cards through their group (`UtubotProcessedOpen.isProcessed`)
+  and opens them with `UtubotProcessedOpen.open`, which asks `UtubotCaptionsOpen` for the video's HQ captions and then starts the
+  normal playback path (`PlaybackPresenter.openVideo`). The player takes that request when it sets the video, and selects the HQ track
+  even with "Select HQ captions automatically" off; the request is for that playback only and expires if no player takes it.
+- A ready cut is not carried again: the Processed open goes through the same playback path as #64, whose `UtubotCutController`
+  follows the video (`GET /v1/videos/{id}/cuts`) and announces a ready cut with its one-press Apply dialog (or applies it by itself
+  when "apply ready cuts automatically" is on). A tile with no cut starts plainly.
+- Tests: `UtubotProcessedOpenTest` (4: the tile's captions selected with the automatic setting off, a ready cut offered by the player
+  path, no cut and plain play, only the section's cards are Processed). The steps 1-3 tests (parser, client, tiles, presenter) stay.
+- Docs: README Features and docs/install.md "Using it" list the section; docs/server.md and docs/captions.md say what its tiles show
+  and that opening one selects the HQ captions.
+- Verified with JDK 25: `:common:testStutubotDebugUnitTest` (1628 tests, 0 failures, 0 errors, 7 skipped),
+  `:smarttubetv:assembleStutubotDebug`, and in `ai-backend` `uv run pytest -q` (1048 passed) and `uv run ruff check` (clean).
+
+## 2026-11-24 (Processed sidebar section, issue 66 step 3)
+
+- The built-in flavor has a sidebar section `Processed` past the other entries and before Settings (`UtubotProcessedSection.ID`,
+  a reserved id 26 since `MediaGroup.TYPE_...` lives in the pinned sibling repo), registered in `BrowsePresenter` and
+  `SidebarService` only with `UtubotSettings.isBuiltIn()`; the other flavors keep their sidebar.
+- Its grid loads `GET /v1/processed` through `UtubotManager.processedObserve(50)`, a backend call, not YouTube; the answer is
+  mapped to video tiles in its newest-first order (`UtubotProcessedSection.toGroup`). A tile has its video id, title, thumbnail
+  and the processed line in the second title: "HQ captions: ready" (else the newest caption state), "Cut ready: …" with every
+  ready preset's label or prompt (else the newest cut state), "Summary ready" when one is stored. The endpoint sends no channel,
+  so the tile has none.
+- The section keeps the browse cache of #65 (replay, background refresh, in-place id reuse); an empty answer shows
+  "No processed videos yet" and a failed one "Can't load the processed videos: …" through `UtubotSectionError`, and a cached
+  section keeps its cards when its refresh fails. Opening a tile is unchanged (step 4 is later).
+- Tests: `UtubotProcessedTilesTest` (5: field mapping, each part and its state, ready preset labels, order, empty answer) and
+  `BrowsePresenterProcessedTest` (5: registration, injected answer loaded into the grid, empty and failed states, a failed load
+  with the view gone), following
+  `BrowsePresenterCacheTest`'s style. `:common:testStutubotDebugUnitTest` and `:smarttubetv:compileStutubotDebugJavaWithJavac`
+  are green with JDK 25.
+
 ## 2026-11-24 (browse cache review round 4)
 
 - Channels multi-grid on a cached replay: only the view's first auto-selection keeps the cached uploads; every later channel the

@@ -454,6 +454,34 @@ test set (5 hand-marked transcripts × 3 requests, must-keep/must-skip spans, no
 The key is read from the named environment variable and never logged. Past measurements live in
 `ai-backend/fixtures/cuts/` (the 2026-11-20 pick: `fast`, with `fast-instruct` as fallback).
 
+## Processed videos
+
+The TV's *Processed* section lists what the owner has recently processed, so the server keeps a
+read-only view over rows it already has rather than a new history table. Wire details:
+[../ai/CONTRACT.md](../ai/CONTRACT.md#processed-videos-addendum-2026-11-23).
+
+- `GET /v1/processed?limit=50` (default 50, at most 200) answers `{"videos":[...]}`, one item per
+  video, newest last change first. The limit counts videos, not the caption or cut entries under
+  them.
+- A video comes from the caller's caption jobs (`jobs`, kind `captions`) and their cut requests
+  (`cut_requests`). Another user's jobs and cuts are never combined into this view; a dismissed
+  cut request is not listed, and a video with only dismissed requests is absent.
+- `captions` lists each caption job in the client-facing states `waiting`/`processing`/`ready`/
+  `failed`/`cancelled` with language, translation target, progress and error. `cuts` lists each
+  request with its state, `preset_id`, the built-in or saved preset label (null for a typed
+  prompt, which rides in `prompt`) and error.
+- `summary` is true when any stored summary exists for the video; summaries are shared per video.
+- `updated_at` is the newest change among the item's caption jobs and cut requests. The title
+  comes from cached video metadata, else the newest caption job's title. The thumbnail is the
+  cached metadata URL, else YouTube's standard `mqdefault` image for the id. Nothing is stored
+  for this endpoint.
+
+On the TV, a tile's second title says what is ready there ("HQ captions: ready • Cut ready: Only
+the demo • Summary ready") or where unfinished work stands. Opening a tile plays the video through
+the usual playback path, selects its HQ captions even when *Select HQ captions automatically* is
+off, and offers a ready director's cut with the same one-press Apply that any video start offers
+(the player's cut controller, as at any video start).
+
 ## Voice prompts
 
 The phone records a spoken cut description and posts it to `POST /v1/speech`; this backend sends

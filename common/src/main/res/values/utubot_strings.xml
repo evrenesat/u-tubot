@@ -137,4 +137,15 @@
     <string name="utubot_cut_not_configured">The server has no model for cuts</string>
     <string name="utubot_cut_loading">Loading the cuts…</string>
     <string name="utubot_cut_failed">Director\'s cut failed: %s</string>
+    <string name="utubot_processed_title">Processed</string>
+    <string name="utubot_processed_message">Videos you recently processed: HQ captions, director\'s cuts and summaries</string>
+    <string name="utubot_processed_empty">No processed videos yet</string>
+    <string name="utubot_processed_failed">Can\'t load the processed videos: %s</string>
+    <string name="utubot_processed_summary">Summary ready</string>
+    <string name="utubot_processed_cut_ready">Cut ready: %s</string>
+    <string name="utubot_processed_cut_waiting">Cut waiting: %s</string>
+    <string name="utubot_processed_cut_building">Cut building: %s</string>
+    <string name="utubot_processed_cut_needs_transcript">Cut needs a transcript: %s</string>
+    <string name="utubot_processed_cut_failed">Cut failed: %s</string>
+    <string name="utubot_processed_cut">Cut: %s</string>
 </resources>

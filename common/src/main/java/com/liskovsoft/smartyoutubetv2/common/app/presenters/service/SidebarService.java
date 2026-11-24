@@ -12,6 +12,8 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs.ProfileChangeListener;
 import com.liskovsoft.smartyoutubetv2.common.prefs.GeneralData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotProcessedSection;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -21,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Function;
 
 public class SidebarService implements ProfileChangeListener {
@@ -29,10 +32,20 @@ public class SidebarService implements ProfileChangeListener {
     private final Context mContext;
     private List<Video> mPinnedItems;
     private final Map<Integer, Integer> mDefaultSections = new LinkedHashMap<>();
+    /**
+     * The default sections the saved sidebar knew when it was written: a section absent from it was added since, so the next
+     * restore adds it once (see migrateMissingDefaultSections). A section the user turned off stays off.
+     */
+    private final Set<Integer> mKnownSectionIds = new TreeSet<>();
     private final AppPrefs mPrefs;
     private boolean mIsSettingsSectionEnabled;
     private int mBootSectionId;
     private final static int RESERVED_ID = 100;
+    /**
+     * The default sections added since the saved state started keeping the known ids: a sidebar saved before them has no
+     * record, so they are the only ones its restore can't tell from a section turned off. Append a new default section here.
+     */
+    private static final int[] SECTIONS_ADDED_SINCE_KNOWN = {UtubotProcessedSection.ID};
     /**
      * Boot to the section at the top of the sidebar, whichever it is. Below RESERVED_ID, so no pinned item has it (see
      * cleanupPinnedItems), and past the ids of the sections (MediaGroup.TYPE_...).
@@ -335,19 +348,31 @@ public class SidebarService implements ProfileChangeListener {
         mDefaultSections.put(R.string.header_playlists, MediaGroup.TYPE_USER_PLAYLISTS);
         mDefaultSections.put(R.string.my_videos, MediaGroup.TYPE_MY_VIDEOS);
         mDefaultSections.put(R.string.playback_queue_category_title, MediaGroup.TYPE_PLAYBACK_QUEUE);
+
+        // Past the other entries: the built-in flavor only (u-tubot #66), next to Settings, which it keeps last
+        if (UtubotSettings.isBuiltIn()) {
+            mDefaultSections.put(R.string.utubot_processed_title, UtubotProcessedSection.ID);
+        }
+
         mDefaultSections.put(R.string.header_settings, MediaGroup.TYPE_SETTINGS);
     }
 
     private void initPinnedItems() {
+        // Every default is known to this sidebar from the start: the hidden ones stay off, as turned off by the default
+        mKnownSectionIds.addAll(mDefaultSections.values());
+
         for (int sectionId : mDefaultSections.values()) {
-            // Hidden sections
-            enableSection(sectionId, !Helpers.equalsAny(sectionId, new int[] {
-                    MediaGroup.TYPE_PLAYBACK_QUEUE,
-                    MediaGroup.TYPE_BLOCKED_CHANNELS,
-                    MediaGroup.TYPE_BLOCKED_AI_CHANNELS,
-                    MediaGroup.TYPE_HIDDEN_VIDEOS
-            }));
+            enableSection(sectionId, isEnabledByDefault(sectionId));
         }
+    }
+
+    private static boolean isEnabledByDefault(int sectionId) {
+        return !Helpers.equalsAny(sectionId, new int[] {
+                MediaGroup.TYPE_PLAYBACK_QUEUE,
+                MediaGroup.TYPE_BLOCKED_CHANNELS,
+                MediaGroup.TYPE_BLOCKED_AI_CHANNELS,
+                MediaGroup.TYPE_HIDDEN_VIDEOS
+        });
     }
 
     private void cleanupPinnedItems() {
@@ -390,6 +415,15 @@ public class SidebarService implements ProfileChangeListener {
 
         mIsSettingsSectionEnabled = Helpers.parseBoolean(split, 2, true);
 
+        mKnownSectionIds.clear();
+        boolean hasKnownIds = split != null && split.length > 3;
+
+        for (Integer sectionId : Helpers.parseList(split, 3, SidebarService::parseSectionId)) {
+            if (sectionId != null) {
+                mKnownSectionIds.add(sectionId);
+            }
+        }
+
         transferOldPinnedItems();
 
         if (mPinnedItems.isEmpty()) {
@@ -399,9 +433,52 @@ public class SidebarService implements ProfileChangeListener {
         // Backward compatibility
         enableSection(MediaGroup.TYPE_SETTINGS, true);
 
+        migrateMissingDefaultSections(hasKnownIds);
+
         cleanupPinnedItems();
 
         keepSettingsLast();
+    }
+
+    /**
+     * A saved sidebar gets every current default section it never knew (u-tubot #66's Processed for an older u-tubot install)
+     * once; the known set says which it knew, so a section the user turned off stays off. A sidebar saved before the set existed
+     * knew every default but those added since {@link #SECTIONS_ADDED_SINCE_KNOWN}. The set is written from now on too.
+     */
+    private void migrateMissingDefaultSections(boolean hasKnownIds) {
+        if (!hasKnownIds) {
+            for (int sectionId : mDefaultSections.values()) {
+                if (!Helpers.equalsAny(sectionId, SECTIONS_ADDED_SINCE_KNOWN)) {
+                    mKnownSectionIds.add(sectionId);
+                }
+            }
+        }
+
+        for (int sectionId : mDefaultSections.values()) {
+            if (mKnownSectionIds.contains(sectionId)) {
+                continue;
+            }
+
+            mKnownSectionIds.add(sectionId);
+
+            if (isEnabledByDefault(sectionId)) {
+                enableSection(sectionId, true);
+            }
+        }
+
+        persistState();
+    }
+
+    private static Integer parseSectionId(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return null;
+        }
+
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private void transferOldPinnedItems() {
@@ -430,7 +507,8 @@ public class SidebarService implements ProfileChangeListener {
 
     public void persistState() {
         keepSettingsLast();
-        mPrefs.setSidebarData(Helpers.mergeData(mPinnedItems, mBootSectionId, mIsSettingsSectionEnabled));
+        mPrefs.setSidebarData(Helpers.mergeData(mPinnedItems, mBootSectionId, mIsSettingsSectionEnabled,
+                Helpers.mergeList(mKnownSectionIds)));
     }
 
     /**

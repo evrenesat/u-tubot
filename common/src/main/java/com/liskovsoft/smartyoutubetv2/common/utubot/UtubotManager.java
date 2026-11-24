@@ -16,6 +16,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Summary;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Transcript;
@@ -657,6 +658,17 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     public String cutRequestUrl(String requestId) {
         return newClient().cutRequestUrl(requestId);
+    }
+
+    //endregion
+
+    //region Processed videos
+
+    /**
+     * The caller's recently processed videos, for the Processed section. Cancelled with the section.
+     */
+    public Observable<ProcessedList> processedObserve(int limit) {
+        return cancellable(client -> client.processed(limit));
     }
 
     //endregion
