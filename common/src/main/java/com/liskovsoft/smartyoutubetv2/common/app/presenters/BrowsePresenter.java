@@ -2325,7 +2325,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
      * replayed under the new one. An in-flight cached refresh is cancelled, so it can't show or write the old answer.
      */
     private void onUtubotConnectionChanged() {
-        if (mBrowseCache == null) {
+        if (mBrowseCache == null || getContext() == null) {
             return;
         }
 

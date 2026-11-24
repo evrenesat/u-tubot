@@ -168,3 +168,21 @@ async def test_another_users_items_are_not_visible(env):
     assert [v["video_id"] for v in theirs] == [VID2, VID1]
     assert theirs[1]["captions"] == []
     assert len(theirs[1]["cuts"]) == 1
+
+
+async def test_dismissed_cuts_stay_out(env):
+    base = time.time()
+    add_caption(env, VID1, updated_at=base - 10)
+    add_cut(env, VID1, preset="cut-demo", state="dismissed", updated_at=base)
+    add_cut(env, VID2, preset="cut-demo", state="dismissed", updated_at=base + 5)
+
+    videos = (await env.client.get("/v1/processed")).json()["videos"]
+    assert [v["video_id"] for v in videos] == [VID1]
+    assert videos[0]["cuts"] == []
+
+
+async def test_limit_outside_the_range_is_refused(env):
+    for limit in (0, 201):
+        r = await env.client.get("/v1/processed", params={"limit": limit})
+        assert r.status_code == 400, r.text
+        assert r.json()["error"]

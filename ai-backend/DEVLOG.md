@@ -1,5 +1,10 @@
 # DEVLOG
 
+## 2026-11-24 (processed videos review round 1)
+
+- `tests/test_processed.py`: a dismissed cut stays out — a video with only dismissed requests is absent, and a video with a caption
+  plus a dismissed cut lists no cuts; `limit` 0 and 201 answer 400 (the router's validation handler). No code changed.
+
 ## 2026-11-23 (processed videos: backend endpoint, GitHub #66 step 1)
 
 - `GET /v1/processed?limit=N` (default 50, at most 200) combines the caller's `jobs` kind

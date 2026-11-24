@@ -1,5 +1,22 @@
 # u·tubot devlog
 
+## 2026-11-24 (Processed section review round 1)
+
+- A backend or token change drops the Processed section's browse cache and cancels a cached refresh still in flight: `BrowsePresenter`
+  registers a `UtubotSettings` connection listener (as `UtubotManager` does), so the tiles of the old connection's user can't be
+  replayed under the new one. Test: user A's tiles cached, backend and token changed, focus Processed shows only the new answer.
+- A saved sidebar keeps the ids of the default sections it knew; a restore adds any current default missing from them once, and
+  a section the user turned off stays off. A sidebar saved before the set existed knew every default but
+  `SECTIONS_ADDED_SINCE_KNOWN` (Processed now), so existing installs gain the section. Tests: an old saved sidebar gains Processed
+  once, and a saved sidebar with it turned off keeps it off.
+- Without a configured backend the section shows "Set the u·tubot backend address in the settings first" instead of
+  "Bad backend address: ".
+- Tests: `tests/test_processed.py` covers a dismissed cut staying out (a video with only dismissed requests is absent) and `limit`
+  0/201 being 400; `BrowsePresenterProcessedTest` covers the cached replay after a connection change and the setup hint. Removed an
+  edit artifact from BrowsePresenter's upstream comment.
+- Verified with JDK 25: `:common:testStutubotDebugUnitTest` (1632 tests, 0 failures, 0 errors, 7 skipped), and in `ai-backend`
+  `uv run pytest -q` (1050 passed) and `uv run ruff check` (clean).
+
 ## 2026-11-24 (Processed section, issue 66 steps 1-4)
 
 - Backend (step 1): `GET /v1/processed?limit=N` (default 50, at most 200, auth) answers `{"videos":[...]}`, one item per video from

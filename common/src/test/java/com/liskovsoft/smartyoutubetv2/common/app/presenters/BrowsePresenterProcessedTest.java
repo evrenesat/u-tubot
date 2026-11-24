@@ -64,6 +64,9 @@ public class BrowsePresenterProcessedTest {
         Assume.assumeTrue(UtubotSettings.isBuiltIn());
         BrowsePresenter.unhold();
         mView = Robolectric.buildActivity(FakeBrowseView.class).setup().get();
+        UtubotSettings settings = UtubotSettings.instance(mView);
+        settings.setUrl("http://127.0.0.1:9");
+        settings.setToken("test-token");
         resetSidebar();
         mPresenter = BrowsePresenter.instance(mView);
         mPresenter.setView(mView);
@@ -74,6 +77,10 @@ public class BrowsePresenterProcessedTest {
 
     @After
     public void tearDown() throws Exception {
+        UtubotSettings settings = UtubotSettings.instance(mView);
+        settings.setUrl("");
+        settings.setToken("");
+
         if (mCache != null) {
             mCache.invalidate();
         }
@@ -146,6 +153,48 @@ public class BrowsePresenterProcessedTest {
         assertEquals(0, mView.errors);
     }
 
+    @Test
+    public void aChangedConnectionDoesNotReplayTheOldUsersCachedTiles() throws Exception {
+        putMapping(UtubotProcessedSection.ID, Observable.just(list(
+                item("only-a", "A's video", JobState.READY, CutState.READY, "Only the demo", true))));
+        mPresenter.onSectionFocused(UtubotProcessedSection.ID);
+        awaitTitle("Processed", 1);
+        assertNotNull(mCache.groups(sectionOf(UtubotProcessedSection.ID), browseCacheIdentity()));
+
+        int updatesBefore = mView.updateCount();
+        UtubotSettings settings = UtubotSettings.instance(mView);
+        settings.setUrl("https://utubot.example.com");
+        settings.setToken("user-b-token");
+
+        assertEquals(updatesBefore, mView.updateCount());
+        assertNull(mCache.groups(sectionOf(UtubotProcessedSection.ID), browseCacheIdentity()));
+
+        putMapping(UtubotProcessedSection.ID, Observable.just(list(
+                item("only-b", "B's video", JobState.PROCESSING, CutState.BUILDING, "Keep the demo", false))));
+        mPresenter.onSectionFocused(UtubotProcessedSection.ID);
+        awaitVideo("only-b");
+
+        for (VideoGroup group : mView.updatesSince(updatesBefore)) {
+            if ("Processed".equals(group.getTitle()) && !group.isEmpty()) {
+                assertEquals("only-b", group.getVideos().get(0).videoId);
+            }
+        }
+    }
+
+    @Test
+    public void anUnconfiguredBackendShowsTheSetupHint() throws Exception {
+        UtubotSettings settings = UtubotSettings.instance(mView);
+        settings.setUrl("");
+        settings.setToken("");
+        putMapping(UtubotProcessedSection.ID, Observable.error(new RuntimeException("Bad backend address: ")));
+
+        mPresenter.onSectionFocused(UtubotProcessedSection.ID);
+        awaitErrors(1);
+
+        assertEquals("Set the u·tubot backend address in the settings first", mView.lastError.getMessage());
+        assertFalse(mView.lastProgress);
+    }
+
     private void setViewGone() throws Exception {
         Field field = BasePresenter.class.getDeclaredField("mView");
         field.setAccessible(true);
@@ -177,6 +226,13 @@ public class BrowsePresenterProcessedTest {
         throw new IllegalStateException(sectionId + " isn't in the sections");
     }
 
+    private String browseCacheIdentity() throws Exception {
+        Method method = BrowsePresenter.class.getDeclaredMethod("getBrowseCacheIdentity");
+        method.setAccessible(true);
+
+        return (String) method.invoke(mPresenter);
+    }
+
     private void putMapping(int sectionId, Observable<?> observable) throws Exception {
         Field field = BrowsePresenter.class.getDeclaredField("mProcessedMapping");
         field.setAccessible(true);
@@ -198,6 +254,22 @@ public class BrowsePresenterProcessedTest {
         }
 
         throw new AssertionError("the section didn't load");
+    }
+
+    private void awaitVideo(String videoId) {
+        long deadline = System.currentTimeMillis() + 5_000;
+
+        while (System.currentTimeMillis() < deadline) {
+            ShadowLooper.idleMainLooper();
+
+            if (mView.hasVideo(videoId)) {
+                return;
+            }
+
+            sleep();
+        }
+
+        throw new AssertionError(videoId + " didn't load");
     }
 
     private void awaitErrors(int count) {
@@ -338,6 +410,26 @@ public class BrowsePresenterProcessedTest {
             }
 
             return false;
+        }
+
+        private boolean hasVideo(String videoId) {
+            for (VideoGroup group : mUpdates) {
+                for (Video video : group.getVideos()) {
+                    if (videoId.equals(video.videoId)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private int updateCount() {
+            return mUpdates.size();
+        }
+
+        private List<VideoGroup> updatesSince(int index) {
+            return new ArrayList<>(mUpdates.subList(index, mUpdates.size()));
         }
 
         private VideoGroup lastTitle(String title, int size) {
