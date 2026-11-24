@@ -1,7 +1,7 @@
 # Director's cuts: quick and watched modes (plan)
 
-Status: draft, revision 2 (the watched mode now reuses the owner's earlier scene-analysis code). Waits for the owner's
-decisions (Part 1) and a plan review. Nothing is implemented.
+Status: draft, revision 3 (revision 2 made the watched mode reuse the owner's earlier scene-analysis code; revision 3
+answers the plan review, section 6). Waits for the owner's decisions (Part 1). Nothing is implemented.
 Scope: two ways to build a director's cut. **Quick** is today's cut, made from the transcript only, and stays the default.
 **Watched** is made from what is on screen plus what is said: the server downloads a small copy of the video, turns it into
 timestamped 2x2 picture grids, has a vision model describe each grid, and gives the editor model the descriptions together
@@ -26,16 +26,19 @@ the owner's public repository `evrenesat/r2t4` (the analysis engine reused here)
 - Watched can cut what quick cannot see: a demo with no talking, slides, a sponsor card on screen, "as you can see here".
 - The watching part is your scene-analyser code (grid extraction, frame selection, running context, the Timed Descriptive
   Transcript), copied into the backend and adapted, not written again.
-- Both modes hold the preset's target length (the #82 fix is shared code, not done twice).
+- Both modes show the cut's real length, and both hold the preset's target length once #82 is merged (that fix is a
+  separate task already in work; it is shared code, not done twice, and the last two backend checkpoints wait for it).
 - If a watched cut fails, the picker says why and offers Quick with one press. A quick cut that is already ready stays usable
   while the watched one builds.
-- Grids stay on your own engines. A cloud vision model is possible only behind a switch that is off.
+- Grids stay on your own engines. A cloud vision model is not part of this plan.
 
 ## Time and space per video
 
-The watched figures come from your scene-analyser runs of March 2026 (a 58-minute episode on a laptop: grids for the whole
-episode in 2.5 minutes; one grid described in 5.6 s by a 2B vision model and 13.8 s by Qwen3.5-35B-A3B). Today's engines and
-models were not measured; checkpoints 2 and 3 do that. The grid counts for YouTube videos are an estimate (see 2.2).
+**The watched times are a guess until checkpoint 3 measures them on your engines.** They are arithmetic from your
+scene-analyser runs of March 2026 (a 58-minute episode on a laptop: grids for the whole
+episode in 2.5 minutes; one grid described in 5.6 s by a 2B vision model and 13.8 s by Qwen3.5-35B-A3B, 21 grids each). Today's engines and
+models were not measured, and one session of the same model was ten times slower. The grid counts for YouTube videos are
+an estimate (see 2.2).
 
 | | Quick | Watched, first cut of a video | Watched, another preset of the same video |
 |---|---|---|---|
@@ -48,27 +51,32 @@ the last finished watched jobs.
 
 ## Decisions needed from you
 
+Decision 7 blocks checkpoint 2; the others can wait until the checkpoint that needs them.
+
 1. **Default mode: Quick** (recommended). Watched is chosen per video, or set as your personal default in Settings.
-2. **Vision model: Qwen3.6-35B-A3B first** (changed; recommended). Its predecessor did exactly this job in scene-analyser
-   (21 of 21 grids answered in valid form, 13.8 s each). Checkpoint 3 confirms it on today's engines and measures the smaller
-   and faster candidates against it (the model family behind the alias the cuts use today, gemma-4-26B); the faster one wins
-   only if its descriptions score within the margin of section 2.11. Alternative: speed first, take the fastest model that
-   passes.
-3. **Cloud vision: off** (recommended). The switch exists (`allow_cloud_frames`), is off by default, and when on the picker
-   says "Watched (cloud)". Alternative: not building the switch at all.
+2. **Vision model: Qwen3.6-35B-A3B first, if it takes pictures** (recommended). Its predecessor did this job in
+   scene-analyser; this model itself is **untested here**, and the gateway lists it as text-only. Checkpoint 3 first probes
+   each candidate with one picture, then measures those that pass (section 2.2 names them). The alias the cuts use today
+   is the candidate known to be listed with image input and is the pick if the Qwen3.6 model does not pass. Alternative:
+   speed first, take the fastest model that passes.
+3. **Cloud vision: not built now** (changed; recommended). No switch, no label. Pictures go only to the one provider you
+   configure for the vision task. Alternative: build an off-by-default switch for a cloud model.
 4. **Keep the small video copy in the media archive** (recommended, same rule as audio in #34: a second look with a better
    model needs no new YouTube download; the archive quota is the limit). Alternative: delete it once the grids are described.
-5. **Longest video for Watched: 90 minutes** (recommended; longer ones answer "too long for Watched, use Quick").
+5. **Longest video for Watched: 90 minutes** (recommended; longer ones answer "too long for Watched, use Quick" before
+   anything is downloaded). Every video up to that length fits: a long or fast-cut video gets coarser grids, never a late
+   refusal.
 6. **When Watched fails: offer Quick with one press** (recommended). Alternative: fall back to Quick automatically and say so.
-7. **Copy your scene-analyser modules into u·tubot under MIT** (new; recommended). `evrenesat/r2t4` is public but has no
-   licence file, so nobody may reuse its code by default. You are the only author of that directory, so your word is enough:
-   the copied files then carry a header naming their origin, and are MIT here. Optional and separate: add a licence to
-   `r2t4` itself. Alternative: keep it out and write the analysis part new from the ideas (slower, and loses tested code).
+7. **Blocking: copy your scene-analyser modules into u·tubot under MIT** (recommended; the reply needed is "yes, MIT").
+   `evrenesat/r2t4` is public but has no licence file, so nobody may reuse its code by default. You are the only author of
+   that directory, so your word is enough: the copied files then carry a header naming their origin, and are MIT here.
+   Optional and separate: add a licence to `r2t4` itself. Alternative: keep it out and write the analysis part new from the
+   ideas (slower, and loses tested code).
 
 ## Risks
 
 - Watched is slow at the measured speeds: a 35B-class model needs tens of minutes for a long video. The plan caps the number
-  of grids, shares the descriptions between presets, and measures a faster model; if that is still too slow for you, the
+  of grids, shares the descriptions between presets, and measures a faster model on at least 100 grids; if that is still too slow for you, the
   answer is a smaller vision model (decision 2's alternative), not a different design.
 - scene-analyser was tuned on a drama episode. Talking heads and screen recordings have few cuts; the plan adds one rule for
   them (long quiet stretches share a grid) that the earlier code did not have and that checkpoint 2 must prove.
@@ -135,9 +143,10 @@ Measured in its recorded run (March 2026, one 58.4-minute episode, a laptop with
   - The same model, image only, first 10 minutes, in an earlier session: 25 answered at a median of 118 s and 12 timed out
     at 180 s. The engine was unstable in that session; the per-grid time is not a property of the model.
   - Qwen3.5-2B, image plus subtitles so far, first 3 minutes: 21 of 21, 5.6 s average.
-  - Qwen3.5-2B, whole episode, subtitles so far: 114 answered, then 204 refused with HTTP 400 from the grid at 20 minutes
-    on, when the accumulated subtitle text passed about 10,000 characters. This is why the bounded and precomputed strategies
-    were written; unbounded context is not an option.
+  - Qwen3.5-2B, whole episode, subtitles so far: 114 answered, then all 204 remaining requests refused with HTTP 400, from
+    the grid at 20 minutes on. At that point the prompt carried 344 subtitle events, about 10,300 characters, and grew with
+    every grid. The cause was not recorded: a context limit of that model load is the likely one, not a shown one. The
+    bounded and precomputed strategies were written the day after.
   - Qwen3.5-0.8B: a single answer recorded (5.4 s). No conclusion.
 - Not in the data: any quality score, a comparison of grids with single frames, a run of the models named in its current
   config, a completed whole-title run with the bounded strategy.
@@ -168,12 +177,17 @@ not a sidecar:
   priorities, back-pressure and job events), its own deployment, and a file hand-over for every job.
 - Copy: the reusable part is about 1,400 lines of pure functions (`frame_selector.py`, five functions of `extractor_v1.py`,
   the bounded strategy and memory, the TDT validator) that need only `ffmpeg` and Pillow. They are adapted to the backend's
-  rules: tunables into `config.py` (no module constants), async `ffmpeg` calls through the existing helper, paths from the
-  scratch directory, typed dataclasses kept.
+  rules: tunables into `config.py` (no module constants), paths from the scratch directory, typed dataclasses kept. Their
+  `ffmpeg` calls stay blocking `subprocess` calls (the low-resolution pass reads raw grey frames from the child's stdout,
+  the cut probe parses its stderr; the backend's `run_ffmpeg` discards stdout and cannot do either) behind a new small
+  module `watch/ffmpeg.py`: argument arrays only, a cancel event that terminates the child, `-threads` from
+  `[cuts.watched] ffmpeg_threads = 2`, stderr trimmed and free of paths in errors. The whole grid stage runs in one worker
+  thread per build (`asyncio.to_thread`), never on the event loop that serves the long polls; one watched build at a time
+  means one such thread.
 
 Rules for the copy: each copied file starts with a comment naming `evrenesat/r2t4`, `scene-analyser/<file>` and the commit
 `29075554`; `ai-backend/THIRD_PARTY.md` (new) lists them with "by the repository owner, contributed under MIT" and the date
-of his decision; no file is copied before decision 7 is answered yes. With a no, checkpoints 2 and 3 are written from the
+of his decision, and the `AGENTS.md` licence sentence gains that file; no file is copied before decision 7 is answered yes. With a no, checkpoints 2 and 3 are written from the
 behaviour described in 1.2 instead, without the code, and take longer.
 
 New Python dependency: Pillow, in an optional extra `watched` (like `asr`); without it watched is unavailable with the
@@ -222,10 +236,15 @@ in checkpoint 2:
 
 - **Quiet stretches share a grid.** Consecutive chunks that `frame_selector` flags as low-variation are joined up to
   `low_variation_max_chunk_s = 45.0`; the four frames are chosen over the joined window. A talking head then costs about
-  1.3 grids a minute instead of 4. A scene cut still ends a chunk.
-- **A cap.** `max_grids = 240`. When the chunk list is longer, `max_chunk_s` and `low_variation_max_chunk_s` are raised
-  step by step (factor 1.25, at most to 30 s and 90 s) and the chunks rebuilt; still over the cap, the build is refused as
-  too long. Deterministic for a given video and settings.
+  1.3 grids a minute instead of 4. Chunk ends follow `frame_selector`'s own rule (a busy cut, else a calm cut near the
+  maximum, else the maximum); cuts inside a chunk stay listed in its record.
+- **A cap that always fits.** `max_grids = 240`. When the chunk list is longer, the chunks are rebuilt with all three
+  lengths raised together (`min_chunk_s`, `max_chunk_s`, `low_variation_max_chunk_s`, factor 1.25 per step, at most four
+  steps). Still over the cap, the last step is a budget split: chunks of `duration / max_grids` seconds, each end moved to
+  a scene cut when one lies within `cut_merge_s`. So every video within `max_video_minutes` gets at most 240 grids (at 90
+  minutes: one grid per 22.5 s, one frame per 5.6 s) and the cap never refuses a video; the only length refusal is the
+  duration check before the download. Deterministic for a given video and settings; the step used is in the manifest and
+  the job report, and the cut document says `"coarse": true` when the budget split was used.
 
 Expected grids per video minute: 1.3 (still picture) to 5.4 (the measured drama); the tables in Part 1 assume 2 to 5.
 The manifest keeps scene-analyser's record: chunk window, the four timestamps and scores, activity class, low-variation
@@ -237,8 +256,18 @@ coverage. The cost side is measured (5.4 requests per minute instead of about 22
 so checkpoint 3 measures one thing about it: whether text on a slide is still read inside a 512 px cell (2.11).
 
 **Vision model.** A new task table `[llm.cuts_vision]` (same fields as other tasks; no default, like `[llm.cuts]`).
-First choice for the owner's server: Qwen3.6-35B-A3B (decision 2). Checkpoint 3 confirms it and measures the faster
-candidates; the result is recorded in `ai-backend/fixtures/cuts/VISION-CHOICE-<date>.md`.
+Candidates on the owner's gateway, by alias as served today:
+
+| # | Alias | Model | Gateway says | Note |
+|---|---|---|---|---|
+| 1 | `qwen3.6-35b-a3b-oq8e-mtp` | Qwen3.6-35B-A3B | text only (the default for discovered models) | recommended if it passes the probe; successor of the measured Qwen3.5-35B-A3B |
+| 2 | `fast` (`fast-instruct` is the same family and counts as one) | Qwen3.8-Flash-Next | image input | the `[llm.cuts]` pick of 2026-11-20; the known image-capable candidate |
+| 3 | `gemma-4-26b-a4b-it-oq8e-mtp` | gemma-4-26B | text only (default) | no earlier data |
+
+The Qwen3.5 models that scene-analyser measured ran on a laptop model server and are not served by the gateway, so they
+are not candidates. Checkpoint 3 starts with a probe (2.11) and continues only with the aliases that pass it. A candidate
+that passes while declared text-only needs its capability corrected in the gateway's own configuration (outside this
+repository) before it is used; the pick is recorded in `ai-backend/fixtures/cuts/VISION-CHOICE-<date>.md`.
 `llm.py` gains message content parts (`[{"type":"text"},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,..."}}]`),
 OpenAI-compatible, nothing provider-specific. JSON answers go through the existing `chat_json` and `extract_json`;
 `json-repair` is not added.
@@ -250,8 +279,10 @@ runs. The user message is scene-analyser's bounded-memory template, fed from u·
 - the transcript text spoken inside the chunk;
 - exact transcript lines of the previous `recent_window_count = 3` chunks;
 - the carry-forward state: the last `carry_forward_scenes = 2` visual summaries and their kinds;
-- no text older than that, and a hard limit `describe_context_chars = 4000` (the measured failure at about 10,000
-  characters of accumulated subtitles is the reason); over the limit the oldest recent lines are dropped first.
+- no text older than that, and a hard limit `describe_context_chars = 4000` (the earlier whole-episode run with growing
+  context ended in HTTP 400 for every later grid; whatever the exact limit was, a prompt that grows with the video is not
+  an option); over the limit the oldest recent lines are dropped first. An HTTP 400 on a grid is retried once with the
+  context halved, and checkpoint 3 records the real limit of the chosen model.
 
 No stronger-model summary of the older transcript is precomputed: a cut needs what a chunk shows, not the plot so far, and
 the pass would cost one more model call per grid.
@@ -316,7 +347,16 @@ in between. Never inward, never across speech.
   units to it.
 - The band is checked on the final document's `kept_ms` (after snap, padding and merge) in both modes.
 - The real length is shown next to the label in both modes ("Highlights · 5:02", with "· Watched" when it is).
-- Checkpoint 4 does not start before #82 is merged; checkpoints 1 to 3 do not depend on it.
+- Owner and place of #82: it is its own task and pull request, in work on the Heavy tier outside this plan (labels
+  `bug`, `tier:heavy`); this plan does not implement it. Checkpoints 4 and 5 wait for its merge to `main`; checkpoints 1, 2,
+  3 and 6 do not.
+- What this plan needs from #82, whatever its final answer format: the selection runs in the server after
+  `parse_cut_answer`, on parts made of unit ids, and the band is checked on the finished cut. If #82 lands like that with
+  other field names, checkpoint 4 uses them as they are. If it lands differently (selection only by prompt, or not on
+  units), checkpoint 4 begins with a short amendment of this section, reviewed before any code.
+- If #82 slips: checkpoints 1, 2, 3 and 6 still land. The real length is shown in both modes anyway, because it is the
+  cut document's existing `kept_ms`; only holding the target waits, and watched is not switched on (checkpoint 7) before
+  it.
 
 ### 2.4 Caching
 
@@ -328,6 +368,8 @@ in between. Never inward, never across speech.
   user. This is the expensive part and is paid once per video.
 - `cuts`: the quick key stays byte-for-byte as it is (existing rows stay valid). The watched key is
   `sha256(video | version | model | transcript_hash | "watched" | descriptions key)`. New column `cuts.mode`.
+- The preset list (`by_mode`) reads the cache once per preset and mode, two lookups per preset instead of one; both are
+  indexed reads of `cuts`.
 - In-flight sharing (`_inflight`) is per key as today; a second watched request for the same video waits on the same
   describing work through a per-video lock.
 - Describing is resumable: finished segments are written to the row as they complete, so a restart continues at the next
@@ -337,14 +379,19 @@ in between. Never inward, never across speech.
 
 ### 2.5 Budget, queue and what the user is told
 
-- `[cuts.watched] max_concurrent = 1` server-wide; waiting requests are `building` with `stage = "queued"`.
+- `[cuts.watched] max_concurrent = 1` server-wide; waiting requests are `building` with `stage = "in_line"` (not `queued`: that
+  name is a job event `_last_stage` filters out, and `waiting` is already a request state).
 - Request documents gain `mode`, `progress` (0 to 1; weights video 0.05, grids 0.1, describing 0.75, model 0.1) and `eta_s`.
 - `eta_s` before the build: expected grids (`eta_grids_per_minute = 3.5` x minutes until the manifest exists, then the real
   count) x seconds per grid, plus `eta_grid_stage_s_per_minute = 3.0` x minutes (153 s for 58.4 minutes was measured) and a
   fixed part. Seconds per grid is the median of the last `eta_window = 20` finished watched jobs; until there are any,
-  `eta_s_per_grid = 14.0` (the measured 35B-class figure). During the build it is recomputed from the grids left.
-- `describe_timeout_s = 60` per grid (the measured worst good answer was 17 s; the unstable session's 118 s answers would
-  have blocked a build for hours), `build_timeout_s = 3600` for the whole build.
+  `eta_s_per_grid = 14.0`, a placeholder from the 21-grid run that checkpoint 3 replaces with the median of its 100-grid
+  run. During the build it is recomputed from the grids left.
+- `describe_timeout_s = 60` per grid, also a placeholder: checkpoint 3 sets it to three times the 95th percentile of its
+  100-grid run. `build_timeout_s = 3600` for the whole build.
+- Ready while you watch something else: the follower follows the video that is playing, so a cut that becomes ready
+  for another video is not announced there. It shows as ready in that video's picker, on the phone's Cuts tab and in the
+  Processed list ("Cut ready"), and is offered when the video is opened again, as ready cuts are today.
 - Texts: picker "Watched · about 12 min"; on start "Watched cut is being prepared, about 12 min. Keep watching."; ready, as
   today, "Cut ready" with Apply.
 
@@ -363,13 +410,12 @@ in between. Never inward, never across speech.
 
 - Grids are sent only to the provider of `[llm.cuts_vision]`, together with the transcript lines of the bounded context.
   `docs/privacy.md` gains this, the stored video copy, and the TDT.
-- `[cuts.watched] allow_cloud_frames = false`. While false: `fallback` entries of `[llm.cuts_vision]` must be on the same
-  provider (config validation error otherwise), and the docs tell the admin to give that provider a gateway key that is not
-  allowed to reach cloud engines (modelgate: a client without `allow_cloud`), so a re-routed alias is refused by the gateway
-  and the watched build fails over to the Quick offer instead of sending pictures out. The backend cannot see where an alias
-  is routed; the guarantee is the gateway key.
-- While true: `modes[]` carries `"cloud": true`, clients label the mode "Watched (cloud)", and `GET /v1/admin/status` says
-  so.
+- No cloud switch (owner decision 3). `fallback` entries of `[llm.cuts_vision]` must be on the same provider (config
+  validation error otherwise), and the docs tell the admin to give that provider a gateway key that is not allowed to
+  reach cloud engines (modelgate: a client without `allow_cloud`), so a re-routed alias is refused by the gateway and the
+  watched build fails over to the Quick offer instead of sending pictures out. The backend cannot see where an alias is
+  routed; the guarantee is the gateway key, and the docs say so.
+- The admin TDT route returns on-screen text of a video to admins only; `docs/privacy.md` names it.
 - The TDT text does reach `[llm.cuts]` (as transcripts do today).
 
 ### 2.8 Failures and fallbacks
@@ -378,7 +424,6 @@ in between. Never inward, never across speech.
 |---|---|
 | Watched not configured or not installed, video too long, live stream | refused at request time (`409`), nothing queued |
 | Video refused by YouTube, media class blocked, archive full, disk reserve | request `failed`, plain reason |
-| Over the grid cap after every reduction step | request `failed`, "too long for Watched" |
 | Vision model unavailable, gateway refusal, over 20 % segments unseen, timeout | request `failed`, plain reason |
 | Editor model failure | as today |
 
@@ -391,12 +436,12 @@ request document says so. A partial watched cut (`"partial": true`) is applied n
 
 - `GET /v1/me` features: `"cuts_watched": bool`.
 - `GET /v1/videos/{id}/cuts`: adds `"default_mode"`, `"modes":[{"id","label","default":bool,"available":bool,"reason"?,
-  "eta_s"?,"cloud"?}]`; each preset adds `"by_mode":{"quick":{state fields},"watched":{state fields}}`. The preset's existing
+  "eta_s"?}]`; each preset adds `"by_mode":{"quick":{state fields},"watched":{state fields}}`. The preset's existing
   top-level `state`, `request_id`, `error`, `cut` keep describing the caller's default mode, so a client that ignores the new
   fields behaves as today.
 - `POST /v1/videos/{id}/cuts`, `PUT /v1/cut-requests/{id}`: optional `"mode"`.
-- Request document: `mode`, `progress`, `eta_s`, `fallback`; `stage` gains `queued`, `video`, `grids`, `describing`.
-- Cut document: `"mode"`, and for watched `"watched":{"grids":n,"model":"<alias>","partial":bool}`. `version` stays 1.
+- Request document: `mode`, `progress`, `eta_s`, `fallback`; `stage` gains `in_line`, `video`, `grids`, `describing`.
+- Cut document: `"mode"`, and for watched `"watched":{"grids":n,"model":"<alias>","partial":bool,"coarse":bool}`. `version` stays 1.
 - `GET /v1/processed`: each cut entry gains `mode`.
 - Settings document: `cut_mode`.
 - Admin: `GET /v1/admin/videos/{id}/tdt` returns the stored TDT (for the job page and for debugging); admin only.
@@ -425,13 +470,23 @@ stage sequence and `progress`, `/__mock/cuts?...&mode=` and a `state=failed&mode
 
 ### 2.11 Evaluation
 
-- **Grid test** (`scripts/grid_bench.py`, run by hand against a real endpoint, never in CI): grids built by the real grid
-  code from clips rendered with `ffmpeg` from known content (text slides at three sizes, a terminal-like text block, colour
-  scenes, a title card, a change between the first and the last cell). Scores: on-screen text recall, `kind` accuracy, valid
-  JSON rate, seconds per grid; and the same content sent as four single frames, once, to put a number on what the grid costs
-  in legibility. Decision rule for the vision model (decision 2): Qwen3.6-35B-A3B is the pick unless it fails (valid JSON
-  under 95 %, or over `describe_s_per_grid_max = 20.0`); a faster candidate replaces it only if its text recall and kind
-  accuracy are each within 0.05 of it. If no candidate passes, the plan stops at checkpoint 3 and the owner decides.
+- **Grid test** (`scripts/grid_bench.py`, run by hand against a real endpoint, never in CI), three steps:
+  1. *Probe* (`--probe`, the first step of checkpoint 3): one generated grid with a large known word in one cell and a
+     colour change across the cells, sent to each candidate alias. Pass: HTTP 200 and the word in the answer. A refusal, an
+     error or an answer without the word drops the candidate. If no candidate passes, the plan stops there and the owner
+     decides (another local model, or the alternative of decision 3).
+  2. *Scores*, for the candidates that passed: grids built by the real grid code from clips rendered with `ffmpeg` from
+     known content (text slides at three sizes, a terminal-like text block, colour scenes, a title card, a change between
+     the first and the last cell). On-screen text recall, `kind` accuracy, valid JSON rate; and the same content sent as
+     four single frames, once, to put a number on what the grid costs in legibility.
+  3. *Long run*, for the candidates that passed: at least 100 consecutive grids of one real video from the archive (offline
+     mode, imported as in 2.12), with the real describe prompt at its full bounded context. Recorded: answered and failed
+     counts, median and 95th percentile seconds per grid, the largest prompt sent, any HTTP 400. `eta_s_per_grid` and
+     `describe_timeout_s` are set from it.
+  Decision rule (decision 2): candidate 1 is the pick when it passes the probe, answers at least 95 % of the long run in
+  valid form and has a median of at most `describe_s_per_grid_max = 20.0`. A faster candidate replaces it only if its text
+  recall and kind accuracy are each within 0.05 of it. If candidate 1 fails, the best-scoring passing candidate under the
+  same limits is the pick.
 - **cutbench, watched mode**: every fixture gains a hand-written TDT (no video, no vision model: this measures the join and
   the editor). Three new fixtures where the transcript alone misleads: a silent demo (the must-keep span has no speech), a
   walkthrough where the talk refers to the screen ("as you can see here") and the screen decides relevance, and a sponsor
@@ -439,8 +494,8 @@ stage sequence and `progress`, `/__mock/cuts?...&mode=` and a `state=failed&mode
   columns, #82's length-accuracy column, and `visual keep` (recall on spans marked as screen-only).
 - **Labelled set** (owner's server, never CI, never in the repository): six real videos the owner chose (two talking, two
   screen recordings, two with demonstrations), two presets each, hand-marked keep and skip ranges in a small JSON file under
-  `[cutbench] labelled_dir`. Media and cassettes are recorded by the owner (`utubot youtube-record` plus the archive); the
-  run uses offline mode. Reports both modes side by side with a readable sample of the kept parts, the grid count per
+  `[cutbench] labelled_dir`. The cassettes are recorded by the owner (`utubot youtube-record`); the video files reach the
+  archive either through his normal production use or through `utubot media import` (2.12). The run uses offline mode. Reports both modes side by side with a readable sample of the kept parts, the grid count per
   minute for each video, and the measured stage times.
 - **Gate** (checkpoint 5): on the three visual fixtures watched scores at least 0.15 higher than quick; on the other
   fixtures it is no more than 0.03 lower; length accuracy inside #82's band in both. If the gate fails, `[cuts.watched]
@@ -458,11 +513,18 @@ stage sequence and `progress`, `/__mock/cuts?...&mode=` and a `state=failed&mode
 - `tests/mock_openai.py` accepts image content parts and answers the describe format (plus modes: invalid JSON once, HTTP
   400, timeout).
 - The fake downloader pattern of `test_media_archive.py` supplies the video; `block_youtube()` stays autouse.
+- **Media import** (new, checkpoint 2): `utubot media import <video_id> <file> [--kind video|audio]`, an owner command
+  that puts a local file into the media archive through `MediaArchive.store` (`check_video_id`, quota check, no network,
+  works with `[youtube] offline`). It is how the long run of checkpoint 3 and the labelled set of checkpoint 5 get their
+  videos without any request to YouTube from a test, an agent or a bench run. Its test imports the synthetic clip and
+  builds grids from it in offline mode.
+- The mock's HTTP 400 case covers the halved-context retry.
 - Per checkpoint, see the table.
 
 ## 3. New and changed files (backend)
 
-- `src/utubot/watch/__init__.py`; `watch/video.py` (download, archive); `watch/frame_selector.py` and `watch/grids.py`
+- `src/utubot/watch/__init__.py`; `watch/video.py` (download, archive); `watch/ffmpeg.py` (blocking calls with cancel,
+  used from the worker thread); `watch/frame_selector.py` and `watch/grids.py`
   (copied and adapted: analysis, chunks, selection, cut probe, extraction, stitching, manifest; plus the quiet-stretch rule
   and the cap); `watch/memory.py` (copied: bounded context, carry-forward state); `watch/describe.py` (prompt, sequential
   requests, records, resume); `watch/tdt.py` (copied validator, slim format, assembly); `watch/join.py` (silent units,
@@ -470,10 +532,12 @@ stage sequence and `progress`, `/__mock/cuts?...&mode=` and a `state=failed&mode
 - `ai-backend/THIRD_PARTY.md` (new): the copied files and their origin.
 - `cuts.py` (mode on requests, key, branch in `_run_build`, fallback field), `llm.py` (content parts), `config.py` and
   `config.example.toml` (`[llm.cuts_vision]`, `[cuts] default_mode`, `[cuts.watched]`, `UserPolicy.cut_mode`),
-  `pyproject.toml` (extra `watched = ["pillow>=11"]`), `db.py`, `media_archive.py` (remove hook), `settings.py`,
-  `processed.py`, `cutbench.py`, `prompts.py` (describe prompt, watched sentences), `web/ui/js/pages/cuts.js`, the settings
+  `pyproject.toml` (extra `watched = ["pillow>=12.1.1"]`, the version scene-analyser ran with), `db.py`, `media_archive.py` (remove hook), `settings.py`,
+  `processed.py`, `cli.py` (`media import`), `cutbench.py`, `prompts.py` (describe prompt, watched sentences), `web/ui/js/pages/cuts.js`, the settings
   page, `job.js`/`jobtext.js` (new stages).
-- Docs: `ai/CONTRACT.md`, `docs/server.md` ("Director's cuts", "Job details"), `docs/privacy.md`, `docs/llm-providers.md`,
+- CI: `.github/workflows/utubot-ci.yml` installs the `watched` extra for the backend job (ffmpeg is already there) and its
+  path filter covers `ai-backend/THIRD_PARTY.md`.
+- Docs: `AGENTS.md` (the licence sentence names `ai-backend/THIRD_PARTY.md`), `ai/CONTRACT.md`, `docs/server.md` ("Director's cuts", "Job details"), `docs/privacy.md`, `docs/llm-providers.md`,
   `ai/APP_INTEGRATION.md`, both devlogs.
 
 ## 4. Checkpoints
@@ -483,17 +547,17 @@ plan (Fast: straightforward from this plan; Heavy: the tricky parts).
 
 | # | Scope | Done when | Tests | Tier |
 |---|---|---|---|---|
-| 0 | Gates, not work of this plan: #82 merged (needed by 4); owner decision 7 answered (needed by 2) | `main` has `target_s` and the ranked selection; the decision is recorded in this plan | #82's own | n/a |
+| 0 | Gates, not work of this plan: owner decision 7 answered (needed by 2); #82 merged (its own Heavy-tier task; needed by 4 and 5, see 2.3) | the decision is recorded in this plan; `main` has the server-side length selection | #82's own | n/a |
 | 1 | Mode plumbing with quick only: contract text, `mode` on requests and cuts, `modes` and `by_mode`, `default_mode`, `UserPolicy.cut_mode`, additive columns, watched listed as unavailable, mock backend modes, parity-matrix row | old request bodies answer exactly as before (replayed in a test); `mode:"watched"` answers the 409; settings round trip; quick cache keys unchanged (a stored row from before is still served) | `test_cuts_api.py`, `test_settings.py`, `test_db_migrations.py`, `test_emulator_mock.py` | Fast |
-| 2 | Video and grids, no model: `watch/video.py`; `frame_selector.py` and `grids.py` copied with headers and `THIRD_PARTY.md`, adapted to config and async `ffmpeg`; the quiet-stretch rule and the cap; archive `kind=video`, limits, disk checks, scratch cleanup, archive remove hook | on the synthetic clip: the four cuts end chunks within 0.5 s, every chunk is 4 to 15 s except the joined still stretch (one grid for 30 s), each grid is 2x2 with cells of at most 512 px, the manifest matches scene-analyser's record; the cap holds on generated chunk lists; a second run downloads nothing and reuses the manifest; grids are gone after the stage; over-limit and full-archive cases fail before a download. Recorded by the owner's server for one talking video and one screen recording: grids per minute, stage time, video size | `test_watch_video.py`, `test_watch_selector.py`, `test_watch_grids.py`, `test_media_archive.py` | Heavy |
-| 3 | Vision: content parts in `llm.py`, `[llm.cuts_vision]`, `memory.py` and `tdt.py` copied with their ported tests, `describe.py` (sequential, bounded context, records, resume, timeout), the cloud rule; `grid_bench.py`; the model pick | mock: one request per grid in order, context never over the limit on a two-hour transcript, one retry then `not_seen`, the 20 % rule, resume after a restart at the next grid, TDT validated and cached per key, same-provider fallback rule; grid test run on the owner's engines for every candidate and the pick recorded with seconds per grid; if none passes, stop and report | `test_watch_describe.py`, `test_watch_memory.py`, `test_watch_tdt.py`, `test_llm_parts.py`, config tests | Heavy |
+| 2 | Video and grids, no model: `watch/video.py`; `frame_selector.py` and `grids.py` copied with headers and `THIRD_PARTY.md`, adapted to config; `watch/ffmpeg.py` and the worker thread; the quiet-stretch rule and the cap with its budget split; `utubot media import`; archive `kind=video`, limits, disk checks, scratch cleanup, archive remove hook | on the synthetic clip: every hard cut is a chunk end or in that chunk's cut list within 0.5 s, every chunk is 4 to 15 s except the joined still stretch (one grid for 30 s), each grid is 2x2 with cells of at most 512 px, the manifest matches scene-analyser's record; the cap holds on generated chunk lists including a 90-minute one with a cut every 4 s (budget split, 240 grids); a long poll answers within its `wait_ms` while the grid stage runs; cancelling a build ends the child `ffmpeg`; `media import` works offline; a second run downloads nothing and reuses the manifest; grids are gone after the stage; over-limit and full-archive cases fail before a download. Recorded by the owner's server for one talking video and one screen recording: grids per minute, stage time, video size | `test_watch_video.py`, `test_watch_selector.py`, `test_watch_grids.py`, `test_media_archive.py`, `test_cli_media.py` | Heavy |
+| 3 | First step: the image-input probe of 2.11 for the three candidate aliases, result recorded before anything else is built. Then: content parts in `llm.py`, `[llm.cuts_vision]`, `memory.py` and `tdt.py` copied with their ported tests, `describe.py` (sequential, bounded context, records, resume, timeout), the cloud rule; `grid_bench.py`; the model pick | mock: one request per grid in order, context never over the limit on a two-hour transcript, one retry then `not_seen`, HTTP 400 retried once with half the context, the 20 % rule, resume after a restart at the next grid, TDT validated and cached per key, same-provider fallback rule; on the owner's engines: scores for every candidate that passed the probe, the long run of at least 100 grids at full context, the pick, the eta and timeout values and the model's real prompt limit recorded; if none passes, stop and report | `test_watch_describe.py`, `test_watch_memory.py`, `test_watch_tdt.py`, `test_llm_parts.py`, config tests | Heavy |
 | 4 | The watched build: `join.py`, `service.py`, branch in `CutService`, snap, #82 selection reused, queue slot, progress and eta, timeouts, failures and `fallback`, job-report stages, admin TDT route and status | end to end on the synthetic clip with the mock models: a watched request goes through every stage to a ready cut whose kept ranges include the silent part; restart mid-build resumes and reuses the caches; second preset skips stages 2 to 4; each failure row of 2.8 produces its document; the band holds after snap | `test_cuts_watched.py`, `test_watch_join.py`, `test_job_report.py` | Heavy |
 | 5 | Evaluation: cutbench TDTs, three visual fixtures, `--mode`, report columns; the labelled-set runner; the gate | bench numbers for both modes recorded in `fixtures/cuts/`; gate result stated; labelled-set run recorded (numbers, grids per minute, times, a readable sample) by the owner's server | `test_cutbench.py` | Fast |
 | 6 | Clients: TV picker row, follower over long builds, texts, labels, failure dialog; web UI control, progress, settings, failure offer; extension side per 2.10 | TV unit tests for the picker model and parser with the new fields; emulator run against the mock (`--cuts-watched-delay`) recorded: pick Watched, keep playing, ready announcement, Apply; failed case shows "Use Quick"; web UI tests for the control and the progress view | `UtubotCut*Test`, `test_webui.py`, emulator recipe in `docs/development.md` | Fast |
 | 7 | Owner trial and switch-on: docs complete, example config, the owner's server enables watched | the owner built watched cuts for at least three videos from the TV and the phone and each finding is fixed or filed | recorded in the devlog | Fast |
 
 Order: 1, then 2, 3, 4, 5 in sequence; 6 may run beside 2 to 5 once 1 has landed (it needs only the contract and the mock).
-4 needs #82; 2 needs decision 7.
+2 needs decision 7; 4 and 5 need #82 merged; 7 needs both.
 
 ## 5. Verified, and not
 
@@ -503,21 +567,26 @@ Order: 1, then 2, 3, 4, 5 in sequence; 6 may run beside 2 to 5 once 1 has landed
   about 60 KB per grid.
 - A 35B-class local Qwen vision model answers a 2x2 grid with transcript context in valid JSON at about 14 s per grid, and
   a 2B model at about 5.6 s (21 grids each).
-- Unbounded transcript context breaks a small model at about 10,000 characters; a bounded context is required.
+- A run whose prompt grew with the video ended in HTTP 400 for every grid after the 114th (about 10,300 characters of
+  subtitles at that point). The cause is not in the data.
 - The reusable modules need only `ffmpeg` and Pillow; all commits to them are the owner's; the repository has no licence.
-- The gateway's model list shows the alias family the cuts use today with image input and lists Qwen3.6-35B-A3B and
-  gemma-4-26B as available local models (declared text-only there, see below).
+- The gateway's model list, as read: `fast` and its family are listed with image input; `qwen3.6-35b-a3b-oq8e-mtp` and
+  `gemma-4-26b-a4b-it-oq8e-mtp` are served and listed without it.
+- The five copied modules compile under Python 3.12 (the plan review checked this); the 3.14 requirement is a declared
+  floor, not used syntax.
 
 ### 5.2 Could not be verified from here
 
-- Whether the local builds of Qwen3.6-35B-A3B and gemma-4-26B accept image input through the gateway. The gateway lists its
-  discovered models as text-only by default; nothing was probed with an image. Qwen3.6-35B-A3B is recommended on the
-  strength of its predecessor's measured runs, not its own.
-- Speed on today's engines. The per-grid times are from a laptop in March 2026 with older models, 21 grids each; one
-  session of the same model was ten times slower. Every time in Part 1 follows from them.
+- Whether any candidate actually answers a picture through the gateway: nothing was probed, for `fast` either. "Text only"
+  is the gateway's default for discovered models and may say nothing about the two builds. Qwen3.6-35B-A3B is recommended
+  on the strength of its predecessor's runs, not its own. The probe is the first step of checkpoint 3.
+- Why the growing-context run failed, and the real prompt limit of any candidate.
+- Speed on today's engines. The per-grid times are from a laptop in March 2026 with older models, 21 grids each from the
+  first three minutes, with little context; one session of the same model was ten times slower. Every time in Part 1, the
+  eta default and the timeout follow from them until the 100-grid run replaces them.
 - Description quality. scene-analyser recorded no score; nothing shows how good the summaries were, and nothing compares
   grids with single frames. The grid test and checkpoint 5 are the first measurements.
-- Grids per minute on YouTube material, and the quiet-stretch rule, which is new. The 1.3 to 5.4 range is arithmetic from
+- Grids per minute on YouTube material, and the quiet-stretch rule and the budget split, which are new. The 1.3 to 5.4 range is arithmetic from
   the settings and one drama episode.
 - The speed of `frame_selector.py` without numpy on the server, and on a 360p source (the measured source was a film file).
 - The size of a 360p video-only stream and the download time under the gate's pacing; that a 360p video-only format exists
@@ -527,3 +596,30 @@ Order: 1, then 2, 3, 4, 5 in sequence; 6 may run beside 2 to 5 once 1 has landed
 - That the TV's cut parser ignores unknown fields and that `UtubotCutFollower` keeps following a request for an hour
   (read, not run; checkpoint 6 tests both).
 - Whether watched is better than quick at all on real videos (checkpoint 5).
+
+## 6. Review response
+
+Plan review of revision 2 (clean context, verdict: approve with changes; no high findings).
+
+| # | Finding | Answer |
+|---|---|---|
+| M1 | The #82 gate has no owner, order or fallback; its answer format is unknown | 2.3 and checkpoint 0: #82 is its own Heavy-tier task; checkpoints 4 and 5 wait for its merge; what the plan needs from it and what happens if the format differs or it slips; Part 1 reworded |
+| M2 | The recommended vision model is unprobed and the candidates are unnamed | 2.2: three candidates by alias; 2.11 and checkpoint 3: the image-input probe is the first step, with a pass condition and a rule when the first choice fails; decision 2 says "untested here" |
+| M3 | Speed rests on 21-grid runs with little context | 2.11 step 3 and checkpoint 3: a run of at least 100 grids at full context; the eta default and the timeout are placeholders set from it; Part 1 says the times are a guess |
+| M4 | The 10,000-character cause was stated as shown | 1.2, 2.2, 5.1, 5.2: the observed evidence only, cause unverified; HTTP 400 retried with half the context; the real limit recorded in checkpoint 3 |
+| M5 | The grid cap can contradict the 90-minute limit, after a paid download | 2.2: the cap raises `min_chunk_s` too and ends in a budget split, so every video within the limit fits; the only length refusal is before the download; decision 5 kept, failure row removed |
+| M6 | `run_ffmpeg` cannot stream frames or return stderr; analysis must be off the event loop | 2.0, section 3, checkpoint 2: `watch/ffmpeg.py` with blocking calls and cancel, the whole grid stage in one worker thread, tests for long-poll latency and cancel |
+| M7 | No way to put media into the archive for offline runs | 2.12, 2.11, checkpoint 2: the owner command `utubot media import` |
+| M8 | The stage name `queued` collides with the job-event filter | 2.5, 2.9: the stage is `in_line` |
+| L | Owner part long; cloud switch for a case nobody asked for | Decision 3 is now "not built"; the switch, the label and the status line are gone. The table and the risks are kept: they carry the time and the main doubts |
+| L | Decision 7 is a gate, not just "new" | Marked blocking, with the reply needed |
+| L | `THIRD_PARTY.md` and the `AGENTS.md` sentence | 2.0 and section 3 |
+| L | CI workflow missing from the file list | Section 3 |
+| L | Pillow pin | `pillow>=12.1.1` |
+| L | `by_mode` doubles the cache lookups | Noted in 2.4; the quick-key test is in checkpoint 1 |
+| L | Admin TDT route and privacy | 2.7 |
+| L | Same-provider rule is config-level only | Unchanged; 2.7 says the guarantee is the gateway key |
+| L | Ready announcement while on another video | 2.5 |
+| L | 5.1 and 5.2 read as contradictory on the gateway's list | Reworded: what the list says (5.1), what was never probed (5.2) |
+| - | Review note: a hard cut does not always end a chunk in `frame_selector` | Found while answering M5; 2.2 and checkpoint 2 corrected |
+

@@ -12,6 +12,11 @@
   has no licence; new owner decision 7). Timestamped 2x2 grids replace single frames, one vision request per grid with a bounded
   running context, the result stored as a slim Timed Descriptive Transcript that maps onto the cut units. The time estimates are
   replaced by that project's measured figures, and the vision model recommendation is now Qwen3.6-35B-A3B first.
+- Revision 3 answers the plan review (approve with changes, eight mediums, ten lows; the plan's section 6): the #82 gate has
+  an owner and a fallback, checkpoint 3 starts with an image-input probe of three named candidate aliases and adds a run of at
+  least 100 grids at full context, the grid cap always fits a video within the 90-minute limit, the grid stage runs in a worker
+  thread with its own `ffmpeg` module, an owner command `utubot media import` feeds offline runs, the waiting stage is
+  `in_line`, and the cloud switch is no longer built.
 
 ## 2026-11-24 (director's cuts respect the target length, issue 82)
 
