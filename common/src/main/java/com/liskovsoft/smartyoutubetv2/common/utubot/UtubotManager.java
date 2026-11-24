@@ -70,6 +70,8 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     private volatile int mDiskScopeGeneration;
     /** Incremented by every connection change: the disk calls of the old connection must not touch the new one's cache */
     private volatile int mConnectionGeneration;
+    /** Incremented by every prompt change: a summary read or request of before it must not come back (see forgetSummaries) */
+    private volatile int mPromptGeneration;
     private String mSessionPrompt;
     private PromptList mPrompts;
     private UtubotCaptionsFollower mCaptionsFollower;
@@ -299,6 +301,8 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     private void forgetSummaries() {
         synchronized (mSummaries) {
+            // Under the lock of the memory writes: a summary read or request that started before this sees the new generation
+            mPromptGeneration++;
             mSummaries.clear();
         }
 
@@ -386,7 +390,11 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
                 T result = call.call(client);
 
                 if (!emitter.isDisposed()) {
-                    emitter.onNext(result);
+                    // A null answer (a summary of prompts that have since changed): the request completes without an item
+                    if (result != null) {
+                        emitter.onNext(result);
+                    }
+
                     emitter.onComplete();
                 }
             } catch (Throwable error) {
@@ -426,33 +434,53 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     public Observable<Summary> summaryObserve(Video video, @Nullable String promptKey) {
         VideoMeta meta = UtubotMeta.from(video);
         String cacheKey = summaryKey(video.videoId, promptKey);
-        Summary cached = getCachedSummary(video.videoId, promptKey);
 
-        if (cached != null) {
-            return Observable.just(cached);
-        }
+        return Observable.defer(() -> {
+            int promptGeneration = mPromptGeneration;
+            Summary cached;
 
-        return cancellable(client -> pollSummary(client, video.videoId, promptKey, meta, cacheKey));
+            synchronized (mSummaries) {
+                // Captured under the lock of a prompt change: a cached summary of the old prompts is not served
+                cached = promptGeneration == mPromptGeneration ? mSummaries.get(cacheKey) : null;
+            }
+
+            if (cached != null) {
+                return Observable.just(cached);
+            }
+
+            return cancellable(client -> pollSummary(client, video.videoId, promptKey, meta, cacheKey, promptGeneration));
+        });
     }
 
-    private Summary pollSummary(UtubotClient client, String videoId, @Nullable String promptKey, @Nullable VideoMeta meta, String cacheKey)
-            throws IOException {
+    private Summary pollSummary(UtubotClient client, String videoId, @Nullable String promptKey, @Nullable VideoMeta meta, String cacheKey,
+                                int promptGeneration) throws IOException {
         int generation = mConnectionGeneration;
 
-        if (useDiskCache(client) && generation == mConnectionGeneration) {
+        if (useDiskCache(client) && generation == mConnectionGeneration && promptGeneration == mPromptGeneration) {
             Summary stored = mDisk.getSummary(videoId, promptKey);
 
             if (stored != null) {
-                // The switch may have landed while the read was on the disk: the answer of the old connection is returned to its
-                // request, but it is not kept for the new connection
-                if (isCurrent(client) && generation == mConnectionGeneration) {
-                    synchronized (mSummaries) {
-                        if (isCurrent(client) && generation == mConnectionGeneration) {
-                            mSummaries.put(cacheKey, stored);
-                        }
+                boolean kept = false;
+
+                // The memory is written under the lock of a prompt change: an answer of the old prompts is never kept
+                synchronized (mSummaries) {
+                    if (isCurrent(client) && generation == mConnectionGeneration && promptGeneration == mPromptGeneration) {
+                        mSummaries.put(cacheKey, stored);
+                        kept = true;
                     }
                 }
 
+                if (kept) {
+                    return stored;
+                }
+
+                // The prompts changed while the read was on the disk: the answer of the old ones is neither kept nor shown
+                if (promptGeneration != mPromptGeneration) {
+                    return null;
+                }
+
+                // The switch may have landed while the read was on the disk: the answer of the old connection is returned to its
+                // request, but it is not kept for the new connection
                 return stored;
             }
         }
@@ -464,18 +492,28 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             summary = client.summary(videoId, promptKey, meta, SUMMARY_WAIT_MS);
         }
 
+        // The prompts changed while the answer was on the wire: the answer of the old ones is neither kept nor shown
+        if (promptGeneration != mPromptGeneration) {
+            return null;
+        }
+
         if (summary.isReady() && !summary.isTransient() && isCurrent(client) && generation == mConnectionGeneration) {
+            // The memory is written under the lock of a prompt change: an answer of the old prompts is never kept
             synchronized (mSummaries) {
-                if (isCurrent(client) && generation == mConnectionGeneration) {
+                if (isCurrent(client) && generation == mConnectionGeneration && promptGeneration == mPromptGeneration) {
                     mSummaries.put(cacheKey, summary);
                 }
             }
 
             synchronized (mDisk) {
-                // The scope and the generation are read under the lock of the switch: a stale answer never lands in the new scope
+                // The scope and the generations are read under the locks of the switch and a prompt change: a stale answer never
+                // lands in the new scope nor survives the clearing
                 synchronized (this) {
-                    if (mDiskScope != null && mDiskScopeGeneration == generation && generation == mConnectionGeneration && isCurrent(client)) {
-                        mDisk.putSummary(promptKey, summary);
+                    synchronized (mSummaries) {
+                        if (mDiskScope != null && mDiskScopeGeneration == generation && generation == mConnectionGeneration
+                                && promptGeneration == mPromptGeneration && isCurrent(client)) {
+                            mDisk.putSummary(promptKey, summary);
+                        }
                     }
                 }
             }
