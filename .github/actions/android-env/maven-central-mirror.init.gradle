@@ -1,4 +1,6 @@
 // CI only: sends every Maven Central repository (build classpath, plugins and dependencies) to Google's mirror of it.
+// The Gradle plugin portal redirects to Maven Central for most plugins, so the build classpath repositories also get the
+// mirror in front: it answers 404 for what Central does not hold, and Gradle then goes on to the next repository.
 def mirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
 def centralUrls = ['https://repo.maven.apache.org/maven2', 'https://repo1.maven.org/maven2']
 
@@ -10,11 +12,18 @@ def redirect = { repositories ->
     }
 }
 
+def mirrorFirst = { repositories ->
+    def repository = repositories.maven { url = mirror }
+    repositories.remove(repository)
+    repositories.addFirst(repository)
+}
+
 gradle.settingsEvaluated { settings ->
     redirect(settings.pluginManagement.repositories)
     redirect(settings.dependencyResolutionManagement.repositories)
 }
 gradle.beforeProject { project ->
     redirect(project.buildscript.repositories)
+    mirrorFirst(project.buildscript.repositories)
     redirect(project.repositories)
 }
