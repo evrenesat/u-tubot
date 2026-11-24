@@ -3,6 +3,9 @@
 - Python 3.12, `uv` only. Run `uv run pytest -q`, `uv run ruff check`, `uv run ruff format --check`
   before committing. Scratch in `temp/` (gitignored).
 - Contract lives in `../ai/CONTRACT.md`; change code and contract together.
+- `src/utubot/watch/frame_selector.py`, `grids.py`, `memory.py` and `tdt.py` are adapted from the owner's
+  `evrenesat/r2t4` `scene-analyser` at commit 29075554 under MIT; `LICENSE` there, `THIRD_PARTY.md` lists every file.
+  Keep the origin header and never present this as an independent implementation.
 - Database changes are additive (new tables, nullable or defaulted columns) so a rollback to the previous revision needs no database step;
   `tests/test_db_migrations.py` enforces it (`docs/server.md`, Updating and rolling back).
 - No magic numbers: tunables go in `src/utubot/config.py` and `config.example.toml`.

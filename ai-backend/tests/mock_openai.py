@@ -222,6 +222,7 @@ class MockOpenAI:
                 "kind": "screen",
                 "on_screen_text": "error: linker failed",
                 "same_as_previous": False,
+                "content": [{"category": "violence", "intensity": 1, "confidence": 0.5}],
             }
         return json.dumps(value)
 

@@ -10,7 +10,7 @@ never authored by a model, and a validator keeps their shape before the row is s
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .grids import ManifestRow
@@ -58,6 +58,7 @@ class SceneAnalysis:
     on_screen_text: str
     same_as_previous: bool
     seen: bool = True
+    content: list[dict[str, Any]] = field(default_factory=list)
 
 
 def parse_description(data: Any) -> SceneAnalysis:
@@ -86,8 +87,16 @@ def parse_description(data: Any) -> SceneAnalysis:
     same = data.get("same_as_previous")
     if not isinstance(same, bool):
         raise DescribeFormatError("'same_as_previous' must be true or false")
+    content = data.get("content")
+    content = [] if content is None else content
+    if not isinstance(content, list):
+        raise DescribeFormatError("'content' must be a list")
     return SceneAnalysis(
-        visual_summary=summary, kind=kind, on_screen_text=on_screen, same_as_previous=same
+        visual_summary=summary,
+        kind=kind,
+        on_screen_text=on_screen,
+        same_as_previous=same,
+        content=content,
     )
 
 
@@ -116,6 +125,13 @@ def assemble(
         analysis = analyses.get(row.grid_filename)
         seen = analysis is not None
         scene = analysis or SceneAnalysis("", "other", "", False, seen=False)
+        labels: dict[str, Any] = {
+            "kind": scene.kind,
+            "on_screen_text": scene.on_screen_text,
+            "same_as_previous": scene.same_as_previous,
+        }
+        if scene.content:
+            labels["content"] = scene.content
         segments.append(
             {
                 "segment_id": f"S{index + 1}",
@@ -124,11 +140,7 @@ def assemble(
                 "end": row.chunk_end,
                 "timestamps": row.selected_timestamps,
                 "visual_summary": scene.visual_summary,
-                "labels": {
-                    "kind": scene.kind,
-                    "on_screen_text": scene.on_screen_text,
-                    "same_as_previous": scene.same_as_previous,
-                },
+                "labels": labels,
                 "unit_ids": unit_ids[index] if unit_ids and index < len(unit_ids) else [],
                 "analysis_provenance": {
                     "model": model,
@@ -157,7 +169,7 @@ def validate_tdt(
     errors: list[str] = []
     if not isinstance(payload, dict):
         return ["the TDT is not a JSON object"]
-    for field in (
+    for name in (
         "format",
         "format_version",
         "video_sha256",
@@ -167,8 +179,8 @@ def validate_tdt(
         "scene_cuts",
         "segments",
     ):
-        if field not in payload:
-            errors.append(f"missing top-level field: {field}")
+        if name not in payload:
+            errors.append(f"missing top-level field: {name}")
     if payload.get("format") != TDT_FORMAT_ID:
         errors.append(f"format must be {TDT_FORMAT_ID!r}")
     if payload.get("format_version") != TDT_FORMAT_VERSION:
@@ -185,9 +197,9 @@ def validate_tdt(
         if not isinstance(segment, dict):
             errors.append(f"segments[{index}] must be an object")
             continue
-        for field in ("segment_id", "grid_filename", "start", "end", "visual_summary", "labels"):
-            if field not in segment:
-                errors.append(f"segments[{index}] missing field: {field}")
+        for name in ("segment_id", "grid_filename", "start", "end", "visual_summary", "labels"):
+            if name not in segment:
+                errors.append(f"segments[{index}] missing field: {name}")
         segment_id = segment.get("segment_id")
         if not isinstance(segment_id, str) or not segment_id:
             errors.append(f"segments[{index}] segment_id must be a string")

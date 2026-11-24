@@ -6,16 +6,21 @@ from utubot.watch.memory import BoundedSceneMemory, format_carry, format_recent
 def test_bounded_context_keeps_recent_lines_and_carry_state():
     segments = [
         (0.0, 2.0, "old line"),
-        (5.0, 6.0, "recent one"),
-        (8.0, 9.0, "recent two"),
+        (5.0, 6.0, "old two"),
+        (8.0, 9.0, "just before"),
+        (10.0, 11.0, "recent one"),
     ]
-    memory = BoundedSceneMemory(segments, recent_window_count=3, carry_forward_scenes=1)
+    memory = BoundedSceneMemory(segments, recent_window_count=2, carry_forward_scenes=1)
     memory.record(0.0, 5.0, visual_summary="A slide about builds.", kind="slide", seen=True)
-    snap = memory.build_snapshot(5.0, 10.0)
-    assert "recent one" in "\n".join(snap.recent_lines)
-    assert "old line" not in "\n".join(snap.recent_lines)
+    memory.record(5.0, 10.0, visual_summary="", kind="other", seen=False)
+    memory.record(10.0, 15.0, visual_summary="A demo.", kind="demo", seen=True)
+    snap = memory.build_snapshot(20.0, 25.0)
+    text = "\n".join(snap.recent_lines)
+    assert "recent one" in text
+    assert "old line" not in text and "just before" not in text
+    assert text.count("recent one") == 1
     carry = format_carry(snap.carry_summaries)
-    assert "slide" in carry and "A slide about builds." in carry
+    assert "demo" in carry and "A demo." in carry
 
 
 def test_context_limit_drops_the_oldest_lines_first():

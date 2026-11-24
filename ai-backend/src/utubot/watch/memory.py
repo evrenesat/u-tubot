@@ -75,9 +75,12 @@ class BoundedSceneMemory:
             for start, end, text in self._segments
             if start >= chunk_start and start <= chunk_end
         ]
+        merged: dict[tuple[float, float, str], None] = {}
+        for start, end, text in recent + inside:
+            merged[(float(start), float(end), str(text))] = None
         lines = [
             f"{start:.1f}-{end:.1f}s: {text}"
-            for start, end, text in sorted(recent + inside, key=lambda s: (s[0], s[1]))
+            for start, end, text in sorted(merged, key=lambda item: (item[0], item[1], item[2]))
         ]
         summaries = [
             {
@@ -92,7 +95,7 @@ class BoundedSceneMemory:
         return BoundedSnapshot(
             recent_lines=lines,
             carry_summaries=summaries,
-            transcript_chars=sum(len(text) for _s, _e, text in lines),
+            transcript_chars=sum(len(line) for line in lines),
             recent_char_count=sum(len(line) for line in lines),
         )
 

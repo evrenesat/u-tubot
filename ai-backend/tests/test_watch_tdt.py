@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from utubot.config import WatchedCutsConfig
 from utubot.watch.grids import ManifestRow
 from utubot.watch.tdt import (
     DescribeFormatError,
@@ -42,7 +41,12 @@ class TestDescribeAnswer:
     def test_rejects_an_unknown_kind_and_long_text(self):
         with pytest.raises(DescribeFormatError):
             parse_description(
-                {"visual_summary": "x", "kind": "film", "on_screen_text": "", "same_as_previous": False}
+                {
+                    "visual_summary": "x",
+                    "kind": "film",
+                    "on_screen_text": "",
+                    "same_as_previous": False,
+                }
             )
         with pytest.raises(DescribeFormatError):
             parse_description(

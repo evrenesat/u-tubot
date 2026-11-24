@@ -74,13 +74,16 @@ class TestWatchedBuild:
         assert call["model"] == "visionmodel"
         assert call["images"] and call["images"][0].startswith("data:image/jpeg;base64,")
         assert "Scene timing" in call["text"]
+        labels = watched_env.svc.db.all(
+            "SELECT * FROM scene_labels WHERE source_key=? ORDER BY start_ms", [f"youtube:{VID}"]
+        )
+        assert len(labels) == cut["watched"]["grids"]
+        assert labels[0]["category"] == "violence" and labels[0]["vocab_version"] == 1
         job = (await watched_env.client.get(f"/v1/jobs/{doc['job_id']}")).json()
         stages = {event["stage"] for event in job["events"]}
         assert {"transcript", "video", "grids", "describing", "model", "checking"} <= stages
 
-    async def test_other_preset_reuses_the_descriptions_and_grids(
-        self, watched_env, tmp_path
-    ):
+    async def test_other_preset_reuses_the_descriptions_and_grids(self, watched_env, tmp_path):
         await store_video(watched_env, tmp_path)
         set_transcript(watched_env.fetcher)
         watched_env.llm.cut_answer = {
@@ -123,8 +126,27 @@ class TestWatchedBuild:
         watched = next(mode for mode in state["modes"] if mode["id"] == "watched")
         assert watched["available"] is False and "not configured" in watched["reason"]
         assert state["default_mode"] == "quick"
-        r = await env.client.post(f"/v1/videos/{VID}/cuts", json={"preset": "cut-demo", "mode": "watched"})
+        r = await env.client.post(
+            f"/v1/videos/{VID}/cuts", json={"preset": "cut-demo", "mode": "watched"}
+        )
         assert r.status_code == 409 and "not configured" in r.json()["error"]
+
+    async def test_archive_remove_clears_watched_cache(self, watched_env, tmp_path):
+        await store_video(watched_env, tmp_path)
+        set_transcript(watched_env.fetcher)
+        r = await post_watched(watched_env)
+        await wait_ready(watched_env, r.json()["request_id"])
+        assert (
+            watched_env.svc.db.one(
+                "SELECT COUNT(*) AS n FROM scene_descriptions WHERE video_id=?", [VID]
+            )["n"]
+            > 0
+        )
+        removed = await watched_env.client.delete(f"/v1/admin/archive/{VID}")
+        assert removed.status_code == 200 and removed.json()["ok"] is True
+        assert removed.json()["watched_cache_rows_removed"]["description_rows"] > 0
+        tdt = await watched_env.client.get(f"/v1/admin/videos/{VID}/tdt")
+        assert tdt.status_code == 404
 
     async def test_the_default_mode_follows_the_users_policy(self, watched_env):
         r = await watched_env.client.put(

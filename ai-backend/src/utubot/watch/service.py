@@ -48,7 +48,7 @@ from .join import (
     watched_serialize,
     watched_units,
 )
-from .tdt import validate_tdt
+from .tdt import CATEGORIES, LABEL_VOCAB_VERSION, validate_tdt
 from .video import ensure_video
 
 if TYPE_CHECKING:
@@ -302,6 +302,7 @@ class WatchedBuilder:
             return
         from .tdt import prompt_hash
 
+        self._store_labels(desc_key, row, payload)
         self.db.execute(
             "INSERT OR REPLACE INTO scene_descriptions(cache_key,video_id,source_kind,source_key,"
             "release_key,release_duration_ms,video_sha256,settings_key,model,prompt_hash,"
@@ -322,6 +323,37 @@ class WatchedBuilder:
                 time.time(),
             ],
         )
+
+    def _store_labels(self, desc_key: str, row: dict[str, Any], payload: dict[str, Any]) -> None:
+        """The optional content labels (#88) as queryable rows; absent labels write nothing."""
+        self.db.execute("DELETE FROM scene_labels WHERE descriptions_key=?", [desc_key])
+        for segment in payload.get("segments") or []:
+            if not isinstance(segment, dict):
+                continue
+            labels = segment.get("labels")
+            content = labels.get("content") if isinstance(labels, dict) else None
+            if not isinstance(content, list):
+                continue
+            for entry in content:
+                if not isinstance(entry, dict) or entry.get("category") not in CATEGORIES:
+                    continue
+                self.db.execute(
+                    "INSERT INTO scene_labels(descriptions_key,source_key,release_key,segment_id,"
+                    "start_ms,end_ms,category,intensity,confidence,vocab_version)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    [
+                        desc_key,
+                        row["source_key"] or f"youtube:{row['video_id']}",
+                        row["release_key"],
+                        str(segment.get("segment_id") or ""),
+                        int((segment.get("start") or 0) * 1000),
+                        int((segment.get("end") or 0) * 1000),
+                        entry["category"],
+                        int(entry.get("intensity") or 0),
+                        float(entry.get("confidence") or 0.0),
+                        LABEL_VOCAB_VERSION,
+                    ],
+                )
 
     # ---- the whole build -----------------------------------------------------------------------
 

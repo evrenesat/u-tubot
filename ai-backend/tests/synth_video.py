@@ -34,9 +34,13 @@ def make_video(directory: Path) -> Path:
     inputs: list[str] = []
     for source, _seconds in PARTS:
         inputs.extend(["-f", "lavfi", "-i", source])
-    graph = "".join(f"[{index}:v]" for index in range(len(PARTS))) + f"concat=n={len(PARTS)}:v=1:a=0[v]"
+    graph = (
+        "".join(f"[{index}:v]" for index in range(len(PARTS))) + f"concat=n={len(PARTS)}:v=1:a=0[v]"
+    )
     command = ["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", graph]
-    command.extend(["-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"])
+    command.extend(
+        ["-map", "[v]", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"]
+    )
     command.append(str(target))
     subprocess.run(command, check=True, capture_output=True)
     return target

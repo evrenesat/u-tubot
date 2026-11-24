@@ -124,7 +124,7 @@ def estimate_sharpness(frame: Image.Image) -> float:
 
 def compute_dhash(frame: Image.Image) -> int:
     resized = frame.resize((9, 8), Image.Resampling.BILINEAR)
-    pixels = list(resized.getdata())
+    pixels = resized.tobytes()
     value = 0
     for row in range(8):
         offset = row * 9

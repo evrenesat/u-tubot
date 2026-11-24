@@ -369,6 +369,37 @@ class CutService:
         # leader's future instead of calling the model again (shared builds, plan v2).
         self._inflight: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
+    def stored_tdt(self, video_id: str) -> dict[str, Any] | None:
+        """The newest stored watched TDT for the admin job page; None when no description exists."""
+        row = self.db.one(
+            "SELECT * FROM scene_descriptions WHERE video_id=? ORDER BY created_at DESC LIMIT 1",
+            [video_id],
+        )
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["json"])
+        except ValueError:
+            return {"error": "the stored TDT is not JSON", "cache_key": row["cache_key"]}
+        return {"cache_key": row["cache_key"], "tdt": payload}
+
+    def clear_watched_cache(self, video_id: str) -> dict[str, int]:
+        """Drop watched scene/description/label rows with their media (the archive cleanup hook)."""
+        desc_keys = [
+            row["cache_key"]
+            for row in self.db.all(
+                "SELECT cache_key FROM scene_descriptions WHERE video_id=?", [video_id]
+            )
+        ]
+        labels = 0
+        for key in desc_keys:
+            labels += self.db.execute_rc("DELETE FROM scene_labels WHERE descriptions_key=?", [key])
+        scenes = self.db.execute_rc("DELETE FROM video_scenes WHERE video_id=?", [video_id])
+        descriptions = self.db.execute_rc(
+            "DELETE FROM scene_descriptions WHERE video_id=?", [video_id]
+        )
+        return {"scene_rows": scenes, "description_rows": descriptions, "label_rows": labels}
+
     # ---- configuration --------------------------------------------------------------------------
 
     @property

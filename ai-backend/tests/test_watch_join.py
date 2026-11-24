@@ -42,7 +42,9 @@ class TestWatchedUnits:
                 segment(15.0, 22.0, "other", "A desk."),
             ]
         )
-        units = watched_units(segments, doc, WatchedCutsConfig(), duration_s=22.0, cuts_cfg=CutsConfig())
+        units = watched_units(
+            segments, doc, WatchedCutsConfig(), duration_s=22.0, cuts_cfg=CutsConfig()
+        )
         numbers = [unit.n for unit in units]
         assert numbers == list(range(1, len(units) + 1))
         assert any(unit.text == NO_SPEECH for unit in units)
@@ -64,8 +66,12 @@ class TestWatchedUnits:
     def test_serialize_interleaves_scenes_and_units(self):
         segments = [(1.0, 3.0, "hello there.")]
         doc = tdt([segment(0.0, 5.0, "screen", "A slide.", False)])
-        units = watched_units(segments, doc, WatchedCutsConfig(), duration_s=5.0, cuts_cfg=CutsConfig())
-        text = watched_serialize(units, scene_lines(doc), [], {"title": "T", "duration_s": 5}, "Keep it")
+        units = watched_units(
+            segments, doc, WatchedCutsConfig(), duration_s=5.0, cuts_cfg=CutsConfig()
+        )
+        text = watched_serialize(
+            units, scene_lines(doc), [], {"title": "T", "duration_s": 5}, "Keep it"
+        )
         lines = text.splitlines()
         scene_at = next(index for index, line in enumerate(lines) if line.startswith("S1 "))
         unit_at = next(index for index, line in enumerate(lines) if line.startswith("#1 "))
@@ -95,7 +101,7 @@ class TestSnap:
 
     def test_never_moves_across_a_speech_unit(self):
         cfg = CutsConfig()
-        units = build_units([(8.0, 12.0, "the demo works.")], cfg)
+        units = build_units([(8.0, 13.0, "the demo works.")], cfg)
         parts = [Part("Demo", 10000, 12000)]
         snapped = snap_parts(parts, [9.5, 12.5], units, 1.0)
         assert (snapped[0].start_ms, snapped[0].end_ms) == (10000, 12000)
