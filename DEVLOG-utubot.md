@@ -1,5 +1,38 @@
 # u·tubot devlog
 
+## 2026-11-24 (director's cut modes plan)
+
+- `ai/CUT_MODES_PLAN.md`: the two-part plan for two director's-cut modes. Quick is today's transcript-based cut and stays the
+  default; Watched adds what is on screen (a small video copy in the media archive, shot boundaries, sampled frames described
+  by a local vision model, scene lines joined with the transcript units, the same editor model and the #82 length selection).
+  Mode is a server default, a per-user default and a per-request field, shown in the TV picker, the phone cut sheet and the
+  extension's Cut tab. Checkpoints 0 to 7, six owner decisions, a list of what could not be verified. Nothing is implemented.
+- Revision 2 of the plan: the watched mode reuses the owner's earlier scene-analysis code (`evrenesat/r2t4`, `scene-analyser`)
+  as its analysis engine, copied into `ai-backend/src/utubot/watch/` with attribution once the owner allows it (that repository
+  has no licence; new owner decision 7). Timestamped 2x2 grids replace single frames, one vision request per grid with a bounded
+  running context, the result stored as a slim Timed Descriptive Transcript that maps onto the cut units. The time estimates are
+  replaced by that project's measured figures, and the vision model recommendation is now Qwen3.6-35B-A3B first.
+- Revision 3 answers the plan review (approve with changes, eight mediums, ten lows; the plan's section 6): the #82 gate has
+  an owner and a fallback, checkpoint 3 starts with an image-input probe of three named candidate aliases and adds a run of at
+  least 100 grids at full context, the grid cap always fits a video within the 90-minute limit, the grid stage runs in a worker
+  thread with its own `ffmpeg` module, an owner command `utubot media import` feeds offline runs, the waiting stage is
+  `in_line`, and the cloud switch is no longer built.
+- Revision 4: decision 2 now follows the owner's model research (three installed vision models, Qwen3.6-35B-A3B as the default,
+  settled by a 45-minute bake-off that is the first step of checkpoint 3). A new last part, "Phase 2: priority classes and engine
+  claims", not yet reviewed: prime and normal users, class-ordered queues, a model route per class, a claim on the big local
+  engine through a small HTTP contract, an effort notch for Watched (Keyframes, Standard, Dense), per-account pairing on the TV,
+  checkpoints P1 to P9 across four repositories.
+- Revision 5 answers the phase 2 review (five high, eight medium findings; the plan's P.7): a claim is waited for at most three
+  minutes and then ends in the Quick offer, the server refuses to start if a local or claimed route could reach the cloud, the
+  claimed route never falls through, the claim contract is frozen first as its own file (checkpoint P0), renewal runs on a timer
+  against the service's clock, TV account pairing fails closed, and the decisions are renumbered D-P1 to D-P11.
+- Revision 6 answers the phase 2 re-check: nothing on the big engine is paused or switched for a claim any more. The claim
+  service waits a bounded time for running work and tells the backend its deadline (`ready_by`); the backend shows the minutes
+  left, gives up with the Quick offer and always deletes a claim it stops waiting for. The claimed route gets its own key.
+- Revision 7 adds section 2.13, the data model for two later features (issues 88 and 89): cuts keyed by a source (a YouTube id
+  or a title id with a release fingerprint and a duration tolerance), per-scene content labels in a queryable table, and an
+  optional transition slot per boundary in the cut document. The columns land in checkpoint 1 with a test that old rows read.
+
 ## 2026-11-24 (director's cuts respect the target length, issue 82)
 
 - The cut picker titles a ready preset with the cut's real length, "Highlights in 5 min · 5:02" (`UtubotCutController.presetTitle`,
