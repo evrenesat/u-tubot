@@ -29,7 +29,14 @@ jobs:
       backend: ${{ steps.scan.outputs.backend }}
       app: ${{ steps.scan.outputs.app }}
       release: ${{ steps.scan.outputs.release }}
+      extension: ${{ steps.scan.outputs.extension }}
+      extension_release: ${{ steps.scan.outputs.extension_release }}
     steps:
+      - name: Checkout u-tubot
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
       - name: Find what changed
         id: scan
         env:
@@ -39,59 +46,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BEFORE: ${{ github.event.before }}
           SHA: ${{ github.sha }}
-          # Files that never change the app. Anything else, a new module included, counts as an app change.
-          NON_APP: '^(ai-backend/|ai/|docs/|updates/|fastlane/|images/|assets/|scripts/|\.github/|[^/]+\.md$|LICENSE$|crowdin\.yml$)'
-          # What the backend job covers: the backend, its contract, the documentation and the release script its tests cover.
-          BACKEND: '^(ai-backend/|ai/|docs/|scripts/utubot_release\.py$)'
-          # The definition of this pipeline: changing it re-runs both jobs but never publishes a release.
-          PIPELINE: '^\.github/(workflows/utubot-ci\.yml$|actions/)'
-        run: |
-          set -euo pipefail
-          ZERO_SHA=0000000000000000000000000000000000000000
-
-          # File names (old names of renames too) of a range or pull request, one per line.
-          pr_files() { gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[] | .filename, (.previous_filename // empty)'; }
-          range_files() { gh api --paginate "repos/$REPO/compare/$1...$SHA" --jq '.files[] | .filename, (.previous_filename // empty)'; }
-          has_match() { [[ -n $(grep -E "$1" <<<"$2" || true) ]]; }
-          has_app_file() { [[ -n $(grep -Ev "$NON_APP" <<<"$1" || true) ]]; }
-
-          # Sets backend and app from a list of changed files.
-          classify() {
-            backend=false
-            app=false
-            if has_match "$BACKEND|$PIPELINE" "$1"; then backend=true; fi
-            if has_app_file "$1" || has_match "$PIPELINE" "$1"; then app=true; fi
-          }
-
-          # Any failure to list files keeps these defaults: run everything.
-          backend=true
-          app=true
-          release=false
-
-          if [ "$EVENT_NAME" = pull_request ]; then
-            if files=$(pr_files); then classify "$files"; fi
-          elif [ "$BEFORE" != "$ZERO_SHA" ] && files=$(range_files "$BEFORE"); then
-            classify "$files"
-          fi
-
-          if [ "$EVENT_NAME" = push ]; then
-            last=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/utubot-v" --jq '.[].ref' \
-              | sed -n 's#^refs/tags/utubot-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' | sort -V | tail -1 || true)
-            if [ -z "$last" ]; then
-              release=true
-            elif since=$(range_files "utubot-v$last"); then
-              if has_app_file "$since"; then release=true; fi
-            else
-              release=true
-            fi
-            if [ "$release" = true ]; then app=true; fi
-          fi
-
-          {
-            echo "backend=$backend"
-            echo "app=$app"
-            echo "release=$release"
-          } | tee -a "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/utubot_ci_changes.py classify
 
   backend:
     needs: changes
@@ -161,6 +116,50 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :common:testStutubotDebugUnitTest :smarttubetv:compileStutubotDebugJavaWithJavac
+
+  extension:
+    needs: changes
+    if: needs.changes.outputs.extension == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - name: Checkout u-tubot
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install the tools
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build every Firefox variant
+        run: |
+          npm run build:firefox-unlisted
+          npm run build:firefox-listed
+          npm run build:firefox-test
+          npm run build:chromium
+          npm run build:chromium-test
+
+      - name: Validate the manifests
+        run: |
+          npx web-ext lint --source-dir dist/firefox-unlisted --self-hosted
+          npx web-ext lint --source-dir dist/firefox-listed
+          npx web-ext lint --source-dir dist/firefox-test --self-hosted
 
   release:
     # Hosted by this repository only: forks do not hold the signing key.
