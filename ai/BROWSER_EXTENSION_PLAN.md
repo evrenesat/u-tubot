@@ -26,15 +26,16 @@ the browser gains what the TV app has:
 
 ## First: an MVP you can use
 
-The first ten checkpoints (0 to 9) give a signed build for **desktop Firefox** with the smallest useful set:
+The first checkpoints (0 to 9b) give a signed build for **desktop Firefox** with the smallest useful set:
 
 - Import setup and pairing.
 - On a video's page: the summary of that video (the short one and the long Summary view with your prompts).
 - HQ captions on the playing video (ready ones shown, a running job followed, kept afterwards).
 - A ready director's cut offered and its skipped parts jumped over.
 
-Estimated at about 70 local-agent hours, roughly one to one and a half weeks of calendar time with reviews (section 17; an
-estimate, not a measurement). It needs your Mozilla account and signing keys (D4) by checkpoint 9. Marks on cards, the AI
+Estimated at about 85 local-agent hours, roughly one and a half to two weeks of calendar time with reviews (section 17; an
+estimate, not a measurement). You look at it on real YouTube twice on the way (after checkpoints 5 and 7, a few minutes
+each), and it needs your Mozilla account and signing keys (D4) by checkpoint 9. Marks on cards, the AI
 answer, the cut picker, the Processed list, the phone and the other browsers follow after it.
 
 ## What parity means
@@ -89,7 +90,7 @@ handle YouTube and is never copied; only permissively licensed code may be copie
   page knowledge is in one file, a failure degrades to "nothing shown" (never a broken page), and your own use is the check
   after each YouTube change. What other extensions do about it is in Part 2, section 15.
 - **No automated test may open YouTube** (repository rule). Tests run against hand-written stand-in pages, so a real YouTube
-  difference is only found in your own use, first at the MVP. This is the same position as the TV app.
+  difference is only found in your own use: two short looks during the MVP (after checkpoints 5 and 7), then the MVP itself. This is the same position as the TV app.
 - **Our captions use a browser feature no extension we read uses on YouTube** (the video element's own subtitle tracks). If
   YouTube hides them, the fallback is drawing them ourselves. That is why captions are in the MVP: you see it early.
 - **YouTube's own scripts can see what the extension puts in the page**: mark labels, which cards are hidden, and the caption
@@ -105,14 +106,23 @@ handle YouTube and is never copied; only permissively licensed code may be copie
 
 ## How you try it
 
+Only you ever open real YouTube with it; no agent or test does.
+
 1. After checkpoint 4: load the build in desktop Firefox (`about:debugging`), import your setup, pair, see "Paired as …".
-2. After checkpoints 6, 7 and 8: the same build shows the summary, the captions and a cut on a video page; the pull request
-   says what to click.
-3. After checkpoint 9 (the MVP): download the signed file (the link is in `docs/install.md`), Add-ons, the cog, "Install Add-on
-   From File", and use YouTube normally. Tell us what breaks: this is the first time the extension meets real YouTube.
-4. After checkpoint 18: the same on the phone. Settings, About Firefox, tap the logo five times, then Settings, "Install
+2. After checkpoint 5, **first look at real YouTube** (unsigned build, loaded the same way): open a video, then another one
+   from the suggestions, and open the extension's popup. It shows what the extension found on the page (player, video, ad,
+   which navigation signal fired). You send us that text or a screenshot; nothing else works yet. This is where a wrong
+   assumption about YouTube's page is cheap to fix.
+3. After checkpoint 6 the summary shows on a video page. After checkpoint 7, **second look**: prepare captions for a video
+   and watch it; the popup also says whether the caption track is on and visible. After checkpoint 8 a ready cut skips.
+4. After checkpoint 9 the release machinery exists. The whole MVP is then reviewed once more as one piece; after that you
+   switch releases on (D4) and the first signed file is published.
+5. Checkpoint 9b, the MVP in use: download the signed file (the link is in `docs/install.md`), Add-ons, the cog, "Install
+   Add-on From File", and use YouTube normally for a few days. What you report is fixed in this checkpoint or moved to a named
+   later one; it closes when your list is empty.
+6. After checkpoint 18: the same on the phone. Settings, About Firefox, tap the logo five times, then Settings, "Install
    extension from file".
-5. After checkpoint 20: Chrome, Edge or Brave with "Load unpacked".
+7. After checkpoint 20: Chrome, Edge or Brave with "Load unpacked".
 
 ---
 
@@ -187,12 +197,16 @@ Existing extensions read for technique: section 15. Not verifiable from here: se
 6. **Network only in the background.** Content scripts and pages never hold the token and never call the backend; they send
    named messages and the background performs the fixed request. There is no generic "fetch this URL" message. The router has
    two message sets:
-   - from **extension pages only** (sender URL under this extension's own `moz-extension://` base): `setup.fetch`,
+   - from **extension pages only** (sender URL under this extension's own base address, taken from `runtime.getURL("")` in
+     `api.js`, so it is `moz-extension://…` on Firefox and `chrome-extension://…` on Chromium): `setup.fetch`,
      `setup.apply`, `pair`, `backend.set`, `token.set`, `health`, `me`, `prompts.list`, `prompts.import`, `prompts.refresh`,
-     `prompts.default`, `settings.*`, `processed`, `captions.open`;
+     `prompts.default`, `settings.*`, `processed`, `open.set`, `diagnostics.read`;
    - from **content scripts on the two YouTube origins** (and extension pages): `assess`, `summary`, `insight`, `transcribe`,
      `transcript`, `prompts.list`, `captions.status`, `captions.prepare`, `captions.file`, `cuts.list`, `cuts.request`,
-     `cuts.follow`, `settings.read`.
+     `cuts.follow`, `settings.read`, `open.take`, `diagnostics.report`.
+   Content scripts cannot read `storage.session` themselves on either browser, so the one-shot open requests (captions for a
+   Processed tile, a carried cut) are written by a page with `open.set` and fetched once by the watch page's content script
+   with `open.take`, which removes them.
    Anything else, another sender id, or a video id that does not match `^[A-Za-z0-9_-]{11}$` is rejected. UI handlers in the
    page ignore events with `isTrusted` false.
 7. **Storage**: `storage.local` holds the backend URL, token, user name, switches, panel delay, the session prompt and the
@@ -223,8 +237,9 @@ Existing extensions read for technique: section 15. Not verifiable from here: se
      the popup show "Allow access to `<origin>`" (the same button, in the options page).
 10. **http**: `content_security_policy.extension_pages` is `script-src 'self'; object-src 'self'` (no
     `upgrade-insecure-requests`), and the setup code refuses `http` for a non-private host with the rule ported from
-    `UtubotSetup.isPrivateHost`. A network error on an `http` backend is shown with the hint "If Firefox's HTTPS-Only mode is
-    on, add an exception for this server or use https".
+    `UtubotSetup.isPrivateHost`. A network error on an `http` backend is shown with one browser-neutral hint: "The browser may be
+    blocking plain http to this server (an HTTPS-only setting or a local-network permission). Allow it for this server, or use
+    https".
 11. **Data consent**: `data_collection_permissions.required` = `["browsingActivity", "websiteContent", "authenticationInfo"]`
     (video ids and card text go to the user's own server; the token authenticates there), no optional entries.
 12. **Captions in the page**: the standard text-track API on YouTube's `<video>` element (`video.addTextTrack` once per language
@@ -273,6 +288,13 @@ Existing extensions read for technique: section 15. Not verifiable from here: se
       re-applied whenever a scan finds them missing (YouTube removes foreign nodes); scans are throttled to one per 50 ms; on
       the mobile site a scan also follows `touchend`, `scrollend` and navigation with a decaying schedule (100 ms to 10 s),
       because cards arrive late there. A card whose container is not recognised is marked but never hidden.
+    - The element-name lists in `site.js` are written fresh, in this plan's own grouping (by what a card is: a video in a
+      grid, in a list, in the suggestions, a Short), from the stand-in fixtures and the owner's notes from the smoke runs.
+      Section 15 says which names exist; no list is carried over from another project's file.
+    - Diagnostics: `site.js` reports what it found (site kind, main video found and its duration, ad marker seen, which
+      navigation signal fired last, card containers recognised and unrecognised, caption track mode and cue count) to the
+      background with `diagnostics.report`; the popup shows it as plain text with a Copy button. It contains no address,
+      token, user name or video title.
     - Orphaned content scripts: after an extension update the old content script keeps running without an extension context.
       Every timer and observer callback first checks that the extension context is alive and tears everything down when it is
       not.
@@ -313,7 +335,8 @@ Existing extensions read for technique: section 15. Not verifiable from here: se
     when a push to `main` carries a version in that file that has no `utubot-ext-v<version>` tag yet, so ordinary checkpoint and
     fix merges release nothing; a release is made by raising the number on purpose. The first release is the MVP at checkpoint 9. The store signs a version number once, which
     is the same rule. Releases are also off until the repository variable `UTUBOT_EXTENSION_RELEASES` is `on` (section 9).
-22. **Pairing device name**: "Firefox (desktop)" or "Firefox (Android)"; it is what the backend's job log shows as the client.
+22. **Pairing device name**: "Firefox (desktop)", "Firefox (Android)" or "Chromium (desktop)" (one name for Chrome, Edge and
+    Brave: they cannot be told apart reliably); it is what the backend's job log shows as the client.
 23. **Processed tiles open in the same tab** (the browser's Back returns to the list).
 24. **Not built**: `ask`, `feedback`, `jobs`, voice, saved presets, admin pages (the TV app has none of them); keyboard shortcuts
     (`commands` does not exist on Android); embedded players; YouTube Music.
@@ -340,7 +363,7 @@ Existing extensions read for technique: section 15. Not verifiable from here: se
 
 ## 3. Feature-parity matrix
 
-Chromium on desktop behaves as the "Desktop Firefox" column in every row. Rows in the MVP (checkpoints 0 to 9): 1 to 4, 10
+Chromium on desktop behaves as the "Desktop Firefox" column in every row. Rows in the MVP (checkpoints 0 to 9b): 1 to 4, 10
 to 12 for the playing video, 14 to 17, 20, 21, 25, 26, 29.
 
 "Panel" is the extension's own panel on a watch page; "chip" is the small u·tubot button the extension adds to a card; "popup"
@@ -511,8 +534,9 @@ extension/
 | End to end, mobile layout | same harness, `m` fixtures, 360 px viewport, touch events | the Android behaviours of the matrix in the mobile page shape |
 | Android runtime | Android emulator, Firefox for Android installed from Mozilla's APK, `web-ext run --target=firefox-android` | checkpoint 10: install, YouTube permission state and the "Allow on YouTube" button, the real permission prompt with both answers, pairing, storage, held requests, `http` to a private address. Checkpoint 18: a mark, a summary, captions and a cut on the fixture pages. By an agent, not in CI |
 | API availability | checkpoint 18's audit: every extension-API call in `api.js` checked against MDN's compatibility table for Firefox for Android 142 | what lint does not report |
+| Owner smoke runs | the owner, the unsigned build, the popup diagnostics | after checkpoints 5 and 7: whether the page facts the player layer and the captions rest on hold on real YouTube |
 | End to end, Chromium | Playwright, unpacked `chromium-test` build, same fixtures and mock, resolver rule | checkpoint 19: the MVP flows and whichever parity features exist, in a service worker background |
-| Real YouTube | the owner, a released build (first at checkpoint 9) | page-structure drift |
+| Real YouTube | the owner, a released build (first at checkpoint 9b) | page-structure drift |
 
 ## 8. Backend, contract and mock changes
 
@@ -646,10 +670,19 @@ reviewed by the plan reviewer. One pull request per checkpoint, each updating `e
 
 Order and gates:
 
-- **0 to 9 are the MVP** (desktop Firefox, section 17), in this order. No gate other than each checkpoint's own review stands
-  in its way.
+- **0 to 9b are the MVP** (desktop Firefox, section 17), in this order. Each checkpoint's own review is the only gate, with
+  these named steps in between:
+  - **Owner smoke run 1**, after checkpoint 5, and **owner smoke run 2**, after checkpoint 7: the owner loads the unsigned
+    `firefox-unlisted` build through `about:debugging` on real YouTube and sends back the popup's diagnostic text (decision
+    15). No agent opens YouTube. Work on the next checkpoint goes on meanwhile; a difference the owner reports is fixed in the
+    site layer, with a fixture for it, before checkpoint 9.
+  - **MVP review**, after checkpoint 9 and before the first signed release: a Heavy clean-context review of checkpoints 0 to
+    9 as one result (token scoping, the two message sets, the permission flows, what enters the page, the release workflow),
+    then the plan reviewer's outcome review of the same. Only after both pass does the owner set
+    `UTUBOT_EXTENSION_RELEASES` to `on`. The same pair of reviews is repeated for the whole result after checkpoint 21.
 - **10 is the Android gate**: 18 (the Android pass) does not start until it has passed or the V2 fallback has been written
   into this plan. It does not block 11 to 17, which are desktop work with mobile-layout tests.
+- A request held on one video must never show on the next: checkpoints 6, 7 and 8 each carry that test.
 - **11 to 18** complete parity on Firefox. **19 and 20** are the Chromium track; they depend only on the MVP and may run
   beside 11 to 18 when a second agent is free, otherwise after 18. **21** is the owner's pass and the store steps.
 - **C1 to C4** are the web UI companion (section 18): after 21, re-planned against `main` before they start.
@@ -663,11 +696,12 @@ Order and gates:
 | 2 | Background core, no UI: client with every endpoint of section 1, `credentials: "omit"`, auth scoping, setup resolution and private-host rule, permission helpers, message router with the two sets, caches; no state in memory (service-worker rule) | `src/background/*`, `src/shared/{models,messages,api}.js` | unit: each endpoint's method, path and query (metadata, `is_live` for cuts); no request without `credentials: "omit"`; the header only for URLs under the backend; `http` to a public host refused; a content-script sender cannot call a page-only message; a bad video id is rejected; the router gives the same answers after its module is loaded afresh between two messages (nothing kept in memory) | unit (ported cases of `UtubotClientTest`, `UtubotSetupTest`) | Fast |
 | 3 | The e2e harness, proven with one trivial test: fixture server on `127.0.0.1`, mock on `127.0.0.2` and `127.0.0.3`, refusing proxy, `user.js`, `tools.lock` with the download and hash step, `run-offline.sh`, Selenium offline setup, CI steps | `tests/e2e/*`, `.github/workflows/utubot-ci.yml` | e2e: the test variant loads as a temporary add-on in the pinned Firefox, its content script marks the `127.0.0.1` fixture page, the background answers a `health` message from the mock on `127.0.0.2`, and the proxy recorded nothing; `run-offline.sh` gives the same result inside the namespace; a deliberately added request to a non-loopback name makes the final check fail (then removed) | unit: `user.js` groups, `tools.lock` format; the one e2e | Heavy |
 | 4 | Options page: Import setup with both permission flows, pairing, test connection, Advanced URL and token, switches, the YouTube permission notice, popup stub | `src/pages/{options,popup}.*`, `tests/e2e/test_setup.py`, `tests/unit/permissions.test.js` | e2e (mock origins are optional permissions, prompts answered by the auto-grant preference, section 6): import `127.0.0.2:<port>`, pair, "Paired as emu"; `permissions.contains` is true for `http://127.0.0.2/*` only after the Import click; the request log shows the header on `/v1/me` and not on `/setup.json` or `/v1/pair`, no `Cookie` on any request (a cookie for the mock's origin is planted first), no `OPTIONS`. With `/__mock/setup?backend=http://127.0.0.3:<port>` nothing is applied and `127.0.0.3` is not granted until "Allow access to http://127.0.0.3:<port>" is clicked; then calls go to that origin and `permissions.contains` is false for `127.0.0.2`. Advanced: saving the other origin grants it and removes the old one. Calling the request outside a click (a test hook that awaits first) is rejected by Firefox and nothing is stored. The YouTube origins start ungranted in the test variant: the options page and popup show "Allow on YouTube", the click grants both and the notice goes; after `permissions.remove` it is back. `http` on loopback pairs with HTTPS-Only mode off and on (loopback is exempt). The proxy recorded nothing. Unit, with `permissions.request` stubbed to answer false: Import, "Allow access" and Advanced store nothing, keep the previous backend and show "Permission was not given"; private literals (`10.0.0.5`, `192.168.1.10`, `host.local`) are accepted for `http` and a public name is refused, without any request. Recorded hand run in desktop Firefox with the preference off: the real prompt answered "Don't allow" (nothing stored) and allowed; a request held 20 s answered; a request held 45 s, result recorded | unit as listed; e2e as listed; the recorded hand run | Heavy |
-| 5 | Site layer, player part (decision 15): site kind, navigation by events with the poll fallback, video id, main video element among several and its replacement, ad state, duration; watch fixtures for `www` (and one for `m`, used from checkpoint 11 on) that dispatch the navigation events, replace the video element and carry a hover-preview video | `src/content/{site,player,main}.js`, `tests/fixtures/site/**` | e2e on the watch fixture: an in-page navigation is noticed through the event within 100 ms and, with the events removed from the fixture, through the poll within 1 s; the video id, duration and ad events fire once per change; a second playing `<video>` (preview) is never taken for the main one; replacing the main `<video>` element re-binds; an unknown page shape logs once and changes nothing; with the extension context gone every timer stops | unit: URL and id parsing, the main-video rule over element descriptions; e2e as listed | Heavy |
-| 6 | Summary of the playing video: the shadow-root host and panel, panel model, state text, countdown, poll cap, working indicator; the panel prompt's short summary on top and the Summary view (prompt list, session prompt, Transcribe in background with follow-up) | `src/shared/{panelmodel,statetext,countdown}.js`, `src/content/ui/{host,panel}.js` | e2e on the watch fixture with the mock's modes: `ready`; `needs_transcript` (server `message` shown, Transcribe starts the job, progress every 4 s, the summary arrives); `delayed` (server `error`, countdown, no retry before `retry_after_s`); `failed` with and without `reason`; `auto_transcribe`; `panel=404` falls back to the first prompt; requests carry `title`, `channel`, `duration_s`; a request stops after 6 long polls; choosing a prompt reloads the text and is kept for the session; no page-visible node holds the backend address | unit: ported cases of `UtubotPanelModelTest`, `UtubotStateTextTest`; e2e as listed | Heavy |
-| 7 | HQ captions: prepare, follower, VTT parser, native text track on the main video, auto-select rule, toast, caption store, ad pause | `src/content/{captions,followers}.js`, `src/shared/vtt.js`, `src/background/captionstore.js` | e2e on the watch fixture with the generated video: a job that turns ready while playing adds a showing track whose active cue text matches the mock's file at a known time, with the toast; with auto-select off the track is listed and not showing; after a browser restart with the mock stopped the stored track still shows and no request is made; a file over 4 MiB or without the WEBVTT header is not stored; a video change clears the cues; the track is hidden while the ad flag is set; the preview video gets no track | unit: VTT parser, follower (ported cases of `UtubotCaptionsFollowerTest`), store rules; e2e as listed | Heavy |
-| 8 | Cuts in the player (decision 13): skipper with the armed timer and the `timeupdate` net, follower, length and ad guards, end-of-video rule, ready offer and automatic apply, toast with Back | `src/content/cuts.js`, `src/shared/cutskipper.js`, `src/content/followers.js` | e2e: with the mock's cut, playback crossing 60 s continues at 108 s within 300 ms of the boundary, at 1x and at 2x speed, and the toast shows "Skipped 0:48"; Back returns into the skipped part and it plays; a user seek into a skipped part plays; the skipper's own jump is not taken for a user seek; pausing before a boundary and resuming still skips; a cut whose last skipped part reaches the end ends the video; a cut built for 200 s on the 240 s video is refused with the message; a request that becomes ready while playing is applied from the current position; automatic apply applies without the offer; nothing is skipped while the ad flag is set or in the preview video | unit: skipper (ported cases of `UtubotCutSkipperTest`, without sponsor segments) and its timer arithmetic with a fake clock, follower (ported cases of `UtubotCutFollowerTest`); e2e as listed | Heavy |
-| 9 | **MVP release.** The `extension-release` job, the release workflow, the `ci-green` command, `updates.json`, the `extension-updates` branch, install and privacy docs, README; then the owner's first use on real YouTube (desktop Firefox) | `.github/workflows/utubot-extension-release.yml`, `.github/workflows/utubot-ci.yml`, `scripts/utubot_ci_changes.py`, `docs/install.md`, `docs/privacy.md`, `README.md` | unit: `extension_release` is true only for an untagged version on a push to `main`; the `ci-green` command accepts a completed green run and the dispatching in-progress run with a green `extension` job, and refuses a red or missing one; `updates.json` is valid for a given version and hash. A dry run of the workflow (signing skipped without secrets) produces the package, checksums and `updates.json` as artifacts and creates no GitHub Release. Without the variable `UTUBOT_EXTENSION_RELEASES` the merge starts no release; a run by hand without secrets ends successfully with the notice and publishes nothing; the ruleset check is recorded. With the owner's secrets and the variable: one signed version is on the branch and installs on desktop Firefox, and after a version bump the installed copy updates itself. The tree and the logs contain no key. The owner's notes from real YouTube (summary, captions visible or not, a cut) are recorded as issues, and each page-shape difference found becomes a fixture | unit; workflow dry run; owner check of install, update and first real use | Fast |
+| 5 | Site layer, player part (decision 15): site kind, navigation by events with the poll fallback, video id, main video element among several and its replacement, ad state, duration; the diagnostics report and its popup view; watch fixtures for `www` (and one for `m`, used from checkpoint 10 on) that dispatch the navigation events, replace the video element and carry a hover-preview video | `src/content/{site,player,main}.js`, `src/pages/popup.*`, `tests/fixtures/site/**` | e2e on the watch fixture: an in-page navigation is noticed through the event within 100 ms and, with the events removed from the fixture, through the poll within 1 s; the video id, duration and ad events fire once per change; a second playing `<video>` (preview) is never taken for the main one; replacing the main `<video>` element re-binds; an unknown page shape logs once and changes nothing; with the extension context gone every timer stops; the popup shows the diagnostic lines for the fixture and they contain no address, token or title. After the merge: owner smoke run 1, its diagnostic text recorded in `extension/DEVLOG.md` | unit: URL and id parsing, the main-video rule over element descriptions; e2e as listed | Heavy |
+| 6 | Summary of the playing video: the shadow-root host and panel, panel model, state text, countdown, poll cap, working indicator; the panel prompt's short summary on top and the Summary view (prompt list, session prompt, Transcribe in background with follow-up) | `src/shared/{panelmodel,statetext,countdown}.js`, `src/content/ui/{host,panel}.js` | e2e on the watch fixture with the mock's modes: `ready`; `needs_transcript` (server `message` shown, Transcribe starts the job, progress every 4 s, the summary arrives); `delayed` (server `error`, countdown, no retry before `retry_after_s`); `failed` with and without `reason`; `auto_transcribe`; `panel=404` falls back to the first prompt; requests carry `title`, `channel`, `duration_s`; a request stops after 6 long polls; choosing a prompt reloads the text and is kept for the session; no page-visible node holds the backend address; stale answer: with `/__mock/hold` on video A's summary request, navigate in the page to video B and release the hold: B's panel never shows A's text | unit: ported cases of `UtubotPanelModelTest`, `UtubotStateTextTest`; e2e as listed | Heavy |
+| 7 | HQ captions: prepare, follower, VTT parser, native text track on the main video, auto-select rule, toast, caption store, ad pause | `src/content/{captions,followers}.js`, `src/shared/vtt.js`, `src/background/captionstore.js` | e2e on the watch fixture with the generated video: a job that turns ready while playing adds a showing track whose active cue text matches the mock's file at a known time, with the toast; with auto-select off the track is listed and not showing; after a browser restart with the mock stopped the stored track still shows and no request is made; a file over 4 MiB or without the WEBVTT header is not stored; a video change clears the cues; the track is hidden while the ad flag is set; the preview video gets no track; stale answer: with the hold on video A's captions status and on its file request (two cases), navigate to video B and release: no cue and no track label of A is on B, and A's file is still stored under A; the diagnostics show the track's mode and cue count. After the merge: owner smoke run 2 (are the cues visible on real YouTube), recorded; "not visible" triggers decision 12's contingency before checkpoint 9 | unit: VTT parser, follower (ported cases of `UtubotCaptionsFollowerTest`), store rules; e2e as listed | Heavy |
+| 8 | Cuts in the player (decision 13): skipper with the armed timer and the `timeupdate` net, follower, length and ad guards, end-of-video rule, ready offer and automatic apply, toast with Back | `src/content/cuts.js`, `src/shared/cutskipper.js`, `src/content/followers.js` | e2e: with the mock's cut, playback crossing 60 s continues at 108 s within 300 ms of the boundary, at 1x and at 2x speed, and the toast shows "Skipped 0:48"; Back returns into the skipped part and it plays; a user seek into a skipped part plays; the skipper's own jump is not taken for a user seek; pausing before a boundary and resuming still skips; a cut whose last skipped part reaches the end ends the video; a cut built for 200 s on the 240 s video is refused with the message; a request that becomes ready while playing is applied from the current position; automatic apply applies without the offer; nothing is skipped while the ad flag is set or in the preview video; stale answer: with the hold on video A's cut list and on its followed request (two cases), navigate to video B and release: nothing is offered, applied or skipped on B | unit: skipper (ported cases of `UtubotCutSkipperTest`, without sponsor segments) and its timer arithmetic with a fake clock, follower (ported cases of `UtubotCutFollowerTest`); e2e as listed | Heavy |
+| 9 | **MVP release machinery and the first signed build.** The `extension-release` job, the release workflow, the `ci-green` command, `updates.json`, the `extension-updates` branch, install and privacy docs, README | `.github/workflows/utubot-extension-release.yml`, `.github/workflows/utubot-ci.yml`, `scripts/utubot_ci_changes.py`, `docs/install.md`, `docs/privacy.md`, `README.md` | unit: `extension_release` is true only for an untagged version on a push to `main`; the `ci-green` command accepts a completed green run and the dispatching in-progress run with a green `extension` job, and refuses a red or missing one; `updates.json` is valid for a given version and hash. A dry run of the workflow (signing skipped without secrets) produces the package, checksums and `updates.json` as artifacts and creates no GitHub Release. Without the variable `UTUBOT_EXTENSION_RELEASES` the merge starts no release; a run by hand without secrets ends successfully with the notice and publishes nothing; the ruleset check is recorded. The tree and the logs contain no key. Then, after the **MVP review** has passed and the owner has set the secrets and the variable: one signed version is on the branch and installs on desktop Firefox | unit; workflow dry run; the first signed release | Fast |
+| 9b | **The MVP in the owner's hands.** The owner installs the signed file and uses it on real YouTube; a second version proves the update path; every finding is fixed here or moved to a named later checkpoint | `src/content/site.js` and whatever the findings touch, `tests/fixtures/site/**`, `extension/DEVLOG.md` | the owner's findings list is recorded in `extension/DEVLOG.md` and each entry is closed by a fix with a fixture of the page shape that broke, or carries the number of the later checkpoint that takes it; after a version bump the installed copy updated itself (or the failure is recorded with what the owner did instead); the checkpoint closes when the list has no open entry | regression fixtures; the owner's confirmation | Heavy |
 | 10 | **Gate: Manifest V3 on Android.** Emulator run of the test variant with the MVP features | `extension/README.md` (the recipe), `extension/DEVLOG.md` (the recorded run) | recorded log of: install; the YouTube permission state after install and the "Allow on YouTube" button; Import setup of `10.0.2.2:<port>` with the real permission prompt, once answered "Don't allow" (nothing stored, "Permission was not given") and once allowed; pairing; settings surviving a Firefox restart; a request held 20 s by `/__mock/hold` answered (must pass); a request held 45 s, longer than Firefox's 30 s event-page idle timeout, with the result recorded (answered: a pending request keeps the page alive; lost: the 20 s cap stays the rule and the result is added to section 4 of this plan); `http` to `10.0.2.2` with HTTPS-Only mode off (must pair) and on (result recorded; if it is blocked, the hint of decision 10 must be what the user sees); the summary, captions and a cut on the `m` watch fixture. A V3 gap found here adds the V2 variant for Firefox and records the decision in this plan | Android runtime check | Heavy |
 | 11 | Site layer, cards part (decisions 15 and 16): section mapping, card discovery by container and by anchor, fields, recycled cards (`href` change), throttled scans, the mobile scan schedule, mark re-application; browse fixtures for both sites that add cards late, reuse a card element for another video and remove foreign nodes | `src/content/{site,cards}.js`, `tests/fixtures/site/**` | e2e on `www` and `m` fixtures: cards added after load are found once, with the fields of decision 16; each path of the mapping table gives its section or none; a card element whose link changes to another video is evaluated again and loses the old video's mark; a mark removed by the page is back after the next scan; 500 cards added at once cause at most one scan per 50 ms; a card with an unknown container is found through its anchor | unit: section, clock and field parsing; e2e as listed | Heavy |
 | 12 | Assess: switch, batching, verdict cache, marks, hiding, mark only, answer in label, pending re-ask, caches dropped on connection change | `src/content/cards.js`, `src/shared/policy.js`, `src/background/cache.js` | e2e with `/__mock/assess`: a `hide` verdict hides its card and a `mark` shows its label on both fixtures; with mark only the hidden card is shown with a mark; `delay=5` or `fail=500` leaves every card visible; a `pending` verdict is asked again on the next scan; one call carries at most 50 videos and the page's section; a history fixture page sends no assess; an unrecognised container is never hidden; no page-visible node holds the backend address | unit: policy, cache, batcher; e2e as listed | Fast |
@@ -718,6 +752,7 @@ Order and gates:
 | The Chrome Web Store fee amount and whether review accepts an extension that needs the user's own server | the register page says "one-time" without the amount; review is case by case | owner decision D8, at submission |
 | Edge for Android (or another Chromium phone browser) running this extension | no source found | not planned; noted in decision 25 |
 | The web UI's newer phone work that is not on `main` yet | only `main` was read | section 18's checkpoints are re-checked against `main` before they start |
+| An update from the V3 build to a V2 build of the same id keeping its settings, token, caption store and granted permissions (only if decision 2's fallback is used; it would reach desktop users of the MVP too) | not tried | checked on a desktop profile before such a release; if data is lost, the fallback ships as a separate Android-only build instead |
 | `utubot.dev` as the id's domain part | an add-on id needs no real domain, but it is permanent | owner decision D5 |
 
 ## 14. Review response and owner additions
@@ -736,6 +771,21 @@ picker) is 16; 14 (Processed) is 17; 15 (Android pass) is 18; 16 (release) is 9;
 | Licence | Decided by the owner: MIT stays, techniques are re-implemented, GPL code is never copied, only permissively licensed code may be copied with attribution. Decision 26, `AGENTS.md`, checkpoint 0 (`extension/AGENTS.md`, `THIRD_PARTY.md`). Not an open decision |
 | Ship an MVP as soon as possible | Section 17 and the reordered section 11: checkpoints 0 to 9 are the MVP on desktop Firefox (setup, pairing, summary of the playing video, HQ captions, cut skipping, signed unlisted build); the Android gate moved behind it; the release wiring moved to checkpoint 9, so D4 is needed there |
 | Mid-term: companion of the web UI | Section 18, decision 28, checkpoints C1 to C4 (not MVP, not parity); no owner decision needed now |
+
+### Fourth review (re-check of the owner additions)
+
+| Finding | Change |
+|---|---|
+| M1 no whole-result review before the first signed release | Section 11: the named "MVP review" step (Heavy clean-context review of 0 to 9, then the plan reviewer) before `UTUBOT_EXTENSION_RELEASES` is switched on; checkpoint 9's signed release waits for it |
+| M2 first real-page contact too late; checkpoint 9 open-ended | Owner smoke runs after checkpoints 5 and 7 with the popup diagnostics (decision 15, section 11); checkpoint 9 is the release machinery and first signed build (Fast), new checkpoint 9b is the owner's use and the fixes (Heavy, closes when the findings list is empty or moved); Part 1 "How you try it" rewritten |
+| M3 stale-answer rule without a test | Checkpoints 6, 7 and 8: hold video A's request, navigate to B, release, nothing of A shown, added or applied |
+| L1 sender check names Firefox's scheme | Decision 6: the base address from `runtime.getURL("")` |
+| L2 device name on Chromium | Decision 22: "Chromium (desktop)" |
+| L3 http hint names one browser | Decision 10: one browser-neutral hint |
+| L4 the V2 fallback reaches desktop users too | Section 13: the update keeps data and permissions or the fallback ships as an Android-only build |
+| L5 element lists close to a GPL file | Decision 15 and section 15: lists written fresh in the plan's own grouping |
+| L6 content scripts cannot read `storage.session` | Decision 6: `open.set` (pages) and `open.take` (content script) |
+| L7 two different MVP totals | Part 1 and section 17 both say about 85 hours (the smoke-run diagnostics, the MVP review and 9b added to the earlier 74) |
 
 ### First review
 
@@ -830,7 +880,7 @@ from an MIT, BSD or Apache-2.0 source and is listed in `extension/THIRD_PARTY.md
   navigate, then release it): a late answer must never paint the new page (`Extensions/e2e/README.md`).
 - **Taken**: decision 15's navigation list (events, Navigation API, poll fallback), tear-down on start, and the rule already
   in the plan that a late answer is dropped by a request generation. Checkpoint 5 tests the event path and the poll path
-  separately.
+  separately; checkpoints 6, 7 and 8 each hold the first video's answer, navigate and release it.
 
 ### Finding the player and the video element
 
@@ -885,6 +935,8 @@ from an MIT, BSD or Apache-2.0 source and is listed in `extension/THIRD_PARTY.md
 - YouTube removes nodes it does not know from some containers a while after navigation (a comment in ImprovedTube's
   `blocklist.js`).
 - A video id can also be read from the thumbnail image's address when the link has none (`src/video.ts` `extractVideoID`).
+- The lists in this repository are not carried over from those files: the names are facts, but `site.js` groups and orders
+  them its own way and grows them from the fixtures and the owner's smoke runs (decision 15).
 - **Taken**: decision 15's card rules (two lists, `href` watching, throttle, mobile schedule, idempotent marks keyed by video
   id, the anchor fallback) and checkpoint 11's fixtures for each. **Not taken**: wrapping the site's functions.
 
@@ -949,12 +1001,13 @@ from an MIT, BSD or Apache-2.0 source and is listed in `extension/THIRD_PARTY.md
 
 ## 17. MVP and estimate
 
-**MVP** = checkpoints 0 to 9, desktop Firefox: skeleton and CI, mock controls, background core, test harness, setup and
-pairing, the player part of the site layer, the summary of the playing video, HQ captions, cut skipping, and the signed
-unlisted release with the owner's first use on real YouTube. It leaves out, on purpose: cards (marks, hiding, glance, chips),
-the AI answer, the prompts settings, the cut picker (a cut is requested from the TV or the web UI and offered by the
-extension when ready), the Processed page, Android, Chromium. The owner's signing setup (D4) is needed at checkpoint 9; until
-then the build is loaded by hand.
+**MVP** = checkpoints 0 to 9b, desktop Firefox: skeleton and CI, mock controls, background core, test harness, setup and
+pairing, the player part of the site layer with the diagnostics, the summary of the playing video, HQ captions, cut skipping,
+the release machinery, the MVP review, the signed unlisted release and the owner's use of it. Two owner smoke runs on real
+YouTube (after 5 and 7) come before the release. It leaves out, on purpose: cards (marks, hiding, glance, chips), the AI
+answer, the prompts settings, the cut picker (a cut is requested from the TV or the web UI and offered by the extension when
+ready), the Processed page, Android, Chromium. The owner's signing setup (D4) is needed at checkpoint 9; until then the build
+is loaded by hand.
 
 Estimate in local-agent hours, implementation plus its clean-context review and one repair round. These are planning
 figures, not measurements; a checkpoint that needs a second repair round adds about a third.
@@ -963,10 +1016,12 @@ figures, not measurements; a checkpoint that needs a second repair round adds ab
 |---|---|---|
 | 0, 1, 2 | 4 + 4 + 6 | Fast tier, may overlap (1 touches only the mock) |
 | 3, 4 | 8 + 9 | Heavy; the harness is the main unknown |
-| 5, 6 | 8 + 10 | Heavy |
-| 7, 8 | 10 + 10 | Heavy; the two features the owner most wants to see on real YouTube |
-| 9 | 5 | Fast, plus the owner's setup and first use |
-| **MVP total** | **about 74** | one heavy agent at a time: 7 to 10 working days |
+| 5, 6 | 9 + 10 | Heavy; 5 includes the diagnostics; smoke run 1 costs the owner minutes |
+| 7, 8 | 10 + 10 | Heavy; smoke run 2 after 7 |
+| 9 | 5 | Fast |
+| MVP review | 4 | Heavy whole-result review, then the plan reviewer |
+| 9b | 6, plus what the findings need | Heavy; open-ended by nature, the figure assumes a handful of page-shape fixes |
+| **MVP total** | **about 85** | one heavy agent at a time: 8 to 11 working days, plus the owner's days of use in 9b |
 | 10 | 6 | Android gate |
 | 11 to 17 | 8 + 5 + 6 + 5 + 4 + 6 + 5 | parity on desktop |
 | 18 | 8 | Android pass and audit |

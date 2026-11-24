@@ -16,6 +16,9 @@
   main video lookup, ad state, timer-driven skipping, recycled cards, hermetic tests), with the site, captions and cuts
   checkpoints changed to match; the licence rule (MIT stays, GPL code is read for technique and never copied); the mid-term
   role as companion of the web UI.
+- Re-check of those additions: two owner smoke runs on real YouTube during the MVP (unsigned build, popup diagnostics), a
+  whole-MVP review before the first signed release, the owner's use as its own checkpoint 9b, stale-answer tests in the
+  summary, captions and cuts checkpoints.
 - `AGENTS.md`: the standing rule that every AI feature is specified, built and tested for the TV app and the browser extension,
   with a transition, and the extension's licence rule. `ai/CONTRACT.md`: the "Clients" section, and the cut paragraph no longer
   says the TV compares `transcript_hash` (it never did). `.github/pull_request_template.md`: the parity, contract and
