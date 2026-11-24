@@ -12,8 +12,10 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
    matches the requested language, the job improves it ([below](#improving-existing-captions)); otherwise (no captions, a limited or
    unreachable caption endpoint, a track without timings) it builds the track from the audio. The check never holds the audio back.
 3. **Download.** yt-dlp fetches the lowest-bitrate audio of the video's original-language track ([below](#which-audio-is-downloaded)) —
-   from the media archive when it is already there — then `ffmpeg` converts it to 16 kHz mono WAV. Videos longer than `max_duration_s`
-   (3 h) are refused. Every download is kept in the media archive, so no audio is ever fetched twice.
+   from the media archive when it is already there — then `ffmpeg` converts it to 16 kHz mono WAV. The audio stream's container
+   `start_time` is kept (silence is added before a late first sample, or the pre-roll is trimmed when it starts early), so engine times
+   stay on the video timeline. Videos longer than `max_duration_s` (3 h) are refused. Every download is kept in the media archive, so
+   no audio is ever fetched twice.
 4. **Vocal separation** (optional): when `separation = "demucs"`, the vocals stem is separated from the music before ASR
    ([below](#vocal-separation)). A job whose ASR answer is already cached skips it — demucs can take tens of minutes on CPU.
 5. **ASR.** Speech recognition with word timestamps, chunked and stitched ([below](#asr-engines)). The answer is cached per video, audio
@@ -35,7 +37,7 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
    never mixed into `real_share`). Tags (`[Music]`) and every row of an authored (`manual`) track keep the row rule. A speech cue shorter than
    `min_cue_s` is joined to a neighbour within `sentence_gap_s` when the join still wraps and stays within `max_cue_s`, `max_cps` and one
    speaker (`merged_short`; the previous cue is preferred unless it ends a sentence and the next one follows without a pause).
-   Credit lines Whisper invents over music (`halluc_credits`, e.g. "Altyazı M.K.", "amara.org") are dropped from every chunk, not only re-listened ones, and from a cached answer when it is read (the ASR cache version is unchanged, so nothing is transcribed again). The drop is part of the chunk review: it is off when `asr_recheck = false` and for `captions-score` unless `--review`.
+   Credit lines Whisper invents over music (`halluc_credits`, e.g. "Altyazı M.K.", "amara.org") are dropped from every chunk, not only re-listened ones, and from a cached answer when it is read (the drop itself needs no new cache version). The drop is part of the chunk review: it is off when `asr_recheck = false` and for `captions-score` unless `--review`.
    **Check against YouTube.** Captions jobs keep YouTube's own word starts (json3 `tOffsetMs`, stored in `transcripts.words`, with
    `caption_kind` `manual|auto`; a transcript stored before this is fetched once more through the gate, and used as it is while YouTube
    does not answer). The `ref_check` event matches the engine's words with them in blocks of `ref_block_s` (60 s) and reports how many
@@ -286,7 +288,7 @@ English with a "Thank you." every 30 s over continuous Turkish speech. After the
 
 Every attempt is an `asr_recheck` event (`reason`, `action` = `forced_language|smaller_window|next_engine`, `detected`, `expected`, `outcome` =
 `replaced|kept|failed`, `flagged_share_before/after`); the drops are one `asr_recheck` with `action = "dropped"`, `dropped_segments`, `dropped_s`. The `asr` event
-carries `rechecked_chunks`, `unresolved_chunks`, `skipped_chunks`, `recheck_requests`, `hallucination_drops`, `dropped_s`; the cached answer also keeps `dropped` (start, end, reasons) and `chunks` (start, end, heard language). A result with an unresolved chunk (every rung failed with an engine error; budget and request-cap skips are deterministic and are cached) is not cached (`cache = "not_stored_unresolved"`). The cached ASR answer is version 3 (older rows are ignored), stored tracks carry `timing_version` 2.
+carries `rechecked_chunks`, `unresolved_chunks`, `skipped_chunks`, `recheck_requests`, `hallucination_drops`, `dropped_s`; the cached answer also keeps `dropped` (start, end, reasons) and `chunks` (start, end, heard language). A result with an unresolved chunk (every rung failed with an engine error; budget and request-cap skips are deterministic and are cached) is not cached (`cache = "not_stored_unresolved"`). The cached ASR answer is version 4 (older rows are ignored), stored tracks carry `timing_version` 2.
 The hint is not part of the cache key: an answer cached under another metadata language stays valid until the audio changes.
 
 ### Measured speed

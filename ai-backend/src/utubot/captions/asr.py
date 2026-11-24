@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import subprocess
 import wave
 from collections.abc import Callable
@@ -143,6 +144,61 @@ def wav_duration(path: Path, sample_rate: int = 16000) -> float:
     except (wave.Error, EOFError):
         bytes_per_sample = 2
         return max(path.stat().st_size - 44, 0) / (sample_rate * bytes_per_sample)
+
+
+async def audio_start_offset(path: Path) -> float:
+    """The start time (s) of the first audio stream, or 0 when ffprobe cannot tell.
+
+    A container can place its first audio sample after `start_time` (a positive offset) or
+    already have played part of it before time 0 (negative). A plain ffmpeg transcode drops
+    that offset, so the ASR WAV would not line up with the video timeline.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=start_time",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await proc.communicate()
+    except (FileNotFoundError, OSError):
+        return 0.0
+    if proc.returncode != 0:
+        return 0.0
+    try:
+        offset = float(out.decode().strip())
+    except ValueError:
+        return 0.0
+    return offset if math.isfinite(offset) else 0.0
+
+
+def start_offset_filter(offset: float) -> str | None:
+    """The ffmpeg audio filter that puts `offset` back into a WAV (None when it is negligible)."""
+    if abs(offset) < 0.0005:
+        return None
+    if offset > 0:
+        return f"adelay={max(1, round(offset * 1000))}:all=1"
+    return f"atrim=start={-offset:.6f},asetpts=PTS-STARTPTS"
+
+
+async def transcode_wav(source: Path, target: Path, sample_rate: int = 16000) -> float:
+    """A 16 kHz mono PCM WAV of `source`, with its container start offset kept; returns the offset."""
+    offset = await audio_start_offset(source)
+    args = ["-i", str(source), "-vn"]
+    audio_filter = start_offset_filter(offset)
+    if audio_filter:
+        args += ["-af", audio_filter]
+    args += ["-ac", "1", "-ar", str(sample_rate), "-c:a", "pcm_s16le", str(target)]
+    await run_ffmpeg(*args)
+    return offset
 
 
 def make_asr(cfg: CaptionsConfig, transport: httpx.AsyncBaseTransport | None = None) -> AsrRouter:
