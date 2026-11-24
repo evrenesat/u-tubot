@@ -758,7 +758,7 @@ Decisions (each with the recommendation):
 | D-P8 | Claim limits | 30 minutes, renewed while the job runs, 2 hours at most per claim, then a 10-minute pause for the same claimer; at most 4 hours of claims a day for the backend as one claimer (all prime users share it), with an alert when a limit is hit. Claims you make by hand are outside the pause and the daily limit | Other numbers |
 | D-P9 | The engine is in video mode | A claim is refused; the request gets the Quick offer at once. Video mode is only left by hand | A claim ends video mode |
 | D-P10 | "Automatic" claims | The backend claims by itself when a prime job needs it, and releases after; no click | Also time windows or rules on the conductor |
-| D-P11 | Agent runs already using the engine when a claim comes | The claim waits for them to finish, at most 10 minutes, then fails with the Quick offer. New agent work goes to the cloud replacement for its whole run. Nothing is ever frozen, stopped or switched in mid-conversation | A longer wait; or switch those runs to the cloud model in mid-conversation and mark them |
+| D-P11 | Agent runs already using the engine when a claim comes | **Decided by the owner (24 Nov 2026): take the engine at once.** Runs already on the engine are switched to the cloud replacement in mid-conversation and marked as switched in their run record; new agent work goes to the replacement for its whole run. Nothing is frozen or stopped. The claim still waits for in-flight model requests to end (idle check) before the engine changes model | (rejected) wait for them to finish, at most 10 minutes, then fail with the Quick offer |
 
 ## P.2 Facts checked for this phase
 
