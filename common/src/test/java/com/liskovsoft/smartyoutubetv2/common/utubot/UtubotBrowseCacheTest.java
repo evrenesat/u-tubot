@@ -6,6 +6,7 @@ import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.BrowseSection;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.VideoGroup;
+import com.liskovsoft.smartyoutubetv2.common.prefs.HomeRowsData;
 
 import org.junit.After;
 import org.junit.Before;
@@ -275,6 +276,44 @@ public class UtubotBrowseCacheTest {
 
         assertEquals(UtubotBrowseCache.State.FRESH, cache.state(home.getId(), home.getType(), IDENTITY, now + 6 * MINUTE, 10));
         assertEquals(UtubotBrowseCache.State.STALE, cache.state(subscriptions.getId(), subscriptions.getType(), IDENTITY, now + 6 * MINUTE, 10));
+    }
+
+    @Test
+    public void theAddedHomeRowMetadataSurvivesARestart() {
+        BrowseSection section = section();
+        VideoGroup channelRow = group(section, "Channel", 0, "aaa");
+        channelRow.setAddedHomeRow(HomeRowsData.Row.TYPE_CHANNEL, "UC-channel");
+        VideoGroup subscriptionsRow = group(section, "Subscriptions", 1, "bbb");
+        subscriptionsRow.setAddedHomeRow(HomeRowsData.Row.TYPE_SUBSCRIPTIONS, null);
+
+        new UtubotBrowseCache(mRoot).save(section, java.util.Arrays.asList(channelRow, subscriptionsRow, group(section, "Plain", 2, "ccc")),
+                IDENTITY, 1_000_000);
+        List<VideoGroup> groups = new UtubotBrowseCache(mRoot).groups(section, IDENTITY);
+
+        assertNotNull(groups);
+        assertEquals(HomeRowsData.Row.TYPE_CHANNEL, groups.get(0).getAddedHomeRowType());
+        assertEquals("UC-channel", groups.get(0).getAddedHomeRowChannelId());
+        assertEquals(HomeRowsData.Row.TYPE_SUBSCRIPTIONS, groups.get(1).getAddedHomeRowType());
+        assertNull(groups.get(1).getAddedHomeRowChannelId());
+        assertEquals(-1, groups.get(2).getAddedHomeRowType());
+        assertNull(groups.get(2).getAddedHomeRowChannelId());
+        // What the hide menu reads: a card of the added Subscriptions row is hidden from Subscriptions, not from Home
+        assertEquals(MediaGroup.TYPE_SUBSCRIPTIONS, groups.get(1).getHiddenVideosSection());
+    }
+
+    @Test
+    public void anEntryOfAnotherFormatVersionIsDropped() throws Exception {
+        BrowseSection section = section();
+        new UtubotBrowseCache(mRoot).save(section, Collections.singletonList(group(section, "Home", -1, "aaa")), IDENTITY, 1_000_000);
+        File file = new File(mRoot, section.getId() + ".json");
+        String json = new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        // An entry of the first format has no version (and none of the row metadata)
+        java.nio.file.Files.write(file.toPath(), json.replaceAll("\"format_version\":\\d+,?", "").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        UtubotBrowseCache restarted = new UtubotBrowseCache(mRoot);
+
+        assertNull(restarted.groups(section, IDENTITY));
+        assertFalse(file.exists());
     }
 
     @Test

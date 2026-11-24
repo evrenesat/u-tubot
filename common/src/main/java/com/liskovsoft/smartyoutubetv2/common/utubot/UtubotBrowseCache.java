@@ -36,6 +36,11 @@ public final class UtubotBrowseCache {
     private static final String TEMP_EXTENSION = ".tmp";
     private static final int CHUNK_BYTES = 4096;
     private static final String TAG = UtubotBrowseCache.class.getSimpleName();
+    // Raised when what an entry holds changes: an entry of another version is dropped, not read
+    private static final int FORMAT_VERSION = 2;
+    private static final String KEY_VERSION = "format_version";
+    private static final String KEY_ADDED_ROW_TYPE = "added_home_row_type";
+    private static final String KEY_ADDED_ROW_CHANNEL = "added_home_row_channel_id";
     private static final String KEY_SECTION = "section_id";
     private static final String KEY_SECTION_TYPE = "section_type";
     private static final String KEY_IDENTITY = "identity";
@@ -150,7 +155,7 @@ public final class UtubotBrowseCache {
 
         try {
             JSONObject entry = new JSONObject().put(KEY_SECTION, section.getId()).put(KEY_SECTION_TYPE, section.getType())
-                    .put(KEY_IDENTITY, identity).put(KEY_LOADED_AT, nowMs).put(KEY_GROUPS, array);
+                    .put(KEY_VERSION, FORMAT_VERSION).put(KEY_IDENTITY, identity).put(KEY_LOADED_AT, nowMs).put(KEY_GROUPS, array);
             byte[] bytes = entry.toString().getBytes(StandardCharsets.UTF_8);
 
             if (bytes.length > MAX_ENTRY_BYTES) {
@@ -297,6 +302,13 @@ public final class UtubotBrowseCache {
 
         try {
             JSONObject entry = new JSONObject(new String(readAll(file), StandardCharsets.UTF_8));
+            if (entry.optInt(KEY_VERSION, 0) != FORMAT_VERSION) {
+                if (!file.delete()) {
+                    Log.e(TAG, "Can't delete %s", file);
+                }
+                return null;
+            }
+
             String storedIdentity = entry.optString(KEY_IDENTITY, null);
 
             if (!BrowseCachePolicy.matchesIdentity(storedIdentity, identity)) {
@@ -375,6 +387,8 @@ public final class UtubotBrowseCache {
         try {
             return new JSONObject().put(KEY_ID, group.getId()).put(KEY_POSITION, group.getPosition())
                     .put(KEY_TYPE, group.getType()).put(KEY_QUEUE, group.isQueue)
+                    .put(KEY_ADDED_ROW_TYPE, group.getAddedHomeRowType())
+                    .putOpt(KEY_ADDED_ROW_CHANNEL, group.getAddedHomeRowChannelId())
                     .putOpt(KEY_TITLE, group.getTitle()).put(KEY_VIDEOS, videos);
         } catch (JSONException e) {
             Log.e(TAG, "Can't serialize a row: %s", e.getMessage());
@@ -476,6 +490,7 @@ public final class UtubotBrowseCache {
         group.setType(json.optInt(KEY_TYPE, -1));
         group.setAction(VideoGroup.ACTION_REPLACE);
         group.isQueue = json.optBoolean(KEY_QUEUE, false);
+        group.setAddedHomeRow(json.optInt(KEY_ADDED_ROW_TYPE, -1), json.has(KEY_ADDED_ROW_CHANNEL) ? json.optString(KEY_ADDED_ROW_CHANNEL, null) : null);
 
         return group;
     }

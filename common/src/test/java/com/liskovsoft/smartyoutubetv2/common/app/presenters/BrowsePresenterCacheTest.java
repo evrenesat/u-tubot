@@ -13,6 +13,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.base.BasePresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.views.BrowseView;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AiSListFilterData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.CollaborationsData;
+import com.liskovsoft.smartyoutubetv2.common.prefs.HomeRowsData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.MainUIData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.WatchLaterData;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBrowseCache;
@@ -147,6 +148,98 @@ public class BrowsePresenterCacheTest {
         mPresenter.onSectionFocused(MediaGroup.TYPE_CHANNEL_UPLOADS);
         mPresenter.onVideoItemSelected(cachedChannels.getVideos().get(0));
         assertEquals(1, mUploadsPresenter.calls());
+    }
+
+    @Test
+    public void selectingAnotherChannelOnAFreshCacheLoadsItsUploads() throws Exception {
+        MainUIData.instance(mView).setUploadsOldLookEnabled(false);
+        MainUIData.instance(mView).setUploadsAutoLoadEnabled(true);
+        BrowseSection section = sectionOf(MediaGroup.TYPE_CHANNEL_UPLOADS);
+        VideoGroup channels = channelGroup(section, "Channels", 0, 7_500, "channel-one", "channel-two");
+        VideoGroup uploads = group(section, "Uploads", 1, 7_600, "upload-one", "upload-two");
+
+        seed(section, cachedGroups(section, channels, uploads), now(), false);
+        mPresenter.onSectionFocused(MediaGroup.TYPE_CHANNEL_UPLOADS);
+        mPresenter.onVideoItemSelected(channels.getVideos().get(0));
+        assertEquals(0, mUploadsPresenter.calls());
+
+        mPresenter.onVideoItemSelected(channels.getVideos().get(1));
+
+        assertEquals(1, mUploadsPresenter.calls());
+    }
+
+    @Test
+    public void selectingAnotherChannelAfterAFailedChannelsRefreshLoadsItsUploads() throws Exception {
+        MainUIData.instance(mView).setUploadsOldLookEnabled(false);
+        MainUIData.instance(mView).setUploadsAutoLoadEnabled(true);
+        BrowseSection section = sectionOf(MediaGroup.TYPE_CHANNEL_UPLOADS);
+        VideoGroup channels = channelGroup(section, "Channels", 0, 7_700, "channel-one", "channel-two");
+        VideoGroup uploads = group(section, "Uploads", 1, 7_800, "upload-one", "upload-two");
+
+        seed(section, cachedGroups(section, channels, uploads), now() - 20 * MINUTE, true);
+        putMapping("mGridMapping", MediaGroup.TYPE_CHANNEL_UPLOADS, Observable.error(new RuntimeException("the channels refresh failed")));
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_CHANNEL_UPLOADS);
+        ShadowLooper.idleMainLooper();
+        mPresenter.onVideoItemSelected(channels.getVideos().get(1));
+
+        assertEquals(1, mUploadsPresenter.calls());
+        assertEquals(0, mView.errors);
+    }
+
+    @Test
+    public void selectingAnotherChannelAfterAFailedUploadsRefreshLoadsItsUploads() throws Exception {
+        MainUIData.instance(mView).setUploadsOldLookEnabled(false);
+        MainUIData.instance(mView).setUploadsAutoLoadEnabled(true);
+        BrowseSection section = sectionOf(MediaGroup.TYPE_CHANNEL_UPLOADS);
+        VideoGroup channels = channelGroup(section, "Channels", 0, 7_900, "channel-one", "channel-two");
+        VideoGroup uploads = group(section, "Uploads", 1, 7_950, "upload-one", "upload-two");
+
+        seed(section, cachedGroups(section, channels, uploads), now() - 20 * MINUTE, true);
+        putMapping("mGridMapping", MediaGroup.TYPE_CHANNEL_UPLOADS,
+                Observable.just(mediaGroup("Channels", 4, "new-channel", MediaGroup.TYPE_CHANNEL_UPLOADS)));
+        mUploadsPresenter.setError(new RuntimeException("the uploads refresh failed"));
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_CHANNEL_UPLOADS);
+        awaitGroup(7_900, "Channels", 4);
+        mPresenter.onVideoItemSelected(channels.getVideos().get(0));
+        mPresenter.onVideoItemSelected(channels.getVideos().get(1));
+
+        assertEquals(2, mUploadsPresenter.calls());
+    }
+
+    @Test
+    public void cachedRowsRefreshKeepsTheFocusedCard() throws Exception {
+        BrowseSection section = musicSection();
+        String target = "target0";
+
+        seed(section, Collections.singletonList(group(section, LIKED_MUSIC, 0, 9_700, target, "other")), now() - 20 * MINUTE, true);
+        PublishSubject<List<MediaGroup>> rows = PublishSubject.create();
+        putMapping("mRowMapping", MediaGroup.TYPE_MUSIC, rows);
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_MUSIC);
+        setField("mCurrentVideo", mCache.groups(section, identity()).get(0).getVideos().get(0));
+        rows.onNext(Collections.singletonList(mediaGroup(LIKED_MUSIC, 6, "target")));
+        rows.onComplete();
+        awaitFocusedCard(target);
+
+        assertEquals(0, mView.errors);
+        assertTrue(mView.hasGroup(9_700, LIKED_MUSIC, 6));
+        assertTrue(mView.hasSelected(target));
+    }
+
+    @Test
+    public void cachedRowsKeepTheAddedHomeRowMetadataForTheirMenus() throws Exception {
+        BrowseSection section = sectionOf(MediaGroup.TYPE_HOME);
+        VideoGroup row = group(section, "Channel row", 0, 9_800, "row-one");
+        row.setAddedHomeRow(HomeRowsData.Row.TYPE_CHANNEL, "UC-row-channel");
+
+        seed(section, Collections.singletonList(row), now(), false);
+        mPresenter.onSectionFocused(MediaGroup.TYPE_HOME);
+
+        Video card = mView.lastGroup(9_800).getVideos().get(0);
+        assertEquals("UC-row-channel", mPresenter.findAddedHomeRowChannelId(card));
+        assertEquals(HomeRowsData.Row.TYPE_CHANNEL, card.getGroup().getAddedHomeRowType());
     }
 
     @Test

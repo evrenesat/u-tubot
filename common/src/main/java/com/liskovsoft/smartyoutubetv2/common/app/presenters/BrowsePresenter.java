@@ -124,6 +124,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
      * while a fresh cache replay keeps them (see onVideoItemSelected).
      */
     private boolean mCachedRefreshStarted;
+    // The next channel selection of a cached multi-grid is the view's auto-selection, whose uploads are already shown
+    private boolean mSkipCachedUploadsSelection;
     /**
      * Cards removed while a cached refresh is still loading: the load's groups still carry them, so its saves filter them out.
      */
@@ -615,11 +617,15 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         if (belongsToChannelUploadsMultiGrid(item)) {
             // A fresh cache replay shows both columns: the view auto-selects a channel as its channels arrive, but its uploads
-            // are already there, so no network load until a background refresh of the section has started. This holds when
-            // auto load is off too: the cached uploads column must not be cleared by the auto-selection.
-            if (mCachedContentShown && !mCachedRefreshStarted) {
-                mCurrentVideo = item;
-                return;
+            // are already there, so that one selection loads nothing. This holds when auto load is off too: the cached uploads
+            // column must not be cleared by the auto-selection. Every later selection is the user's and loads its channel.
+            if (mSkipCachedUploadsSelection) {
+                mSkipCachedUploadsSelection = false;
+
+                if (mCachedContentShown && !mCachedRefreshStarted) {
+                    mCurrentVideo = item;
+                    return;
+                }
             }
 
             if (getMainUIData().isUploadsAutoLoadEnabled()) {
@@ -1096,7 +1102,14 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     public String findAddedHomeRowChannelId(Video video) {
         VideoGroup group = video != null ? video.getGroup() : null;
 
-        return group != null ? mAddedHomeRowChannelIds.get(group) : null;
+        if (group == null) {
+            return null;
+        }
+
+        String channelId = mAddedHomeRowChannelIds.get(group);
+
+        // The rows of the cache aren't made by a load: they carry it
+        return channelId != null ? channelId : group.getAddedHomeRowChannelId();
     }
 
     /**
@@ -1161,6 +1174,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         mCachedReplaySection = section;
         mCachedReplayGroups = groups;
         mCachedRefreshStarted = false;
+        mSkipCachedUploadsSelection = section.getType() == BrowseSection.TYPE_MULTI_GRID && section.getId() == MediaGroup.TYPE_CHANNEL_UPLOADS;
 
         for (VideoGroup group : groups) {
             group.setAction(VideoGroup.ACTION_REPLACE);
@@ -1281,6 +1295,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
      */
     private boolean handleCachedRefreshError(Throwable error, BrowseSection section, int column) {
         mCachedRefreshStarted = false;
+        // No channels are coming to be auto-selected: the next selection is the user's
+        mSkipCachedUploadsSelection = false;
 
         if (!mCachedContentShown || getView() == null) {
             return false;
@@ -1339,6 +1355,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         mCachedReplaySection = null;
         mCachedReplayGroups = null;
         mCachedRefreshStarted = false;
+        mSkipCachedUploadsSelection = false;
         Utils.removeCallbacks(mReplayCachedGroups);
     }
 
@@ -1547,7 +1564,13 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                                     }
                                 }
 
+                                Video focusedBefore = mCurrentVideo;
                                 getView().updateSection(videoGroup);
+
+                                if (cached && videoGroup.getAction() == VideoGroup.ACTION_REPLACE) {
+                                    restoreCachedFocusedItem(videoGroup, focusedBefore);
+                                }
+
                                 mBrowseProcessor.process(videoGroup);
                                 MediaServiceManager.instance().warmUpPlaybackIfNeeded(videoGroup);
 

@@ -1,5 +1,16 @@
 # u·tubot devlog
 
+## 2026-11-24 (browse cache review round 4)
+
+- Channels multi-grid on a cached replay: only the view's first auto-selection keeps the cached uploads; every later channel the
+  user selects loads its uploads (before, a FRESH cache blocked all selections for the whole window). A failed refresh clears the
+  skip too. Tests: second channel on a fresh cache, after a failed channels refresh and after a failed uploads refresh.
+- A cached rows refresh restores the focused card of a replaced row, as grids do (`BrowsePresenterCacheTest`).
+- The cache keeps the added-Home-row metadata (type and channel id, `VideoGroup.setAddedHomeRow`); a replayed row's menus and
+  hide section use it (`findAddedHomeRowChannelId` falls back to the group). Entries carry `format_version` (now 2): an entry of
+  another version is dropped on read, so old entries aren't misread. Tests: round trip, hidden section, old-version entry.
+- PR body: the entry cap is 512 KiB, not 8 MB.
+
 ## 2026-11-24 (browse cache review round 3)
 
 - A cache entry now carries the section type that made its groups: a section whose layout changed (Playlists style, History shorts
