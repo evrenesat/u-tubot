@@ -77,7 +77,8 @@ so the other flavors behave as before.
   backend address, token and the backend's version (`GET /v1/health`), for 3 days, at most 2000 verdicts and 300 summaries; another
   backend, user or version starts empty and removes the old scope. Failures, pending jobs and transcript states are never stored. The
   user's Retry calls `POST /v1/videos/{id}/retry` first (the wait of a `delayed` answer does not), then asks again, even when that call
-  fails; a prompt import, refresh or default change clears the stored summaries of every scope, even one not opened yet.
+  fails; a prompt import, refresh or default change clears the stored summaries of every scope, even one not opened yet, and a
+  request already in flight then is shown but not stored again.
 - Summary panel (`UtubotPanelController`, `UtubotPanelView`, `PanelCoordinator`): a passive preview. One view added to the activity's
   content (no dialog, no window, no dimming); it never takes the focus and never handles a D-pad key. It is the bottom of the right
   strip (35% of the width), below the screen's top bar (`modern_browse_top_bar`, the classic title group), and nothing of the

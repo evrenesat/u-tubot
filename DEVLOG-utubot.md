@@ -235,6 +235,10 @@
 - Review round 1: `clearSummaries` clears every scope's summaries, including a scope that has not been opened yet or is just the
   previous connection, so a prompt change before any summary request cannot serve a stored text of an earlier run. The backend's
   artifact inventory counts UTF-8 bytes (`LENGTH(CAST(... AS BLOB))`) instead of characters for text, json and vtt rows.
+- Review round 4: a summary request that was already in flight when a prompt import, refresh or default change cleared the summaries
+  is shown but not stored again; the manager's summary generation moves under the same lock as the clear, so neither the memory nor
+  the disk gets the old prompt's text back. `UtubotSummaryCacheTest` waits a blocked request through a refresh and checks both caches,
+  then a new request on the same backend version.
 
 ## 2026-11-24 (CI app job: Robolectric no longer downloads at test time)
 

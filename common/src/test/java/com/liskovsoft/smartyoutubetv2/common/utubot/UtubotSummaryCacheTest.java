@@ -14,6 +14,8 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
@@ -34,6 +36,8 @@ public class UtubotSummaryCacheTest {
     private static final String BUSY_ID = "busyCCCCCCC";
     private static final String READY_ID = "readyDDDDDD";
     private static final String PENDING_ID = "pendingEEEE";
+    private static final String SLOW_ID = "slowFFFFFFFF";
+    private static final int WAIT_MS = 5000;
     private TinyHttpServer mServer;
     private Activity mActivity;
     private UtubotManager mManager;
@@ -173,6 +177,38 @@ public class UtubotSummaryCacheTest {
         ask(READY_ID);
 
         assertEquals(2, mRequests.get());
+    }
+
+    @Test
+    public void aSummaryThatArrivesAfterAPromptChangeIsNotKept() throws InterruptedException {
+        answerHealth("1.0");
+        CountDownLatch arrived = new CountDownLatch(1);
+        CountDownLatch mayAnswer = new CountDownLatch(1);
+        mServer.on("/v1/videos/" + SLOW_ID + "/summary", request -> {
+            mRequests.incrementAndGet();
+            arrived.countDown();
+            mayAnswer.await(WAIT_MS, TimeUnit.MILLISECONDS);
+            return new TinyHttpServer.Response(200, "{\"video_id\":\"" + SLOW_ID + "\",\"status\":\"ready\",\"text\":\"- old prompt\",\"source\":\"asr\"}");
+        });
+        mServer.on("/v1/prompts/refresh", request -> new TinyHttpServer.Response(200, "{}"));
+        CountDownLatch answered = new CountDownLatch(1);
+        mManager.summaryObserve(video(SLOW_ID), "panel").subscribe(summary -> answered.countDown(), error -> answered.countDown());
+        assertTrue(arrived.await(WAIT_MS, TimeUnit.MILLISECONDS));
+
+        // The prompt sets are refreshed while the summary request waits: what it brings is the old prompt's answer
+        mManager.refreshPromptsObserve().blockingFirst();
+        mayAnswer.countDown();
+
+        assertTrue(answered.await(WAIT_MS, TimeUnit.MILLISECONDS));
+        assertNull(mManager.getCachedSummary(SLOW_ID, "panel"));
+        assertNull(UtubotDiskCache.instance(mActivity).getSummary(SLOW_ID, "panel"));
+
+        // A new request on the same backend version does not find the in-flight answer in the cleared cache
+        mManager.onConnectionChanged();
+        int before = mRequests.get();
+        ask(SLOW_ID);
+
+        assertEquals(before + 1, mRequests.get());
     }
 
     @Test

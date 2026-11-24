@@ -52,6 +52,11 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     private final Context mContext;
     private final UtubotSettings mSettings;
     private final VerdictCache mVerdicts = new VerdictCache(VerdictCache.MAX_ENTRIES);
+    /**
+     * The generation of the kept summaries: a prompt change or another connection clears them, so a request that was already in
+     * flight is not stored after it (it would bring back what was just dropped). Guarded by {@code mSummaries}.
+     */
+    private long mSummaryGeneration;
     private final Map<String, Summary> mSummaries = new LinkedHashMap<String, Summary>() {
         @Override
         protected boolean removeEldestEntry(Entry<String, Summary> eldest) {
@@ -102,6 +107,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
         mVerdicts.clear();
 
         synchronized (mSummaries) {
+            mSummaryGeneration++;
             mSummaries.clear();
         }
 
@@ -251,14 +257,16 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     /**
-     * The default prompt or the prompt sets changed: no summary of before is the answer to the same request anymore
+     * The default prompt or the prompt sets changed: no summary of before is the answer to the same request anymore. The generation
+     * moves in the same step, so a request that is already in flight does not store its old prompt's answer after the clear.
      */
     private void forgetSummaries() {
         synchronized (mSummaries) {
+            mSummaryGeneration++;
             mSummaries.clear();
+            // Under the same lock: a request can neither read nor write a stored summary through the clear
+            mDisk.clearSummaries();
         }
-
-        mDisk.clearSummaries();
     }
 
     /**
@@ -393,15 +401,23 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
     private Summary pollSummary(UtubotClient client, String videoId, @Nullable String promptKey, @Nullable VideoMeta meta, String cacheKey)
             throws IOException {
+        // What was asked before a prompt change or a switch belongs to the old request: its answer is shown, but not kept again
+        long generation;
+
+        synchronized (mSummaries) {
+            generation = mSummaryGeneration;
+        }
+
         if (useDiskCache(client)) {
-            Summary stored = mDisk.getSummary(videoId, promptKey);
+            synchronized (mSummaries) {
+                if (generation == mSummaryGeneration) {
+                    Summary stored = mDisk.getSummary(videoId, promptKey);
 
-            if (stored != null) {
-                synchronized (mSummaries) {
-                    mSummaries.put(cacheKey, stored);
+                    if (stored != null) {
+                        mSummaries.put(cacheKey, stored);
+                        return stored;
+                    }
                 }
-
-                return stored;
             }
         }
 
@@ -414,11 +430,14 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
         if (summary.isReady() && !summary.isTransient() && isCurrent(client)) {
             synchronized (mSummaries) {
-                mSummaries.put(cacheKey, summary);
-            }
+                // The caches the request started on were cleared while it waited: the text is the answer to the old prompt
+                if (generation == mSummaryGeneration) {
+                    mSummaries.put(cacheKey, summary);
 
-            if (mDiskScope != null) {
-                mDisk.putSummary(promptKey, summary);
+                    if (mDiskScope != null) {
+                        mDisk.putSummary(promptKey, summary);
+                    }
+                }
             }
         }
 

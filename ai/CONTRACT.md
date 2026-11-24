@@ -366,7 +366,7 @@ Stored for later threshold tuning.
   `can_transcribe`, and no Retry when `reason` is present. None of these answers is kept by the app. Retry (the user's action, not the
   countdown of a `delayed` answer) first calls `POST /v1/videos/{id}/retry`, whatever it answers, then asks again. The app keeps only ready
   verdicts and summaries on disk, per backend address, token and backend version (`version` of `GET /v1/health`) for 3 days, and drops them with
-  a prompt import, refresh or default change. The AI answer shows
+  a prompt import, refresh or default change; a summary request that was in flight then is shown but not stored again. The AI answer shows
   the same states for an insight, counts a delay down and follows a running transcription like the view does (the transcription the user
   starts is started from the Summary view of the video). `message` is shown as the server wrote it in the panel, the view and the answer;
   the app's own wording is only the fallback. Every `insight`, `summary` and `transcribe` call carries `title`, `channel` and `duration_s`.
