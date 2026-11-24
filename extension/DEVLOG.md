@@ -1,3 +1,18 @@
+## 2026-11-24 (checkpoint 2: background core)
+
+- `src/background/client.js` calls every endpoint of the plan's section 1 with the contract's methods, paths, query fields
+  (title, channel, duration_s on insight/summary/transcribe; is_live too on cut requests), `credentials: "omit"` and
+  `cache: "no-store"` on every request. `auth.js` scopes the bearer header to the stored backend's scheme, host, port and path;
+  `setup.js` resolves the typed address and the setup file, with http for private hosts only; `settings.js` keeps the TV's
+  defaults and keys.
+- `src/background/router.js`: the two message sets of decision 6, sender checks (extension pages for the page set; YouTube or the
+  test fixture for content), video id validation, and a stateless executor: connection and settings from `storage.local`, the
+  verdict/summary/captions caches and the one-shot open requests in `storage.session`, no state in memory. `cache.js` clears the
+  session caches on a backend or token change. `main.js` wires the router to the real API and opens the options page on install.
+- `src/shared/models.js`, `meta.js`, `messages.js`: the contract's parsers and the message sets. `tests/unit/{auth,setup,client,
+  messages,router}.test.js`: the ported setup and client cases, every endpoint's method/path/query, the credentials and auth
+  scoping, the sender and video-id checks and a fresh router load.
+
 # u·tubot browser extension devlog
 
 ## 2026-11-24 (checkpoint 1: mock backend controls)
