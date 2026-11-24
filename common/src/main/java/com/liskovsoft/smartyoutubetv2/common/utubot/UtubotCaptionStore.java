@@ -39,7 +39,7 @@ public final class UtubotCaptionStore {
     private static final String TEMP_EXTENSION = ".tmp";
     private static final int CHUNK_BYTES = 4096;
     private static final String VTT_HEADER = "WEBVTT";
-    private static final String BYTE_ORDER_MARK = "﻿";
+    private static final String BYTE_ORDER_MARK = "\uFEFF";
     private static final Pattern VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{11}");
     private static final Pattern LANGUAGE = Pattern.compile("[A-Za-z0-9_-]{1,32}");
     private static final String KEY_TRACKS = "tracks";
