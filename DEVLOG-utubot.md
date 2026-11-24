@@ -4,8 +4,13 @@
 
 - `ai/FIREFOX_EXTENSION_PLAN.md`: the two-part plan for a Firefox extension (desktop and Android, one codebase) with parity for the
   u·tubot features: owner decisions, the parity matrix against the TV code, architecture, the no-YouTube test approach, signing and
-  distribution, eleven checkpoints. No backend or contract change is needed; nothing is implemented yet.
-- `AGENTS.md`: the standing rule that every AI feature is specified, built and tested for the TV app and the extension.
+  distribution, seventeen checkpoints (0 to 16). No backend or app change is needed; nothing is implemented yet.
+- Revised after the first plan review (the plan's section 14 maps each finding to its change): the extension never creates a
+  GitHub Release (the APK readers list releases by count), explicit permission buttons, every mock-backend control specified,
+  requests without cookies, the assess mapping, a fully specified offline test guard, smaller checkpoints.
+- `AGENTS.md`: the standing rule that every AI feature is specified, built and tested for the TV app and the extension, with a
+  transition until the extension is usable. `ai/CONTRACT.md`: the "Clients" section, and the cut paragraph no longer says the TV
+  compares `transcript_hash` (it never did). `.github/pull_request_template.md`: the parity, contract and no-YouTube boxes.
 
 ## 2026-11-24 (Processed section review round 1)
 
