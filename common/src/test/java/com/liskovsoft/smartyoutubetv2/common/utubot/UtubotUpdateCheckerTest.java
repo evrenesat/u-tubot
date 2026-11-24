@@ -158,11 +158,40 @@ public class UtubotUpdateCheckerTest {
 
     @Test
     public void theInstalledCodeIsReadFromTheApp() throws Exception {
-        PackageInfo info = mActivity.getPackageManager().getPackageInfo(mActivity.getPackageName(), 0);
-        info.versionCode = 3010;
-        ShadowPackageManager manager = shadowOf(mActivity.getPackageManager());
-        manager.installPackage(info);
+        installVersionCode(3010);
 
         assertEquals(3010, new UtubotUpdateChecker(mActivity, mListener).getInstalledVersionCode());
+    }
+
+    /**
+     * The shared checker can judge a higher code's version name equal (or older): the flavor still reports it as an update.
+     * An empty address list shows which path was taken (safe-address error vs "latest version").
+     */
+    @Test
+    public void aHigherCodeWithTheSameNameIsAnUpdateNotTheLatestVersion() throws Exception {
+        installVersionCode(3010);
+        UtubotUpdateChecker checker = new UtubotUpdateChecker(mActivity, mListener);
+
+        checker.onChangelogReceived(true, "0.3.10", 3011, null, new Uri[0]);
+
+        assertEquals(UtubotUpdateChecker.NO_SAFE_DOWNLOAD, mError.getMessage());
+    }
+
+    @Test
+    public void anEqualOrOlderCodeWithANewerNameIsNotAnUpdate() throws Exception {
+        installVersionCode(3010);
+        UtubotUpdateChecker checker = new UtubotUpdateChecker(mActivity, mListener);
+
+        checker.onChangelogReceived(false, "0.3.11", 3010, Collections.singletonList("Fixes"), new Uri[0]);
+
+        assertEquals(AppUpdateCheckerListener.LATEST_VERSION, mError.getMessage());
+        assertEquals(0, mFound);
+    }
+
+    private void installVersionCode(int versionCode) throws Exception {
+        PackageInfo info = mActivity.getPackageManager().getPackageInfo(mActivity.getPackageName(), 0);
+        info.versionCode = versionCode;
+        ShadowPackageManager manager = shadowOf(mActivity.getPackageManager());
+        manager.installPackage(info);
     }
 }
