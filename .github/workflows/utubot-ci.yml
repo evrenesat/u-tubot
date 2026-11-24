@@ -161,6 +161,30 @@ jobs:
           npx web-ext lint --source-dir dist/firefox-listed
           npx web-ext lint --source-dir dist/firefox-test --self-hosted
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: extension/tests/e2e/uv.lock
+
+      - name: Install ffmpeg
+        # The caption tests of later checkpoints generate their media with it.
+        working-directory: .
+        run: sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install the e2e dependencies
+        working-directory: extension/tests/e2e
+        run: uv sync --frozen
+
+      - name: Download the pinned Firefox and geckodriver
+        # The only network use of the e2e run; every test afterwards is behind the refusing proxy.
+        working-directory: extension/tests/e2e
+        run: python3 download_tools.py
+
+      - name: End-to-end tests
+        working-directory: extension/tests/e2e
+        run: uv run pytest -q
+
   release:
     # Hosted by this repository only: forks do not hold the signing key.
     # A red backend blocks the release too: the app and the backend are one contract, and the deployment of a red commit never

@@ -94,26 +94,30 @@ async function bundle(variant, outDir) {
     background: join(root, "src/background/main.js"),
     content: join(root, "src/content/main.js"),
   };
+  const pageEntries = {};
 
   for (const entry of ["options.js", "popup.js", "processed.js"]) {
     if (existsSync(join(root, "src/pages", entry))) {
-      entries[`pages/${entry.replace(/\.js$/, "")}`] = join(root, "src/pages", entry);
+      pageEntries[`pages/${entry.replace(/\.js$/, "")}`] = join(root, "src/pages", entry);
     }
   }
 
-  await build({
-    entryPoints: entries,
+  const common = {
     outdir: outDir,
     bundle: true,
-    format: "esm",
     target: isFirefox ? "firefox140" : "chrome121",
     minify: false,
     sourcemap: false,
     legalComments: "none",
     logLevel: "warning",
     define: { __UTUBOT_TEST__: isTest ? "true" : "false" },
-    external: isFirefox ? [] : [],
-  });
+  };
+
+  await build({ ...common, entryPoints: entries, format: "iife" });
+
+  if (Object.keys(pageEntries).length > 0) {
+    await build({ ...common, entryPoints: pageEntries, format: "esm" });
+  }
 }
 
 function copyStatic(outDir) {

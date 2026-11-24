@@ -1,0 +1,12 @@
+{
+  "firefox": {
+    "version": "140.4.0esr",
+    "url": "https://ftp.mozilla.org/pub/firefox/releases/140.4.0esr/linux-x86_64/en-US/firefox-140.4.0esr.tar.xz",
+    "sha256": "265c0799e79b8003e20508a8164040d0109837150eba892f53f1e5ae628b576d"
+  },
+  "geckodriver": {
+    "version": "0.36.0",
+    "url": "https://github.com/mozilla/geckodriver/releases/download/v0.36.0/geckodriver-v0.36.0-linux64.tar.gz",
+    "sha256": "0bde38707eb0a686a20c6bd50f4adcc7d60d4f73c60eb83ee9e0db8f65823e04"
+  }
+}

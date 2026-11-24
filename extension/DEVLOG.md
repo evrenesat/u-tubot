@@ -37,3 +37,26 @@
 - `utubot-ci.yml`: the `changes` job runs the script and the new `extension` job lints, unit-tests, builds all five variants and
   runs `web-ext lint` on the Firefox variants. `.github/workflows/utubot-parity.yml`: the `parity-box` job with the
   `pull_request` triggers of the plan.
+
+## 2026-11-24 (checkpoint 3: e2e harness)
+
+- `tests/e2e/`: `fixture_server.py` (the page fixtures on `127.0.0.1`), `refusing_proxy.py` (records method and host, answers 502,
+  `/__log`), `download_tools.py` with `tools.lock` (Firefox `140.4.0esr` and geckodriver `0.36.0`, source URL and SHA-256), `user.js`
+  (the named service groups, the proxy and its three loopback exemptions, the auto-grant permission preference), `pyproject.toml`
+  with `uv.lock`, `conftest.py` (mock on `127.0.0.2`/`127.0.0.3`, fixture server, proxy, Firefox profile and temporary add-on,
+  extension UUID from the profile's `prefs.js`), `run-offline.sh` and the one trivial test of section 6's table; `tests/unit/e2e.test.js`
+  checks the groups and the lock format.
+- The suite: the test variant marks the `127.0.0.1` fixture, an optional permission for `http://127.0.0.2/*` is granted by a click
+  with the auto-grant preference, and the background answers `health` from the mock there. `test_refusing_proxy.py` proves a request to
+  a non-loopback name is recorded and refused; `test_zz_the_refusing_proxy_recorded_nothing` runs last and fails when the session
+  contacted any host.
+- Fixes found by the guard: the background/content bundles were ESM and content scripts may not be modules, so both are IIFE bundles
+  and only page scripts stay ESM; the remote-settings dummy server must be exactly `data:,#remote-settings-dummy/v1` and Firefox's
+  test mode (`MOZ_DISABLE_NONLOCAL_CONNECTIONS=1`) makes it skip. Firefox reported `content-signature-2.cdn.mozilla.net`,
+  `firefox-settings-attachments.cdn.mozilla.net` and `firefox.settings.services.mozilla.com` through the proxy before the fix; after it
+  the final check passes.
+- `run-offline.sh` was not executed in this environment: `unshare --net`, user-namespace mapping and bubblewrap's loopback setup are
+  all denied (`Operation not permitted`), and sudo needs a password. The suite itself passed locally only behind the proxy guard,
+  outside the required namespace; the namespace run remains to be done where the capability exists (owner host or CI's guard).
+  `.github/workflows/utubot-ci.yml`'s `extension` job now installs the e2e dependencies, downloads the pinned tools (its only network
+  step) and runs the suite; `docs/development.md` has the recipe.
