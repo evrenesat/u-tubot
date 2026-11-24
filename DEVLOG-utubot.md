@@ -1,5 +1,12 @@
 # u·tubot devlog
 
+## 2026-11-24 (director's cuts respect the target length, issue 82)
+
+- The cut picker titles a ready preset with the cut's real length, "Highlights in 5 min · 5:02" (`UtubotCutController.presetTitle`,
+  from `kept_ms`); unit test in `UtubotCutControllerTest`. The ready toast already showed the length. No upstream file touched.
+- Backend: the highlights preset now has a target length with a tolerance and the server enforces it (`ai-backend/DEVLOG.md`).
+  Browser extension: its cut checkpoints show the same real length (plan parity; no extension code yet).
+
 ## 2026-11-24 (browser extension plan, issue 72)
 
 - `ai/BROWSER_EXTENSION_PLAN.md` (first written as `FIREFOX_EXTENSION_PLAN.md`): the two-part plan for a browser extension with

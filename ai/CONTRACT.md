@@ -448,7 +448,9 @@ opens the build report in the jobs API; `raw_answer` is the model's answer, trim
 
 The cut document (`cut`): `{"version","video_id","transcript_hash","duration_ms","label",
 "summary","parts":[{"label","start_ms","end_ms"}],"skip_ranges_ms":[[from,to]...],"kept_ms",
-"source","preset_id","model","built_at"}`. All times are milliseconds of the video the cut was
+"kept_s"?,"target_s"?,"source","preset_id","model","built_at"}`. `kept_s` is `kept_ms` in seconds
+(one decimal) and `target_s` the preset's target length in seconds, `null` for typed prompts, saved
+presets and videos already short enough (both additive; older cuts lack them, clients read `kept_ms`). All times are milliseconds of the video the cut was
 built for (`duration_ms`); a client does not apply a cut whose video length differs by more than
 2 s. `transcript_hash` identifies the transcript the cut was built from; clients carry it and do not
 compare it (they hold no transcript). `skip_ranges_ms` is the sorted,
@@ -466,6 +468,18 @@ accepts its real length). A missing timed transcript queues a transcript job
 as their own async tasks (never in the caption worker's queue) with a per-user cap, and one
 finished cut is shared per (video, preset or prompt, model, transcript) cache key — two requests
 with the same key that are in flight together share the model call too.
+
+Target length (addendum, 2026-11-24): a built-in preset can have a target length (`[cuts]
+preset_target_s`, today `cut-highlights-5` = 300 s) and a tolerance (`length_tolerance`, default
+0.15 = +/- 15 %). The model is told the target, asked to keep about `over_ask_frac` (0.2) more and to
+give every part a `rank` (1 = most important; optional, an answer without ranks counts in video
+order). The server takes parts by rank until the target is reached, trims the last one at a unit
+boundary so the total stays inside the band, and returns them in video order. An answer below the
+band gets one retry that names the measured length; a second short answer fails the request
+("The model kept only N s of the T s this cut aims for"). A preset with a target skips the keep
+fraction guard; a video no longer than the band's top is cut without a target. Clients show the real
+length (`kept_ms`) next to the preset label, for example "Highlights in 5 min · 5:02" (TV picker; the
+browser extension's cut checkpoints show the same, plan section 3).
 
 ## Voice prompts (addendum, 2026-11-21)
 

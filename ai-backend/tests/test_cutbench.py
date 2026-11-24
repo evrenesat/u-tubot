@@ -5,6 +5,7 @@ import json
 from utubot.config import CutsConfig
 from utubot.cutbench import (
     TRANSCRIPTS,
+    BenchRequest,
     score_request,
     summarize,
 )
@@ -43,10 +44,10 @@ def fake_model(answer_text: str, *, usage: dict | None = None, calls: list | Non
 
 
 class TestFixtures:
-    def test_five_transcripts_with_three_requests_each(self):
+    def test_five_transcripts_with_three_or_more_requests_each(self):
         assert len(TRANSCRIPTS) == 5
         for transcript in TRANSCRIPTS:
-            assert len(transcript.requests) == 3
+            assert len(transcript.requests) >= 3
             assert transcript.duration_s > 60
             assert transcript.segments and transcript.segments[0][0] == 0
 
@@ -152,6 +153,39 @@ class TestScorer:
             for request in transcript.requests:
                 results.append(score_request(transcript, request, good, "perfect-ish"))
         summary = summarize(results)
-        assert summary["requests"] == 15
+        assert summary["requests"] == 16
         assert summary["format_errors"] == 0
         assert summary["mean_keep"] > 0.6
+
+
+class TestLengthAccuracy:
+    def test_a_targeted_request_reports_how_far_the_length_is_from_the_target(self):
+        transcript = TRANSCRIPTS[0]
+        units = build_units(transcript.segments, CFG)
+        request = BenchRequest(
+            name="short",
+            instruction="Keep the highlights.",
+            preset_id=None,
+            keep=[(units[0].start, units[-1].end)],
+            skip=[],
+            target_s=60,
+        )
+        # Ranked parts worth ~110 s: the server cuts them down to the 60 s target.
+        rows, at = [], 0.0
+        for u in units:
+            if at > 110:
+                break
+            rows.append({"from": u.n, "to": u.n, "rank": len(rows) + 1})
+            at += u.end - u.start
+        text = json.dumps({"parts": rows, "summary": "s", "kept_s": 110})
+        result = score_request(transcript, request, fake_model(text), "m")
+        assert result.target_s == 60
+        assert result.length_err is not None and result.length_err <= CFG.length_tolerance
+        assert summarize([result])["mean_length_err"] == result.length_err
+
+    def test_requests_without_a_target_have_no_length_number(self):
+        transcript = TRANSCRIPTS[0]
+        request = transcript.requests[0]
+        result = score_request(transcript, request, fake_model(answer([(1, 2)])), "m")
+        assert result.length_err is None
+        assert summarize([result])["mean_length_err"] is None

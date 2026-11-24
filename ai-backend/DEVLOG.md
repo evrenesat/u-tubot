@@ -1,5 +1,18 @@
 # DEVLOG
 
+## 2026-11-24 (cuts respect the target length, issue 82)
+
+- Problem: `cut-highlights-5` on a 1005 s video kept 681 s; the length was only a wish in the prompt and the guard is off for it.
+- `cuts.py`: `[cuts] preset_target_s` (`cut-highlights-5` = 300), `length_tolerance` 0.15, `over_ask_frac` 0.2. With a target the prompt names it
+  and asks for a `rank` per part; `select_for_target` takes parts by rank (no rank = video order) until the target, trims the last
+  one at a unit boundary to stay under the band, returns video order. Below the band: one retry that names the measured length,
+  then a clear error. Typed prompts, saved presets and videos no longer than the band keep the old behaviour. The cache version
+  includes the target, so old highlights cuts rebuild.
+- Cut document gains `kept_s` and `target_s` (additive, `ai/CONTRACT.md`).
+- `cutbench.py`: `BenchRequest.target_s`, `RequestResult.length_err`, `summarize()["mean_length_err"]`; the router fixture has a
+  60 s highlights request.
+- Tests: ranked selection, trim, old format, retry and failure paths (`test_cuts.py`, `test_cuts_api.py`), length accuracy (`test_cutbench.py`).
+
 ## 2026-11-24 (processed videos review round 1)
 
 - `tests/test_processed.py`: a dismissed cut stays out — a video with only dismissed requests is absent, and a video with a caption

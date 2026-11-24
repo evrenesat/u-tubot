@@ -63,7 +63,9 @@ CUT_SYSTEM = (
     '{"parts":[{"from":<int>,"to":<int>,"label":"<2-6 words>"}],'
     '"summary":"<one line, at most 120 characters>","kept_s":<int>}. '
     '"from" and "to" are the first and last unit id of one kept part. Ranges never overlap, ids '
-    "must exist, and parts stay in video order. Be faithful to the transcript; never invent "
+    "must exist, and parts stay in video order. When the task gives a target length, add "
+    '"rank":<int> to every part (1 = the most important part, every part its own number). '
+    "Be faithful to the transcript; never invent "
     "content and never add commentary."
 )
 
@@ -102,6 +104,9 @@ class Part:
     label: str
     start_ms: int
     end_ms: int
+    rank: int | None = None  # 1 = most important; None when the model gave none
+    first: int | None = None  # first and last unit id the part was built from
+    last: int | None = None
 
 
 def _clean_text(text: str) -> str:
@@ -204,6 +209,8 @@ def serialize_units(
     chapters: list[tuple[float, str]],
     meta: dict[str, Any],
     instruction: str,
+    target_s: int | None = None,
+    over_ask_frac: float = 0.0,
 ) -> str:
     """The user message the cut model answers: the video facts, the task, then the numbered units."""
     duration = meta.get("duration_s")
@@ -217,6 +224,13 @@ def serialize_units(
         lines.append("Chapters:")
         lines.extend(f"- {fmt_ts(at)} {title}" for at, title in chapters)
     lines.append(f"Task: {instruction.strip()}")
+    if target_s:
+        ask_s = int(target_s * (1 + over_ask_frac))
+        lines.append(
+            f"Target length: {target_s} s kept in total. Keep a little more than that, about "
+            f"{ask_s} s of unit time, and give every part a rank (1 = most important): the "
+            "server drops the lowest-ranked parts until the target fits."
+        )
     lines.append(UNITS_MARK)
     lines.extend(f"#{u.n} [{fmt_ts(u.start)}-{fmt_ts(u.end)}] {u.text}" for u in units)
     lines.append("Answer with the JSON object the system message describes.")
@@ -247,15 +261,102 @@ def parse_cut_answer(data: Any, units: list[Unit]) -> list[Part]:
         if start_n <= last_to:
             raise CutFormatError(f"part {i + 1} overlaps or goes before part {i}")
         label = _clean_text(str(raw.get("label") or ""))[:80]
+        try:
+            rank = int(raw["rank"])
+        except (KeyError, TypeError, ValueError):
+            rank = None  # the old format has no rank: parts count in video order
         out.append(
             Part(
                 label or f"Part {i + 1}",
                 int(units[start_n - 1].start * 1000),
                 int(units[end_n - 1].end * 1000),
+                rank,
+                start_n,
+                end_n,
             )
         )
         last_to = end_n
     return out
+
+
+def target_band(target_s: int, tolerance: float) -> tuple[float, float]:
+    """The accepted kept length (s) around a preset's target: `(low, high)`."""
+    return target_s * (1 - tolerance), target_s * (1 + tolerance)
+
+
+def effective_target_s(cfg, preset_id: str | None, duration_s: float | None) -> int | None:
+    """The preset's target length (s), or None for typed prompts, saved presets and videos
+    already short enough to fit the band."""
+    target_s = cfg.preset_target_s.get(preset_id or "")
+    if target_s is None:
+        return None
+    if duration_s and duration_s <= target_band(target_s, cfg.length_tolerance)[1]:
+        return None
+    return target_s
+
+
+def _padded_s(part: Part, cfg) -> float:
+    return (part.end_ms - part.start_ms) / 1000.0 + cfg.pad_before_s + cfg.pad_after_s
+
+
+def _trim_to(part: Part, units: list[Unit], budget_s: float, cfg) -> Part | None:
+    """The leading units of `part` that fit `budget_s` (padding included), cut at a unit
+    boundary; None when not even the first unit fits or the part has no unit ids."""
+    if part.first is None or part.last is None:
+        return None
+    last = None
+    for n in range(part.first, part.last + 1):
+        if units[n - 1].end - units[part.first - 1].start + cfg.pad_before_s + cfg.pad_after_s > (
+            budget_s
+        ):
+            break
+        last = n
+    if last is None:
+        return None
+    return Part(
+        part.label,
+        part.start_ms,
+        int(units[last - 1].end * 1000),
+        part.rank,
+        part.first,
+        last,
+    )
+
+
+def select_for_target(
+    parts: list[Part], units: list[Unit], cfg, target_s: int
+) -> tuple[list[Part], float]:
+    """Pick parts by importance until the target is met; `(parts in video order, length in s)`.
+
+    Parts are taken by rank (parts without one count in video order, after the ranked ones).
+    A part that would push the total past the band is trimmed at a unit boundary to fit; the
+    selection stops once the target is reached. A model answer shorter than the band returns
+    everything it gave, so the caller can see the shortfall.
+    """
+    low, high = target_band(target_s, cfg.length_tolerance)
+    pool_s = sum(_padded_s(p, cfg) for p in parts)
+    if pool_s < low:
+        return list(parts), pool_s
+    order = sorted(
+        range(len(parts)),
+        key=lambda i: (parts[i].rank if parts[i].rank is not None else len(parts) + i + 1, i),
+    )
+    chosen: list[Part] = []
+    total = 0.0
+    for i in order:
+        if total >= target_s:
+            break
+        part = parts[i]
+        length = _padded_s(part, cfg)
+        if total + length > high:
+            trimmed = _trim_to(part, units, high - total, cfg)
+            if trimmed is None:
+                continue
+            part, length = trimmed, _padded_s(trimmed, cfg)
+        chosen.append(part)
+        total += length
+    chosen.sort(key=lambda p: p.start_ms)
+    return chosen, total
 
 
 def finalize_parts(
@@ -317,12 +418,14 @@ def cut_document(
     source: str,
     preset_id: str | None,
     built_at: float | None = None,
+    target_s: int | None = None,
 ) -> dict[str, Any]:
     """The wire document the phone and the TV read: kept parts, skip ranges in ms, the transcript
     hash and the length the cut was built for (the TV refuses a cut whose length differs)."""
     duration_ms = int((duration_s or 0) * 1000)
     if not duration_ms and parts:
         duration_ms = parts[-1].end_ms
+    kept_ms = sum(p.end_ms - p.start_ms for p in parts)
     return {
         "version": CUT_DOC_VERSION,
         "video_id": video_id,
@@ -332,7 +435,9 @@ def cut_document(
         "summary": (summary or "")[:300],
         "parts": [{"label": p.label, "start_ms": p.start_ms, "end_ms": p.end_ms} for p in parts],
         "skip_ranges_ms": skip_ranges_ms(parts, duration_ms),
-        "kept_ms": sum(p.end_ms - p.start_ms for p in parts),
+        "kept_ms": kept_ms,
+        "kept_s": round(kept_ms / 1000.0, 1),
+        "target_s": target_s,
         "source": source,
         "preset_id": preset_id,
         "model": model,
@@ -788,7 +893,10 @@ class CutService:
             )
         if self._dismissed(request_id):
             return
-        version = self._version(preset_id, instruction)
+        duration_s = meta.get("duration_s")
+        duration_s = float(duration_s) if duration_s else None
+        target_s = self.target_for(preset_id, duration_s)
+        version = self._version(preset_id, instruction, target_s)
         model = self.cfg.llm.cuts.model if self.cfg.llm.cuts else ""
         cache_key = self._cache_key(video_id, version, model, thash)
         hit = self.db.one("SELECT json FROM cuts WHERE cache_key=?", [cache_key])
@@ -822,24 +930,12 @@ class CutService:
         self._inflight[cache_key] = leader
         try:
             with events.stage(STAGE_MODEL, model=model, units=len(units)) as model_stage:
-                data = await self._ask(units, chapters, meta, instruction)
-                try:
-                    parts = parse_cut_answer(data, units)
-                except CutFormatError as exc:
-                    trace.emit(STAGE_MODEL, events.WARN, problem=exc.problem, repair=1)
-                    data = await self._ask(units, chapters, meta, instruction, problem=exc.problem)
-                    try:
-                        parts = parse_cut_answer(data, units)
-                    except CutFormatError as exc2:
-                        raise CutRefused(
-                            f"The model's answer stayed unusable ({exc2.problem}),"
-                            " so no cut was built."
-                        ) from exc2
+                data, parts = await self._ask_parts(
+                    units, chapters, meta, instruction, target_s, trace
+                )
                 model_stage.set(answer=json.dumps(data, ensure_ascii=False))
             with events.stage(STAGE_CHECKING):
-                duration_s = meta.get("duration_s")
-                duration_s = float(duration_s) if duration_s else None
-                guard = not (preset_id or "").endswith("highlights-5")
+                guard = target_s is None and not (preset_id or "").endswith("highlights-5")
                 parts, _kept_s = finalize_parts(
                     parts, self.cfg.cuts, guard=guard, duration_s=duration_s
                 )
@@ -853,6 +949,7 @@ class CutService:
                     duration_s=duration_s,
                     source=source,
                     preset_id=preset_id,
+                    target_s=target_s,
                 )
                 events.emit(
                     STAGE_CHECKING,
@@ -860,6 +957,7 @@ class CutService:
                     parts=len(parts),
                     kept_s=doc["kept_ms"] / 1000.0,
                     duration_s=duration_s,
+                    target_s=target_s,
                 )
             self.db.execute(
                 "INSERT OR REPLACE INTO cuts(cache_key,video_id,version,preset_id,prompt,model,"
@@ -936,6 +1034,54 @@ class CutService:
             raise CutRefused(f"Unknown cut preset {preset_id}.")
         return prompt.template, preset_id, "preset"
 
+    def target_for(self, preset_id: str | None, duration_s: float | None) -> int | None:
+        return effective_target_s(self.cfg.cuts, preset_id, duration_s)
+
+    async def _ask_parts(
+        self,
+        units: list[Unit],
+        chapters: list[tuple[float, str]],
+        meta: dict[str, Any],
+        instruction: str,
+        target_s: int | None,
+        trace: events.JobTrace,
+    ) -> tuple[Any, list[Part]]:
+        """The model's answer as parts: one repair round for a broken answer and, with a target
+        length, one retry that names the measured length when the answer is below the band."""
+        cfg = self.cfg.cuts
+        problem: str | None = None
+        for attempt in range(2 if target_s else 1):
+            data = await self._ask(units, chapters, meta, instruction, target_s, problem=problem)
+            try:
+                parts = parse_cut_answer(data, units)
+            except CutFormatError as exc:
+                trace.emit(STAGE_MODEL, events.WARN, problem=exc.problem, repair=1)
+                data = await self._ask(
+                    units, chapters, meta, instruction, target_s, problem=exc.problem
+                )
+                try:
+                    parts = parse_cut_answer(data, units)
+                except CutFormatError as exc2:
+                    raise CutRefused(
+                        f"The model's answer stayed unusable ({exc2.problem}), so no cut was built."
+                    ) from exc2
+            if not target_s:
+                return data, parts
+            chosen, total_s = select_for_target(parts, units, cfg, target_s)
+            low, high = target_band(target_s, cfg.length_tolerance)
+            if total_s >= low:
+                return data, chosen
+            if attempt == 0:
+                trace.emit(STAGE_MODEL, events.WARN, problem="below target length", retry=1)
+                problem = (
+                    f"it keeps only {int(total_s)} s in total but the task needs about "
+                    f"{target_s} s (between {int(low)} and {int(high)} s); keep more parts."
+                )
+        raise CutRefused(
+            f"The model kept only {int(total_s)} s of the {target_s} s this cut aims for, "
+            "so no cut was built. Try again."
+        )
+
     def _label(self, preset_id: str | None, row: dict[str, Any]) -> str:
         if row["prompt"]:
             return row["prompt"]
@@ -945,9 +1091,10 @@ class CutService:
         return PRESET_LABELS.get(preset_id or "", preset_id or "Cut")
 
     @staticmethod
-    def _version(preset_id: str | None, instruction: str) -> str:
+    def _version(preset_id: str | None, instruction: str, target_s: int | None = None) -> str:
         mark = "cut" if preset_id else "prompt"
-        return f"{mark}:" + hashlib.sha256(instruction.encode()).hexdigest()[:16]
+        text = instruction if target_s is None else f"{instruction}|target={target_s}"
+        return f"{mark}:" + hashlib.sha256(text.encode()).hexdigest()[:16]
 
     @staticmethod
     def _cache_key(video_id: str, version: str, model: str, thash: str) -> str:
@@ -1019,6 +1166,7 @@ class CutService:
         chapters: list[tuple[float, str]],
         meta: dict[str, Any],
         instruction: str,
+        target_s: int | None = None,
         *,
         problem: str | None = None,
     ) -> Any:
@@ -1026,7 +1174,9 @@ class CutService:
         task = self.cfg.llm.cuts
         if task is None:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
-        message = serialize_units(units, chapters, meta, instruction)
+        message = serialize_units(
+            units, chapters, meta, instruction, target_s, self.cfg.cuts.over_ask_frac
+        )
         if len(message) // self.cfg.cuts.chars_per_token > self.cfg.cuts.max_input_tokens:
             raise CutRefused("This video is too long to cut in one pass (no map/reduce yet).")
         messages = [

@@ -453,6 +453,13 @@ public class UtubotCutControllerTest {
         assertEquals("", UtubotCutController.formatPart(null));
     }
 
+    @Test
+    public void aReadyPresetShowsItsRealLengthNextToTheLabel() {
+        assertEquals("Highlights in 5 min \u00b7 5:02", UtubotCutController.presetTitle("Highlights in 5 min", 302_000));
+        assertEquals("Only the demo \u00b7 1:02:03", UtubotCutController.presetTitle("Only the demo", 3_723_000));
+        assertEquals("Highlights in 5 min", UtubotCutController.presetTitle("Highlights in 5 min", UtubotModels.UNKNOWN));
+    }
+
     private static final class TestCutController extends UtubotCutController {
         private Video mVideo;
         private PlaybackView mPlayer;
