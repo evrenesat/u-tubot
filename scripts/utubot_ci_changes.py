@@ -31,7 +31,7 @@ PIPELINE = re.compile(
     r"^\.github/(workflows/utubot-ci\.yml$|workflows/utubot-parity\.yml$|workflows/utubot-extension-release\.yml$|actions/)"
 )
 EXTENSION = re.compile(r"^(extension/|ai/CONTRACT\.md$|scripts/emulator_mock_backend\.py$)")
-UTUBOT_CODE = re.compile(r"^(common|smarttubetv)/.+utubot/")
+UTUBOT_CODE = re.compile(r"^(common|smarttubetv)/(?:.*/)?utubot/")
 PLAN = "ai/BROWSER_EXTENSION_PLAN.md"
 CONTRACT = "ai/CONTRACT.md"
 PARITY_BOX = re.compile(r"(?im)^\s*[-*]\s*\[[xX]\]\s*AI feature parity")

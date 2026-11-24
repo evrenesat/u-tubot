@@ -132,6 +132,11 @@ def test_parity_fails_tv_utubot_code_without_the_box():
     )
 
 
+def test_parity_matches_utubot_code_at_the_module_root():
+    assert parity_fails(["common/utubot/UtubotMenu.java"], "no box") is True
+    assert parity_fails(["smarttubetv/utubot/UtubotMenu.java"], "no box") is True
+
+
 def test_parity_command_reads_the_body_from_the_environment_without_executing_it(tmp_path):
     files = tmp_path / "files.txt"
     files.write_text("ai/CONTRACT.md\n", encoding="utf-8")

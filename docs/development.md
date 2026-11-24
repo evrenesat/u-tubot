@@ -167,7 +167,7 @@ service by name; the suite ends with a check that fails when the proxy recorded 
 cd extension/tests/e2e
 uv sync --frozen
 python3 download_tools.py                       # the only download; SHA-256 checked against tools.lock
-tests/e2e/run-offline.sh                         # local runs: a network namespace with loopback only
+./run-offline.sh                                  # local runs: a network namespace with loopback only
 uv run pytest -q                                 # CI: hosted runner, behind the proxy guard
 ```
 

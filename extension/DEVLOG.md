@@ -13,8 +13,11 @@
 - `scripts/emulator_mock_backend.py`: removed a stray `DELETE /v1/prompts/default` branch that read an undefined body (the plan
   names only `PUT`); the mock test adds the `panel=400` answer. `ai-backend/tests/test_ci_changes.py` and `test_emulator_mock.py`
   were reformatted and the unused import removed so `ruff check` and `ruff format --check` pass in CI.
+- `scripts/utubot_ci_changes.py`: the parity rule matches u-tubot code at the module root too (`common/utubot/`,
+  `smarttubetv/utubot/`), as the plan's `common/**/utubot/**` says, with a unit test. `docs/development.md` runs
+  `./run-offline.sh` from the e2e directory.
 - Evidence: `npm run lint`, `npm test` (45 pass), all five builds, `web-ext lint` on the three Firefox variants (0 errors);
-  `ruff check`/`format --check`, `pytest tests/test_ci_changes.py tests/test_emulator_mock.py` (34 pass); the e2e suite (3 pass)
+  `ruff check`/`format --check`, `pytest tests/test_ci_changes.py tests/test_emulator_mock.py` (35 pass); the e2e suite (3 pass)
   behind the refusing proxy in the pinned Firefox. A deliberate probe fetched `refused.example.invalid` through Firefox; the final
   guard failed and printed that host (probe then removed), so a host-leaking session cannot pass. `run-offline.sh` is still not
   runnable here (`unshare --net` and bubblewrap are denied, `Operation not permitted`); CI's proxy guard is the offline check and
