@@ -1,5 +1,14 @@
 # u·tubot devlog
 
+## 2026-11-24 (CI app job: Robolectric no longer downloads at test time)
+
+- Every Robolectric test class failed in CI since 23 Nov at `MavenArtifactFetcher` (an `IOException` while Robolectric fetched its
+  android-all jars from Maven Central during the test run). `gradle/robolectric-offline.gradle` (applied in `common` and
+  `smarttubetv`) now resolves the instrumented jars for sdk 28, 30, 33 and 34 as Gradle dependencies, copies them to
+  `build/robolectric-deps` (`copyRobolectricDependencies`) and sets `robolectric.offline=true` plus `robolectric.dependency.dir`
+  for every test task. Cause of the red CI: Maven Central answers 429 (Too Many Requests) to the GitHub runners, for poms and for the 150 MB jars; the CI action now installs a Gradle init script that sends every Central repository to Google's mirror
+  The workflow also caches the jars. Add the artifact to that list when a test uses a new `@Config(sdk = ...)`.
+
 ## 2026-11-23 (director's cuts playable from lists and the player; u-tubot#64)
 
 - Picking a ready preset in a picker opened from a list no longer asks a player for its length (and no longer claims a different
