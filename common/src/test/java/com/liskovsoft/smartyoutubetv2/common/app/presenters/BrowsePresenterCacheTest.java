@@ -10,7 +10,11 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.VideoGroup;
 import com.liskovsoft.smartyoutubetv2.common.app.models.errors.ErrorFragmentData;
 import com.liskovsoft.smartyoutubetv2.common.app.views.BrowseView;
+import com.liskovsoft.smartyoutubetv2.common.prefs.AiSListFilterData;
+import com.liskovsoft.smartyoutubetv2.common.prefs.CollaborationsData;
+import com.liskovsoft.smartyoutubetv2.common.prefs.WatchLaterData;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBrowseCache;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 
 import org.junit.After;
 import org.junit.Before;
@@ -19,6 +23,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLooper;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
@@ -55,6 +60,7 @@ public class BrowsePresenterCacheTest {
     public void setUp() {
         BrowsePresenter.unhold();
         mView = Robolectric.buildActivity(FakeBrowseView.class).setup().get();
+        resetHoldingSettings();
         mPresenter = BrowsePresenter.instance(mView);
         mPresenter.setView(mView);
         mPresenter.onViewInitialized();
@@ -98,18 +104,23 @@ public class BrowsePresenterCacheTest {
 
         seed(section, cachedGroups(section, group(section, LIKED_MUSIC, 0, 7_000, "old-one"),
                 group(section, MUSIC, 1, 8_000, "old-two")), now() - 20 * MINUTE, true);
-        putMapping("mRowMapping", MediaGroup.TYPE_MUSIC, Observable.just(first, second));
+        putMapping("mRowMapping", MediaGroup.TYPE_MUSIC, Observable.defer(() -> {
+            mView.countRefresh();
+            return Observable.just(first, second);
+        }));
 
         mPresenter.onSectionFocused(MediaGroup.TYPE_MUSIC);
+        awaitRefresh();
 
         List<VideoGroup> cached = mCache.groups(section, identity());
+        assertEquals(1, mView.refreshSubscriptions());
+        assertTrue(mView.hasGroup(7_000, LIKED_MUSIC, 6));
+        assertTrue(mView.hasGroup(8_000, MUSIC, 6));
         assertEquals(0, mView.errors);
-        assertTrue(mView.hasGroup(7_000, LIKED_MUSIC, 1));
-        assertTrue(mView.hasGroup(8_000, MUSIC, 1));
         assertNotNull(cached);
         assertEquals(2, cached.size());
-        assertEquals(1, cached.get(0).getVideos().size());
-        assertEquals(1, cached.get(1).getVideos().size());
+        assertEquals(6, cached.get(0).getVideos().size());
+        assertEquals(6, cached.get(1).getVideos().size());
         assertEquals(MUSIC, cached.get(1).getTitle());
         assertEquals(0, mView.emptyUpdates());
     }
@@ -126,6 +137,7 @@ public class BrowsePresenterCacheTest {
                 Observable.concat(Observable.just(first), Observable.error(new RuntimeException("the later part failed"))));
 
         mPresenter.onSectionFocused(MediaGroup.TYPE_MUSIC);
+        awaitFirstChunk();
 
         List<VideoGroup> cached = mCache.groups(section, identity());
         assertEquals(0, mView.errors);
@@ -150,6 +162,27 @@ public class BrowsePresenterCacheTest {
 
         assertEquals(0, mCache.count());
         assertEquals(null, mCache.groups(section, identity()));
+    }
+
+    /**
+     * What holds a row back (a lookup or a filter set by another test) stays out: this test drives the rows of the section itself.
+     */
+    private void resetHoldingSettings() {
+        UtubotSettings settings = UtubotSettings.instance(mView);
+        settings.setUrl("");
+        settings.setToken("");
+        settings.setAssessEnabled(false);
+        WatchLaterData.instance(mView).setMode(WatchLaterData.MODE_SHOW);
+        CollaborationsData.instance(mView).setMode(CollaborationsData.MODE_SHOW);
+        AiSListFilterData aiSList = AiSListFilterData.instance(mView);
+
+        for (int list : new int[]{AiSListFilterData.LIST_BLOCKLIST, AiSListFilterData.LIST_WARNLIST}) {
+            aiSList.setEverythingEnabled(list, false);
+
+            for (int section = 0; section < AiSListFilterData.SECTION_COUNT; section++) {
+                aiSList.setHideEnabled(list, section, false);
+            }
+        }
     }
 
     private BrowseSection musicSection() throws Exception {
@@ -182,6 +215,41 @@ public class BrowsePresenterCacheTest {
         field.setAccessible(true);
         Map<Integer, Observable<?>> map = (Map<Integer, Observable<?>>) field.get(mPresenter);
         map.put(sectionId, observable);
+    }
+
+    private void awaitRefresh() throws Exception {
+        long deadline = System.currentTimeMillis() + 5_000;
+
+        while (System.currentTimeMillis() < deadline) {
+            ShadowLooper.idleMainLooper();
+            List<VideoGroup> cached = mCache.groups(musicSection(), identity());
+
+            if (cached != null && cached.size() == 2 && cached.get(0).getVideos().size() == 6
+                    && cached.get(1).getVideos().size() == 6) {
+                return;
+            }
+
+            Thread.sleep(20);
+        }
+
+        throw new AssertionError("the refresh didn't save the whole section");
+    }
+
+    private void awaitFirstChunk() throws Exception {
+        long deadline = System.currentTimeMillis() + 5_000;
+
+        while (System.currentTimeMillis() < deadline) {
+            ShadowLooper.idleMainLooper();
+
+            if (mView.hasGroup(7_000, LIKED_MUSIC, 6)) {
+                Thread.sleep(50);
+                return;
+            }
+
+            Thread.sleep(20);
+        }
+
+        throw new AssertionError("the first part didn't arrive");
     }
 
     private long now() {
@@ -306,6 +374,7 @@ public class BrowsePresenterCacheTest {
         private final List<Video> mSelectedItems = new ArrayList<>();
         private boolean mProgressShowing;
         private int errors;
+        private int refreshSubscriptions;
 
         @Override
         public void addSection(int index, BrowseSection section) {
@@ -371,6 +440,14 @@ public class BrowsePresenterCacheTest {
 
         @Override
         public void updateBadge() {
+        }
+
+        private int refreshSubscriptions() {
+            return refreshSubscriptions;
+        }
+
+        private void countRefresh() {
+            refreshSubscriptions++;
         }
 
         private boolean hasGroup(int id, String title, int size) {
