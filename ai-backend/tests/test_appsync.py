@@ -87,6 +87,8 @@ class Github:
         self.requests: list[httpx.Request] = []
         self.status: int | None = None
         self.headers: dict[str, str] = {}
+        self.api_headers: dict[str, str] = {}
+        self.api_statuses: list[int] = []
 
     def add_release(
         self,
@@ -151,10 +153,20 @@ class Github:
             return httpx.Response(self.status, headers=self.headers)
         url = str(request.url)
         if url == API_RELEASES:
-            return httpx.Response(200, json=self.releases)
+            body = json.dumps(self.releases).encode()
+            etag = f'"{hashlib.sha256(body).hexdigest()}"'
+            headers = {"etag": etag, **self.api_headers}
+            status = 304 if request.headers.get("if-none-match") == etag else 200
+            self.api_statuses.append(status)
+            if status == 304:
+                return httpx.Response(304, headers=headers)
+            return httpx.Response(200, content=body, headers=headers)
         if url in self.files:
             return httpx.Response(200, content=self.files[url])
         return httpx.Response(404)
+
+    def api_calls(self) -> list[httpx.Request]:
+        return [r for r in self.requests if r.url.host == "api.github.com"]
 
     def client(self) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(self.handler), follow_redirects=True)
@@ -202,6 +214,68 @@ def test_second_run_is_a_no_op_without_downloading(tmp_path, github):
     result = sync(cfg, github)
     assert result.status == "up-to-date"
     assert len(github.downloads()) == first_downloads + 1  # only release.json is fetched again
+
+
+def test_release_list_is_conditional_and_304_reuses_the_cached_list(tmp_path, github):
+    github.add_release("0.3.1", 3001)
+    cfg = make_cfg(tmp_path)
+    sync(cfg, github)
+    state = json.loads((tmp_path / "app" / appsync.SYNC_STATE_FILE).read_text())
+    assert state["etag"]
+    result = sync(cfg, github)
+    assert result.status == "up-to-date"
+    assert github.api_statuses == [200, 304]
+    assert github.api_calls()[1].headers["if-none-match"] == state["etag"]
+
+
+def test_rate_limit_reset_is_remembered_and_later_runs_skip_github(tmp_path, github, monkeypatch):
+    now = 1_700_000_000
+    monkeypatch.setattr(appsync.time, "time", lambda: now)
+    github.status = 403
+    github.headers = {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(now + 300)}
+    cfg = make_cfg(tmp_path)
+    with pytest.raises(appsync.TransientError) as first:
+        sync(cfg, github)
+    assert first.value.notice
+    assert len(github.requests) == 1
+    with pytest.raises(appsync.TransientError) as second:
+        sync(cfg, github)
+    assert not second.value.notice
+    assert "not asking again" in str(second.value)
+    assert len(github.requests) == 1
+
+    monkeypatch.setattr(appsync.time, "time", lambda: now + 301)
+    github.status = None
+    github.headers = {}
+    github.add_release("0.3.1", 3001)
+    result = sync(cfg, github)
+    assert result.status == "published"
+    assert any("rate limit cleared" in line for line in result.lines)
+
+
+def test_exhausted_quota_on_a_successful_response_is_remembered(tmp_path, github, monkeypatch):
+    now = 1_700_000_000
+    monkeypatch.setattr(appsync.time, "time", lambda: now)
+    github.add_release("0.3.1", 3001)
+    github.api_headers = {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(now + 300)}
+    cfg = make_cfg(tmp_path)
+    assert sync(cfg, github).status == "published"
+    requests = len(github.requests)
+    with pytest.raises(appsync.TransientError) as exc:
+        sync(cfg, github)
+    assert not exc.value.notice
+    assert len(github.requests) == requests
+
+
+def test_cli_warns_once_per_rate_limit_state(tmp_path, github, monkeypatch, capsys):
+    now = 1_700_000_000
+    monkeypatch.setattr(appsync.time, "time", lambda: now)
+    github.status = 403
+    github.headers = {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(now + 300)}
+    assert run_cli(tmp_path, github, monkeypatch) == appsync.EXIT_TEMPFAIL
+    assert "rate limit" in capsys.readouterr().err
+    assert run_cli(tmp_path, github, monkeypatch) == appsync.EXIT_TEMPFAIL
+    assert "rate limit" not in capsys.readouterr().err
 
 
 def test_older_or_equal_release_does_not_replace_the_channel(tmp_path, github):

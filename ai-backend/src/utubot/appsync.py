@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +53,7 @@ MAX_CHANGELOG_LINES = 20
 VERSION_CODE_MAJOR_STEP = 1_000_000
 VERSION_CODE_MINOR_STEP = 1_000
 EXIT_TEMPFAIL = 75
+SYNC_STATE_FILE = "sync-state.json"
 
 
 class SyncError(Exception):
@@ -61,6 +63,11 @@ class SyncError(Exception):
 class TransientError(SyncError):
     """GitHub could not be reached or is rate limiting; try again later."""
 
+    def __init__(self, message: str, *, notice: bool = True, rate_limit_reset: int = 0) -> None:
+        super().__init__(message)
+        self.notice = notice
+        self.rate_limit_reset = rate_limit_reset
+
 
 @dataclass
 class SyncResult:
@@ -68,6 +75,49 @@ class SyncResult:
     version_name: str | None = None
     version_code: int | None = None
     lines: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SyncState:
+    etag: str = ""
+    releases: list[Any] = field(default_factory=list)
+    cached: bool = False
+    rate_limit_reset: int = 0
+    rate_limit_notice: int = 0
+
+    @classmethod
+    def load(cls, cfg: Config) -> SyncState:
+        try:
+            raw = json.loads((cfg.app_dir / SYNC_STATE_FILE).read_text())
+        except (OSError, json.JSONDecodeError):
+            return cls()
+        if not isinstance(raw, dict):
+            return cls()
+        releases = raw.get("releases")
+        return cls(
+            etag=str(raw.get("etag") or ""),
+            releases=releases if isinstance(releases, list) else [],
+            cached=isinstance(releases, list),
+            rate_limit_reset=_as_int(raw.get("rate_limit_reset")),
+            rate_limit_notice=_as_int(raw.get("rate_limit_notice")),
+        )
+
+    def save(self, cfg: Config) -> None:
+        try:
+            cfg.app_dir.mkdir(parents=True, exist_ok=True)
+            (cfg.app_dir / SYNC_STATE_FILE).write_text(
+                json.dumps(
+                    {
+                        "etag": self.etag,
+                        "releases": self.releases,
+                        "rate_limit_reset": self.rate_limit_reset,
+                        "rate_limit_notice": self.rate_limit_notice,
+                    }
+                )
+                + "\n"
+            )
+        except OSError:
+            return
 
 
 @dataclass
@@ -104,6 +154,21 @@ def normalize_pin(text: str) -> str:
     return pin
 
 
+def _as_int(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _rate_limit_reset(headers: httpx.Headers) -> int:
+    return _as_int(headers.get("x-ratelimit-reset"))
+
+
+def _reset_text(reset: int) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(reset))
+
+
 def new_client(cfg: Config) -> httpx.Client:
     return httpx.Client(
         timeout=cfg.app.sync_timeout_s,
@@ -113,7 +178,11 @@ def new_client(cfg: Config) -> httpx.Client:
 
 
 def _request(
-    client: httpx.Client, url: str, headers: dict[str, str] | None = None
+    client: httpx.Client,
+    url: str,
+    headers: dict[str, str] | None = None,
+    *,
+    accept_not_modified: bool = False,
 ) -> httpx.Response:
     try:
         response = client.get(url, headers=headers)
@@ -122,11 +191,17 @@ def _request(
     if response.status_code == 429 or (
         response.status_code == 403 and response.headers.get("x-ratelimit-remaining") == "0"
     ):
+        reset = _rate_limit_reset(response.headers)
+        until = f"; not asking again until {_reset_text(reset)}" if reset else ""
         raise TransientError(
-            "GitHub rate limit reached; set a token in the env var named by [app] github_token_env"
+            f"GitHub rate limit reached{until}; "
+            "set a token in the env var named by [app] github_token_env",
+            rate_limit_reset=reset,
         )
     if response.status_code >= 500:
         raise TransientError(f"GitHub answered HTTP {response.status_code}")
+    if accept_not_modified and response.status_code == 304:
+        return response
     if response.status_code != 200:
         raise SyncError(f"GET {httpx.URL(url).path} answered HTTP {response.status_code}")
     return response
@@ -445,21 +520,69 @@ def sync_github(
     if not REPO_RE.match(repo):
         raise SyncError(f"repository must look like OWNER/NAME, got {repo!r}")
     pin = normalize_pin(cfg.app.signing_cert_sha256)
+    state = SyncState.load(cfg)
+    now = int(time.time())
+    if state.rate_limit_reset > now:
+        raise TransientError(
+            "GitHub rate limit reached; not asking again until "
+            f"{_reset_text(state.rate_limit_reset)}. "
+            "Set a token in the env var named by [app] github_token_env",
+            notice=False,
+        )
+    notices: list[str] = []
     own_client = client is None
     client = client or new_client(cfg)
     try:
-        listing = _request(
-            client,
-            f"{GITHUB_API}/repos/{repo}/releases?per_page={cfg.app.sync_releases_per_page}",
-            _api_headers(cfg),
-        )
+        headers = _api_headers(cfg)
+        if state.cached and state.etag:
+            headers["If-None-Match"] = state.etag
         try:
-            releases = listing.json()
-        except json.JSONDecodeError as exc:
-            raise SyncError("GitHub returned an unreadable release list") from exc
-        picked = pick_release(releases if isinstance(releases, list) else [], include_prerelease)
+            listing = _request(
+                client,
+                f"{GITHUB_API}/repos/{repo}/releases?per_page={cfg.app.sync_releases_per_page}",
+                headers,
+                accept_not_modified=True,
+            )
+        except TransientError as exc:
+            if exc.rate_limit_reset > now:
+                exc.notice = state.rate_limit_notice != exc.rate_limit_reset
+                state.rate_limit_reset = exc.rate_limit_reset
+                state.rate_limit_notice = exc.rate_limit_reset
+                if not dry_run:
+                    state.save(cfg)
+            raise
+        if listing.status_code == 304:
+            releases = state.releases
+        else:
+            try:
+                parsed = listing.json()
+            except json.JSONDecodeError as exc:
+                raise SyncError("GitHub returned an unreadable release list") from exc
+            releases = parsed if isinstance(parsed, list) else []
+            state.etag = listing.headers.get("etag", "")
+            state.releases = releases
+            state.cached = True
+        reset = _rate_limit_reset(listing.headers)
+        if listing.headers.get("x-ratelimit-remaining") == "0" and reset > now:
+            state.rate_limit_reset = reset
+            state.rate_limit_notice = reset
+        else:
+            if state.rate_limit_notice:
+                notices.append(
+                    "GitHub rate limit cleared "
+                    f"(reached until {_reset_text(state.rate_limit_notice)})"
+                )
+            state.rate_limit_reset = 0
+            state.rate_limit_notice = 0
+        if not dry_run and cfg.app_dir.exists():
+            state.save(cfg)
+        picked = pick_release(releases, include_prerelease)
         if picked is None:
-            return SyncResult("no-release", lines=[f"{repo} has no {TAG_PREFIX}X.Y.Z release"])
+            if not dry_run:
+                state.save(cfg)
+            return SyncResult(
+                "no-release", lines=notices + [f"{repo} has no {TAG_PREFIX}X.Y.Z release"]
+            )
         release, version = picked
         info = release_info(client, repo, release, version)
         latest = appchannel.load_latest(cfg)
@@ -475,8 +598,13 @@ def sync_github(
         )
         head = f"{release['tag_name']}: {info.version_name}, versionCode {info.version_code}, from {source}; {channel}"
         if not is_newer(info, latest):
+            if not dry_run:
+                state.save(cfg)
             return SyncResult(
-                "up-to-date", info.version_name, info.version_code, [head, "nothing to do"]
+                "up-to-date",
+                info.version_name,
+                info.version_code,
+                notices + [head, "nothing to do"],
             )
         names = ", ".join(f.name for f in info.files)
         if dry_run:
@@ -506,6 +634,7 @@ def sync_github(
         apksigner = resolve_apksigner(cfg)
         app_dir = cfg.app_dir
         app_dir.mkdir(parents=True, exist_ok=True)
+        state.save(cfg)
         with tempfile.TemporaryDirectory(prefix=".sync-", dir=app_dir) as tmp:
             apks = []
             for item in info.files:
@@ -523,7 +652,7 @@ def sync_github(
             except appchannel.PublishError as exc:
                 raise SyncError(str(exc)) from exc
         removed = prune_old_versions(app_dir, cfg.app.keep_versions)
-        lines = [head, f"published {info.version_name} ({info.version_code}): {names}"]
+        lines = notices + [head, f"published {info.version_name} ({info.version_code}): {names}"]
         if removed:
             lines.append(f"removed old APK files: {', '.join(removed)}")
         return SyncResult("published", info.version_name, info.version_code, lines)

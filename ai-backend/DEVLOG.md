@@ -147,6 +147,19 @@
   differently is not matched by text alone. `dedupe_segments` keeps its two-word rule (segments have no per-word times).
 - Tests: a single doubled word at the seam, the same token said at a different time kept, and only one copy of a repeated word dropped.
   `docs/captions.md` (Chunking and stitching) updated.
+## 2026-11-24 (sync-github uses conditional requests and backs off, issue 81)
+
+- Problem: the timer asked GitHub for the release list every five minutes, even when it had not changed, and an anonymous rate
+  limit logged the same warning on every run.
+- `appsync.py`: `SyncState` stored in `app_dir/sync-state.json` keeps the last release list, its ETag and `X-RateLimit-Reset`. The
+  listing request sends `If-None-Match`; a `304` reuses the stored list and still fetches only `release.json`, as before. A
+  `403`/`429` with `X-RateLimit-Remaining: 0` stores the reset; runs before it exit `75` without a request. `TransientError.notice`
+  tells the CLI to print one warning per rate-limit state, and a later successful run says the limit cleared. A `200` that says the
+  quota is exhausted is remembered too. Dry runs write nothing, so a dry run never creates the state file.
+- Tests: the fake GitHub serves an ETag, answers `304` to a matching `If-None-Match` and records API statuses; covered conditional
+  second run, remembered reset and skip, exhausted quota on a successful response, CLI warning once and recovery.
+- Docs: `docs/server.md` Updates, `deploy/README.md` and `config.example.toml` name the token as the preferred setup and describe
+  conditional requests and the reset backoff.
 
 ## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
 

@@ -765,9 +765,12 @@ signing_cert_sha256 = "<64 hex digits>"           # SHA-256 of your release sign
 
 What a run does:
 
-1. Lists the repository's releases through the GitHub API (no login needed for a public repository; set `UTUBOT_GITHUB_TOKEN`,
-   or the variable named by `github_token_env`, only to raise the rate limit) and takes the highest `utubot-vX.Y.Z` that is not a
-   draft (prereleases only with `--prerelease`).
+1. Lists the repository's releases through the GitHub API (no login needed for a public repository; a token in the environment
+   variable named by `github_token_env`, `UTUBOT_GITHUB_TOKEN` by default, is the preferred setup because it raises the rate limit)
+   and takes the highest `utubot-vX.Y.Z` that is not a draft (prereleases only with `--prerelease`). The request carries the last
+   ETag (`If-None-Match`), so an unchanged list answers `304` and does not count against the rate limit. The ETag, the last list and
+   GitHub's `X-RateLimit-Reset` are kept in `app_dir/sync-state.json`; while a reset is in the future the command exits `75`
+   without asking GitHub and prints one warning when the limit is first hit, not on every run.
 2. Reads its `release.json` and compares `version_code` with the channel's (`latest.json`). Equal or older: nothing to do, so the
    command is safe to run every few minutes.
 3. Downloads each APK, checks its SHA-256 against `release.json`, then verifies its signature and requires every signer
