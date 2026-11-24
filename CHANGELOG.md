@@ -14,6 +14,9 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 - Retry really tries again: besides asking the backend again, it now makes the backend forget its short-lived memory of a failed fetch or
   answer of that video (a busy model is never remembered; other failures for 2 minutes). The backend can also list what it keeps per
   video and clear chosen artifacts, and the media archive can free its least recently used files at its quota when the owner turns that on.
+- Update notifications in the main menu: when the backend's `/app/update.json` offers a higher `versionCode` than the installed app and
+  "Notify about updates" is on, the app shows the update dialog shortly after it starts and again on its schedule, without opening
+  Settings, Updates. Choosing "Not now" (or Back) dismisses that version until a newer one arrives; "Check for updates" still shows it.
 - Switching between browse sections is instant: each section first shows the cards it had the last time, from memory or from a
   cache kept on the TV across restarts, and only then refreshes in the background, at most every 5, 10, 20, 30 or 60 minutes
   (Settings, u·tubot, Browse refresh; 10 by default). The refreshed rows update in place and keep the card that had the focus;

@@ -25,9 +25,11 @@ import okhttp3.HttpUrl;
 public class UtubotUpdateChecker extends AppUpdateChecker {
     private static final String TAG = UtubotUpdateChecker.class.getSimpleName();
     static final String NO_SAFE_DOWNLOAD = "The update file offers no https download";
+    private final Context mContext;
 
     public UtubotUpdateChecker(Context context, AppUpdateCheckerListener listener) {
         super(context, listener);
+        mContext = context.getApplicationContext();
     }
 
     @Override
@@ -78,7 +80,7 @@ public class UtubotUpdateChecker extends AppUpdateChecker {
      */
     int getInstalledVersionCode() {
         try {
-            return getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), 0).versionCode;
+            return mContext.getPackageManager().getPackageInfo(mContext.getPackageName(), 0).versionCode;
         } catch (PackageManager.NameNotFoundException e) {
             return 0;
         }

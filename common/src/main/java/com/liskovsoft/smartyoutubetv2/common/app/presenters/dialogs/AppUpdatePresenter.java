@@ -118,7 +118,7 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
      * gated by the shared checker's 15 minute/60 second "recently checked" window, and only when update notifications are on.
      * It returns whether a check was started.
      */
-    boolean startAutomatic() {
+    public boolean startAutomatic() {
         if (mIsForceCheckRunning || !mUpdateChecker.isUpdateCheckEnabled()) {
             return false;
         }
@@ -128,7 +128,7 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         }
 
         mIsForceCheck = false;
-        mUpdateChecker.forceCheckForUpdates(getUpdateUrls());
+        forceCheck();
 
         return true;
     }

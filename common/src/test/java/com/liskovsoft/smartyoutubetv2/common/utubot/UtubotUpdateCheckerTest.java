@@ -157,7 +157,7 @@ public class UtubotUpdateCheckerTest {
     }
 
     @Test
-    public void theInstalledCodeIsReadFromTheApp() {
+    public void theInstalledCodeIsReadFromTheApp() throws Exception {
         PackageInfo info = mActivity.getPackageManager().getPackageInfo(mActivity.getPackageName(), 0);
         info.versionCode = 3010;
         ShadowPackageManager manager = shadowOf(mActivity.getPackageManager());
