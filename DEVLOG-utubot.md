@@ -26,6 +26,9 @@
   minutes and then ends in the Quick offer, the server refuses to start if a local or claimed route could reach the cloud, the
   claimed route never falls through, the claim contract is frozen first as its own file (checkpoint P0), renewal runs on a timer
   against the service's clock, TV account pairing fails closed, and the decisions are renumbered D-P1 to D-P11.
+- Revision 6 answers the phase 2 re-check: nothing on the big engine is paused or switched for a claim any more. The claim
+  service waits a bounded time for running work and tells the backend its deadline (`ready_by`); the backend shows the minutes
+  left, gives up with the Quick offer and always deletes a claim it stops waiting for. The claimed route gets its own key.
 
 ## 2026-11-24 (director's cuts respect the target length, issue 82)
 

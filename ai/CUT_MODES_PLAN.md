@@ -1,7 +1,7 @@
 # Director's cuts: quick and watched modes (plan)
 
 Status: draft, revision 5 (revision 4 added Phase 2 at the end and the vision-model shortlist of the owner's model
-research; revision 5 answers the phase 2 review, P.7; revision 2 made the watched mode reuse the owner's earlier scene-analysis code; revision 3
+research; revision 5 answers the phase 2 review and revision 6 its re-check, P.7; revision 2 made the watched mode reuse the owner's earlier scene-analysis code; revision 3
 answers the plan review, section 6). Waits for the owner's decisions (Part 1). Nothing is implemented.
 Scope: two ways to build a director's cut. **Quick** is today's cut, made from the transcript only, and stays the default.
 **Watched** is made from what is on screen plus what is said: the server downloads a small copy of the video, turns it into
@@ -652,7 +652,7 @@ Plan review of revision 2 (clean context, verdict: approve with changes; no high
 
 # Phase 2: priority classes and engine claims
 
-Added 24 Nov 2026 (evening) on the owner's request; revised once after its review (P.7). It comes after the checkpoints
+Added 24 Nov 2026 (evening) on the owner's request; revised after its review and its re-check (P.7). It comes after the checkpoints
 above and blocks none of them. What it adds: two classes of user, a way for a priority request to get the big local
 engine to itself, a model route per class, and an effort notch for watched cuts. Infrastructure outside this repository
 is described here only as far as this backend sees it; the companion plan `plans/engine-claims.md` in the owner's private
@@ -673,12 +673,16 @@ What changes for you:
   Normal requests never slow it: they wait and say "waiting for a priority job"; a normal watched build that is already
   running pauses after the grid it is on (at most a minute) and continues afterwards.
 - **The big engine on demand, within limits.** When a prime request needs picture analysis, the backend claims the big
-  local engine. Nothing running there is cut off: agent runs that use it are parked between two model requests and
-  continue after, new agent work starts on its cloud replacement. **A claim is not instant.** Getting the engine idle
-  takes up to two minutes, and if a vision model has to be loaded in place of the usual one (the bake-off decides, D-P2)
-  that adds minutes in both directions.
-- **If the engine cannot be had within 3 minutes**, the watched request ends with the reason and the one-press Quick
-  offer of phase 1. It never waits without end and never sends pictures to the cloud.
+  local engine. Nothing running there is stopped, paused or switched to another model: new agent work starts on its cloud
+  replacement at once, and the claim waits for the agent runs that are already on the engine to finish. You see "waiting
+  for the engine, N min left". **A claim is not instant**, and with long agent runs under way it often will not come in
+  time.
+- **If the engine is not free within 10 minutes**, the watched request ends with the reason (for example "the engine is
+  in use by the owner") and the one-press Quick offer of phase 1. It never waits without end and never sends pictures to
+  the cloud. Grids that were already described stay stored, so asking again later continues where it stopped; the same
+  holds for a long Dense build that reaches the 2-hour claim limit.
+- **While a claim lasts, normal users' requests that need a model on that engine wait**, up to the length of the claim.
+  The example config therefore gives the normal class a text model on another engine.
 - **Cloud is a choice per class.** Prime text work (summaries, answers, the cut editor) may use the cloud when the local
   model is busy. Normal users use local models when they are free and wait otherwise; the server refuses to start if their
   route could reach the cloud.
@@ -691,15 +695,15 @@ Decisions (each with the recommendation):
 |---|---|---|---|
 | D-P1 | Where the claim lives | The conductor owns the claim (page control, API, audit, limits, expiry) and switches the gateway with the existing mode switch | A claim feature inside the gateway itself; revisit if claims pass about 20 a day |
 | D-P2 | Vision model under a claim | Decided by the bake-off only. The plan assumes the bake-off winner is loaded in place of the usual big model for the length of the claim (minutes each way). The usual model is bake-off entry 4; if it passes the bar, no model change is needed and that is used instead | Skip entry 4 and always swap |
-| D-P3 | The engine cannot be claimed within 3 minutes | The request ends with the reason and offers Quick | Send the pictures to a cloud model, labelled "Watched (cloud)" (reopens phase 1 decision 3) |
+| D-P3 | The engine cannot be claimed in time (D-P11) | The request ends with the reason and offers Quick | Send the pictures to a cloud model, labelled "Watched (cloud)" (reopens phase 1 decision 3) |
 | D-P4 | Text tasks for prime | Local first; the cloud only when the local model has not started answering within 5 s | Cloud always, as the server is set up today |
 | D-P5 | Normal users and Watched | Allowed at Keyframes only; default Quick | Not allowed at all |
 | D-P6 | A running normal build when prime work arrives | Pause after the current grid, resume after | Let it finish first |
 | D-P7 | Users on the TV | Each YouTube account can pair with its own u·tubot user, with that user's own pairing code; unknown or unpaired accounts use the device's user | One user per device as today (a child on your TV would then be prime) |
-| D-P8 | Claim limits | 30 minutes, renewed while the job runs, 2 hours at most per claim, then a 10-minute pause for the same claimer; at most 4 hours of claims a day per claimer, with an alert when a limit is hit | Other numbers |
+| D-P8 | Claim limits | 30 minutes, renewed while the job runs, 2 hours at most per claim, then a 10-minute pause for the same claimer; at most 4 hours of claims a day for the backend as one claimer (all prime users share it), with an alert when a limit is hit. Claims you make by hand are outside the pause and the daily limit | Other numbers |
 | D-P9 | The engine is in video mode | A claim is refused; the request gets the Quick offer at once. Video mode is only left by hand | A claim ends video mode |
 | D-P10 | "Automatic" claims | The backend claims by itself when a prime job needs it, and releases after; no click | Also time windows or rules on the conductor |
-| D-P11 | Agent runs already using the engine when a claim comes | Parked between two model requests (their process is frozen, nothing is lost), resumed at release. If the engine is not idle after 2 minutes the claim fails and nothing was changed | Wait until those runs finish (a prime request then usually ends in the Quick offer); or switch them to the cloud model in mid-conversation and mark them |
+| D-P11 | Agent runs already using the engine when a claim comes | The claim waits for them to finish, at most 10 minutes, then fails with the Quick offer. New agent work goes to the cloud replacement for its whole run. Nothing is ever frozen, stopped or switched in mid-conversation | A longer wait; or switch those runs to the cloud model in mid-conversation and mark them |
 
 ## P.2 Facts checked for this phase
 
@@ -752,7 +756,7 @@ A route is a named way to reach a model; a class lists the routes it may use, in
 | Route | Meaning | Key |
 |---|---|---|
 | `local` | The shared local models | a gateway key that cannot reach cloud engines |
-| `claimed` | The big local engine while this backend holds a claim on it (P.3.3) | the same kind of key: cloud is impossible on this route too |
+| `claimed` | The big local engine while this backend holds a claim on it (P.3.3) | its own key, also unable to reach cloud engines, and different from the `local` key so the gateway can tell the claimer's requests from everyone else's |
 | `cloud` | A provider that may reach cloud engines | a different key |
 
 - Providers gain `route = "local"|"claimed"|"cloud"`. Each task table gains
@@ -764,7 +768,8 @@ A route is a named way to reach a model; a class lists the routes it may use, in
   that gives normal a `cloud` route, or pictures a `cloud` route without D-P3's alternative being switched on, is a
   startup error.
 - **Startup validation** (the server does not start with `[classes]` configured unless all hold):
-  1. no provider with route `local` or `claimed` shares its `api_key_env`, or its key value, with a `cloud` provider;
+  1. the `local`, `claimed` and `cloud` providers have three different `api_key_env` names and three different key
+     values;
   2. each `local` and `claimed` provider passes the cloud check: one request for `[llm] cloud_check_alias` (an alias the
      admin names that is served only by a cloud engine) must be refused by the gateway with its "cloud not allowed"
      answer. Any other answer, including a success, stops the start with a message naming the provider;
@@ -789,26 +794,38 @@ The backend speaks a small HTTP contract to a claim service; it does not know wh
 (checkpoint P0), and both plans refer to that file; the text below is its draft.
 
 - `[engine_claim] url`, `token_env`, `engine = "<name>"`, `ttl_s = 1800`, `renew_every_s = 300`, `renew_retry_s = 20`,
-  `claim_wait_max_s = 180`, `release_idle_s = 60`, `claim_retry_max = 1`.
+  `claim_wait_max_s = 900`, `release_idle_s = 60`, `claim_retry_max = 1`.
 - `POST <url>` `{"engine","reason","ttl_s","client_ref"}` -> `201 {"id","state":"draining"|"active","expires_at",
-  "max_expires_at","link"?}`. The holder is whoever the token belongs to; `client_ref` is an opaque string this backend
-  chooses (its instance id) so it can find its own claim again. `409 {"reason"}` with `reason` one of `held`,
-  `other_mode`, `engine_down`, `actuator_failed`, `drain_timeout`, `max_reached`, `cooldown`, `budget`.
+  "max_expires_at","ready_by","waiting_for"?,"link"?}`. `ready_by` is the time by which the service will have made the
+  claim `active` or failed it; `waiting_for` says what it waits for (`runs`, `idle`, `model`). `reason` carries this
+  backend's job id, nothing about the user. The holder is whoever the token belongs to; `client_ref` is an opaque string this backend
+  chooses (its instance id) so it can find its own claim again. `409 {"reason","holder_kind"?}` with `reason` one of `held`
+  (`holder_kind` `owner` or `other`), `other_mode`, `engine_down`, `actuator_failed`, `runs_busy`, `drain_timeout`,
+  `max_reached`, `cooldown`, `budget`. A `draining` claim that the service gives up ends as `failed` with one of the same
+  reasons.
   `POST <url>/<id>/renew` -> `200 {"expires_at"}` or `409` (`max_reached`, or the claim is gone).
   `DELETE <url>/<id>` -> `200`. `GET <url>?engine=&client_ref=` -> the caller's open claim or `404`.
   `GET <url>/<id>` -> its state (`draining`, `active`, `released`, `expired`, `failed`).
 - Times: only the service's `expires_at` counts; the backend never computes an expiry from its own clock and `ttl_s`.
 - Getting a claim: the backend asks when a prime job needs the `claimed` route and polls the claim while it is
-  `draining`. If it is not `active` within `claim_wait_max_s` of the first ask (a refusal counts from the same moment and
-  is asked again every 20 s, except `other_mode`, `budget`, `cooldown` and `max_reached`, which end the wait at once),
-  the wait ends: the watched request fails with a plain sentence built from the reason and carries the `fallback` to Quick
-  of 2.8. Nothing waits without a limit.
+  `draining`. The service owns the waiting time: it waits for what has to finish and fails the claim itself at
+  `ready_by`. The request shows "waiting for the engine, N min left" from `ready_by`. `claim_wait_max_s` is only this
+  backend's outer guard and must be larger than the service's longest wait (checked against the first `ready_by`; a
+  smaller value is a logged configuration error and `ready_by` is used). A `409` on asking ends the wait at once.
+- Giving up: whenever the backend stops waiting (the claim failed, the guard ran out, the user dismissed the request, the
+  job was cancelled) it sends `DELETE` for the claim, so the engine is never held for nobody.
+- The sentence shown comes from the reason: `held` by the owner reads "The engine is in use by the owner right now.",
+  `runs_busy` "Other work on the engine did not finish in time.", and so on; none of them reads like a fault of the
+  video. The request then carries the `fallback` to Quick of 2.8.
+- Under any claim `describe_concurrency` is 1 until a memory budget for parallel requests has been measured (companion
+  plan).
 - Holding it: renewal runs on its own timer every `renew_every_s`, independent of the describing loop (a slow grid cannot
   stall it). A renewal that fails in transport is retried every `renew_retry_s` until 60 s before `expires_at`; a `409`
   or reaching that point means the claim is lost.
 - A lost claim, or any failure on the `claimed` route (P.3.2), ends the current grid's request as failed and stops the
   job at that grid. The backend releases what it holds, then asks once more (`claim_retry_max`), with the same wait limit.
-  A second loss or failure in the same build ends it with the Quick offer; the grids already described stay cached. A
+  A second loss or failure in the same build ends it with the Quick offer; the grids already described stay cached, so
+  a later request (after a `cooldown`, for example) continues from them. A
   memory-guard refusal is such a failure: it is never retried in a loop.
 - Release: when no prime job needs the route any more, after `release_idle_s` (two cuts in a row share one claim), and on
   shutdown. On start the backend looks up its claim by `client_ref` and continues it if a prime job is waiting, else
@@ -865,14 +882,14 @@ Repositories: **u-tubot** (this one), **modelgate** (the gateway), and the owner
 |---|---|---|---|---|
 | P0 | u-tubot | `ai/ENGINE_CLAIM_CONTRACT.md`: the frozen contract of P.3.3 (requests, answers, every `409` reason, times, `client_ref`), reviewed against the companion plan | both plans link to the merged file; P2, P5 and P6 do not start before it | Fast |
 | P1 | u-tubot | Classes: `prime` flag, CLI, API, web UI checkbox, `klass` columns, ordering in queue, limiter, gate and cut cap, normal demanding work waits and yields, shared-build rule | unit: a normal job queued first starts after a prime one queued later; with a prime watched build active a normal one stays `in_line` with reason `priority`; a running normal build stops after its current grid and finishes later with the same TDT; a build's class rises when a prime request joins and never through a normal one; every route is called as a normal user with `prime`, `class` and `klass` in headers, query and body and the class stays normal (the route list is enumerated as in `test_webui.py`); `GET /v1/me` reports the stored class only; a job made with an extension-style token has its user's class; migrations additive | Heavy |
-| P2 | u-tubot | Routes: `route` on providers, `by_route`, `[classes.*.routes]`, startup validation and the repeated cloud check, next-route rules, status | startup fails for each of: shared key env, shared key value, a local provider whose cloud check is answered, a `claimed` alias with a fallback, a normal class with a cloud route; mock gateway with two keys: no request of a normal user carries the cloud key (asserted on every recorded request); a "cloud not allowed" answer makes a normal request wait and retry, not fail; prime text moves to cloud after `cloud_after_s` measured to the first streamed byte, the local call is cancelled, and a local answer arriving at 5.1 s is not used twice; a non-success on `claimed` is never retried on another route; servers without classes behave as before (replayed requests) | Heavy |
+| P2 | u-tubot | Routes: `route` on providers, `by_route`, `[classes.*.routes]`, startup validation and the repeated cloud check, next-route rules, status | startup fails for each of: any two of the three routes sharing a key env or a key value, a local provider whose cloud check is answered, a `claimed` alias with a fallback, a normal class with a cloud route; mock gateway with two keys: no request of a normal user carries the cloud key (asserted on every recorded request); a "cloud not allowed" answer makes a normal request wait and retry, not fail; prime text moves to cloud after `cloud_after_s` measured to the first streamed byte, the local call is cancelled, and a local answer arriving at 5.1 s is not used twice; a non-success on `claimed` is never retried on another route; servers without classes behave as before (replayed requests) | Heavy |
 | P3 | evreniops | The mode switch gains `claim` and `release` with its own cap and expiry timer; the claim map covers every alias that targets the big engine | companion plan; tests against a fake gateway admin API | Fast |
-| P4 | modelgate | The usual big model as bake-off entry 4; in-flight counts per engine and client readable by the claim service; the fallback-free picture alias; the no-cloud client key | companion plan; production-config test | Fast |
-| P5 | conduktor | Claim API per the frozen contract, scoped token, limits and budget, drain with the idle check, parking of running agent runs, expiry, audit, the page control | companion plan; pytest with a stub actuator | Heavy |
-| P6 | u-tubot | Claim client: `[engine_claim]`, wait limit, timer renewal, lost claim, restart lookup, job-report stage, the Quick offer | `tests/mock_claims.py`: a prime watched build claims before its first grid and renews on the timer while one grid takes longer than `renew_every_s`; two prime builds in a row share one claim and it is released `release_idle_s` after the second; each `409` reason gives its sentence, and the request ends with `fallback` to Quick within `claim_wait_max_s` (at once for `other_mode`, `budget`, `cooldown`, `max_reached`); a claim that expires on the service's clock while the backend's clock runs slow is treated as lost; a guard-style error on the claimed alias releases, asks once more, then ends with the Quick offer and keeps the described grids; the backend is killed while holding a claim, the mock expires it, the restarted backend finds nothing by `client_ref` and asks again; restarted while the claim is alive, it continues it; no claim call is made for a normal user on any route | Heavy |
+| P4 | modelgate | The usual big model as bake-off entry 4; in-flight counts per alias and client readable by the claim service; the fallback-free picture alias; two no-cloud client keys (one for `local`, one for `claimed`) | companion plan; production-config test | Fast |
+| P5 | conduktor | Claim API per the frozen contract, scoped token, limits and budget, new agent work pinned to the replacement, the bounded wait for running work and the idle check, expiry, audit, the page control | companion plan; pytest with a stub actuator | Heavy |
+| P6 | u-tubot | Claim client: `[engine_claim]`, wait limit, timer renewal, lost claim, restart lookup, job-report stage, the Quick offer | `tests/mock_claims.py`: a prime watched build claims before its first grid and renews on the timer while one grid takes longer than `renew_every_s`; two prime builds in a row share one claim and it is released `release_idle_s` after the second; each `409` reason and each failed-claim reason gives its sentence (`held` by the owner reads as in use, not as a fault) and the request ends with `fallback` to Quick; the remaining minutes shown come from `ready_by`; a `DELETE` is sent on every way of giving up (failed claim, guard, dismissed request, cancelled job); a claim that expires on the service's clock while the backend's clock runs slow is treated as lost; a guard-style error on the claimed alias releases, asks once more, then ends with the Quick offer and keeps the described grids; the backend is killed while holding a claim, the mock expires it, the restarted backend finds nothing by `client_ref` and asks again; restarted while the claim is alive, it continues it; no claim call is made for a normal user on any route | Heavy |
 | P7 | u-tubot | Effort: settings, contract, cache rule, class limits, mock backend, the three clients | synthetic clip: `keyframes` yields one grid per 60 s, `dense` more grids than `standard`; a 90-minute generated chunk list gives 90 grids at `keyframes`; a stored `standard` TDT serves a `keyframes` request without a vision call; a normal user asking for `standard` gets the `403`; TV and web UI tests for the notch; emulator recipe with the mock | Fast |
 | P8 | u-tubot (app) | Per-account pairing on the TV, fail closed | unit tests for the token store: account A paired with a prime user, then account B unpaired, then signed out, then an unresolved account: A's token is used only for A; a switch cancels requests in flight and clears caches; `scope` sent on pairing; emulator run against the mock with two mock users and no real YouTube account, recorded | Fast |
-| P9 | all | Owner drill on the real machines, with the backend in offline mode and an imported video; needs P4's picture alias | recorded: a prime watched cut claims the engine, agent runs are parked and new agent work answers from the replacement, the grids are described locally, the claim is released, the parked runs continue, the aliases are back; a normal request made meanwhile waited; a claim asked during video mode gave the Quick offer | Fast |
+| P9 | all | Owner drill on the real machines, with the backend in offline mode and an imported video; needs P4's picture alias | recorded: a prime watched cut asks for the engine while one agent run is on it, new agent work answers from the replacement, the claim becomes active when that run has ended, the grids are described locally, the claim is released, the aliases are back; a second try with a run that outlasts the wait ends in the Quick offer with nothing changed; a normal request made meanwhile waited; a claim asked during video mode gave the Quick offer | Fast |
 
 Order: P0 first. P1 can start once phase 1 checkpoint 1 has landed; P2 after P0 (it tests against mocks; the real
 no-cloud key comes with P4). P3, P4, P5 are outside this repository; P5 after P0. P6 needs P2 and P5. P7 needs phase 1
@@ -895,9 +912,10 @@ checkpoint 4. P8 needs P1. P9 needs all.
   check it). D-P2 is decided by bake-off entry 4, not before.
 - How long a model change takes in both directions, and what memory it needs. The swap path is not allowed before the
   companion plan's measured memory budget and its engine-side state for a loaded vision model exist.
-- That an agent run can be frozen between two model requests and continue cleanly (the companion plan starts with that
-  trial; D-P11's first alternative applies if it fails).
-- Whether the gateway exposes in-flight request counts per engine and client (P4 adds them if not).
+- How often the engine becomes free within 10 minutes when agent work is under way; the drill and the first weeks of use
+  show it, and D-P11's wait is a config value on the service.
+- Whether the gateway exposes in-flight request counts (P4 adds them per alias and client). Use of the engine that does
+  not go through the gateway is invisible to the idle check and is out of scope.
 - Whether every alias the coding agents use is covered by the mode switch (the companion plan makes it a test).
 - The 5 s first-byte threshold for prime text, and the keyframes level's quality (the labelled set of 2.11 gets an effort
   column).
@@ -911,9 +929,9 @@ Review of the first phase 2 text (clean context, verdict: needs changes, five hi
 
 | # | Finding | Answer |
 |---|---|---|
-| H1 | A refused claim left a prime watched build waiting without end | P.3.3: `claim_wait_max_s = 180`, then the Quick offer; some reasons end the wait at once. D-P3 is the owner's choice between that and labelled cloud pictures |
+| H1 | A refused claim left a prime watched build waiting without end | P.3.3: a bounded wait (first 3 minutes, now the service's `ready_by`, see the re-check), then the Quick offer; some reasons end the wait at once. D-P3 is the owner's choice between that and labelled cloud pictures |
 | H2 | Key isolation rested on choosing the right key | P.3.2: startup validation (separate keys, a cloud check that must be refused, no fallback on claimed aliases), repeated hourly; `claimed` uses a no-cloud key and never falls through |
-| H3 | Drain was a fixed 10 s; runs in mid-conversation undecided | D-P11 and the companion plan: an idle check on the engine, agent runs parked between requests and resumed, new agent work on the replacement for its whole life, the claim fails after 2 minutes without idle and changes nothing; a model change only after idle |
+| H3 | Drain was a fixed 10 s; runs in mid-conversation undecided | D-P11 and the companion plan: an idle check on the engine, agent runs parked between requests and resumed (parking was dropped in the re-check below), new agent work on the replacement for its whole life, the claim fails after 2 minutes without idle and changes nothing; a model change only after idle |
 | H4 | The engine's memory guard was not handled | P.3.2, P.3.3: one target and no fallback on the picture alias on both sides (tested in P2 and P4), a guard refusal is a claim failure with one new attempt, no loop; the swap path waits for a measured memory budget (companion plan) |
 | H5 | Claim authority was thin | Companion plan: token scoped to claims on one engine, per-claim cap enforced by the service and by the switch, cooldown, daily budget with alert, a private-network-only route with a source check, token from the vault and rotated. P.3.1: class cannot be stated by a client; shared builds rise one way only |
 | M1 | An agent alias missing from the claim map | Companion plan: a test that every alias targeting the big engine is in the map, the opposite check for the conductor's own alias, and a drill step |
@@ -925,3 +943,16 @@ Review of the first phase 2 text (clean context, verdict: needs changes, five hi
 | M7 | Missing tests | P1 (class spoofing on every route, extension token), P6 (killed backend, restart, two builds sharing a claim) |
 | M8 | Keyframes cap against long videos; higher-level TDT for normal users | P.3.4: the cap equals the 90-minute limit; the limit is on compute, not content |
 | L | Names, precedence of `by_route`, first-byte case, status, paused state, emulator account, decision numbering | P.4 header, P.3.2, P2's test, P.3.2 status line, P.3.1, P8, D-P numbering |
+
+Re-check of that revision (verdict: needs changes; one new high on parking, four mediums). The owner's side simplified
+instead of patching: parking is dropped.
+
+| # | Finding | Answer |
+|---|---|---|
+| N1 | Freezing agent runs is unsafe | Dropped. D-P11: new agent work goes to the replacement for its whole run, the claim waits for running work with a limit, then fails with the Quick offer; nothing is frozen, stopped or switched |
+| N2 | Pinned runs, the cloud budget, other aliases of a run | Companion plan: the pin is a whole run profile (every model of the run), shown on the page; at the cloud cap pinned runs fail as provider errors and are retried on the local model |
+| N3 | In-flight counter and whose requests count | P.3.2: the `claimed` route has its own key; companion plan: counts per alias and client, leak-proof, engine use outside the gateway documented as out of scope; P.1 states that normal requests on that engine wait during a claim |
+| N4 | A 3-minute wait did not fit drain and a model change | P.3.3: the service owns the wait and sends `ready_by`; the backend's guard is larger; `DELETE` on every give-up; a sentence per reason, `held` by the owner included |
+| N5 | Limits in two places | Companion plan: one tested inequality between the switch's cap and the service's limits, the owner's own claims outside pause and daily budget, the service is the source of truth and the switch the safety net. P.1 and P.3.3: a build that hits a limit continues from its stored grids later |
+| L | Parallel requests under a claim; job id in the reason | P.3.3 |
+
