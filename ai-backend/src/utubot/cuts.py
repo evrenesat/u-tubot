@@ -27,7 +27,7 @@ from .captions.jobs import JobQueue
 from .config import Config, CutsConfig, LLMTask
 from .db import Database
 from .llm import INTERACTIVE, LLMClient, LLMError
-from .prompts import Prompt, PromptStore
+from .prompts import CUT_PRESET_INSTRUCTIONS, Prompt, PromptStore
 from .transcripts import SOURCE_ASR, Transcript, TranscriptService, fmt_ts
 
 log = logging.getLogger("utubot.cuts")
@@ -337,10 +337,149 @@ def target_band(target_s: int, tolerance: float) -> tuple[float, float]:
     return target_s * (1 - tolerance), target_s * (1 + tolerance)
 
 
-def effective_target_s(cfg, preset_id: str | None, duration_s: float | None) -> int | None:
-    """The preset's target length (s), or None for typed prompts, saved presets and videos
-    already short enough to fit the band."""
+# ---- length intent ------------------------------------------------------------------------------
+
+MIN_TARGET_S = 30
+BUILTIN_CUT_IDS = frozenset(f"cut-{name}" for name in CUT_PRESET_INSTRUCTIONS)
+LENGTH_SECONDS = "s"
+LENGTH_FRACTION = "frac"
+_SHRINK = r"(?:shorter|shorten|trim|reduce|remove|drop|cut|shave)"
+_NUM = r"(\d+(?:\.\d+)?)"
+_FRACTIONS = {
+    "half": 0.5,
+    "third": 1 / 3,
+    "quarter": 0.25,
+    "two thirds": 2 / 3,
+    "three quarters": 0.75,
+}
+_FRACTION_WORDS = "|".join(sorted(_FRACTIONS, key=len, reverse=True))
+# A portion of the video named by position ("the first half") is not a length.
+_POSITION = frozenset(
+    {
+        "first",
+        "last",
+        "second",
+        "final",
+        "middle",
+        "opening",
+        "closing",
+        "latter",
+        "other",
+        "same",
+        "than",
+    }
+)
+_NOT_A_LENGTH = {
+    "first", "last", "skip", "skipping", "after", "before", "from", "until", "at", "past",
+    "remove", "removing", "drop", "dropping", "minute", "second", "next",
+}  # fmt: skip
+
+
+_CUES = frozenset(
+    {"keep", "cut", "make", "shorten", "shorter", "trim", "reduce", "to", "down", "most", "under",
+     "about", "around", "roughly", "within", "length", "long", "short", "version"}
+)  # fmt: skip
+_LENGTH_TAIL = re.compile(
+    r"\s*(?:of (?:it|the video)\b|as long\b|long\b|version\b|shorter\b|total\b)"
+)
+_AFTER_CUE = frozenset({"of", "as", "it", "long", "please", "total", "version", "or", "and", "in"})
+
+
+def _has_length_context(low: str, start: int, end: int) -> bool:
+    """A number or fraction word names a length only as the whole prompt, with a length phrase
+    after it, or after a length verb and followed by nothing that makes it part of a title."""
+    lead, tail = low[:start].strip(" .,!?:;"), low[end:]
+    if not lead and not tail.strip(" .,!?:;"):
+        return True
+    if _LENGTH_TAIL.match(tail):
+        return True
+    if _CUES & set(re.findall(r"[a-z']+", lead)[-3:]):
+        following = re.findall(r"[a-z0-9']+", tail)[:1]
+        return not following or following[0] in _AFTER_CUE
+    return False
+
+
+def _fraction_matches(text: str) -> set[float]:
+    found: set[float] = set()
+    removing = re.compile(
+        rf"{_SHRINK}\s+(?:it\s+)?(?:down\s+)?by\s+(?:a\s+|one\s+)?({_FRACTION_WORDS})s?\b"
+    )
+    spans = []
+    for m in removing.finditer(text):
+        found.add(1 - _FRACTIONS[m.group(1)])
+        spans.append(m.span(1))
+    kept = re.compile(
+        rf"\b(?:a\s+|one\s+)?({_FRACTION_WORDS})s?\b(?!\s+(?:an?\s+)?(?:hour|minute))"
+    )
+    for m in kept.finditer(text):
+        if any(a <= m.start(1) < b for a, b in spans):
+            continue
+        before = text[: m.start()].split()[-1:]
+        if before and before[0] in _POSITION:
+            continue
+        if not _has_length_context(text, m.start(), m.end()):
+            continue
+        found.add(_FRACTIONS[m.group(1)])
+    return found
+
+
+def parse_length_intent(text: str) -> tuple[str, float] | None:
+    """The length an English description asks for: `("frac", kept fraction)` or `("s", seconds)`.
+    None when it names no length, or names several or an unclear one (then no target is used)."""
+    low = (text or "").lower()
+    found: set[tuple[str, float]] = {(LENGTH_FRACTION, round(f, 4)) for f in _fraction_matches(low)}
+    for m in re.finditer(rf"{_NUM}\s*(?:%|percent)", low):
+        pct = float(m.group(1))
+        lead, tail = low[: m.start()].rstrip(), low[m.end() :].lstrip()
+        removing = re.search(rf"{_SHRINK}\s+(?:it\s+)?(?:down\s+)?by$", lead) or re.match(
+            r"(?:shorter|less|off)\b", tail
+        )
+        if not removing and not _has_length_context(low, m.start(), m.end()):
+            continue
+        found.add((LENGTH_FRACTION, round((100 - pct if removing else pct) / 100, 4)))
+    for m in re.finditer(rf"{_NUM}[\s-]*(?:minutes?|mins?)\b", low):
+        words = low[: m.start()].split()[-1:]
+        if words and words[0] in _NOT_A_LENGTH:
+            continue
+        if not _has_length_context(low, m.start(), m.end()):
+            continue
+        found.add((LENGTH_SECONDS, round(float(m.group(1)) * 60, 1)))
+    hour = re.search(r"\bhalf an hour\b", low)
+    if hour and _has_length_context(low, hour.start(), hour.end()):
+        found.add((LENGTH_SECONDS, 1800.0))
+    if len(found) != 1:
+        return None
+    kind, value = next(iter(found))
+    if kind == LENGTH_FRACTION and not 0 < value < 1:
+        return None
+    return (kind, value) if value > 0 else None
+
+
+def length_target_s(length: tuple[str, float] | None, duration_s: float | None) -> int | None:
+    """A length intent as seconds kept (a fraction needs the video's duration)."""
+    if length is None:
+        return None
+    kind, value = length
+    if kind == LENGTH_FRACTION:
+        if not duration_s:
+            return None
+        value = value * duration_s
+    target_s = int(round(value))
+    return target_s if target_s >= MIN_TARGET_S else None
+
+
+def effective_target_s(
+    cfg,
+    preset_id: str | None,
+    duration_s: float | None,
+    length: tuple[str, float] | None = None,
+) -> int | None:
+    """The target length (s): a built-in preset's, else the given length intent (a saved preset's
+    explicit length, or the one read from the description); None when there is none or the video
+    is already short enough to fit the band."""
     target_s = cfg.preset_target_s.get(preset_id or "")
+    if target_s is None:
+        target_s = length_target_s(length, duration_s)
     if target_s is None:
         return None
     if duration_s and duration_s <= target_band(target_s, cfg.length_tolerance)[1]:
@@ -1030,7 +1169,9 @@ class CutService:
         changed since it was built."""
         model = self.cfg.llm.cuts.model if self.cfg.llm.cuts else ""
         duration = self._meta(video_id).get("duration_s")
-        target_s = self.target_for(prompt.id, float(duration) if duration else None)
+        target_s = self.target_for(
+            prompt.id, float(duration) if duration else None, prompt.template, prompt
+        )
         row = self.db.one(
             "SELECT json, transcript_hash FROM cuts WHERE video_id=? AND version=? AND model=?"
             " ORDER BY created_at DESC LIMIT 1",
@@ -1136,7 +1277,8 @@ class CutService:
             return
         duration_s = meta.get("duration_s")
         duration_s = float(duration_s) if duration_s else None
-        target_s = self.target_for(preset_id, duration_s)
+        saved = next((p for p in self.presets(row["user"]) if p.id == preset_id), None)
+        target_s = self.target_for(preset_id, duration_s, instruction, saved)
         version = self._version(preset_id, instruction, target_s)
         model = self.cfg.llm.cuts.model if self.cfg.llm.cuts else ""
         cache_key = self._cache_key(video_id, version, model, thash)
@@ -1271,8 +1413,24 @@ class CutService:
             raise CutRefused(f"Unknown cut preset {preset_id}.")
         return prompt.template, preset_id, "preset"
 
-    def target_for(self, preset_id: str | None, duration_s: float | None) -> int | None:
-        return effective_target_s(self.cfg.cuts, preset_id, duration_s)
+    def target_for(
+        self,
+        preset_id: str | None,
+        duration_s: float | None,
+        instruction: str,
+        saved: Prompt | None = None,
+    ) -> int | None:
+        """Built-in target, else the saved preset's explicit length, else the length the
+        description asks for (the built-ins' own wording is never read)."""
+        length = None
+        if saved is not None and (saved.length_min or saved.length_frac):  # one of them, see Prompt
+            if saved.length_min:
+                length = (LENGTH_SECONDS, saved.length_min * 60)
+            else:
+                length = (LENGTH_FRACTION, saved.length_frac)
+        elif preset_id not in BUILTIN_CUT_IDS:
+            length = parse_length_intent(instruction)
+        return effective_target_s(self.cfg.cuts, preset_id, duration_s, length)
 
     def _label(self, preset_id: str | None, row: dict[str, Any]) -> str:
         if row["prompt"]:
