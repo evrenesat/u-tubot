@@ -7,6 +7,11 @@
   by a local vision model, scene lines joined with the transcript units, the same editor model and the #82 length selection).
   Mode is a server default, a per-user default and a per-request field, shown in the TV picker, the phone cut sheet and the
   extension's Cut tab. Checkpoints 0 to 7, six owner decisions, a list of what could not be verified. Nothing is implemented.
+- Revision 2 of the plan: the watched mode reuses the owner's earlier scene-analysis code (`evrenesat/r2t4`, `scene-analyser`)
+  as its analysis engine, copied into `ai-backend/src/utubot/watch/` with attribution once the owner allows it (that repository
+  has no licence; new owner decision 7). Timestamped 2x2 grids replace single frames, one vision request per grid with a bounded
+  running context, the result stored as a slim Timed Descriptive Transcript that maps onto the cut units. The time estimates are
+  replaced by that project's measured figures, and the vision model recommendation is now Qwen3.6-35B-A3B first.
 
 ## 2026-11-24 (director's cuts respect the target length, issue 82)
 
