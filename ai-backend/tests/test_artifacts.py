@@ -99,6 +99,18 @@ async def test_the_inventory_lists_what_is_cached_per_video(env):
     assert doc["total_bytes"] == sum(a["bytes"] for a in doc["artifacts"])
 
 
+async def test_the_inventory_counts_text_bytes_not_characters(env):
+    await env.client.get(f"/v1/videos/{VID}/summary", params={"wait_ms": 5000})
+    text = "Türkçe özet: üç şey 日本語"
+    env.svc.db.execute("UPDATE summaries SET text=? WHERE video_id=?", [text, VID])
+
+    doc = (await env.client.get(f"/v1/admin/videos/{VID}/artifacts")).json()
+
+    kinds = {a["kind"]: a for a in doc["artifacts"]}
+    assert kinds["summary"]["bytes"] == len(text.encode("utf-8")), "LENGTH(X) counts characters"
+    assert doc["total_bytes"] == sum(a["bytes"] for a in doc["artifacts"])
+
+
 async def test_purge_removes_the_named_kinds_only(env):
     await env.client.get(f"/v1/videos/{VID}/summary", params={"wait_ms": 5000})
     r = await env.client.delete(f"/v1/admin/videos/{VID}/artifacts", params={"kind": "summary"})

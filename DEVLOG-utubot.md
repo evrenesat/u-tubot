@@ -9,6 +9,9 @@
   change of the backend's settings does not change its version), at most 2000 verdicts and 300 summaries. Failures, pending jobs
   and transcript states are never stored. Importing or refreshing prompts and setting the default prompt clear the summaries. Known
   limit: a default prompt changed from another device is only noticed after the 3 days or a new backend version.
+- Review round 1: `clearSummaries` clears every scope's summaries, including a scope that has not been opened yet or is just the
+  previous connection, so a prompt change before any summary request cannot serve a stored text of an earlier run. The backend's
+  artifact inventory counts UTF-8 bytes (`LENGTH(CAST(... AS BLOB))`) instead of characters for text, json and vtt rows.
 
 ## 2026-11-24 (CI app job: Robolectric no longer downloads at test time)
 
