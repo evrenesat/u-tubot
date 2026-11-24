@@ -535,6 +535,16 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     }
 
     /**
+     * The preset label with the real length of its ready cut: "Highlights in 5 min · 5:02". A cut without a known length
+     * (or no cut yet) is just the label.
+     */
+    public static String presetTitle(String label, long keptMs) {
+        String length = formatLength(keptMs);
+
+        return length.isEmpty() ? label : label + " \u00b7 " + length;
+    }
+
+    /**
      * "12:40" of a length in milliseconds
      */
     public static String formatLength(long ms) {

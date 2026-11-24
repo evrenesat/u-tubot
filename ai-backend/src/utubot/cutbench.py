@@ -22,8 +22,10 @@ from .cuts import (
     CutRefused,
     Part,
     build_units,
+    effective_target_s,
     finalize_parts,
     parse_cut_answer,
+    select_for_target,
     serialize_units,
 )
 from .llm import extract_json
@@ -54,6 +56,7 @@ class BenchRequest:
     keep: list[tuple[float, float]]
     skip: list[tuple[float, float]]
     budget_s: float | None = None
+    target_s: int | None = None  # kept length the request asks for; overrides the preset's
 
 
 @dataclass
@@ -210,6 +213,15 @@ def _fixture_router() -> BenchTranscript:
                 preset_id=None,
                 keep=lay.span("mesh_test"),
                 skip=lay.span("intro", "sponsor", "outro"),
+            ),
+            BenchRequest(
+                name="highlights-1min",
+                instruction="Keep the highlights: the most useful minute of the video.",
+                preset_id=None,
+                keep=lay.span("what_changed", "the_catch", "mesh_test", "verdict"),
+                skip=lay.span("intro", "sponsor", "outro"),
+                budget_s=75.0,
+                target_s=60,
             ),
         ],
     )
@@ -590,6 +602,8 @@ class RequestResult:
     repairs: int = 0
     parts: int = 0
     kept_s: float | None = None
+    target_s: int | None = None
+    length_err: float | None = None  # |kept - target| / target, only for requests with a target
     excess: float = 0.0
     wall_s: float = 0.0
     prompt_tokens: int = 0
@@ -602,6 +616,8 @@ class RequestResult:
             else (f"refused: {self.refused}" if self.refused else f"format: {self.format_error}")
         )
         extra = f" excess {self.excess:.2f}" if self.excess else ""
+        if self.length_err is not None:
+            extra += f" len-err {self.length_err:.2f}"
         return (
             f"{self.transcript:<16} {self.request:<18} keep {self.keep:5.2f} "
             f"skip {self.skip:5.2f} score {self.score:+5.2f} parts {self.parts:<3}"
@@ -635,7 +651,11 @@ def score_request(
     }
     chapters = []
     out = RequestResult(transcript=transcript.id, request=request.name, model=model)
-    message = serialize_units(units, chapters, meta, request.instruction)
+    target_s = request.target_s or effective_target_s(cfg, request.preset_id, transcript.duration_s)
+    out.target_s = target_s
+    message = serialize_units(
+        units, chapters, meta, request.instruction, target_s, cfg.over_ask_frac
+    )
     messages = [
         {"role": "system", "content": CUT_SYSTEM},
         {"role": "user", "content": message},
@@ -644,6 +664,8 @@ def score_request(
     try:
         data = _ask(model_fn, messages, out)
         parts = parse_cut_answer(data, units)
+        if target_s:
+            parts, _total_s = select_for_target(parts, units, cfg, target_s)
     except CutFormatError as exc:
         out.format_error = exc.problem
         out.wall_s = time.monotonic() - started
@@ -654,13 +676,15 @@ def score_request(
         return out
     out.wall_s = time.monotonic() - started
     try:
-        guard = not (request.preset_id or "").endswith("highlights-5")
+        guard = target_s is None and not (request.preset_id or "").endswith("highlights-5")
         kept, _kept_s = finalize_parts(parts, cfg, guard=guard, duration_s=transcript.duration_s)
     except CutRefused as exc:
         out.refused = exc.message
         return out
     out.parts = len(kept)
     out.kept_s = sum(p.end_ms - p.start_ms for p in kept) / 1000.0
+    if target_s:
+        out.length_err = round(abs(out.kept_s - target_s) / target_s, 4)
     keep_ms = sum(b - a for a, b in request.keep) * 1000
     skip_ms = sum(b - a for a, b in request.skip) * 1000
     covered = sum(_overlap_ms(span, kept) for span in request.keep)
@@ -716,12 +740,14 @@ def score_all(model_fn: ModelFn, model: str, cfg: CutsConfig | None = None) -> l
 def summarize(results: list[RequestResult]) -> dict[str, Any]:
     """The per-model line the comparison is read from."""
     n = len(results) or 1
+    errs = [r.length_err for r in results if r.length_err is not None]
     return {
         "model": results[0].model if results else "?",
         "requests": len(results),
         "mean_keep": round(sum(r.keep for r in results) / n, 4),
         "mean_skip": round(sum(r.skip for r in results) / n, 4),
         "mean_excess": round(sum(r.excess for r in results) / n, 4),
+        "mean_length_err": round(sum(errs) / len(errs), 4) if errs else None,
         "mean_score": round(sum(r.score for r in results) / n, 4),
         "refused": sum(1 for r in results if r.refused),
         "format_errors": sum(1 for r in results if r.format_error),

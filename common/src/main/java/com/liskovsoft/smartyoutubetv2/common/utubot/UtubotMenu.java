@@ -188,7 +188,7 @@ public final class UtubotMenu {
         UtubotCutController controller = PlaybackPresenter.instance(context).getController(UtubotCutController.class);
 
         for (CutPreset preset : cuts.presets) {
-            dialog.appendSingleButton(UiOptionItem.from(preset.label, stateText(context, preset, controller),
+            dialog.appendSingleButton(UiOptionItem.from(presetTitle(preset), stateText(context, preset, controller),
                     option -> onPresetPicked(context, video, preset, controller)));
 
             // A ready cut shows its kept parts under the preset, so the owner can judge it on the
@@ -201,6 +201,10 @@ public final class UtubotMenu {
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_describe_on_phone),
                 option -> describeOnPhone(context, video)));
         dialog.showDialog(context.getString(R.string.utubot_cut));
+    }
+
+    private static String presetTitle(CutPreset preset) {
+        return preset.isReady() ? UtubotCutController.presetTitle(preset.label, preset.cut.keptMs) : preset.label;
     }
 
     /**

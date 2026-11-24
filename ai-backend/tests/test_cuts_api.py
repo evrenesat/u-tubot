@@ -373,6 +373,83 @@ class TestCreateAndBuild:
         doc = await wait_ready(cuts_env, r.json()["request_id"])
         assert doc["state"] == "ready"
 
+    async def test_highlights_keep_the_target_length(self, cuts_env):
+        set_transcript(cuts_env.fetcher, n=132)  # 11 min, one unit per 5 s
+        # 22 parts of 30 s (all 11 min), ranked backwards: the last part matters most.
+        cuts_env.llm.cut_answer = {
+            "parts": [
+                {"from": i * 6 + 1, "to": i * 6 + 6, "label": f"P{i}", "rank": 22 - i}
+                for i in range(22)
+            ],
+            "summary": "s",
+            "kept_s": 660,
+        }
+        r = await post_cut(cuts_env, preset="cut-highlights-5")
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "ready", doc
+        cut = doc["cut"]
+        assert cut["target_s"] == 300
+        assert 255 <= cut["kept_s"] <= 345 and cut["kept_ms"] == int(cut["kept_s"] * 1000)
+        starts = [p["start_ms"] for p in cut["parts"]]
+        assert starts == sorted(starts)
+        # The most important parts (the last ones) are in, the least important (the first) out.
+        assert cut["parts"][-1]["end_ms"] >= 655_000
+        assert cut["parts"][0]["start_ms"] > 300_000
+        assert len(cuts_env.llm.cut_calls) == 1
+        assert "Target length: 300 s" in cuts_env.llm.cut_calls[0]
+
+    async def test_old_format_answer_without_ranks_still_builds(self, cuts_env):
+        set_transcript(cuts_env.fetcher, n=132)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": i * 6 + 1, "to": i * 6 + 6, "label": f"P{i}"} for i in range(22)],
+            "summary": "s",
+            "kept_s": 660,
+        }
+        r = await post_cut(cuts_env, preset="cut-highlights-5")
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "ready", doc
+        assert 255 <= doc["cut"]["kept_s"] <= 345
+        assert doc["cut"]["parts"][0]["label"] == "P0"
+
+    async def test_answer_far_below_the_band_is_retried_once_with_the_length(self, cuts_env):
+        set_transcript(cuts_env.fetcher, n=132)
+        short = {"parts": [{"from": 1, "to": 6, "label": "A", "rank": 1}], "summary": "s"}
+        long = {
+            "parts": [
+                {"from": i * 6 + 1, "to": i * 6 + 6, "label": f"P{i}", "rank": i + 1}
+                for i in range(12)
+            ],
+            "summary": "s",
+        }
+        cuts_env.llm.cut_answers = [short, long]
+        r = await post_cut(cuts_env, preset="cut-highlights-5")
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "ready", doc
+        assert 255 <= doc["cut"]["kept_s"] <= 345
+        assert len(cuts_env.llm.cut_calls) == 2
+
+    async def test_still_short_after_the_retry_is_a_clear_error(self, cuts_env):
+        set_transcript(cuts_env.fetcher, n=132)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 6, "label": "A", "rank": 1}],
+            "summary": "s",
+        }
+        r = await post_cut(cuts_env, preset="cut-highlights-5")
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "failed"
+        assert "300 s" in doc["error"] and len(cuts_env.llm.cut_calls) == 2
+
+    async def test_typed_prompt_has_no_target(self, cuts_env):
+        set_transcript(cuts_env.fetcher, n=132)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 6, "label": "A"}, {"from": 20, "to": 40, "label": "B"}],
+            "summary": "s",
+        }
+        r = await post_cut(cuts_env, prompt="Keep the first minute and a bit")
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "ready" and doc["cut"]["target_s"] is None
+        assert "Target length" not in cuts_env.llm.cut_calls[0]
+
     async def test_unknown_preset_and_bad_bodies(self, cuts_env):
         r = await post_cut(cuts_env, preset="cut-nope")
         assert r.status_code == 409

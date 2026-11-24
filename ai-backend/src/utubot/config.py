@@ -198,6 +198,10 @@ class CutsConfig(BaseModel):
     transcript_wait_s: float = 900.0
     poll_s: float = 2.0
     max_report_chars: int = 4000
+    # Presets with a target kept length (s); typed prompts and saved presets have none.
+    preset_target_s: dict[str, int] = Field(default_factory=lambda: {"cut-highlights-5": 300})
+    length_tolerance: float = 0.15  # accepted kept length: target +/- this fraction
+    over_ask_frac: float = 0.2  # the model is asked for this much more than the target
 
 
 class SpeechConfig(BaseModel):

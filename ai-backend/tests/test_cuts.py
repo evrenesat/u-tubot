@@ -12,6 +12,9 @@ from utubot.cuts import (
     finalize_parts,
     parse_chapters,
     parse_cut_answer,
+    select_for_target,
+    serialize_units,
+    target_band,
     transcript_hash,
 )
 from utubot.prompts import BUILTIN_SET, TASK_CUTS, Prompt, PromptStore
@@ -274,3 +277,88 @@ class TestPromptFiltering:
 
         with pytest.raises(ValidationError):
             Prompt(id="x", label="x", template="t", task="nope")
+
+
+def eleven_minute_units() -> list[Unit]:
+    """66 units of 10 s (11 min), one unit per number, back to back."""
+    return [Unit(n, (n - 1) * 10.0, n * 10.0, f"unit {n}") for n in range(1, 67)]
+
+
+def ranked(units: list[Unit], spans: list[tuple[int, int, int | None]]) -> list[Part]:
+    answer = {
+        "parts": [
+            {"from": a, "to": b, "label": f"p{a}", **({"rank": r} if r is not None else {})}
+            for a, b, r in spans
+        ]
+    }
+    return parse_cut_answer(answer, units)
+
+
+class TestTargetLength:
+    def test_band_is_target_plus_minus_tolerance(self):
+        assert target_band(300, 0.15) == (255.0, 345.0)
+
+    def test_eleven_minutes_for_a_five_minute_preset_lands_in_the_band(self):
+        units = eleven_minute_units()
+        # 11 parts of 60 s, importance not in video order.
+        spans = [
+            (i * 6 + 1, i * 6 + 6, r) for i, r in enumerate([5, 1, 9, 3, 11, 2, 8, 4, 10, 6, 7])
+        ]
+        chosen, total = select_for_target(ranked(units, spans), units, CFG, 300)
+        low, high = target_band(300, CFG.length_tolerance)
+        assert low <= total <= high
+        assert [p.start_ms for p in chosen] == sorted(p.start_ms for p in chosen)
+
+    def test_lowest_ranked_parts_go_first(self):
+        units = eleven_minute_units()
+        spans = [
+            (i * 6 + 1, i * 6 + 6, r) for i, r in enumerate([5, 1, 9, 3, 11, 2, 8, 4, 10, 6, 7])
+        ]
+        chosen, _ = select_for_target(ranked(units, spans), units, CFG, 300)
+        kept_ranks = {p.rank for p in chosen}
+        assert {1, 2, 3, 4}.issubset(kept_ranks)
+        assert not kept_ranks & {9, 10, 11}
+
+    def test_last_selected_part_is_trimmed_at_a_unit_boundary(self):
+        units = eleven_minute_units()
+        # Two 200 s parts: the second (rank 2) must shrink to fit the 345 s ceiling.
+        parts = ranked(units, [(1, 20, 1), (31, 50, 2)])
+        chosen, total = select_for_target(parts, units, CFG, 300)
+        assert total <= 345.0
+        assert chosen[1].last < 50 and chosen[1].end_ms == int(units[chosen[1].last - 1].end * 1000)
+        assert chosen[1].first == 31
+
+    def test_old_format_without_ranks_counts_in_video_order(self):
+        units = eleven_minute_units()
+        spans = [(i * 6 + 1, i * 6 + 6, None) for i in range(11)]
+        chosen, total = select_for_target(ranked(units, spans), units, CFG, 300)
+        low, high = target_band(300, CFG.length_tolerance)
+        assert low <= total <= high
+        assert chosen[0].first == 1  # the earliest parts survive
+
+    def test_an_answer_below_the_band_comes_back_whole_and_short(self):
+        units = eleven_minute_units()
+        parts = ranked(units, [(1, 6, 1), (11, 16, 2)])
+        chosen, total = select_for_target(parts, units, CFG, 300)
+        assert len(chosen) == 2 and total < target_band(300, CFG.length_tolerance)[0]
+
+    def test_prompt_names_the_target_and_asks_for_ranks(self):
+        units = eleven_minute_units()
+        text = serialize_units(units, [], {"duration_s": 660}, "Highlights", 300, 0.2)
+        assert "Target length: 300 s" in text and "360 s" in text and "rank" in text
+        assert "Target length" not in serialize_units(units, [], {}, "Highlights")
+
+    def test_cut_document_carries_target_and_kept_seconds(self):
+        doc = cut_document(
+            video_id="v",
+            thash="h",
+            model="m",
+            parts=[Part("a", 0, 305_000)],
+            summary="",
+            label="Highlights",
+            duration_s=660,
+            source="preset",
+            preset_id="cut-highlights-5",
+            target_s=300,
+        )
+        assert doc["target_s"] == 300 and doc["kept_s"] == 305.0
