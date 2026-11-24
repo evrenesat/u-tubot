@@ -233,9 +233,10 @@ js_runtime = "deno"                # deno (default), node, bun or quickjs
 
 [archive]
 # Every media file a pipeline downloads from YouTube is kept here, content-addressed by its
-# sha256, and reused instead of being downloaded again. Put it on a large disk. Nothing in it is
-# ever deleted automatically: when the quota is reached new downloads are refused until an admin
-# removes entries (web UI: Admin → Media archive).
+# sha256, and reused instead of being downloaded again. Put it on a large disk. By default nothing
+# in it is deleted automatically: when the quota is reached new downloads are refused until an admin
+# removes entries (web UI: Admin → Media archive). eviction = "lru" below makes the quota free
+# the least recently used files first instead.
 # path = "/mnt/media/utubot-archive"   # example; unset: <data dir>/archive
 quota_bytes = 0                       # ceiling in bytes (0: no limit); a full archive refuses new downloads
 warn_frac = 0.9                       # log a warning from this fraction of the quota on

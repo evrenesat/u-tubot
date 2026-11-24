@@ -40,7 +40,7 @@ import java.util.Map;
  * entry also expires after {@link #TTL_MS}, because a change of the backend's settings does not change its version. Layout:
  * {@code <root>/<scope>/verdicts.json} and {@code <root>/<scope>/summaries/<video id>-<prompt hash>.json}. A damaged file is dropped.
  */
-public final class UtubotDiskCache {
+public class UtubotDiskCache {
     public static final String DIRECTORY = "utubot_cache";
     public static final long TTL_MS = 3L * 24 * 60 * 60 * 1000;
     public static final int MAX_VERDICTS = VerdictCache.MAX_ENTRIES;

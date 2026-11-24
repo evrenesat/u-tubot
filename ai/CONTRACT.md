@@ -663,8 +663,10 @@ read from the archive first and download only when the media is missing, so a vi
 
 - `GET /v1/admin/archive?video_id=&limit=` -> `{"files","usage_bytes","quota_bytes","state":"ok|warn|full","entries":[...rows...]}`.
 - `DELETE /v1/admin/archive/{video_id}` -> `{"ok":true,"removed","bytes_freed","stage_cache_rows_removed"}`; `404` when nothing is stored for it. This is the
-  only cleanup: nothing in the archive is ever deleted automatically. At `quota_bytes` (0: no limit) new downloads are refused
-  (the job fails with "The media archive is full...") until an admin removes entries; at `warn_frac` (0.9) a warning is logged.
+  default cleanup: by default nothing in the archive is ever deleted automatically. At `quota_bytes` (0: no limit) new downloads are refused
+  (the job fails with "The media archive is full...") until an admin removes entries; with `[archive] eviction = "lru"` a download at the quota
+  instead frees the least recently used entries outside `evict_protect_s` first (a stored file that overshoots the quota is kept with a warning);
+  at `warn_frac` (0.9) a warning is logged.
 - `GET /v1/admin/status` also carries `"archive":{"files","usage_bytes","quota_bytes","state"}`.
 
 Every response carries `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and

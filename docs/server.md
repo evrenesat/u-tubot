@@ -227,13 +227,14 @@ bytes are stored once; the scratch copy under `data_dir/media` is removed when t
 Pipelines read from the archive first: a job whose video is already archived never contacts YouTube for its audio (no gate wait,
 the report shows "From the media archive"), and only a miss leads to a download, which the job then stores. Removing entries is
 an explicit admin act — *Admin → Media archive* in the web UI (usage against the quota, one row per video with format, size,
-sha256 and age, a *Remove* button) or `DELETE /v1/admin/archive/{video_id}` (`GET /v1/admin/archive` lists it). Nothing in the
-archive is ever deleted automatically, and the scratch sweep of `data_dir/media` never touches it.
+sha256 and age, a *Remove* button) or `DELETE /v1/admin/archive/{video_id}` (`GET /v1/admin/archive` lists it). Unless the owner turns
+on LRU eviction below, nothing in the archive is ever deleted automatically, and the scratch sweep of `data_dir/media` never touches it.
 
 Optional LRU eviction (`[archive] eviction = "lru"`, default `never`): a download that would start at or past the quota first frees the
 least recently used entries (a `lookup` hit stamps `last_used_at`; an entry never read counts from its fetch time) until the usage is
-below it, and a file that overshoots the quota right after it was stored does the same. Entries used within `evict_protect_s` (1 h; a job
-may be reading one) and the file just stored are never evicted; when that is not enough the download is refused as without eviction.
+below it. Entries used within `evict_protect_s` (1 h; a job may be reading one) and the file just stored are never evicted; when that is not
+enough the download is refused as without eviction. A file that overshoots the quota right after it was stored is kept anyway (the store
+logs a warning, it does not fail the job), and the eviction after the store frees what it can without touching the protected entries.
 Turning it on is the owner's decision: the default keeps the "nothing is deleted by itself" rule.
 
 ## Cache and failures
@@ -260,9 +261,9 @@ Admin: `GET /v1/admin/videos/{id}/artifacts` lists what is stored for a video (p
 `kind=archive` removes the archived media, as `DELETE /v1/admin/archive/{id}` does). Kinds: `metadata`, `transcript`, `captions`,
 `triage`, `analysis`, `summary`, `condensed`, `insight`, `pipeline`, `verdict`, `archive`.
 
-The quota (`[archive] quota_bytes`, `0`: no limit) never frees space by itself. At `warn_frac` (`0.9`) of the quota a warning is
+The quota (`[archive] quota_bytes`, `0`: no limit) never frees space by itself unless `eviction = "lru"`. At `warn_frac` (`0.9`) of the quota a warning is
 logged; at the quota new downloads are refused — the job fails with "The media archive is full; an admin must free space in it
-(nothing is deleted automatically)" — while archived media keeps serving every pipeline. A download whose storage fails (the
+(nothing is deleted automatically)" — unless the LRU eviction freed enough room first; while archived media keeps serving every pipeline. A download whose storage fails (the
 archive disk is out of space or gone) fails the job and keeps the file in its scratch directory instead of deleting it.
 
 ## Users, pairing, devices

@@ -12,6 +12,13 @@
 - Review round 1: `clearSummaries` clears every scope's summaries, including a scope that has not been opened yet or is just the
   previous connection, so a prompt change before any summary request cannot serve a stored text of an earlier run. The backend's
   artifact inventory counts UTF-8 bytes (`LENGTH(CAST(... AS BLOB))`) instead of characters for text, json and vtt rows.
+- Review round 2: a connection generation guards every disk-cache call. A read that started for the old backend does not open its
+  scope after the switch (which would delete the new one's directory), does not put its verdicts into the cleared memory, does not
+  keep its summary for the new connection, and never persists a verdict or summary under the new scope; the fast path answers only
+  for the generation that opened the scope. `UtubotConnectionDiskRaceTest` gates a verdict and a summary disk read while the token
+  changes and covers both a stale summary hit and a stale scope reopen. The archive docs say "by default" beside the LRU opt-in and
+  state the overshoot-keeps-with-warning case; `ai-backend/README.md` and `config.example.toml` list `eviction` and `evict_protect_s`.
+  The branch merges `main` under the PR's top devlog section so the two histories keep both entries.
 
 ## 2026-11-24 (CI app job: Robolectric no longer downloads at test time)
 
