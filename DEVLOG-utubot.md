@@ -37,7 +37,7 @@
   printed after the next focus). Home focused again at 19:46:07.830: `Show cached section Home`, again no Home load, and the dump
   had the four cards. The fake thumbnail URLs failed in Glide too, so this check covers the rows' replay, not images or a live
   YouTube run.
-=======
+
 ## 2026-11-23 (director's cuts playable from lists and the player; u-tubot#64)
 
 - Picking a ready preset in a picker opened from a list no longer asks a player for its length (and no longer claims a different
@@ -63,7 +63,6 @@
   showed the Apply offer, which applied on one press; with "apply ready cuts automatically" on it applied without a dialog; a cut built for
   200 s on the 240 s video showed the different-length toast and stayed off. The app's list picker and the player button cannot be driven
   there: the mock has no browse content and the app's screens play YouTube videos only (docs/development.md notes the device pass).
->>>>>>> origin/main
 
 ## 2026-11-21 (director's cuts checkpoint 4 review round 1; live modelgate STT limit)
 
