@@ -158,6 +158,10 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         mBrowseProcessor = new BrowseProcessorManager(getContext(), this::syncItem);
         mActions = new ArrayList<>();
         mBrowseCache = UtubotSettings.isBuiltIn() ? UtubotBrowseCache.instance(context) : null;
+        if (mBrowseCache != null) {
+            // The Processed section's cards come from the backend: another backend or token makes them another user's (see onUtubotConnectionChanged)
+            UtubotSettings.instance(context).addConnectionListener(this::onUtubotConnectionChanged);
+        }
         WatchLaterManager.instance(context).setOnEdited(this::onWatchLaterEdited);
         initSectionMappings();
         // Read above: the Home rows and the pinned items refer to the groups by the ids they have now, before the sections are made
@@ -678,7 +682,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
             return;
         }
 
-        // Check that channels new look enabled and we're on the first columnAdd commentMore actions
+        // Check that channels new look enabled and we're on the first column
         if (belongsToChannelUploadsMultiGrid(item)) {
             if (getMainUIData().isUploadsAutoLoadEnabled()) {
                 VideoActionPresenter.instance(getContext()).apply(item);
@@ -1828,6 +1832,13 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
             return;
         }
 
+        // No backend yet: the section says how to set one instead of failing with "Bad backend address"
+        if (!UtubotSettings.instance(getContext()).isConfigured()) {
+            getView().showProgressBar(false);
+            getView().showError(UtubotSectionError.notConfigured(getContext()));
+            return;
+        }
+
         Observable<ProcessedList> processed = mProcessedMapping.get(section.getId());
 
         if (processed == null) {
@@ -2307,6 +2318,30 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
     private boolean isGridSection() {
         return mCurrentSection != null && mCurrentSection.getType() != BrowseSection.TYPE_ROW;
+    }
+
+    /**
+     * Another u-tubot backend or token: the Processed section's cache is of the old connection and its user, so it can't be
+     * replayed under the new one. An in-flight cached refresh is cancelled, so it can't show or write the old answer.
+     */
+    private void onUtubotConnectionChanged() {
+        if (mBrowseCache == null) {
+            return;
+        }
+
+        BrowseSection processed = Helpers.findFirst(mSectionsMapping.values(), section -> section.getId() == UtubotProcessedSection.ID);
+
+        if (processed == null) {
+            return;
+        }
+
+        boolean inFlight = mCachedRefreshStarted && mCurrentSection != null && mCurrentSection.getId() == processed.getId();
+
+        if (inFlight) {
+            disposeActions();
+        }
+
+        invalidateCachedSection(processed);
     }
 
     @Override

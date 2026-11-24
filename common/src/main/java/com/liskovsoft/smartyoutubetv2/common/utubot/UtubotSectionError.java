@@ -26,6 +26,13 @@ public class UtubotSectionError implements ErrorFragmentData {
     }
 
     /**
+     * No backend is set yet: the section says how to set one, not "Bad backend address"
+     */
+    public static UtubotSectionError notConfigured(Context context) {
+        return new UtubotSectionError(context.getString(R.string.utubot_not_configured));
+    }
+
+    /**
      * The backend could not be reached or answered with an error
      */
     public static UtubotSectionError failed(Context context, @Nullable Throwable error) {
