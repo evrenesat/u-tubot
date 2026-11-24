@@ -1938,17 +1938,18 @@ class CutService:
         try:
             data, parts = await self.engine.pick_parts(units, chapters, meta, instruction, target_s)
             with events.stage(STAGE_CHECKING):
-                guard = target_s is None and not (preset_id or "").endswith("highlights-5")
-                # A named preset is a deliberate removal instruction, so keeping nearly all of the
-                # video is a result, not "nothing to cut"; a typed prompt without a target keeps
-                # the upper guard.
-                guard_max = guard and preset_id is None
+                min_guard, max_guard = keep_guards(preset_id)
+                if target_s is not None:
+                    # A length-targeted cut is allowed to keep little or much; the band,
+                    # not the keep guard, decides what is acceptable.
+                    min_guard = max_guard = False
                 parts, _kept_s = finalize_parts(
                     parts,
                     self.cfg.cuts,
-                    guard=guard,
+                    guard=True,
                     duration_s=duration_s,
-                    guard_max=guard_max,
+                    min_guard=min_guard,
+                    guard_max=max_guard,
                 )
                 summary = removal_summary(
                     preset_id, parts, duration_s, str(data.get("summary") or "")
