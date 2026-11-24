@@ -25,6 +25,8 @@ async def cuts_env(env):
     [
         ("make it half as long", (LENGTH_FRACTION, 0.5)),
         ("half", (LENGTH_FRACTION, 0.5)),
+        ("cut it to half", (LENGTH_FRACTION, 0.5)),
+        ("30% of the video", (LENGTH_FRACTION, 0.3)),
         ("shorter by half", (LENGTH_FRACTION, 0.5)),
         ("keep a third", (LENGTH_FRACTION, 0.3333)),
         ("a quarter of it", (LENGTH_FRACTION, 0.25)),
@@ -55,6 +57,11 @@ def test_parse_length_intent(text, want):
         "half and 10 minutes",
         "10 minutes or 20 minutes",
         "remove the intro at 3 minutes",
+        "keep half time analysis",
+        "the third chapter",
+        "20% tips",
+        "top 5 minutes of 2024",
+        'keep the "20% tips" part',
     ],
 )
 def test_ambiguous_text_has_no_length(text):
@@ -180,3 +187,10 @@ class TestLengthInCuts:
                 assert r.status_code == 200  # zero means no length
             else:
                 assert r.status_code == 400, extra
+
+
+def test_a_prompt_with_both_lengths_is_rejected():
+    from utubot.prompts import Prompt
+
+    with pytest.raises(ValueError, match="not both"):
+        Prompt(id="cut-x", label="x", template="t", task="cuts", length_min=5, length_frac=0.5)

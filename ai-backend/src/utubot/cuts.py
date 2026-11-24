@@ -375,6 +375,30 @@ _NOT_A_LENGTH = {
 }  # fmt: skip
 
 
+_CUES = frozenset(
+    {"keep", "cut", "make", "shorten", "shorter", "trim", "reduce", "to", "down", "most", "under",
+     "about", "around", "roughly", "within", "length", "long", "short", "version"}
+)  # fmt: skip
+_LENGTH_TAIL = re.compile(
+    r"\s*(?:of (?:it|the video)\b|as long\b|long\b|version\b|shorter\b|total\b)"
+)
+_AFTER_CUE = frozenset({"of", "as", "it", "long", "please", "total", "version", "or", "and", "in"})
+
+
+def _has_length_context(low: str, start: int, end: int) -> bool:
+    """A number or fraction word names a length only as the whole prompt, with a length phrase
+    after it, or after a length verb and followed by nothing that makes it part of a title."""
+    lead, tail = low[:start].strip(" .,!?:;"), low[end:]
+    if not lead and not tail.strip(" .,!?:;"):
+        return True
+    if _LENGTH_TAIL.match(tail):
+        return True
+    if _CUES & set(re.findall(r"[a-z']+", lead)[-3:]):
+        following = re.findall(r"[a-z0-9']+", tail)[:1]
+        return not following or following[0] in _AFTER_CUE
+    return False
+
+
 def _fraction_matches(text: str) -> set[float]:
     found: set[float] = set()
     removing = re.compile(
@@ -393,6 +417,8 @@ def _fraction_matches(text: str) -> set[float]:
         before = text[: m.start()].split()[-1:]
         if before and before[0] in _POSITION:
             continue
+        if not _has_length_context(text, m.start(), m.end()):
+            continue
         found.add(_FRACTIONS[m.group(1)])
     return found
 
@@ -408,13 +434,18 @@ def parse_length_intent(text: str) -> tuple[str, float] | None:
         removing = re.search(rf"{_SHRINK}\s+(?:it\s+)?(?:down\s+)?by$", lead) or re.match(
             r"(?:shorter|less|off)\b", tail
         )
+        if not removing and not _has_length_context(low, m.start(), m.end()):
+            continue
         found.add((LENGTH_FRACTION, round((100 - pct if removing else pct) / 100, 4)))
     for m in re.finditer(rf"{_NUM}[\s-]*(?:minutes?|mins?)\b", low):
         words = low[: m.start()].split()[-1:]
         if words and words[0] in _NOT_A_LENGTH:
             continue
+        if not _has_length_context(low, m.start(), m.end()):
+            continue
         found.add((LENGTH_SECONDS, round(float(m.group(1)) * 60, 1)))
-    if re.search(r"\bhalf an hour\b", low):
+    hour = re.search(r"\bhalf an hour\b", low)
+    if hour and _has_length_context(low, hour.start(), hour.end()):
         found.add((LENGTH_SECONDS, 1800.0))
     if len(found) != 1:
         return None
@@ -1392,7 +1423,7 @@ class CutService:
         """Built-in target, else the saved preset's explicit length, else the length the
         description asks for (the built-ins' own wording is never read)."""
         length = None
-        if saved is not None and (saved.length_min or saved.length_frac):
+        if saved is not None and (saved.length_min or saved.length_frac):  # one of them, see Prompt
             if saved.length_min:
                 length = (LENGTH_SECONDS, saved.length_min * 60)
             else:

@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from .config import GLANCE_MAX_TOKENS, Config
 from .db import Database
@@ -177,6 +177,12 @@ class Prompt(BaseModel):
         if v is not None and not MIN_LENGTH_FRAC <= v <= MAX_LENGTH_FRAC:
             raise ValueError(f"length_frac must be {MIN_LENGTH_FRAC}..{MAX_LENGTH_FRAC}")
         return v
+
+    @model_validator(mode="after")
+    def _one_length(self) -> Prompt:
+        if self.length_min and self.length_frac:
+            raise ValueError("give the length in minutes or as a fraction, not both")
+        return self
 
     @field_validator("id")
     @classmethod
