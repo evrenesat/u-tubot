@@ -30,7 +30,8 @@ import java.util.Map;
 
 public final class UtubotBrowseCache {
     public static final String DIRECTORY = "utubot_browse";
-    public static final int MAX_ENTRY_BYTES = 8 * 1024 * 1024;
+    // The JSON is parsed and written on the thread that shows or saves the section: a bounded entry keeps that work short.
+    public static final int MAX_ENTRY_BYTES = 512 * 1024;
     private static final String ENTRY_EXTENSION = ".json";
     private static final String TEMP_EXTENSION = ".tmp";
     private static final int CHUNK_BYTES = 4096;

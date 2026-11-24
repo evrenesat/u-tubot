@@ -1037,7 +1037,6 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         }
 
         mBrowseCache.save(section, groups, getBrowseCacheIdentity(), System.currentTimeMillis());
-        mCachedContentShown = false;
     }
 
     private void saveCachedGroup(BrowseSection section, VideoGroup group) {
@@ -1067,10 +1066,27 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         }
 
         getView().showProgressBar(false);
-        mCachedContentShown = false;
+        // The cached cards are still on screen: the flag stays set, so they're protected as cached until the section is left
+        // or loaded again.
         Log.d(TAG, "Keep the cached section %s: %s", mCurrentSection != null ? mCurrentSection.getTitle() : null, error);
 
         return true;
+    }
+
+    /**
+     * The load of the section is whole: the cards on screen are its content of now, not cached ones. A multi-grid writes a column
+     * at a time, so the other column's cached cards stay protected until the section is left or loaded again.
+     */
+    private void finishCachedRefresh(BrowseSection section) {
+        if (section.getType() == BrowseSection.TYPE_MULTI_GRID) {
+            return;
+        }
+
+        mCachedContentShown = false;
+        mCachedShownGroups = null;
+        mCachedReplaySection = null;
+        mCachedReplayGroups = null;
+        Utils.removeCallbacks(mReplayCachedGroups);
     }
 
     private void restoreCachedFocusedItem(VideoGroup group, Video focusedBefore) {
@@ -1243,6 +1259,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         AtomicInteger groupIndex = new AtomicInteger(-1);
         // The rows of this load share it: a video is kept by the first row that has it
         DuplicateFilter duplicateFilter = DuplicatesData.instance(getContext()).isSectionEnabled(section.getId()) ? new DuplicateFilter() : null;
+        // Sections emit their rows in parts (e.g. Music: its "Liked music" row, then its rows; Playlists: one per playlist).
+        // The cache of the whole section is written once, from all the parts of this load. Its stale rows are taken out then too:
+        // a part that hasn't arrived yet mustn't have its cached rows cleared.
+        List<VideoGroup> loadedGroups = new ArrayList<>();
+        Set<Integer> usedCachedIds = new HashSet<>();
 
         Disposable updateAction = HiddenVideoResolver.resolveGroups(getContext(), VideoCategoryManager.instance(getContext()).resolveGroups(groups), section)
                 // The rows that lost their videos to Hide content get the next ones before they're shown
@@ -1257,8 +1278,6 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                             }
 
                             getView().showProgressBar(false);
-
-                            Set<Integer> usedCachedIds = new HashSet<>();
 
                             for (VideoGroup videoGroup : videoGroups) {
                                 appendLocalHistory(videoGroup, isShortsRow(videoGroup), false);
@@ -1278,13 +1297,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                                 MediaServiceManager.instance().warmUpPlaybackIfNeeded(videoGroup);
 
                                 continueGroupIfNeeded(videoGroup, false);
-                            }
 
-                            if (cached) {
-                                removeStaleCachedRows(section, usedCachedIds);
+                                loadedGroups.add(videoGroup);
                             }
-
-                            saveCachedGroups(section, videoGroups);
 
                             // With the rows of the account, not popping in after them: History emits its rows together
                             addMissingLocalHistoryRows(videoGroups);
@@ -1296,6 +1311,16 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                             }
                             handleLoadError(error);
                         }, () -> {
+                            if (cached) {
+                                removeStaleCachedRows(section, usedCachedIds);
+                            }
+
+                            // Once, with every part: the first parts keep their rows in the cache, and a failure of a later one
+                            // leaves the cache of the last whole load.
+                            saveCachedGroups(section, loadedGroups);
+
+                            finishCachedRefresh(section);
+
                             // The account's History has no video: the ones watched here instead, as the History grid had them
                             if (isHistorySection() && getView() != null && getView().isEmpty() && !VideoStateService.instance(getContext()).isEmpty()) {
                                 updateLocalHistoryRows();
@@ -1460,7 +1485,10 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                                 return;
                             }
                             handleLoadError(error);
-                        }, () -> handleLoadError(null));
+                        }, () -> {
+                            finishCachedRefresh(section);
+                            handleLoadError(null);
+                        });
 
         mActions.add(updateAction);
     }
