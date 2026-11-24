@@ -31,7 +31,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from utubot.cutbench import TRANSCRIPTS, RequestResult, summarize  # noqa: E402
+from utubot.cutbench import LONG_TRANSCRIPT, TRANSCRIPTS, RequestResult, summarize  # noqa: E402
 
 
 def _client_model_fn(client: httpx.Client, model: str, timeout_s: float):
@@ -69,6 +69,11 @@ def main() -> int:
     parser.add_argument(
         "--list", action="store_true", help="list the models the endpoint serves and exit"
     )
+    parser.add_argument(
+        "--long",
+        action="store_true",
+        help="also score the three-hour case, which runs by map/reduce (many model calls)",
+    )
     parser.add_argument("--timeout-s", type=float, default=900.0, help="per-request timeout")
     parser.add_argument(
         "--json", dest="json_path", default=None, help="write the full results document here"
@@ -97,7 +102,7 @@ def main() -> int:
         for model in models:
             print(f"\n=== {model} ===")
             results: list[RequestResult] = []
-            for transcript in TRANSCRIPTS:
+            for transcript in [*TRANSCRIPTS, *([LONG_TRANSCRIPT] if args.long else [])]:
                 t0 = time.monotonic()
                 got = score_all_for_model(client, model, args.timeout_s, [transcript])
                 results.extend(got)

@@ -181,8 +181,19 @@ class CutsConfig(BaseModel):
     cached per (video, preset or prompt, model, transcript).
     """
 
-    max_input_tokens: int = 24000
+    # Tokens (chars / chars_per_token) one request may carry. Set it to about 80% of the context
+    # of the `[llm.cuts]` alias; a transcript over it is cut by map/reduce instead of one pass.
+    max_input_tokens: int = 80000
     chars_per_token: int = 4
+    # Map/reduce (long videos): the token budget of one excerpt, how many units an excerpt shares
+    # with its predecessor, how many excerpts are asked at once (the model limiter still caps
+    # the real concurrency), how much candidate text the reduce call sees, how many reduce rounds
+    # a huge candidate list may take.
+    map_chunk_tokens: int = Field(default=30000, ge=1)
+    map_overlap_units: int = Field(default=4, ge=0)
+    map_parallel: int = Field(default=4, ge=1)
+    reduce_excerpt_chars: int = Field(default=160, ge=0)
+    max_reduce_rounds: int = Field(default=4, ge=1)
     unit_max_pause_s: float = 0.6
     unit_max_s: float = 15.0
     merge_gap_s: float = 2.0

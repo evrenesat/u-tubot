@@ -38,7 +38,14 @@ const STAGE_LABEL = {
   transcript: "finding the transcript",
   model: "the model is choosing the parts",
   checking: "checking the result",
+  map: "reading the long video in parts",
+  reduce: "choosing the final parts",
 };
+function stageText(req) {
+  const label = STAGE_LABEL[req.stage] || req.stage;
+  const p = req.progress;
+  return p && req.stage === "map" ? `${label} (${p.done} of ${p.of})` : label;
+}
 const GROUP = { waiting: 0, building: 1, needs_transcript: 1, ready: 2, failed: 3 };
 const DEFAULT_SPEECH_S = 50;
 let speech = null;
@@ -141,7 +148,7 @@ function cardActions(req, reload) {
 function cutCard(req, reload) {
   const doing =
     req.state === "building" && req.stage
-      ? ", " + (STAGE_LABEL[req.stage] || req.stage)
+      ? ", " + stageText(req)
       : req.state === "needs_transcript"
         ? ", a transcript job is queued"
         : "";
@@ -683,7 +690,7 @@ async function sheet(view, requestId) {
     waitingSig = null;
     stopMic();
     if (req.state === "building" || req.state === "needs_transcript") {
-      const stage = req.state === "needs_transcript" ? "needs a transcript" : STAGE_LABEL[req.stage] || req.stage || "working";
+      const stage = req.state === "needs_transcript" ? "needs a transcript" : stageText(req) || "working";
       kids.push(
         card(
           null,

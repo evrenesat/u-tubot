@@ -10,18 +10,21 @@ report; the queue the phone shows is the `cut_requests` table.
 from __future__ import annotations
 
 import asyncio
+import bisect
 import hashlib
 import json
 import logging
+import math
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from .captions import events
 from .captions.jobs import JobQueue
-from .config import Config
+from .config import Config, CutsConfig, LLMTask
 from .db import Database
 from .llm import INTERACTIVE, LLMClient, LLMError
 from .prompts import Prompt, PromptStore
@@ -33,6 +36,8 @@ log = logging.getLogger("utubot.cuts")
 STAGE_TRANSCRIPT = "transcript"
 STAGE_MODEL = "model"
 STAGE_CHECKING = "checking"
+STAGE_MAP = "map"  # long videos: excerpt i of n (detail `done`, `of`)
+STAGE_REDUCE = "reduce"  # long videos: the final choice over the candidates (detail `round`)
 
 REQUEST_STATES = ("waiting", "building", "needs_transcript", "ready", "failed", "dismissed")
 BUILDING_STATES = ("building", "needs_transcript")
@@ -50,6 +55,8 @@ CUT_JSON_RULES = (
     "Remember the rules: reply with the JSON object only; ids are the unit numbers you were "
     "given; from <= to; ranges never overlap and stay in video order; every id must exist."
 )
+MAP_RETRIES = 1  # a failed excerpt is asked once more, then the cut fails
+CANDIDATES_MARK = "Candidate parts (each line starts with its id and time range):"
 PRESET_LABELS = {
     "cut-no-filler": "No filler",
     "cut-answer": "Just the answer",
@@ -67,6 +74,33 @@ CUT_SYSTEM = (
     '"rank":<int> to every part (1 = the most important part, every part its own number). '
     "Be faithful to the transcript; never invent "
     "content and never add commentary."
+)
+
+REDUCE_SYSTEM = (
+    "You finish director's cuts of long YouTube videos for a TV viewer. The video was read in "
+    "excerpts and each excerpt proposed candidate parts; you choose which numbered candidates "
+    "to keep so the video plays the way the task asks. Reply ONLY with JSON: "
+    '{"parts":[{"from":<int>,"to":<int>,"label":"<2-6 words>"}],'
+    '"summary":"<one line, at most 120 characters>","kept_s":<int>}. '
+    'Every part is ONE candidate: "from" and "to" are the same candidate id. Ids must exist and '
+    "parts stay in video order. When the task gives a target length, add "
+    '"rank":<int> to every part (1 = the most important part, every part its own number). '
+    "Each candidate shows its rank inside its own excerpt; ranks of different excerpts are not "
+    "comparable, so judge by the label and the text. Be faithful to the candidates; never "
+    "invent content and never add commentary."
+)
+MAP_NOTE = (
+    "This is excerpt {i} of {n} of a long video that is read in pieces; neighbouring excerpts "
+    "share a few units. Propose candidate parts from THIS excerpt only, with the unit ids as "
+    "given. A later step makes the final choice across the whole video, so propose every part "
+    "that fits the task, give every part a rank (1 = the best fit for the task in this "
+    'excerpt, every part its own number) and answer {{"parts":[]}} when nothing here fits.'
+)
+REDUCE_NOTE = (
+    "The video is long, so it was read in excerpts. The lines below are CANDIDATE parts the "
+    "excerpts proposed, not transcript units: each shows its id, time range, label, its rank "
+    "inside its own excerpt and a short text excerpt. Choose the candidates to keep; each part "
+    "you return is one candidate (from and to are the same id)."
 )
 
 
@@ -204,6 +238,10 @@ def transcript_hash(segments: list[tuple[float, float, str]]) -> str:
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
+def unit_line(u: Unit) -> str:
+    return f"#{u.n} [{fmt_ts(u.start)}-{fmt_ts(u.end)}] {u.text}"
+
+
 def serialize_units(
     units: list[Unit],
     chapters: list[tuple[float, str]],
@@ -211,8 +249,16 @@ def serialize_units(
     instruction: str,
     target_s: int | None = None,
     over_ask_frac: float = 0.0,
+    *,
+    note: str | None = None,
+    scope: str = "in total",
+    mark: str = UNITS_MARK,
 ) -> str:
-    """The user message the cut model answers: the video facts, the task, then the numbered units."""
+    """The user message the cut model answers: the video facts, the task, then the numbered units.
+
+    `note` is an extra paragraph after the task (map/reduce says which excerpt this is), `scope`
+    what the target length counts ("in total", or "from this excerpt"), `mark` the line that
+    introduces the numbered lines."""
     duration = meta.get("duration_s")
     lines = [
         f"Title: {meta.get('title') or ''}",
@@ -224,27 +270,34 @@ def serialize_units(
         lines.append("Chapters:")
         lines.extend(f"- {fmt_ts(at)} {title}" for at, title in chapters)
     lines.append(f"Task: {instruction.strip()}")
+    if note:
+        lines.append(note)
     if target_s:
         ask_s = int(target_s * (1 + over_ask_frac))
         lines.append(
-            f"Target length: {target_s} s kept in total. Keep a little more than that, about "
+            f"Target length: {target_s} s kept {scope}. Keep a little more than that, about "
             f"{ask_s} s of unit time, and give every part a rank (1 = most important): the "
             "server drops the lowest-ranked parts until the target fits."
         )
-    lines.append(UNITS_MARK)
-    lines.extend(f"#{u.n} [{fmt_ts(u.start)}-{fmt_ts(u.end)}] {u.text}" for u in units)
+    lines.append(mark)
+    lines.extend(unit_line(u) for u in units)
     lines.append("Answer with the JSON object the system message describes.")
     return "\n".join(lines)
 
 
-def parse_cut_answer(data: Any, units: list[Unit]) -> list[Part]:
-    """The model's JSON answer as kept parts, or `CutFormatError` naming the problem."""
+def parse_cut_answer(data: Any, units: list[Unit], *, allow_empty: bool = False) -> list[Part]:
+    """The model's JSON answer as kept parts, or `CutFormatError` naming the problem.
+
+    `units` is the list the model saw: the whole transcript, or one excerpt (consecutive units
+    that keep their transcript ids). `allow_empty` accepts `"parts": []` (an excerpt with
+    nothing to propose)."""
     if not isinstance(data, dict):
         raise CutFormatError("the answer is not a JSON object")
     raw_parts = data.get("parts")
-    if not isinstance(raw_parts, list) or not raw_parts:
+    if not isinstance(raw_parts, list) or (not raw_parts and not allow_empty):
         raise CutFormatError("'parts' is missing or empty")
-    last_to = 0
+    lo, hi = units[0].n, units[-1].n
+    last_to = lo - 1
     out: list[Part] = []
     for i, raw in enumerate(raw_parts):
         if not isinstance(raw, dict):
@@ -254,9 +307,9 @@ def parse_cut_answer(data: Any, units: list[Unit]) -> list[Part]:
             end_n = int(raw["to"])
         except (KeyError, TypeError, ValueError):
             raise CutFormatError(f"part {i + 1} has no valid from/to unit ids") from None
-        if not 1 <= start_n <= end_n <= len(units):
+        if not lo <= start_n <= end_n <= hi:
             raise CutFormatError(
-                f"part {i + 1} names units {start_n}-{end_n}; the transcript has 1-{len(units)}"
+                f"part {i + 1} names units {start_n}-{end_n}; the transcript has {lo}-{hi}"
             )
         if start_n <= last_to:
             raise CutFormatError(f"part {i + 1} overlaps or goes before part {i}")
@@ -268,8 +321,8 @@ def parse_cut_answer(data: Any, units: list[Unit]) -> list[Part]:
         out.append(
             Part(
                 label or f"Part {i + 1}",
-                int(units[start_n - 1].start * 1000),
-                int(units[end_n - 1].end * 1000),
+                int(units[start_n - lo].start * 1000),
+                int(units[end_n - lo].end * 1000),
                 rank,
                 start_n,
                 end_n,
@@ -357,6 +410,174 @@ def select_for_target(
         total += length
     chosen.sort(key=lambda p: p.start_ms)
     return chosen, total
+
+
+@dataclass
+class Chunk:
+    """One excerpt of a long transcript: consecutive units, the first few shared with the
+    previous excerpt (`core_first` is the first unit this excerpt owns)."""
+
+    index: int
+    units: list[Unit]
+    core_first: int
+
+    @property
+    def core(self) -> list[Unit]:
+        return [u for u in self.units if u.n >= self.core_first]
+
+
+@dataclass
+class Candidate:
+    """A part an excerpt proposed, as the reduce call sees it: unit ids, label and its rank
+    (`rank` of `of`) inside the excerpt that proposed it."""
+
+    first: int
+    last: int
+    label: str
+    rank: int
+    of: int
+
+
+def plan_chunks(
+    units: list[Unit],
+    chapters: list[tuple[float, str]],
+    budget_chars: int,
+    overlap_units: int,
+) -> list[Chunk]:
+    """Split `units` into excerpts of at most about `budget_chars` characters each.
+
+    Chapter starts are preferred boundaries: a chapter is never cut unless it alone exceeds the
+    budget (then it is split evenly at unit boundaries) and neighbouring chapters are packed
+    together while they fit. Every excerpt but the first starts `overlap_units` units early.
+    """
+    costs = [len(unit_line(u)) + 1 for u in units]
+    biggest = max(costs)
+    room = max(budget_chars - overlap_units * biggest, biggest)
+    starts = [u.start for u in units]
+    cuts = {0}
+    for at, _title in chapters:
+        i = bisect.bisect_left(starts, at)
+        if 0 < i < len(units):
+            cuts.add(i)
+    bounds = sorted(cuts) + [len(units)]
+    pieces: list[tuple[int, int]] = []
+    for a, b in zip(bounds, bounds[1:], strict=False):
+        total = sum(costs[a:b])
+        if total <= room:
+            pieces.append((a, b))
+            continue
+        limit = min(room, total / math.ceil(total / room) + biggest)
+        at, acc = a, 0
+        for i in range(a, b):
+            if acc + costs[i] > limit and i > at:
+                pieces.append((at, i))
+                at, acc = i, 0
+            acc += costs[i]
+        pieces.append((at, b))
+    spans: list[tuple[int, int]] = []
+    held = 0
+    for a, b in pieces:
+        cost = sum(costs[a:b])
+        if spans and held + cost <= room:
+            spans[-1] = (spans[-1][0], b)
+            held += cost
+        else:
+            spans.append((a, b))
+            held = cost
+    return [
+        Chunk(k, units[max(0, a - overlap_units) if k else 0 : b], units[a].n)
+        for k, (a, b) in enumerate(spans)
+    ]
+
+
+def chapters_between(
+    chapters: list[tuple[float, str]], start: float, end: float
+) -> list[tuple[float, str]]:
+    """The chapters an excerpt from `start` to `end` touches: the one running at its start
+    and every later one that begins before `end`."""
+    before = [c for c in chapters if c[0] <= start]
+    inside = [c for c in chapters if start < c[0] < end]
+    return before[-1:] + inside
+
+
+def candidates_from(parts: list[Part]) -> list[Candidate]:
+    """The parts one excerpt proposed as candidates: each carries its rank among them (parts
+    without a rank count in video order, after the ranked ones)."""
+    order = sorted(
+        range(len(parts)),
+        key=lambda i: (parts[i].rank if parts[i].rank is not None else len(parts) + i + 1, i),
+    )
+    position = {i: pos + 1 for pos, i in enumerate(order)}
+    return [
+        Candidate(p.first or 0, p.last or 0, p.label, position[i], len(parts))
+        for i, p in enumerate(parts)
+    ]
+
+
+def merge_candidates(cands: list[Candidate]) -> list[Candidate]:
+    """Candidates in video order; those of neighbouring excerpts that share units (the overlap)
+    become one, with the label and rank of the better of the two."""
+    out: list[Candidate] = []
+    for cand in sorted(cands, key=lambda c: (c.first, c.last)):
+        if out and cand.first <= out[-1].last:
+            top = out[-1]
+            best = cand if cand.rank / cand.of < top.rank / top.of else top
+            out[-1] = Candidate(top.first, max(top.last, cand.last), best.label, best.rank, best.of)
+        else:
+            out.append(cand)
+    return out
+
+
+def candidate_units(cands: list[Candidate], units: list[Unit], excerpt_chars: int) -> list[Unit]:
+    """The candidates as numbered lines for the reduce call: id (1..n), the real time range,
+    label, rank in its excerpt and the start of its text."""
+    out: list[Unit] = []
+    for i, c in enumerate(cands, 1):
+        text = " ".join(u.text for u in units[c.first - 1 : c.last])
+        if len(text) > excerpt_chars:
+            text = text[:excerpt_chars].rstrip() + "..."
+        label = f"{c.label} (rank {c.rank} of {c.of} in its excerpt)"
+        out.append(Unit(i, units[c.first - 1].start, units[c.last - 1].end, f"{label}: {text}"))
+    return out
+
+
+def expand_candidate_parts(
+    parts: list[Part], cands: list[Candidate], units: list[Unit]
+) -> list[Part]:
+    """The reduce answer (parts over candidate ids) as parts over the real units: one part per
+    candidate, so the gaps between candidates stay out of the cut."""
+    out: list[Part] = []
+    for part in parts:
+        for k in range(part.first or 0, (part.last or 0) + 1):
+            c = cands[k - 1]
+            out.append(
+                Part(
+                    c.label,
+                    int(units[c.first - 1].start * 1000),
+                    int(units[c.last - 1].end * 1000),
+                    part.rank,
+                    c.first,
+                    c.last,
+                )
+            )
+    return out
+
+
+def split_candidates(
+    cands: list[Candidate], units: list[Unit], budget_chars: int, excerpt_chars: int
+) -> list[list[Candidate]]:
+    """Groups of consecutive candidates whose lines fit `budget_chars` (one group at least)."""
+    shown = candidate_units(cands, units, excerpt_chars)
+    groups: list[list[Candidate]] = [[]]
+    held = 0
+    for cand, line in zip(cands, shown, strict=True):
+        cost = len(unit_line(line)) + 1
+        if groups[-1] and held + cost > budget_chars:
+            groups.append([])
+            held = 0
+        groups[-1].append(cand)
+        held += cost
+    return groups
 
 
 def finalize_parts(
@@ -460,6 +681,7 @@ class CutService:
     ):
         self.cfg, self.db, self.llm = cfg, db, llm
         self.transcripts, self.prompts, self.jobs = transcripts, prompts, jobs
+        self.engine = CutEngine(cfg.cuts, lambda: cfg.llm.cuts, llm)
         self._tasks: dict[str, asyncio.Task] = {}
         # One build in flight per cache key: a second request with the same key waits on the
         # leader's future instead of calling the model again (shared builds, plan v2).
@@ -707,6 +929,9 @@ class CutService:
         }
         if row["state"] in BUILDING_STATES and row["job_id"]:
             out["stage"] = self._last_stage(row["job_id"])
+            progress = self._last_progress(row["job_id"])
+            if progress:
+                out["progress"] = progress
         if row["state"] == "ready" and row["cut_key"]:
             cut = self.db.one("SELECT json FROM cuts WHERE cache_key=?", [row["cut_key"]])
             if cut:
@@ -720,6 +945,20 @@ class CutService:
             [job_id],
         )
         return row["stage"] if row else None
+
+    def _last_progress(self, job_id: str) -> dict[str, int] | None:
+        """`{"done","of"}` of the excerpts a long video has been through, while the map runs."""
+        row = self.db.one(
+            "SELECT stage, detail FROM job_events WHERE job_id=? AND stage NOT IN"
+            " ('delivered','queued') ORDER BY id DESC LIMIT 1",
+            [job_id],
+        )
+        if row is None or row["stage"] != STAGE_MAP or not row["detail"]:
+            return None
+        detail = json.loads(row["detail"])
+        if "done" not in detail or "of" not in detail:
+            return None
+        return {"done": int(detail["done"]), "of": int(detail["of"])}
 
     def get(self, request_id: str, user: str) -> dict[str, Any] | None:
         """One request for its owner, with the cut and the build report once it has them."""
@@ -790,10 +1029,12 @@ class CutService:
         """The stored cut for this preset, unless the transcript or the `[llm.cuts]` model
         changed since it was built."""
         model = self.cfg.llm.cuts.model if self.cfg.llm.cuts else ""
+        duration = self._meta(video_id).get("duration_s")
+        target_s = self.target_for(prompt.id, float(duration) if duration else None)
         row = self.db.one(
             "SELECT json, transcript_hash FROM cuts WHERE video_id=? AND version=? AND model=?"
             " ORDER BY created_at DESC LIMIT 1",
-            [video_id, self._version(prompt.id, prompt.template), model],
+            [video_id, self._version(prompt.id, prompt.template, target_s), model],
         )
         if row is None:
             return None
@@ -929,11 +1170,7 @@ class CutService:
         leader.add_done_callback(lambda f: None if f.cancelled() else f.exception())
         self._inflight[cache_key] = leader
         try:
-            with events.stage(STAGE_MODEL, model=model, units=len(units)) as model_stage:
-                data, parts = await self._ask_parts(
-                    units, chapters, meta, instruction, target_s, trace
-                )
-                model_stage.set(answer=json.dumps(data, ensure_ascii=False))
+            data, parts = await self.engine.pick_parts(units, chapters, meta, instruction, target_s)
             with events.stage(STAGE_CHECKING):
                 guard = target_s is None and not (preset_id or "").endswith("highlights-5")
                 parts, _kept_s = finalize_parts(
@@ -1037,51 +1274,6 @@ class CutService:
     def target_for(self, preset_id: str | None, duration_s: float | None) -> int | None:
         return effective_target_s(self.cfg.cuts, preset_id, duration_s)
 
-    async def _ask_parts(
-        self,
-        units: list[Unit],
-        chapters: list[tuple[float, str]],
-        meta: dict[str, Any],
-        instruction: str,
-        target_s: int | None,
-        trace: events.JobTrace,
-    ) -> tuple[Any, list[Part]]:
-        """The model's answer as parts: one repair round for a broken answer and, with a target
-        length, one retry that names the measured length when the answer is below the band."""
-        cfg = self.cfg.cuts
-        problem: str | None = None
-        for attempt in range(2 if target_s else 1):
-            data = await self._ask(units, chapters, meta, instruction, target_s, problem=problem)
-            try:
-                parts = parse_cut_answer(data, units)
-            except CutFormatError as exc:
-                trace.emit(STAGE_MODEL, events.WARN, problem=exc.problem, repair=1)
-                data = await self._ask(
-                    units, chapters, meta, instruction, target_s, problem=exc.problem
-                )
-                try:
-                    parts = parse_cut_answer(data, units)
-                except CutFormatError as exc2:
-                    raise CutRefused(
-                        f"The model's answer stayed unusable ({exc2.problem}), so no cut was built."
-                    ) from exc2
-            if not target_s:
-                return data, parts
-            chosen, total_s = select_for_target(parts, units, cfg, target_s)
-            low, high = target_band(target_s, cfg.length_tolerance)
-            if total_s >= low:
-                return data, chosen
-            if attempt == 0:
-                trace.emit(STAGE_MODEL, events.WARN, problem="below target length", retry=1)
-                problem = (
-                    f"it keeps only {int(total_s)} s in total but the task needs about "
-                    f"{target_s} s (between {int(low)} and {int(high)} s); keep more parts."
-                )
-        raise CutRefused(
-            f"The model kept only {int(total_s)} s of the {target_s} s this cut aims for, "
-            "so no cut was built. Try again."
-        )
-
     def _label(self, preset_id: str | None, row: dict[str, Any]) -> str:
         if row["prompt"]:
             return row["prompt"]
@@ -1160,6 +1352,325 @@ class CutService:
             f"No transcript after {int(self.cfg.cuts.transcript_wait_s / 60)} min; try again later."
         )
 
+
+class CutEngine:
+    """Asks the cut model: one pass when the transcript fits `max_input_tokens`, otherwise map
+    over excerpts and reduce over their candidates. Knows nothing of requests, jobs or the
+    database, so the offline bench drives the same code."""
+
+    def __init__(
+        self,
+        cfg: CutsConfig,
+        task: Callable[[], LLMTask | None],
+        llm: Any,
+    ):
+        self.cfg, self.task, self.llm = cfg, task, llm
+
+    async def pick_parts(
+        self,
+        units: list[Unit],
+        chapters: list[tuple[float, str]],
+        meta: dict[str, Any],
+        instruction: str,
+        target_s: int | None,
+    ) -> tuple[Any, list[Part]]:
+        """The model's final answer and the parts to keep (before padding and the checks)."""
+        if self.fits(units, chapters, meta, instruction, target_s):
+            task = self.task()
+            with events.stage(
+                STAGE_MODEL, model=task.model if task else "", units=len(units)
+            ) as model_stage:
+                data, parts = await self._ask_parts(units, chapters, meta, instruction, target_s)
+                model_stage.set(answer=json.dumps(data, ensure_ascii=False))
+            return data, parts
+        return await self._map_reduce(units, chapters, meta, instruction, target_s)
+
+    async def _ask_parts(
+        self,
+        units: list[Unit],
+        chapters: list[tuple[float, str]],
+        meta: dict[str, Any],
+        instruction: str,
+        target_s: int | None,
+        *,
+        candidates: list[Candidate] | None = None,
+    ) -> tuple[Any, list[Part]]:
+        """The model's answer as parts: one repair round for a broken answer and, with a target
+        length, one retry that names the measured length when the answer is below the band.
+
+        With `candidates` this is the reduce call: the model sees the candidates instead of the
+        units and its answer is expanded back to parts over the real units."""
+        cfg = self.cfg
+        problem: str | None = None
+        shown = units
+        style: dict[str, Any] = {}
+        if candidates is not None:
+            shown = candidate_units(candidates, units, cfg.reduce_excerpt_chars)
+            style = {"system": REDUCE_SYSTEM, "note": REDUCE_NOTE, "mark": CANDIDATES_MARK}
+        for attempt in range(2 if target_s else 1):
+            data, parts = await self._ask_parsed(
+                shown, chapters, meta, instruction, target_s, problem=problem, **style
+            )
+            if candidates is not None:
+                parts = expand_candidate_parts(parts, candidates, units)
+            if not target_s:
+                return data, parts
+            chosen, total_s = select_for_target(parts, units, cfg, target_s)
+            low, high = target_band(target_s, cfg.length_tolerance)
+            if total_s >= low:
+                return data, chosen
+            if attempt == 0:
+                events.emit(STAGE_MODEL, events.WARN, problem="below target length", retry=1)
+                problem = (
+                    f"it keeps only {int(total_s)} s in total but the task needs about "
+                    f"{target_s} s (between {int(low)} and {int(high)} s); keep more parts."
+                )
+        raise CutRefused(
+            f"The model kept only {int(total_s)} s of the {target_s} s this cut aims for, "
+            "so no cut was built. Try again."
+        )
+
+    async def _ask_parsed(
+        self,
+        shown: list[Unit],
+        chapters: list[tuple[float, str]],
+        meta: dict[str, Any],
+        instruction: str,
+        target_s: int | None,
+        *,
+        problem: str | None = None,
+        allow_empty: bool = False,
+        **style: Any,
+    ) -> tuple[Any, list[Part]]:
+        """One question and its parsed answer; a broken answer gets one repair round."""
+        data = await self._ask(
+            shown, chapters, meta, instruction, target_s, problem=problem, **style
+        )
+        try:
+            return data, parse_cut_answer(data, shown, allow_empty=allow_empty)
+        except CutFormatError as exc:
+            events.emit(STAGE_MODEL, events.WARN, problem=exc.problem, repair=1)
+            data = await self._ask(
+                shown, chapters, meta, instruction, target_s, problem=exc.problem, **style
+            )
+            try:
+                return data, parse_cut_answer(data, shown, allow_empty=allow_empty)
+            except CutFormatError as exc2:
+                raise CutRefused(
+                    f"The model's answer stayed unusable ({exc2.problem}), so no cut was built."
+                ) from exc2
+
+    def _tokens(self, message: str) -> int:
+        return len(message) // self.cfg.chars_per_token
+
+    def fits(
+        self,
+        units: list[Unit],
+        chapters: list[tuple[float, str]],
+        meta: dict[str, Any],
+        instruction: str,
+        target_s: int | None,
+    ) -> bool:
+        """Whether the whole transcript goes to the model in one request."""
+        message = serialize_units(
+            units, chapters, meta, instruction, target_s, self.cfg.over_ask_frac
+        )
+        return self._tokens(message) <= self.cfg.max_input_tokens
+
+    async def _all(self, jobs: list[Any]) -> list[Any]:
+        """Run the coroutines together; the first failure cancels the rest and is raised."""
+        tasks = [asyncio.ensure_future(job) for job in jobs]
+        try:
+            await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        return [task.result() for task in tasks]
+
+    async def _map_reduce(
+        self,
+        units: list[Unit],
+        chapters: list[tuple[float, str]],
+        meta: dict[str, Any],
+        instruction: str,
+        target_s: int | None,
+    ) -> tuple[Any, list[Part]]:
+        """A cut for a transcript too long for one request.
+
+        Map: excerpts (on chapter boundaries when there are chapters, a few units shared with
+        the previous one) are each asked for ranked candidate parts, with the excerpt's share of
+        the target length. Reduce: one call over the candidates picks the cut, with the same
+        rank selection as a one-pass cut; candidates that do not fit one call are narrowed in
+        rounds first."""
+        cfg = self.cfg
+        chunks = self._plan_chunks(units, chapters, meta, instruction, target_s)
+        total_s = sum(u.end - u.start for u in units) or 1.0
+        gate = asyncio.Semaphore(cfg.map_parallel)
+        proposed: list[list[Part]] = [[] for _ in chunks]
+        done = 0
+
+        async def one(chunk: Chunk) -> None:
+            nonlocal done
+            core_s = sum(u.end - u.start for u in chunk.core)
+            share = max(1, round(target_s * core_s / total_s)) if target_s else None
+            async with gate:
+                proposed[chunk.index] = await self._map_chunk(
+                    chunk, len(chunks), chapters, meta, instruction, share
+                )
+            done += 1
+            events.emit(STAGE_MAP, events.RUNNING, done=done, of=len(chunks))
+
+        with events.stage(STAGE_MAP, chunks=len(chunks), units=len(units)) as map_stage:
+            events.emit(STAGE_MAP, events.RUNNING, done=0, of=len(chunks))
+            await self._all([one(chunk) for chunk in chunks])
+            cands = merge_candidates([c for parts in proposed for c in candidates_from(parts)])
+            map_stage.set(candidates=len(cands))
+        if not cands:
+            raise CutRefused("Nothing was worth keeping, so there is no cut.")
+        return await self._reduce(cands, units, chapters, meta, instruction, target_s)
+
+    def _plan_chunks(
+        self,
+        units: list[Unit],
+        chapters: list[tuple[float, str]],
+        meta: dict[str, Any],
+        instruction: str,
+        target_s: int | None,
+    ) -> list[Chunk]:
+        cfg = self.cfg
+        header = serialize_units(
+            [],
+            chapters,
+            meta,
+            instruction,
+            target_s,
+            cfg.over_ask_frac,
+            note=MAP_NOTE.format(i=99, n=99),
+        )
+        tokens = min(cfg.map_chunk_tokens, cfg.max_input_tokens)
+        budget = tokens * cfg.chars_per_token - len(header) - len(CUT_SYSTEM)
+        return plan_chunks(units, chapters, budget, cfg.map_overlap_units)
+
+    async def _map_chunk(
+        self,
+        chunk: Chunk,
+        n: int,
+        chapters: list[tuple[float, str]],
+        meta: dict[str, Any],
+        instruction: str,
+        share: int | None,
+    ) -> list[Part]:
+        """Candidate parts of one excerpt; a failed excerpt is asked once more, then the cut fails."""
+        note = MAP_NOTE.format(i=chunk.index + 1, n=n)
+        span = chapters_between(chapters, chunk.units[0].start, chunk.units[-1].end)
+        problem = ""
+        for attempt in range(MAP_RETRIES + 1):
+            try:
+                _data, parts = await self._ask_parsed(
+                    chunk.units,
+                    span,
+                    meta,
+                    instruction,
+                    share,
+                    allow_empty=True,
+                    note=note,
+                    scope="from this excerpt",
+                )
+                return parts
+            except CutRefused as exc:
+                problem = exc.message
+            except LLMError:
+                log.warning("cut excerpt %d of %d: the model service failed", chunk.index + 1, n)
+                problem = "the model service did not answer"
+            events.emit(
+                STAGE_MAP, events.WARN, excerpt=chunk.index + 1, problem=problem, retry=attempt + 1
+            )
+        raise CutRefused(
+            f"Part {chunk.index + 1} of {n} of this long video could not be analysed "
+            f"({problem.rstrip('.')}), so no cut was built. Try again."
+        )
+
+    async def _reduce(
+        self,
+        cands: list[Candidate],
+        units: list[Unit],
+        chapters: list[tuple[float, str]],
+        meta: dict[str, Any],
+        instruction: str,
+        target_s: int | None,
+    ) -> tuple[Any, list[Part]]:
+        """The final choice over the candidates; too many for one call are narrowed in rounds."""
+        cfg = self.cfg
+        rounds = 0
+        while True:
+            shown = candidate_units(cands, units, cfg.reduce_excerpt_chars)
+            message = serialize_units(
+                shown, chapters, meta, instruction, target_s, cfg.over_ask_frac,
+                note=REDUCE_NOTE, mark=CANDIDATES_MARK,
+            )  # fmt: skip
+            if self._tokens(message) <= cfg.max_input_tokens:
+                with events.stage(STAGE_REDUCE, candidates=len(cands), rounds=rounds):
+                    return await self._ask_parts(
+                        units, chapters, meta, instruction, target_s, candidates=cands
+                    )
+            if rounds >= cfg.max_reduce_rounds:
+                raise CutRefused(
+                    "This video gave too many candidate parts to choose from, so no cut was built."
+                )
+            rounds += 1
+            narrowed = await self._reduce_round(
+                cands, units, chapters, meta, instruction, target_s, rounds
+            )
+            if not narrowed:
+                raise CutRefused("Nothing was worth keeping, so there is no cut.")
+            if len(narrowed) >= len(cands):
+                raise CutRefused(
+                    "The candidate parts could not be narrowed down, so no cut was built."
+                )
+            cands = narrowed
+
+    async def _reduce_round(
+        self,
+        cands: list[Candidate],
+        units: list[Unit],
+        chapters: list[tuple[float, str]],
+        meta: dict[str, Any],
+        instruction: str,
+        target_s: int | None,
+        round_no: int,
+    ) -> list[Candidate]:
+        """One narrowing round: groups of candidates that fit a call each keep their best parts
+        (with a target: the group's share of it, plus the usual over-ask)."""
+        cfg = self.cfg
+        header = serialize_units(
+            [], chapters, meta, instruction, target_s, cfg.over_ask_frac,
+            note=REDUCE_NOTE, mark=CANDIDATES_MARK,
+        )  # fmt: skip
+        budget = cfg.max_input_tokens * cfg.chars_per_token - len(header) - len(REDUCE_SYSTEM)
+        groups = split_candidates(cands, units, budget, cfg.reduce_excerpt_chars)
+        spans = [sum(units[c.last - 1].end - units[c.first - 1].start for c in g) for g in groups]
+        gate = asyncio.Semaphore(cfg.map_parallel)
+
+        async def one(group: list[Candidate], span_s: float) -> list[Candidate]:
+            share = max(1, round(target_s * span_s / (sum(spans) or 1.0))) if target_s else None
+            shown = candidate_units(group, units, cfg.reduce_excerpt_chars)
+            async with gate:
+                _data, parts = await self._ask_parsed(
+                    shown, chapters, meta, instruction, share,
+                    allow_empty=True, system=REDUCE_SYSTEM, note=REDUCE_NOTE,
+                    mark=CANDIDATES_MARK,
+                )  # fmt: skip
+            kept = expand_candidate_parts(parts, group, units)
+            if share and kept:
+                kept, _ = select_for_target(kept, units, cfg, int(share * (1 + cfg.over_ask_frac)))
+            return candidates_from(kept)
+
+        with events.stage(STAGE_REDUCE, candidates=len(cands), groups=len(groups), round=round_no):
+            kept = await self._all([one(g, sp) for g, sp in zip(groups, spans, strict=True)])
+        return merge_candidates([c for group in kept for c in group])
+
     async def _ask(
         self,
         units: list[Unit],
@@ -1169,18 +1680,33 @@ class CutService:
         target_s: int | None = None,
         *,
         problem: str | None = None,
+        system: str = CUT_SYSTEM,
+        note: str | None = None,
+        scope: str = "in total",
+        mark: str = UNITS_MARK,
     ) -> Any:
         """The model's parsed answer. One repair round when the ids break the rules."""
-        task = self.cfg.llm.cuts
+        task = self.task()
         if task is None:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
         message = serialize_units(
-            units, chapters, meta, instruction, target_s, self.cfg.cuts.over_ask_frac
+            units,
+            chapters,
+            meta,
+            instruction,
+            target_s,
+            self.cfg.over_ask_frac,
+            note=note,
+            scope=scope,
+            mark=mark,
         )
-        if len(message) // self.cfg.cuts.chars_per_token > self.cfg.cuts.max_input_tokens:
-            raise CutRefused("This video is too long to cut in one pass (no map/reduce yet).")
+        if self._tokens(message) > self.cfg.max_input_tokens:
+            raise CutRefused(
+                "This video is too long to cut: a request does not fit the model's input "
+                "even after splitting it up."
+            )
         messages = [
-            {"role": "system", "content": CUT_SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": message},
         ]
         if problem:
