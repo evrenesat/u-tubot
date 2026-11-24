@@ -3,3 +3,7 @@ dist/
 web-ext-artifacts/
 .amo-credentials
 .venv/
+.tools/
+__pycache__/
+.pytest_cache/
+*.pyc

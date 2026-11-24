@@ -149,6 +149,33 @@ extension's tests use these controls (all are local, no real service is contacte
 `OPTIONS` answers `405` and is logged. The tests of the controls are in `ai-backend/tests/test_emulator_mock.py`; the TV recipes above
 replay the same defaults.
 
+### Extension build and tests
+
+```sh
+cd extension
+npm ci
+npm run lint && npm test
+npm run build:firefox-unlisted                       # also firefox-listed, firefox-test, chromium, chromium-test
+web-ext lint --source-dir dist/firefox-unlisted --self-hosted
+```
+
+The e2e suite drives the `firefox-test` build in the pinned Firefox against fixture pages on `127.0.0.1`, the mock backend on
+`127.0.0.2` and `127.0.0.3`, and a refusing proxy as the only route out. The committed `tests/e2e/user.js` turns off every Firefox
+service by name; the suite ends with a check that fails when the proxy recorded anything.
+
+```sh
+cd extension/tests/e2e
+uv sync --frozen
+python3 download_tools.py                       # the only download; SHA-256 checked against tools.lock
+tests/e2e/run-offline.sh                         # local runs: a network namespace with loopback only
+uv run pytest -q                                 # CI: hosted runner, behind the proxy guard
+```
+
+`run-offline.sh` uses `unshare --net` and brings up `lo`; run it where network namespaces are permitted (root or the needed
+capability). If `unshare` is denied, do not run the suite outside a namespace: rely on CI's proxy guard instead. Selenium runs with
+`SE_OFFLINE=true`, explicit `FIREFOX_BIN`/`GECKODRIVER_BIN`, and Firefox's `MOZ_DISABLE_NONLOCAL_CONNECTIONS=1` test mode so its
+remote-settings client skips the dummy server of `user.js`. No test opens YouTube.
+
 ### Checking the browse cache (no YouTube)
 
 A section can be seeded as if it had loaded before: `files/utubot_browse/<section_id>.json` holds `section_type` (the layout that

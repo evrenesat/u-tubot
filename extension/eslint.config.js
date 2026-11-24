@@ -1,6 +1,6 @@
 export default [
   {
-    ignores: ["dist/**", "node_modules/**", "web-ext-artifacts/**", "tests/fixtures/**"],
+    ignores: ["dist/**", "node_modules/**", "web-ext-artifacts/**", "tests/fixtures/**", "tests/e2e/.venv/**", "tests/e2e/.tools/**"],
   },
   {
     files: ["**/*.js", "**/*.mjs"],
