@@ -153,7 +153,7 @@ def classify_command(args: argparse.Namespace) -> int:
     sha = os.environ.get("SHA", "")
     before = os.environ.get("BEFORE", "")
     pr_number = os.environ.get("PR_NUMBER", "")
-    files = args.files.read_text().splitlines() if args.files else changed_files(event, sha, before, pr_number)
+    files = args.files.read().splitlines() if args.files else changed_files(event, sha, before, pr_number)
     result = classify_files(files)
 
     push = event == "push"
@@ -188,7 +188,7 @@ def classify_command(args: argparse.Namespace) -> int:
 
 def parity_command(args: argparse.Namespace) -> int:
     event = os.environ.get("EVENT_NAME", "pull_request")
-    files = args.files.read_text().splitlines() if args.files else changed_files(
+    files = args.files.read().splitlines() if args.files else changed_files(
         event, os.environ.get("SHA", ""), os.environ.get("BEFORE", ""), os.environ.get("PR_NUMBER", "")
     )
     body = os.environ.get("PR_BODY", "")
@@ -200,8 +200,8 @@ def parity_command(args: argparse.Namespace) -> int:
 
 
 def ci_green_command(args: argparse.Namespace) -> int:
-    runs = json.loads(args.runs.read_text() if args.runs else "[]")
-    jobs = json.loads(args.jobs.read_text() if args.jobs else "[]")
+    runs = json.loads(args.runs.read() if args.runs else "[]")
+    jobs = json.loads(args.jobs.read() if args.jobs else "[]")
     needed = [name.strip() for name in args.needed.split(",") if name.strip()]
     return 0 if ci_green(runs, jobs, auto=args.auto, needed=needed) else 1
 
