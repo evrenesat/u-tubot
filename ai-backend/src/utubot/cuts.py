@@ -74,7 +74,8 @@ PRESET_LABELS = {
     "cut-highlights-5": "Highlights in 5 min",
 }
 # Removal presets keep whatever the video has left worth keeping; keeping nearly all of it is a
-# valid result ("little or no filler"), so only the lower keep guard applies to them.
+# valid result ("little or no filler"), so a named preset has no upper keep guard. Only the broad
+# no-filler preset has the lower guard; a targeted answer or demo may legitimately be short.
 REMOVAL_PRESET_IDS = frozenset({"cut-no-filler", "cut-answer", "cut-demo"})
 NO_FILLER_PRESET_ID = "cut-no-filler"
 

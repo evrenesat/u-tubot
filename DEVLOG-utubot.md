@@ -202,6 +202,13 @@
   `UtubotUpdateCheckerTest`.
 - Parity: the browser extension has no update UI of its own (the browser updates it), so there is no extension row for this feature.
 - Verified with JDK 25: `:common:testStutubotDebugUnitTest` (1646 tests, 0 failures, 0 errors, 7 skipped), `:smarttubetv:assembleStutubotDebug`.
+## 2026-11-25 (director's cuts review round 3: the player)
+
+- A flowing tick that crossed into a drop deeper than the old 2 s x speed entry window (a fast or late tick) missed the drop and
+  then played all of it; `UtubotCutSkipper.onPosition` now skips when the tick lands anywhere inside the drop, while a seek still
+  wins through the backwards and MAX_FLOW checks. Test: an 18.4 s tick at 4x from 50 s to 68.4 s jumps past the 60-108 s drop.
+- Backend side of the round (rebase intent, target merges, bench retry, caption-source repeats) is in `ai-backend/DEVLOG.md`.
+
 ## 2026-11-24 (director's cuts review round 0: the player)
 
 - A short forward seek that landed just inside a dropped range was treated as the playback

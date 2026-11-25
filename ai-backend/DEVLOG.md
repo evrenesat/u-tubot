@@ -33,6 +33,31 @@
 
 # DEVLOG
 
+## 2026-11-25 (director's cuts review r3: rebase intent, target merges, bench retry, fast ticks)
+
+- Rebase onto the default branch joined main's #114 keep-guard split (a named preset has no upper guard; a typed prompt without a
+  target keeps it) with r0/r1's guard shape and unit rules: `keep_guards` returns (min, max) = no-filler only for the lower guard,
+  a typed prompt only for the upper; `finalize_parts` still merges and drops short parts on the model's boundaries clamped to the
+  video before it pads, and its `min_guard`/`guard_max` both default to `guard`.
+- Target length: selection charged each selected part's padded length while `finalize_parts` merges gaps under `merge_gap_s`, so a
+  60 s target could end at 75.3 s (25 % over the band) or fall beneath it. `_kept_total_s` now applies the same merge, short-drop,
+  padding and video clamp as finalize, and `select_for_target` charges it after every part; the same 20-part probe (4 s parts,
+  1.9 s gaps, target 60 s) now picks 11 parts and finalizes 63.5 s (length error 0.058) instead of 13 parts and 75.3 s (0.255).
+- Bench: a one-pass targeted request skipped production's one retry with the measured shortfall and scored a build that production
+  would fail as ready; `_one_pass` now has that retry and refuses with the kept-only reason. The set doc says 16 requests (5
+  transcripts, the router fixture has 4 requests).
+- Units: rolling caption repeats were dropped for every source, so an authored caption or ASR that says the same words twice lost
+  the second; `build_units(rolling=...)` is on only for YouTube auto captions (not a manual caption, not ASR).
+- Player: a flowing tick landing deeper in a drop than the old 2 s x speed entry window (a fast or late tick) missed it and played
+  the whole drop; any tick that lands inside a drop now skips to its end, while a seek stays out through the backwards/flow checks.
+- Offline reference bench (hand-marked spans mapped to units, no LLM or YouTube), 16 requests, before the r3 fixes and after:
+  keep 0.9726, skip 1.000, mean score +0.9726, 0 refusals, 51.01 s mean kept, 1.31 parts, mean length error 0.015 both times
+  (the reference answer is already perfect, so the fixes change the failure cases, not this run). Sample:
+  `bench-router highlights-1min keep 0.56 skip 1.00 score +0.56 parts 1 len-err 0.01 ok kept_s 60.9 target 60`.
+- `reasoning_effort = "none"` and `max_tokens = 2500` stay: agents never call a cloud LLM, so a low/medium reasoning comparison
+  remains an owner bench run.
+- Backend suite 1184 passed, ruff check/formatted; the TV skipper tests pass with the full common unit task.
+
 ## 2026-11-25 (director's cuts review r1: sentence repeats, bench errors, target lengths)
 
 1. Rolling caption repeats were dropped only while a unit was open. After a sentence or length
