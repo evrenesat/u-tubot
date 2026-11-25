@@ -143,7 +143,7 @@ def changed_files(event: str, sha: str, before: str, pr_number: str) -> list[str
         return gh_lines_or_none(["--paginate", f"repos/{repo}/pulls/{pr_number}/files", "--jq", '.[] | .filename, (.previous_filename // empty)'])
     if before != zero:
         return gh_lines_or_none(["--paginate", f"repos/{repo}/compare/{before}...{sha}", "--jq", '.files[] | .filename, (.previous_filename // empty)'])
-    return []
+    return None
 
 
 def classify_or_everything(files: list[str] | None) -> Classification:

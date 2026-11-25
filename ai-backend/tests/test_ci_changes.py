@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from utubot_ci_changes import (  # noqa: E402
     Classification,
+    changed_files,
     ci_green,
     classify_files,
     classify_or_everything,
@@ -62,6 +63,15 @@ def test_contract_change_runs_backend_and_extension():
 def test_mock_backend_change_runs_backend_and_extension():
     assert classify_files(["scripts/emulator_mock_backend.py"]) == Classification(
         backend=True, app=False, release=False, extension=True, extension_release=False
+    )
+
+
+def test_a_zero_before_on_a_push_runs_everything(monkeypatch):
+    monkeypatch.setenv("REPO", "evrenesat/u-tubot")
+    files = changed_files("push", "a" * 40, "0" * 40, "")
+    assert files is None
+    assert classify_or_everything(files) == Classification(
+        backend=True, app=True, release=False, extension=True, extension_release=False
     )
 
 

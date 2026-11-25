@@ -1,5 +1,24 @@
 # u·tubot browser extension devlog
 
+## 2026-11-25 (checkpoints 0-3: second review round, fixes)
+
+- `src/shared/messages.js`: a content script may call the names both sets share (`settings.read`, `prompts.list`); only a
+  non-shared page name still needs an extension page. The test fixture sender is now a parsed URL whose `hostname` is exactly
+  `127.0.0.1`, so `127.0.0.10` and `127.0.0.1.evil` are refused; `messages.test.js` covers the positive and negative cases and
+  `router.test.js` calls the shared page names from the content side.
+- `src/shared/models.js`: parsers return plain data only; the `is*`, `allPrompts`, `first` and `find` helpers were moved to
+  exported `revive*` functions (and a `revive(type, value)` map) that attach them as non-enumerable properties on the receiving
+  side. The cache and the runtime message boundary now carry JSON-safe values, and `models.test.js` checks every parser through
+  `structuredClone` and JSON. `router.test.js` uses structured-clone storage, so a leak of a function fails, and revives a cached
+  summary after a fresh router load.
+- `tests/e2e/refusing_proxy.py`: `HEAD`, `OPTIONS` and `PATCH` are recorded and refused like the other methods; the new proxy
+  test covers every method.
+- `scripts/utubot_ci_changes.py`: a push whose `before` is the zero SHA returns an unknown file list (`None`), so every test job
+  runs instead of being skipped; `test_ci_changes.py` covers the zero-before case directly.
+- Evidence: `npm run lint`, `npm test` (55 pass), the five builds; `uv run pytest -q test_refusing_proxy.py` (2 pass);
+  `ruff check`/`format --check` and `pytest tests/test_ci_changes.py` (29 pass). The Selenium harness was not started here because
+  the pinned Firefox and geckodriver were not downloaded in this checkout.
+
 ## 2026-11-25 (checkpoints 0-3: first review round, fixes)
 
 - `src/background/setup.js`: `isPrivateHost`, `hostPart` (`resolveUrl`) and `originOf` strip the brackets of an IPv6 host

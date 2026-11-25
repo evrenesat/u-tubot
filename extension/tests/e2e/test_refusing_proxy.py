@@ -17,3 +17,21 @@ def test_a_request_to_a_non_loopback_name_is_recorded_and_refused():
         assert {"method": "GET", "host": "refused.example.invalid"} in __import__("json").loads(answer)["requests"]
     finally:
         proxy.stop()
+
+
+def test_every_request_method_is_recorded_and_refused():
+    proxy = RefusingProxy().start()
+    try:
+        for method in ("POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"):
+            connection = http.client.HTTPConnection("127.0.0.1", proxy.port, timeout=5)
+            connection.request(method, "http://refused.example.invalid/x", body=b"", headers={"Host": "refused.example.invalid"})
+            assert connection.getresponse().status == 502
+            connection.close()
+        connection = http.client.HTTPConnection("127.0.0.1", proxy.port, timeout=5)
+        connection.request("GET", "/__log")
+        requests = __import__("json").loads(connection.getresponse().read())["requests"]
+        connection.close()
+        for method in ("POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"):
+            assert {"method": method, "host": "refused.example.invalid"} in requests
+    finally:
+        proxy.stop()

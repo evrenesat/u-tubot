@@ -56,7 +56,15 @@ export function isContentSender(sender, isTest) {
     return true;
   }
 
-  return Boolean(isTest && sender.url.startsWith("http://127.0.0.1"));
+  if (!isTest) {
+    return false;
+  }
+
+  try {
+    return new URL(sender.url).hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
 }
 
 export function checkMessage(message, sender, extensionBase, isTest) {
@@ -75,7 +83,7 @@ export function checkMessage(message, sender, extensionBase, isTest) {
     throw new Error("Unknown message");
   }
 
-  if (PAGE_ONLY.has(message.type) && !page) {
+  if (PAGE_ONLY.has(message.type) && !CONTENT.has(message.type) && !page) {
     throw new Error("This message comes from an extension page only");
   }
 

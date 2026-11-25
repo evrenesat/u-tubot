@@ -66,6 +66,18 @@ class RefusingProxy:
                 self.record("DELETE")
                 self.refuse()
 
+            def do_HEAD(self) -> None:
+                self.record("HEAD")
+                self.refuse()
+
+            def do_OPTIONS(self) -> None:
+                self.record("OPTIONS")
+                self.refuse()
+
+            def do_PATCH(self) -> None:
+                self.record("PATCH")
+                self.refuse()
+
             def log_message(self, *_args) -> None:
                 return
 

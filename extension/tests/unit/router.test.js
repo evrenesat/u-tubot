@@ -3,11 +3,16 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { createRouter } from "../../src/background/router.js";
+import { revive } from "../../src/shared/models.js";
 
 const BASE = "http://127.0.0.2:8790";
 const PAGE = { url: "moz-extension://test/pages/options.html" };
 const CONTENT = { url: "https://www.youtube.com/watch?v=abcdefghijk", tab: { id: 1 } };
 const VIDEO = "abcdefghijk";
+
+function serialized(value) {
+  return value === undefined ? undefined : structuredClone(value);
+}
 
 function memory() {
   const areas = { local: {}, session: {} };
@@ -16,18 +21,20 @@ function memory() {
     local: {
       async get(keys) {
         if (keys === null) {
-          return { ...areas.local };
+          return serialized(areas.local);
         }
         const result = {};
         for (const key of keys) {
           if (key in areas.local) {
-            result[key] = areas.local[key];
+            result[key] = serialized(areas.local[key]);
           }
         }
         return result;
       },
       async set(values) {
-        Object.assign(areas.local, values);
+        for (const [key, value] of Object.entries(values)) {
+          areas.local[key] = serialized(value);
+        }
       },
       async remove(keys) {
         for (const key of Array.isArray(keys) ? keys : [keys]) {
@@ -38,18 +45,20 @@ function memory() {
     session: {
       async get(keys) {
         if (keys === null) {
-          return { ...areas.session };
+          return serialized(areas.session);
         }
         const result = {};
         for (const key of keys) {
           if (key in areas.session) {
-            result[key] = areas.session[key];
+            result[key] = serialized(areas.session[key]);
           }
         }
         return result;
       },
       async set(values) {
-        Object.assign(areas.session, values);
+        for (const [key, value] of Object.entries(values)) {
+          areas.session[key] = serialized(value);
+        }
       },
       async remove(keys) {
         for (const key of Array.isArray(keys) ? keys : [keys]) {
@@ -105,6 +114,18 @@ test("a bad video id is rejected", async () => {
   await assert.rejects(() => router.handleMessage({ type: "summary", payload: { video_id: "short" } }, CONTENT), /Bad video id/);
 });
 
+test("a content script may read settings and list prompts", async () => {
+  const storage = memory();
+  prepared(storage);
+  const fake = fakeFetch({ default: "builtin/tldr", sets: [] });
+  const router = createRouter({ storage, fetchImpl: fake.fetchImpl, extensionBase: "moz-extension://test/", isTest: false });
+  const settings = await router.handleMessage({ type: "settings.read", payload: {} }, CONTENT);
+  assert.equal(settings.wait_ms, 1200);
+  const prompts = await router.handleMessage({ type: "prompts.list", payload: {} }, CONTENT);
+  assert.equal(prompts.defaultKey, "builtin/tldr");
+  assert.equal(fake.calls[0].url.pathname, "/v1/prompts");
+});
+
 test("the test variant accepts the loopback content page", async () => {
   const storage = memory();
   prepared(storage);
@@ -125,6 +146,9 @@ test("the router answers from storage after the module is loaded afresh", async 
   const second = fresh.createRouter({ storage, fetchImpl: fake.fetchImpl, extensionBase, isTest: false });
   const secondAnswer = await second.handleMessage({ type: "summary", payload: { video_id: VIDEO, prompt: "panel" } }, CONTENT);
   assert.deepEqual(secondAnswer, firstAnswer);
+  assert.equal(fake.calls.length, 1);
+  assert.equal(typeof firstAnswer.isReady, "undefined");
+  assert.equal(revive("summary", structuredClone(secondAnswer)).isReady(), true);
 });
 
 test("setup.fetch parses the setup from the given address without a token", async () => {

@@ -31,9 +31,17 @@ test("a page may call both sets and a YouTube page only the content set", () => 
   assert.throws(() => checkMessage({ type: "health", payload: {} }, YOUTUBE, BASE, false), /extension page only/);
 });
 
+test("a content script may call the names both sets share", () => {
+  for (const type of ["settings.read", "prompts.list"]) {
+    assert.deepEqual(checkMessage({ type, payload: {} }, YOUTUBE, BASE, false), { page: false, payload: {} });
+  }
+});
+
 test("the test variant accepts the fixture page and nothing else", () => {
   const fixture = { url: "http://127.0.0.1:8123/watch", tab: { id: 1 } };
   assert.equal(checkMessage({ type: "summary", payload: { video_id: "abcdefghijk" } }, fixture, BASE, true).page, false);
   assert.throws(() => checkMessage({ type: "summary", payload: { video_id: "abcdefghijk" } }, fixture, BASE, false), /not allowed/);
   assert.throws(() => checkMessage({ type: "summary", payload: { video_id: "abcdefghijk" } }, { url: "http://127.0.0.2:8790/" }, BASE, true), /not allowed/);
+  assert.throws(() => checkMessage({ type: "summary", payload: { video_id: "abcdefghijk" } }, { url: "http://127.0.0.10:8123/watch" }, BASE, true), /not allowed/);
+  assert.throws(() => checkMessage({ type: "summary", payload: { video_id: "abcdefghijk" } }, { url: "http://127.0.0.1.evil:8123/watch" }, BASE, true), /not allowed/);
 });

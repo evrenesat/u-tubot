@@ -31,6 +31,13 @@ function strings(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 }
 
+function attachHelpers(target, values) {
+  for (const [name, value] of Object.entries(values)) {
+    Object.defineProperty(target, name, { value, enumerable: false, configurable: true });
+  }
+  return target;
+}
+
 export function parseVerdict(json) {
   return {
     videoId: json?.video_id ?? null,
@@ -42,7 +49,6 @@ export function parseVerdict(json) {
     answerShort: text(json, "answer_short"),
     insightReady: Boolean(json?.insight_ready),
     captionsReady: Boolean(json?.captions_ready),
-    isReady: () => (json?.status ?? "pending") === "ready",
   };
 }
 
@@ -68,19 +74,21 @@ function readAnswer(json, answer) {
   return answer;
 }
 
-function answerHelpers(answer) {
-  answer.isReady = () => answer.status === "ready";
-  answer.isPending = () => answer.status === "pending";
-  answer.isFailed = () => answer.status === "failed";
-  answer.needsTranscript = () => answer.status === "needs_transcript" || answer.transcriptStatus === "none";
-  answer.isDelayed = () => answer.transcriptStatus === "delayed";
-  answer.isTranscribing = () => answer.transcriptStatus === "transcribing";
-  answer.isTransient = () => answer.needsTranscript() || answer.isDelayed() || answer.isTranscribing();
-  return answer;
+export function reviveAnswer(answer) {
+  return attachHelpers(answer, {
+    isReady: () => answer.status === "ready",
+    isPending: () => answer.status === "pending",
+    isFailed: () => answer.status === "failed",
+    needsTranscript: () => answer.status === "needs_transcript" || answer.transcriptStatus === "none",
+    isDelayed: () => answer.transcriptStatus === "delayed",
+    isTranscribing: () => answer.transcriptStatus === "transcribing",
+    isTransient: () => answer.status === "needs_transcript" || answer.transcriptStatus === "none"
+      || answer.transcriptStatus === "delayed" || answer.transcriptStatus === "transcribing",
+  });
 }
 
 export function parseInsight(json) {
-  const insight = readAnswer(json, {
+  return readAnswer(json, {
     videoId: json?.video_id ?? null,
     titleQuestion: text(json, "title_question"),
     answer: text(json, "answer"),
@@ -89,21 +97,19 @@ export function parseInsight(json) {
     keyPoints: strings(json?.key_points),
     inflation: json?.inflation ?? null,
   });
-  return answerHelpers(insight);
 }
 
 export function parseSummary(json) {
-  const summary = readAnswer(json, {
+  return readAnswer(json, {
     videoId: json?.video_id ?? null,
     prompt: text(json, "prompt"),
     text: text(json, "text"),
   });
-  return answerHelpers(summary);
 }
 
 export function parseTranscript(json) {
   const status = text(json, "transcript_status") ?? json?.status ?? "unknown";
-  const transcript = {
+  return {
     videoId: json?.video_id ?? null,
     status,
     progressPercent: percent(json?.progress),
@@ -111,10 +117,14 @@ export function parseTranscript(json) {
     estimateSec: seconds(json?.estimate_s),
     error: text(json, "error"),
   };
-  transcript.isDone = () => status === "ok" || status === "ready";
-  transcript.isTranscribing = () => status === "transcribing" || status === "queued" || status === "running";
-  transcript.isFailed = () => status === "failed";
-  return transcript;
+}
+
+export function reviveTranscript(transcript) {
+  return attachHelpers(transcript, {
+    isDone: () => transcript.status === "ok" || transcript.status === "ready",
+    isTranscribing: () => transcript.status === "transcribing" || transcript.status === "queued" || transcript.status === "running",
+    isFailed: () => transcript.status === "failed",
+  });
 }
 
 export function parsePromptSet(json, fallbackId = null) {
@@ -139,33 +149,42 @@ export function parsePromptSet(json, fallbackId = null) {
 }
 
 export function parsePrompts(json) {
-  const list = {
+  return {
     defaultKey: text(json, "default"),
     panelDefaultKey: text(json, "panel_default"),
     sets: (Array.isArray(json?.sets) ? json.sets : []).map((set) => parsePromptSet(set)),
   };
-  list.allPrompts = () => list.sets.flatMap((set) => set.prompts);
-  list.first = () => list.allPrompts()[0] ?? null;
-  list.find = (key) => list.allPrompts().find((prompt) => prompt.key === key) ?? null;
-  return list;
+}
+
+export function revivePrompts(list) {
+  const allPrompts = () => list.sets.flatMap((set) => set.prompts);
+  return attachHelpers(list, {
+    allPrompts,
+    first: () => allPrompts()[0] ?? null,
+    find: (key) => allPrompts().find((prompt) => prompt.key === key) ?? null,
+  });
 }
 
 export function parseCaptions(json) {
-  const captions = {
+  return {
     status: json?.status ?? "none",
     progress: typeof json?.progress === "number" ? json.progress : 0,
     tracks: (Array.isArray(json?.tracks) ? json.tracks : [])
       .filter((track) => typeof track?.url === "string")
       .map((track) => ({
         lang: track.lang ?? null,
-        label: track.label ?? track.lang,
+        label: track.label ?? track.lang ?? null,
         url: track.url,
         speakers: Number(track.speakers) || 0,
         timingVersion: track.timing_version ?? null,
       })),
   };
-  captions.isReady = () => captions.status === "ready" && captions.tracks.length > 0;
-  return captions;
+}
+
+export function reviveCaptions(captions) {
+  return attachHelpers(captions, {
+    isReady: () => captions.status === "ready" && captions.tracks.length > 0,
+  });
 }
 
 export function parseMe(json) {
@@ -226,17 +245,24 @@ export function parseCuts(json) {
         requestId: text(preset, "request_id"),
         error: text(preset, "error"),
         cut: parseCut(preset.cut),
-        isReady: () => preset.state === CutState.READY && Boolean(preset.cut),
       })),
   };
 }
 
+export function reviveCuts(cuts) {
+  for (const preset of cuts.presets) {
+    attachHelpers(preset, {
+      isReady: () => preset.state === CutState.READY && Boolean(preset.cut),
+    });
+  }
+  return cuts;
+}
+
 export function parseCutRequest(json) {
-  const state = json?.state ?? CutState.WAITING;
   const request = {
     id: text(json, "request_id") ?? text(json, "id"),
     videoId: json?.video_id ?? null,
-    state,
+    state: json?.state ?? CutState.WAITING,
     source: text(json, "source"),
     presetId: text(json, "preset_id"),
     prompt: text(json, "prompt"),
@@ -247,11 +273,16 @@ export function parseCutRequest(json) {
     stage: text(json, "stage"),
     cut: parseCut(json?.cut),
   };
-  request.isWaiting = () => state === CutState.WAITING;
-  request.isBuilding = () => state === CutState.BUILDING || state === CutState.NEEDS_TRANSCRIPT;
-  request.isDone = () => state === CutState.READY || state === CutState.FAILED || state === "dismissed";
-  request.isReady = () => state === CutState.READY && Boolean(request.cut);
   return request;
+}
+
+export function reviveCutRequest(request) {
+  return attachHelpers(request, {
+    isWaiting: () => request.state === CutState.WAITING,
+    isBuilding: () => request.state === CutState.BUILDING || request.state === CutState.NEEDS_TRANSCRIPT,
+    isDone: () => request.state === CutState.READY || request.state === CutState.FAILED || request.state === "dismissed",
+    isReady: () => request.state === CutState.READY && Boolean(request.cut),
+  });
 }
 
 function parseProcessedCaptions(list) {
@@ -266,7 +297,6 @@ function parseProcessedCaptions(list) {
       error: text(json, "error"),
       createdAt: Number(json.created_at) || 0,
       updatedAt: Number(json.updated_at) || 0,
-      isReady: () => json.state === "ready",
     }));
 }
 
@@ -282,7 +312,6 @@ function parseProcessedCuts(list) {
       error: text(json, "error"),
       createdAt: Number(json.created_at) || 0,
       updatedAt: Number(json.updated_at) || 0,
-      isReady: () => json.state === CutState.READY,
     }));
 }
 
@@ -299,6 +328,40 @@ export function parseProcessed(json) {
       cuts: parseProcessedCuts(item.cuts),
     }));
   return { videos };
+}
+
+export function reviveProcessed(processed) {
+  for (const video of processed.videos) {
+    for (const caption of video.captions) {
+      attachHelpers(caption, { isReady: () => caption.state === "ready" });
+    }
+    for (const cut of video.cuts) {
+      attachHelpers(cut, { isReady: () => cut.state === CutState.READY });
+    }
+  }
+  return processed;
+}
+
+export function reviveVerdict(verdict) {
+  return attachHelpers(verdict, { isReady: () => verdict.status === "ready" });
+}
+
+const REVIVERS = {
+  assess: (values) => values.map(reviveVerdict),
+  summary: reviveAnswer,
+  insight: reviveAnswer,
+  transcribe: reviveTranscript,
+  transcript: reviveTranscript,
+  "prompts.list": revivePrompts,
+  "captions.status": reviveCaptions,
+  "cuts.list": reviveCuts,
+  "cuts.request": reviveCutRequest,
+  "cuts.follow": reviveCutRequest,
+  processed: reviveProcessed,
+};
+
+export function revive(type, value) {
+  return REVIVERS[type]?.(value) ?? value;
 }
 
 export { UNKNOWN };
