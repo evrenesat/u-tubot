@@ -112,6 +112,9 @@ CREATE TABLE IF NOT EXISTS cuts(
   source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
   release_duration_ms INTEGER, mode TEXT NOT NULL DEFAULT 'quick');
 CREATE INDEX IF NOT EXISTS cuts_video ON cuts(video_id);
+CREATE TABLE IF NOT EXISTS cut_channel_modes(
+  user TEXT NOT NULL, channel_id TEXT NOT NULL, channel_name TEXT, mode TEXT NOT NULL,
+  updated_at REAL NOT NULL, PRIMARY KEY(user, channel_id));
 """
 
 JOB_COLUMNS = {
@@ -139,8 +142,26 @@ CUT_REQUEST_COLUMNS = {
     "release_key": "TEXT",
     "release_duration_ms": "INTEGER",
     "mode": "TEXT NOT NULL DEFAULT 'quick'",
+    "mode_rule": "TEXT NOT NULL DEFAULT 'request'",
+    "channel_id": "TEXT",
+    "channel_mode": "TEXT",
+    "user_mode": "TEXT",
+    "server_mode": "TEXT",
 }
 CUT_COLUMNS = dict(CUT_REQUEST_COLUMNS)
+MODE_RULE_REQUEST = "request"
+MODE_RULE_CHANNEL = "channel"
+MODE_RULE_USER = "user"
+MODE_RULE_SERVER = "server"
+MODE_RULES = (MODE_RULE_REQUEST, MODE_RULE_CHANNEL, MODE_RULE_USER, MODE_RULE_SERVER)
+MAX_CHANNEL_ID_CHARS = 64
+MAX_CHANNEL_NAME_CHARS = 120
+CUT_REQUEST_RULE_COLUMN = {
+    MODE_RULE_REQUEST: "mode",
+    MODE_RULE_CHANNEL: "channel_mode",
+    MODE_RULE_USER: "user_mode",
+    MODE_RULE_SERVER: "server_mode",
+}
 METADATA_ONLY = "metadata_only"
 
 
