@@ -1,5 +1,15 @@
 # DEVLOG
 
+## 2026-11-25 (example-config tests off the host data dir)
+
+- Problem: backend CI was red on the captions start-offset branch. The three tests that load
+  `config.example.toml` used its `data_dir` (`/var/lib/utubot`) and so read the host's `users.toml`,
+  which belongs to the service and cannot be read by the test runner.
+- `tests/conftest.py`: an `example_config` fixture loads the example with `users_path` pointed at
+  `tmp_path/users.toml`, keeping the example's declared users and defaults and touching no host file.
+- `test_glance.py`, `test_prompts_summary.py`, `test_security.py`: use the fixture; `test_security`
+  also asserts the example's `data_dir` stays and the users path is the temp file.
+
 ## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
 
 - Problem: only built-in presets had a target length, so the owner's saved "half" preset kept 75 % and 82 %.

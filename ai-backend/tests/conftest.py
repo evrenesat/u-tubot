@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+from pathlib import Path
 
 import httpx
 import pytest
@@ -152,6 +153,16 @@ def mock_llm() -> MockOpenAI:
 @pytest.fixture
 def fetcher() -> FakeFetcher:
     return FakeFetcher()
+
+
+@pytest.fixture
+def example_config(tmp_path, monkeypatch) -> Config:
+    """`config.example.toml` with its `users.toml` kept out of the host's data directory."""
+    from utubot.config import load_config
+
+    users_file = tmp_path / "users.toml"
+    monkeypatch.setattr(Config, "users_path", property(lambda self: users_file))
+    return load_config(Path(__file__).parent.parent / "config.example.toml")
 
 
 @pytest.fixture
