@@ -22,7 +22,7 @@ public final class UtubotCutWatcher {
     public static final int REQUEST_WAIT_MS = 10_000;
     /** The first check after a start does not wait: it learns the state the request had while the app was closed */
     public static final int STATUS_WAIT_MS = 1;
-    public static final int MAX_ERRORS = 5;
+    private static final long MAX_RETRY_MS = 30_000;
 
     public interface Fetcher {
         void fetchRequest(String requestId, int waitMs, Callback callback);
@@ -181,12 +181,13 @@ public final class UtubotCutWatcher {
     }
 
     private void onFailure(Watch watch) {
-        if (++watch.errors >= MAX_ERRORS || isOld(watch.entry)) {
+        // A few network errors do not lose the order: it is kept until the cut is ready, failed or old
+        if (isOld(watch.entry)) {
             finish(watch);
             return;
         }
 
-        schedule(watch, retryDelayMs(watch.errors));
+        schedule(watch, retryDelayMs(++watch.errors));
     }
 
     private void schedule(Watch watch, long delayMs) {
@@ -212,7 +213,8 @@ public final class UtubotCutWatcher {
     }
 
     /**
-     * A moment between the retries of a long poll: 1 s, 2 s, then 5 s, so a network drop does not burn the error budget at once
+     * A moment between the retries of a long poll: 1 s, 2 s, 5 s, 10 s, then at most 30 s. A network drop must neither hammer the
+     * backend nor lose an order that is still being built.
      */
     private static long retryDelayMs(int errors) {
         switch (errors) {
@@ -220,8 +222,12 @@ public final class UtubotCutWatcher {
                 return 1_000;
             case 2:
                 return 2_000;
-            default:
+            case 3:
                 return 5_000;
+            case 4:
+                return 10_000;
+            default:
+                return MAX_RETRY_MS;
         }
     }
 

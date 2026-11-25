@@ -144,10 +144,15 @@
 - The first check after a start does not wait: a cut that became ready while the app was closed is left to the cut picker and the
   Processed section, while a failed build reports its reason (at the next screen if there was none). Dismissed, ready and failed
   requests leave the list, anything over 30 minutes is old, and a backend or token change clears it. A cut of the video that is
-  playing stays with the player's own follower.
+  playing stays with the player's own follower only when that follower follows the same request (or the cut is applied or queued);
+  a request it never learned, like one ordered from the cut sheet with no preset, still asks.
+- A network error no longer loses an order: the watcher retries (1 s, 2 s, 5 s, 10 s, then every 30 s) until the cut is ready,
+  failed or older than 30 minutes.
 - Tests: `UtubotCutWaitlistTest` (persistence, one row per request, cap, clear, bad stored rows), `UtubotCutWatcherTest` (ordered
-  or startup check, closed-app ready, failure reason, dismissed, old, retries) and `UtubotCutPromptQueueTest` (Yes opens, No
-  stays, several cuts one at a time, a blocked question retried, no double answer). Browser extension: parity matrix row 34.
+  or startup check, closed-app ready, failure reason, dismissed, old, errors kept until ready), `UtubotCutNoticesTest` (playing
+  video and follower ownership, TV-created request, popup text, Yes/No/Back, failure at the next screen), `UtubotScreenTest` (any
+  screen, dialog over player) and `UtubotCutPromptQueueTest` (Yes opens, No stays, several cuts one at a time, a blocked question
+  retried, no double answer). Browser extension: parity matrix row 34.
 - Verified with JDK 25: the new tests and `:common:testStutubotDebugUnitTest` (all u·tubot tests), plus the TV module build.
 
 ## 2026-11-24 (director's cuts for long videos, issue 95)

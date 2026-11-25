@@ -394,6 +394,28 @@ public class UtubotCutControllerTest {
     }
 
     /**
+     * A cut the player has already applied or is waiting to apply belongs to the player: the app-wide notice must not ask again
+     */
+    @Test
+    public void hasCut_isTrueForAnAppliedOrWaitingCut() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+
+        assertFalse(mController.hasCut(cut));
+
+        assertTrue(mController.toggle(cut));
+        assertTrue(mController.hasCut(cut));
+
+        assertTrue(mController.toggle(cut));
+        mController.open(video(VIDEO), 0);
+        assertTrue(mController.toggle(cut));
+        assertFalse(mController.isApplied(cut));
+        assertTrue(mController.hasCut(cut));
+    }
+
+    /**
      * A finished playback leaves no applied cut: a picker of the same video from a list carries it to the reopened video instead
      * of turning a cut off that isn't playing
      */

@@ -341,6 +341,13 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     }
 
     /**
+     * Whether this cut is already applied or waiting for the length of the video that plays
+     */
+    public boolean hasCut(Cut cut) {
+        return isApplied(cut) || isQueued(cut);
+    }
+
+    /**
      * The video is the one this player really has started: a remembered video of a closed player or a released engine is not playing
      */
     public boolean isPlaying(@Nullable String videoId) {

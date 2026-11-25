@@ -172,19 +172,41 @@ public class UtubotCutWatcherTest {
     }
 
     @Test
-    public void tooManyErrors_giveUp() {
-        mWatcher.watch(entry(0));
+    public void errorsDoNotLoseTheOrder_untilItIsReady() {
+        Entry entry = entry(0);
+        mWatcher.watch(entry);
+        mWaitlist.add(entry);
 
-        for (int i = 0; i < UtubotCutWatcher.MAX_ERRORS; i++) {
+        for (int i = 0; i < 10; i++) {
             mAnswers.add(new IOException("down"));
         }
+
+        mScheduler.advance(80_000);
+
+        assertTrue(mReady.isEmpty());
+        assertTrue(mFailed.isEmpty());
+        assertEquals(1, mWaitlist.entries().size());
+        assertEquals(1, mScheduler.pending());
+
+        mAnswers.clear();
+        mAnswers.add(request("ready"));
+        mScheduler.advance(DRAIN_MS);
+
+        assertEquals(Collections.singletonList(REQUEST), mReady);
+        assertTrue(mWaitlist.entries().isEmpty());
+    }
+
+    @Test
+    public void anOldOrderStopsAfterAnError() {
+        mWatcher.watch(entry(-UtubotCutWaitlist.MAX_AGE_MS - 1));
+        mAnswers.add(new IOException("down"));
 
         mScheduler.advance(DRAIN_MS);
 
         assertTrue(mReady.isEmpty());
         assertTrue(mFailed.isEmpty());
         assertTrue(mWaitlist.entries().isEmpty());
-        assertEquals(UtubotCutWatcher.MAX_ERRORS, mFetched.size());
+        assertEquals(0, mScheduler.pending());
     }
 
     @Test

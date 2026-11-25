@@ -122,21 +122,22 @@ public final class UtubotCutNotices {
         }
     }
 
-    private void onCutReady(Entry entry, Cut cut) {
+    void onCutReady(Entry entry, Cut cut) {
         if (!UtubotScreen.isForeground()) {
             // The app was closed or in the background when the cut became ready: it stays in the picker and the Processed section
             return;
         }
 
-        if (isPlayingVideo(entry.videoId)) {
-            // The player's own follower announces and applies a cut of the video that plays (#64)
+        if (isPlayingVideo(entry.videoId) && (followsRequest(entry.requestId) || hasCut(cut))) {
+            // The player's own follower announces and applies a cut of the video that plays (#64). A request the player follows has
+            // no preset id, so only this check can tell it apart from one ordered elsewhere for the video that plays.
             return;
         }
 
         mPrompts.add(new UtubotCutPromptQueue.Item(entry, cut));
     }
 
-    private void onCutFailed(Entry entry, @Nullable String error) {
+    void onCutFailed(Entry entry, @Nullable String error) {
         String text = error != null && !error.trim().isEmpty()
                 ? mContext.getString(R.string.utubot_cut_failed, error)
                 : mContext.getString(R.string.utubot_cut_failed_plain);
@@ -148,7 +149,7 @@ public final class UtubotCutNotices {
         }
     }
 
-    private boolean presentPrompt(UtubotCutPromptQueue.Item item, UtubotCutPromptQueue.Answer answer) {
+    boolean presentPrompt(UtubotCutPromptQueue.Item item, UtubotCutPromptQueue.Answer answer) {
         Context screen = UtubotScreen.screenContext();
 
         if (screen == null || !UtubotScreen.isForeground()) {
@@ -162,12 +163,7 @@ public final class UtubotCutNotices {
             return false;
         }
 
-        String title = item.entry.title != null && !item.entry.title.trim().isEmpty()
-                ? item.entry.title.trim() : screen.getString(R.string.utubot_cut);
-        String length = UtubotCutController.formatLength(item.cut.keptMs);
-        String text = length.isEmpty()
-                ? screen.getString(R.string.utubot_cut_ready_play_no_length, title)
-                : screen.getString(R.string.utubot_cut_ready_play, title, length);
+        String text = promptText(screen, item.entry, item.cut);
 
         final boolean[] answered = {false};
         OptionItem yes = UiOptionItem.from(screen.getString(R.string.utubot_cut_play_yes), option -> {
@@ -201,11 +197,20 @@ public final class UtubotCutNotices {
         return true;
     }
 
+    static String promptText(Context screen, Entry entry, Cut cut) {
+        String title = entry.title != null && !entry.title.trim().isEmpty()
+                ? entry.title.trim() : screen.getString(R.string.utubot_cut);
+        String length = UtubotCutController.formatLength(cut.keptMs);
+
+        return length.isEmpty()
+                ? screen.getString(R.string.utubot_cut_ready_play_no_length, title)
+                : screen.getString(R.string.utubot_cut_ready_play, title, length);
+    }
+
     private void openWithCut(UtubotCutPromptQueue.Item item) {
         Context screen = UtubotScreen.screenContext();
         Context context = screen != null ? screen : mContext;
-
-        UtubotCutController controller = PlaybackPresenter.instance(context).getController(UtubotCutController.class);
+        UtubotCutController controller = cutController(context);
 
         if (controller != null) {
             controller.applyOnOpen(item.cut);
@@ -218,11 +223,29 @@ public final class UtubotCutNotices {
     }
 
     private boolean isPlayingVideo(String videoId) {
-        Context screen = UtubotScreen.screenContext();
-        Context context = screen != null ? screen : mContext;
-        UtubotCutController controller = PlaybackPresenter.instance(context).getController(UtubotCutController.class);
+        UtubotCutController controller = cutController(screenContext());
 
         return controller != null && controller.isPlaying(videoId);
+    }
+
+    private boolean followsRequest(@Nullable String requestId) {
+        return UtubotManager.instance(mContext).isFollowingCut(requestId);
+    }
+
+    private boolean hasCut(Cut cut) {
+        UtubotCutController controller = cutController(screenContext());
+
+        return controller != null && controller.hasCut(cut);
+    }
+
+    private Context screenContext() {
+        Context screen = UtubotScreen.screenContext();
+
+        return screen != null ? screen : mContext;
+    }
+
+    private UtubotCutController cutController(Context context) {
+        return PlaybackPresenter.instance(context).getController(UtubotCutController.class);
     }
 
     private void schedulePromptRetry() {

@@ -803,6 +803,13 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     /**
+     * Whether the player of the video that plays follows this request (it will announce and apply its cut)
+     */
+    public synchronized boolean isFollowingCut(@Nullable String requestId) {
+        return mCutsFollower != null && mCutsFollower.isFollowing(requestId);
+    }
+
+    /**
      * The user asked for a cut of the video that plays (the menu) and the backend answered with this request
      */
     public void cutRequested(String videoId, @Nullable String requestId, @Nullable String state) {

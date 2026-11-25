@@ -218,8 +218,10 @@ so the other flavors behave as before.
   (`UtubotCutController.applyOnOpen`) and opens the video; No, or Back, only closes the question, so the screen and the playback
   position stay as they were. A ready cut found on the first check after a start (the app was closed when it finished) is not
   announced; a failed build shows its reason as a short message (at the next screen when there was none). A cut of the video that
-  plays is left to the player's own follower, so it is not asked again. The list ends with ready, failed or dismissed requests and
-  drops anything older than 30 minutes; a backend or token change clears it.
+  plays is not asked again only when the player's follower follows that same request (or the cut is already applied or queued);
+  a request the follower never learned, such as one ordered from the cut sheet with no preset id, still asks. Network errors do not
+  lose an order: it is retried (1 s, 2 s, 5 s, 10 s, then every 30 s) until it is ready, failed or older than 30 minutes. Ready,
+  failed and dismissed requests leave the list, and a backend or token change clears it.
 - With the Summary view open the focus never rests on the screen under it: the first D-pad key, OK or Enter after the grid took
   the focus back restores the view's focus and is used (`UtubotKeys.actsOnFocus`).
 
