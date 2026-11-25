@@ -64,6 +64,7 @@
 ## 2026-11-25 (example-config tests off the host data dir)
 
 - Problem: backend CI was red on the captions start-offset branch. The three tests that load
+- Problem: backend CI was red on the captions seam-dedupe branch. The three tests that load
   `config.example.toml` used its `data_dir` (`/var/lib/utubot`) and so read the host's `users.toml`,
   which belongs to the service and cannot be read by the test runner.
 - `tests/conftest.py`: an `example_config` fixture loads the example with `users_path` pointed at
@@ -100,6 +101,8 @@
    the end of the previous overlapping row, so YouTube's automatic rolling windows no longer show
    the repeated tail twice. Word comparison ignores case and punctuation; a repeat after a gap is
    kept. Exact duplicate rows are still dropped. Tests in `tests/test_align.py`.
+- Verified: `uv run ruff check`, `uv run ruff format --check`, `uv run pytest -q` (1137 passed).
+
 ## 2026-11-24 (captions seam dedupe by word time, u-tubot #51)
 
 - `chunking.dedupe_words` now decides a seam repeat by bare token and start time (`DEDUPE_START_S`, 0.3 s) instead of needing two
