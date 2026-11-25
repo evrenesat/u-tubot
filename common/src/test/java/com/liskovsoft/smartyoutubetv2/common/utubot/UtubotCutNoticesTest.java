@@ -32,6 +32,7 @@ import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -167,6 +168,22 @@ public class UtubotCutNoticesTest {
         assertNull(mDialog.text);
     }
 
+    /**
+     * A cut the player's follower offered with Apply (the request was cleared when it became ready) is not asked again: the notice
+     * must read the offer as the player already handling the cut, not a second, waiting question.
+     */
+    @Test
+    public void aReadyCutThePlayerIsOffering_isNotAsked() throws Exception {
+        foreground();
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut();
+        setField(mController, "mOfferingCut", cut);
+
+        mNotices.onCutReady(entry(), cut);
+
+        assertNull(mDialog.text);
+    }
+
     @Test
     public void aCutFoundWhileTheAppIsInTheBackground_isNotAskedAtTheNextScreen() {
         mNotices.onCutReady(entry(), cut());
@@ -226,6 +243,46 @@ public class UtubotCutNoticesTest {
         assertFalse(answer.played);
         assertTrue(answer.stayed);
         assertFalse(mDialog.shown);
+    }
+
+    /**
+     * Yes goes through the real queue: the controller carries the cut to the open (applyOnOpen) and the presenter opens the cut's video
+     * with its title, not a list add that would hide a null controller/context regression in openWithCut.
+     */
+    @Test
+    public void theYesPathCarriesTheCutThroughTheRealOpen() throws Exception {
+        foreground();
+        mController.open(video(OTHER_VIDEO), 240_000); // another video plays: the ready cut is asked over it
+
+        Cut cut = cut();
+        mNotices.onCutReady(entry(), cut);
+
+        mDialog.items.get(0).onSelect(true); // Yes, through the real queue and openWithCut
+
+        assertTrue(promptQueue().isEmpty());
+        assertSame(cut, mController.appliedOnOpen());
+
+        Video opened = mPresenter.getVideo();
+        assertNotNull(opened);
+        assertEquals(VIDEO, opened.videoId);
+        assertEquals(TITLE, opened.title);
+    }
+
+    /**
+     * A ready cut the player took over (applied) after the question was kept is dropped at the next try, not shown again over the cut
+     * the player already has.
+     */
+    @Test
+    public void aCutThePlayerGainedAfterItWasKept_isDroppedAtTheNextTry() throws Exception {
+        foreground();
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut();
+        assertTrue(mController.toggle(cut)); // the player applies the cut after the question was kept
+
+        promptQueue().add(new Item(entry(), cut));
+
+        assertNull(mDialog.text); // dropped: the player already has the cut
+        assertTrue(promptQueue().isEmpty());
     }
 
     @Test
@@ -289,6 +346,10 @@ public class UtubotCutNoticesTest {
         setField(mManager, "mCutsFollower", follower);
     }
 
+    private UtubotCutPromptQueue promptQueue() throws Exception {
+        return (UtubotCutPromptQueue) getField(mNotices, "mPrompts");
+    }
+
     private static Entry entry() {
         return new Entry(REQUEST, VIDEO, TITLE, 0);
     }
@@ -311,16 +372,34 @@ public class UtubotCutNoticesTest {
     }
 
     private static Object getField(Object target, String name) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
+        for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
 
-        return field.get(target);
+                return field.get(target);
+            } catch (NoSuchFieldException missing) {
+                // The field is higher up the hierarchy: keep looking
+            }
+        }
+
+        throw new NoSuchFieldException(name);
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
+        for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                field.set(target, value);
+
+                return;
+            } catch (NoSuchFieldException missing) {
+                // The field is higher up the hierarchy: keep looking
+            }
+        }
+
+        throw new NoSuchFieldException(name);
     }
 
     private static Object getStatic(Class<?> type, String name) throws Exception {
@@ -423,10 +502,21 @@ public class UtubotCutNoticesTest {
     private static final class TestCutController extends UtubotCutController {
         private Video mVideo;
         private PlaybackView mPlayer;
+        private Cut mAppliedOnOpen;
 
         void open(Video video, long durationMs) {
             mVideo = video;
             mPlayer = player(durationMs);
+        }
+
+        @Override
+        public void applyOnOpen(Cut cut) {
+            mAppliedOnOpen = cut;
+            super.applyOnOpen(cut);
+        }
+
+        Cut appliedOnOpen() {
+            return mAppliedOnOpen;
         }
 
         @Override

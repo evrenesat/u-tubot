@@ -128,13 +128,27 @@ public final class UtubotCutNotices {
             return;
         }
 
-        if (isPlayingVideo(entry.videoId) && (followsRequest(entry.requestId) || hasCut(cut))) {
-            // The player's own follower announces and applies a cut of the video that plays (#64). A request the player follows has
-            // no preset id, so only this check can tell it apart from one ordered elsewhere for the video that plays.
+        if (playerTookOverReadyCut(entry, cut)) {
+            // The player's own follower announces and applies (or offers) a cut of the video that plays (#64). It follows the request
+            // the moment the video opens and clears it when the cut is ready, so "follows" alone would miss a cut the player already
+            // took over; a request the player follows has no preset id, so only this check can tell it apart from one ordered elsewhere.
             return;
         }
 
         mPrompts.add(new UtubotCutPromptQueue.Item(entry, cut));
+    }
+
+    /**
+     * The player is handling this ready cut of the video that plays, so the app-wide notice must not also ask: the player's follower
+     * still owns the request (across an engine release, before it answers), or it has already applied, queued, or offered the cut.
+     */
+    private boolean playerTookOverReadyCut(Entry entry, Cut cut) {
+        if (followsRequest(entry.requestId)) {
+            return true;
+        }
+
+        UtubotCutController controller = cutController(screenContext());
+        return controller != null && controller.isHandlingReadyCut(cut);
     }
 
     void onCutFailed(Entry entry, @Nullable String error) {
@@ -154,6 +168,13 @@ public final class UtubotCutNotices {
 
         if (screen == null || !UtubotScreen.isForeground()) {
             return false; // nothing is up: onScreenAvailable tries again
+        }
+
+        if (playerTookOverReadyCut(item.entry, item.cut)) {
+            // The player took over this cut (applied, queued, or offering) since it was kept: drop the question instead of reopening
+            // the same video and discarding the cut the player already has. Resolved as "stay", then the next ready cut is tried.
+            answer.stay();
+            return true;
         }
 
         AppDialogPresenter dialog = AppDialogPresenter.instance(screen);
@@ -222,20 +243,8 @@ public final class UtubotCutNotices {
         PlaybackPresenter.instance(context).openVideo(video);
     }
 
-    private boolean isPlayingVideo(String videoId) {
-        UtubotCutController controller = cutController(screenContext());
-
-        return controller != null && controller.isPlaying(videoId);
-    }
-
     private boolean followsRequest(@Nullable String requestId) {
         return UtubotManager.instance(mContext).isFollowingCut(requestId);
-    }
-
-    private boolean hasCut(Cut cut) {
-        UtubotCutController controller = cutController(screenContext());
-
-        return controller != null && controller.hasCut(cut);
     }
 
     private Context screenContext() {
