@@ -63,7 +63,8 @@ public final class UtubotMenu {
         boolean isPanelOn = settings.isSummaryPanelEnabled();
         dialog.appendSingleButton(UiOptionItem.from(context.getString(isPanelOn ? R.string.utubot_panel_on : R.string.utubot_panel_off),
                 option -> settings.setSummaryPanelEnabled(!isPanelOn)));
-        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_prepare_captions), option -> prepareCaptions(context, video)));
+        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_prepare_captions), option -> prepareCaptions(context, video, false)));
+        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_force_captions), option -> prepareCaptions(context, video, true)));
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_menu), option -> showCuts(context, video)));
     }
 
@@ -155,9 +156,9 @@ public final class UtubotMenu {
         return hours > 0 ? String.format(Locale.ROOT, "%d:%02d:%02d", hours, minutes, rest) : String.format(Locale.ROOT, "%d:%02d", minutes, rest);
     }
 
-    private static void prepareCaptions(Context context, Video video) {
+    private static void prepareCaptions(Context context, Video video, boolean force) {
         RxHelper.disposeActions(sAction);
-        sAction = UtubotManager.instance(context).prepareCaptionsObserve(video.videoId)
+        sAction = UtubotManager.instance(context).prepareCaptionsObserve(video.videoId, force)
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(status -> {
                             MessageHelpers.showMessage(context, context.getString(R.string.utubot_captions_status, status));

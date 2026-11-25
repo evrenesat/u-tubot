@@ -70,6 +70,21 @@
   `tmp_path/users.toml`, keeping the example's declared users and defaults and touching no host file.
 - `test_glance.py`, `test_prompts_summary.py`, `test_security.py`: use the fixture; `test_security`
   also asserts the example's `data_dir` stays and the users path is the temp file.
+## 2026-11-25 (forced ASR from the audio and the captions gate, issue 107 r0)
+
+- Default stays YouTube captions. `POST /v1/videos/ID/transcribe?force=true` and `"force": true` on
+  `POST /v1/videos/ID/captions` skip the caption recheck (`caption_recheck` says `skipped` / `forced`) and build from the audio even when
+  captions exist. A forced transcript replaces a stored caption transcript (`TranscriptService.store_asr(replace=...)`); an ASR
+  transcript already stored is still `ready`, and a queued job is promoted (`jobs.force_job`) instead of adding a second one.
+- `jobs.force` (additive column, default 0) keeps the request on the job, so a retry stays forced. The transcript endpoint reports
+  `transcribing` while a forced job runs although the old captions are still stored.
+- Web UI: "Ignore YouTube captions" switch in *Transcribe a video*; TV: "Transcribe from audio" in the video menu.
+- `captions-gate` (offline) compares a candidate `captions-score --json` with YouTube auto captions/a baseline: `hit >= gate_hit_min`
+  and `gate_hit_margin` over the baseline, `loose` not below and `>= gate_loose_min`, `words.within_s >= gate_words_within_min`, at most
+  `gate_max_short_cues` cues under `gate_short_cue_s`, and a recorded meaning score not below the baseline. Thresholds are `[captions]
+  gate_*`. The Hindi fixture and its recorded meaning evaluation are owner work; no fixture is checked in here.
+- Tests: forced transcript over existing captions, force promotion, forced caption job skips YouTube (`test_captions.py`,
+  `test_transcript_flow.py`), gate pass/fail/missing meaning (`test_caption_gate.py`).
 
 ## 2026-11-25 (example-config tests off the host data dir, backend CI red)
 

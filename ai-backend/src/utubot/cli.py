@@ -243,6 +243,35 @@ def cmd_captions_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_captions_gate(args: argparse.Namespace) -> int:
+    """Compare two score reports (candidate and baseline) against the release thresholds."""
+    from .captions.gate import compare
+
+    cfg = load_config(args.config)
+    try:
+        with open(args.candidate, encoding="utf-8") as fh:
+            candidate = json.load(fh)
+        with open(args.baseline, encoding="utf-8") as fh:
+            baseline = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"captions-gate failed: {exc}", file=sys.stderr)
+        return 1
+    result = compare(candidate, baseline, cfg.captions)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print("PASS" if result["passed"] else "FAIL")
+        for line in result["failures"]:
+            print(f"  {line}")
+        cand = result["candidate"]
+        base = result["baseline"]
+        print(
+            f"  candidate hit {cand['hit']:.3f} loose {cand['loose']:.3f} words {cand['words_within']}"
+        )
+        print(f"  baseline  hit {base['hit']:.3f} loose {base['loose']:.3f}")
+    return 0 if result["passed"] else 1
+
+
 def cmd_captions_regen(args: argparse.Namespace) -> int:
     """Queue background captions jobs for tracks made before the current timing scheme."""
     from .captions.regen import print_items, regen
@@ -410,6 +439,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     score.add_argument("--json", action="store_true", help="print JSON")
     score.set_defaults(func=cmd_captions_score)
+    gate = sub.add_parser(
+        "captions-gate",
+        help=(
+            "compare two captions-score JSON reports (candidate vs baseline) against the release"
+            " thresholds (offline: reads files only)"
+        ),
+    )
+    gate.add_argument("--candidate", required=True, help="captions-score --json of the new track")
+    gate.add_argument("--baseline", required=True, help="captions-score --json of the baseline")
+    gate.add_argument("--json", action="store_true", help="print JSON")
+    gate.set_defaults(func=cmd_captions_gate)
     regen = sub.add_parser(
         "captions-regen",
         help="queue captions jobs for tracks made before the current timing scheme",

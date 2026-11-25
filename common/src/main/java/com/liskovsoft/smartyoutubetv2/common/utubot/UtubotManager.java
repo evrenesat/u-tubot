@@ -767,7 +767,11 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     public Observable<String> prepareCaptionsObserve(String videoId) {
-        return Observable.fromCallable(() -> newClient().prepareCaptions(videoId)).subscribeOn(Schedulers.io());
+        return prepareCaptionsObserve(videoId, false);
+    }
+
+    public Observable<String> prepareCaptionsObserve(String videoId, boolean force) {
+        return Observable.fromCallable(() -> newClient().prepareCaptions(videoId, force)).subscribeOn(Schedulers.io());
     }
 
     //endregion

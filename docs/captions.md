@@ -115,6 +115,12 @@ The spoken language is the transcript's with a YouTube track suffix (`-orig`, `-
 language the engine answered in and the Latin share of its words, and `reference_language_ok` is false (the command prints a warning) when any window answered in another language:
 the onsets of such a reference say nothing about the speech. The JSON also has a `words` block (`null` without cached engine words): the video's cached raw engine words compared token by token with the
 windows' words (`matched`, `matched_share`, `median_s`, `p10_s`, `p90_s`, `within_s` within `sync_late_s`). It checks the engine against itself with different windowing (chunk seams, long-chunk drift), not a systematic bias.
+`utubot captions-gate --candidate REPORT.json --baseline REPORT.json [--json]` compares two `captions-score --json` reports (the
+new track and YouTube's automatic captions, or another engine's track) and fails unless the candidate clears `captions.gate_hit_min`
+(0.60), is `gate_hit_margin` (0.20) over the baseline's `hit`, keeps `loose` at or above the baseline and `gate_loose_min` (0.85), has
+`words.within_s` at least `gate_words_within_min` (0.85), has at most `gate_max_short_cues` (2) cues under `gate_short_cue_s` (0.7 s),
+and its recorded `meaning` score (an evaluation fixture; no model runs here) is not below the baseline's. The command reads files only
+and never touches YouTube or a model; the thresholds are `captions.gate_*` in the config.
 `utubot captions-regen [--video ID]... [--legacy] [--limit N] [--dry-run]` queues a background captions job for each stored track
 whose `timing_version` is missing or older than the current scheme (`--legacy`: only tracks that have none), at most
 `regen_limit_default` (20) per run unless `--limit` says otherwise; a track is not listed when a newer track of the video already has
@@ -382,7 +388,9 @@ only). The backend never summarises such a video from its title. What happens in
   claimed before background jobs, uses the gate and the engines at interactive priority, and may use any engine. A side-panel job is a
   background job; when the user then opens the video, it is promoted. Background-only engines never take interactive jobs.
 - **Explicit.** `POST /v1/videos/ID/transcribe` queues a job regardless of the policy (one per user and video; asking again returns
-  the same job).
+  the same job). A forced job (`?force=true`, and `"force": true` for `POST /v1/videos/ID/captions`, the TV's "Transcribe from audio")
+  skips the caption recheck and builds from the audio even when YouTube captions exist; a forced transcript replaces a stored caption
+  transcript (an existing ASR transcript is still `ready`).
 - **YouTube limits the caption API.** When the caption class is cooling (or its probe is out, see
   [server.md](server.md#youtube-limits-and-the-transcription-fallback)), or a caption fetch has just been refused (429, 403), and the
   `media` class is healthy and an engine can take the video, the request is treated like "no captions": the policy above decides between

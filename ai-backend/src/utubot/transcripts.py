@@ -522,37 +522,41 @@ class TranscriptService:
         model: str | None = None,
         segments: list[tuple[float, float, str]] | None = None,
         job_id: str | None = None,
+        replace: bool = False,
     ) -> bool:
         """Keep an ASR transcript unless the video has fresh stored YouTube captions.
 
         A transcript stored first stays: ASR does not replace usable captions, and captions fetched
         later do not replace ASR (`_fetch`). Captions older than `cache_ttl_s` are no longer used
-        (`cached`), so the ASR transcript replaces them. Returns False when nothing was stored.
+        (`cached`), so the ASR transcript replaces them. A `replace` transcript was asked for
+        explicitly and overwrites anything stored. Returns False when nothing was stored.
         `segments` are `(start_s, end_s, text)` rows kept next to the text with the engine and
         model that produced them; `job_id` is the job that made it (for its delivery log).
         """
         now = time.time()
+        params = [
+            video_id,
+            lang,
+            SOURCE_ASR,
+            text,
+            now,
+            engine,
+            model,
+            json.dumps(segments) if segments else None,
+            job_id,
+        ]
+        where = ""
+        if not replace:
+            where = " WHERE transcripts.source != ? OR transcripts.fetched_at < ?"
+            params += [SOURCE_CAPTIONS, now - self.cfg.transcripts.cache_ttl_s]
         stored = self.db.execute_rc(
             "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,engine,model,segments,job_id)"
             " VALUES(?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
             " text=excluded.text, fetched_at=excluded.fetched_at, engine=excluded.engine,"
             " model=excluded.model, segments=excluded.segments, job_id=excluded.job_id,"
-            " words=NULL, caption_kind=NULL"
-            " WHERE transcripts.source != ? OR transcripts.fetched_at < ?",
-            [
-                video_id,
-                lang,
-                SOURCE_ASR,
-                text,
-                now,
-                engine,
-                model,
-                json.dumps(segments) if segments else None,
-                job_id,
-                SOURCE_CAPTIONS,
-                now - self.cfg.transcripts.cache_ttl_s,
-            ],
+            " words=NULL, caption_kind=NULL" + where,
+            params,
         )
         if stored:
             self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])

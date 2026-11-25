@@ -901,7 +901,7 @@ def create_app(
         translate_to = resolve_translate_to(body.translate_to, default_target)
         if translate_to and not LANG_RE.match(translate_to):
             raise HTTPException(400, "invalid language code")
-        job = svc.jobs.enqueue(user.name, video_id, body.lang, translate_to)
+        job = svc.jobs.enqueue(user.name, video_id, body.lang, translate_to, force=body.force)
         return {"status": job["status"], "job_id": job["id"], "eta_s": None}
 
     @app.get("/v1/videos/{video_id}/captions")
@@ -926,12 +926,13 @@ def create_app(
         request: Request,
         video_id: str,
         meta: QueryMeta = Depends(qmeta),
+        force: bool = False,
         user: UserConfig = Depends(current_user),
     ):
         check_video_id(video_id)
         mark_origin(request, user)
         try:
-            return svc.transcription.request(user.name, video_id, meta.as_dict())
+            return svc.transcription.request(user.name, video_id, meta.as_dict(), force=force)
         except TranscribeRefused as exc:
             raise HTTPException(exc.status, exc.message) from exc
 

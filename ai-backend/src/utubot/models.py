@@ -61,6 +61,7 @@ class CaptionsRequest(BaseModel):
 
     lang: str = "auto"
     translate_to: str | None = None
+    force: bool = False
 
 
 class CutCreateRequest(BaseModel):

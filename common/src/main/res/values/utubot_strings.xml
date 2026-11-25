@@ -66,6 +66,7 @@
     <string name="utubot_panel_off">Summary panel: off</string>
     <string name="utubot_panel_toggle">Summary panel</string>
     <string name="utubot_prepare_captions">Prepare HQ captions</string>
+    <string name="utubot_force_captions">Transcribe from audio</string>
     <string name="utubot_captions_status">HQ captions: %s</string>
     <string name="utubot_captions_failed">HQ captions failed: %s</string>
     <string name="utubot_captions_ready">u·tubot captions ready</string>

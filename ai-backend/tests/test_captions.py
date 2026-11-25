@@ -560,3 +560,18 @@ async def test_translate_empty_item_counts_as_failed(env):
     _translate_with(env, behave)
     ev = await _translated(env, _plain_cues(3))
     assert ev["detail"]["split"] >= 1 and ev["detail"]["untranslated"] == 0
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="ffmpeg missing")
+async def test_forced_caption_job_skips_youtube_captions(env):
+    env.fetcher.text = "[00:00] YouTube words here. " * 5
+    started = await env.client.post(
+        f"/v1/videos/{VID}/captions", json={"lang": "auto", "force": True}
+    )
+    assert started.json()["status"] == "queued"
+    job_id = started.json()["job_id"]
+    assert env.svc.db.one("SELECT force FROM jobs WHERE id=?", [job_id])["force"] == 1
+    body = await wait_status(env.client, {"ready", "failed"})
+    assert body["status"] == "ready", body
+    assert env.fetcher.calls == []
+    assert "Hello there." in (await env.client.get(body["tracks"][0]["url"])).text

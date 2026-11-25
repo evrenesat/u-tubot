@@ -102,6 +102,7 @@ class JobQueue:
         lang: str,
         translate_to: str | None,
         trigger: dict[str, Any] | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         row = self.db.one(
             "SELECT * FROM jobs WHERE kind=? AND video_id=? AND lang=?"
@@ -110,9 +111,16 @@ class JobQueue:
             [KIND_CAPTIONS, video_id, lang, translate_to or ""],
         )
         if row:
-            return dict(row)
+            return self.force_job(row["id"]) if force and not row["force"] else dict(row)
         return self._insert(
-            user, video_id, KIND_CAPTIONS, lang, translate_to, None, trigger=trigger
+            user,
+            video_id,
+            KIND_CAPTIONS,
+            lang,
+            translate_to,
+            None,
+            trigger=trigger,
+            force=force,
         )
 
     def find_active_transcript(self, user: str, video_id: str) -> dict[str, Any] | None:
@@ -139,17 +147,33 @@ class JobQueue:
         title: str | None,
         priority: int = BACKGROUND,
         trigger: dict[str, Any] | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Queue an ASR transcript; the same user asking again gets the job already queued.
 
         `INTERACTIVE` jobs (someone is waiting on the transcript) are claimed before background ones.
+        A `force` request turns a queued or running job into a forced one.
         """
         existing = self.find_active_transcript(user, video_id)
         if existing is not None:
-            return existing
+            return self.force_job(existing["id"]) if force and not existing["force"] else existing
         return self._insert(
-            user, video_id, KIND_TRANSCRIPT, LANG_AUTO, None, title, priority, trigger
+            user,
+            video_id,
+            KIND_TRANSCRIPT,
+            LANG_AUTO,
+            None,
+            title,
+            priority,
+            trigger,
+            force=force,
         )
+
+    def force_job(self, job_id: str) -> dict[str, Any]:
+        """Mark an active job as forced: it builds from the audio instead of using captions."""
+        self.db.execute("UPDATE jobs SET force=1, updated_at=? WHERE id=?", [time.time(), job_id])
+        self._wake.set()
+        return dict(self.db.one("SELECT * FROM jobs WHERE id=?", [job_id]))
 
     def promote_transcript(self, video_id: str) -> None:
         """Someone now waits on this video's transcript: queued work goes first, a running download too."""
@@ -189,13 +213,26 @@ class JobQueue:
         title: str | None,
         priority: int = BACKGROUND,
         trigger: dict[str, Any] | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         job_id = uuid.uuid4().hex[:12]
         now = time.time()
         self.db.execute(
             "INSERT INTO jobs(id,user,video_id,lang,translate_to,status,progress,created_at,"
-            "updated_at,kind,title,priority) VALUES(?,?,?,?,?,'queued',0,?,?,?,?,?)",
-            [job_id, user, video_id, lang, translate_to, now, now, kind, title, priority],
+            "updated_at,kind,title,priority,force) VALUES(?,?,?,?,?,'queued',0,?,?,?,?,?,?)",
+            [
+                job_id,
+                user,
+                video_id,
+                lang,
+                translate_to,
+                now,
+                now,
+                kind,
+                title,
+                priority,
+                int(force),
+            ],
         )
         origin = events.current_origin()
         self.events.record(
@@ -213,6 +250,7 @@ class JobQueue:
                 "title": title,
                 "lang": lang,
                 "translate_to": translate_to,
+                **({"force": True} if force else {}),
             },
             ts=now,
         )
@@ -229,7 +267,8 @@ class JobQueue:
     def transcript_job(self, video_id: str) -> dict[str, Any] | None:
         """The active ASR transcript job for a video, else its most recent failed one (if newest)."""
         row = self.db.one(
-            "SELECT id, status, progress, error, updated_at, priority FROM jobs WHERE kind=? AND video_id=?"
+            "SELECT id, status, progress, error, updated_at, priority, force"
+            " FROM jobs WHERE kind=? AND video_id=?"
             " ORDER BY (status IN ('queued','running')) DESC, created_at DESC LIMIT 1",
             [KIND_TRANSCRIPT, video_id],
         )
@@ -507,6 +546,21 @@ class JobQueue:
         video_id = job["video_id"]
         priority = job["priority"]
         gate = self.pipeline.gate
+        if job["force"]:
+            events.emit(
+                events.CAPTION_RECHECK,
+                events.SKIPPED,
+                reason="forced",
+                message="The user asked for the audio: YouTube captions were not used.",
+            )
+            await self.pipeline.run(
+                video_id,
+                job["lang"],
+                job["translate_to"],
+                lambda f: self._set_progress(job["id"], f),
+                priority,
+            )
+            return
         check = (
             gate.interactive_ok(*FETCH_CLASSES)
             if priority == INTERACTIVE
@@ -626,12 +680,20 @@ class JobQueue:
         video_id = job["video_id"]
         priority = job["priority"]
         gate = self.pipeline.gate
+        forced = bool(job["force"])
         check = (
             gate.interactive_ok(*FETCH_CLASSES)
             if priority == INTERACTIVE
             else gate.healthy(*FETCH_CLASSES)
         )
-        if check:
+        if forced:
+            events.emit(
+                events.CAPTION_RECHECK,
+                events.SKIPPED,
+                reason="forced",
+                message="The user asked for the audio: YouTube captions were not used.",
+            )
+        elif check:
             if await self._recheck_captions(video_id, priority):
                 return
         else:
@@ -656,6 +718,7 @@ class JobQueue:
             model=out.model,
             segments=out.segment_rows(),
             job_id=job["id"],
+            replace=forced,
         )
         events.emit(
             events.STORED,

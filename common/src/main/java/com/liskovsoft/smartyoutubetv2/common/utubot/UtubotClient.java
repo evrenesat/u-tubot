@@ -418,8 +418,13 @@ public class UtubotClient {
      * @return the status of the queued job: queued, running, ready or failed
      */
     public String prepareCaptions(String videoId) throws IOException {
+        return prepareCaptions(videoId, false);
+    }
+
+    public String prepareCaptions(String videoId, boolean force) throws IOException {
         return parse(() -> {
-            JSONObject body = new JSONObject().put("lang", "auto").put("translate_to", JSONObject.NULL);
+            JSONObject body = new JSONObject().put("lang", "auto").put("translate_to", JSONObject.NULL)
+                    .put("force", force);
             return new JSONObject(send(builder("/videos/" + videoId + "/captions", true).post(json(body)), 0)).optString("status", "queued");
         });
     }

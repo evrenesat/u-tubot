@@ -143,6 +143,7 @@ JOB_COLUMNS = {
     "attempts": "INTEGER NOT NULL DEFAULT 0",
     "not_before": "REAL",
     "priority": "INTEGER NOT NULL DEFAULT 1",
+    "force": "INTEGER NOT NULL DEFAULT 0",
 }
 POLICY_COLUMNS = {"version": "INTEGER NOT NULL DEFAULT 0", "updated_at": "REAL NOT NULL DEFAULT 0"}
 TRANSCRIPT_COLUMNS = {

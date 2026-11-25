@@ -207,6 +207,7 @@ async def score_track(
         "cues": len(cues),
         "first_cue_start_s": round(min(cue_starts), 3) if cue_starts else None,
         "max_cue_s": round(max((end - start for start, end, _t in cues), default=0.0), 3),
+        "short_cues": sum(1 for start, end, _t in cues if end - start < c.gate_short_cue_s),
     }
     archive = MediaArchive(cfg, db)
     entry = archive.lookup(video_id, KIND_AUDIO)

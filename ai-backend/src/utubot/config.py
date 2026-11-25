@@ -541,6 +541,13 @@ class CaptionsConfig(BaseModel):
     # `utubot captions-score` defaults
     score_windows: int = Field(default=4, ge=1)
     score_window_s: float = Field(default=120.0, gt=0)
+    # `utubot captions-gate`: a candidate track ships only when it beats the baseline on sync
+    gate_hit_min: float = 0.60
+    gate_hit_margin: float = 0.20
+    gate_loose_min: float = 0.85
+    gate_words_within_min: float = 0.85
+    gate_max_short_cues: int = Field(default=2, ge=0)
+    gate_short_cue_s: float = Field(default=0.7, gt=0)
 
     @field_validator("translate_to")
     @classmethod
