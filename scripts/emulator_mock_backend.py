@@ -57,6 +57,7 @@ DEFAULT_DELAYED_ERROR = "YouTube is slowing us down, trying again shortly"
 DEFAULT_ESTIMATE_S = 240
 DEFAULT_RETRY_AFTER_S = 4
 STATE = {"mode": "ready", "delay": 1.0, "delayed_left": 2, "progress": {}, "transcribing": set(), "message": None,
+         "reason": None, "panel_status": None,
          "estimate": DEFAULT_ESTIMATE_S, "retry_after": DEFAULT_RETRY_AFTER_S, "start_progress": 0.0}
 LOCK = threading.Lock()
 CAPTIONS = {}
@@ -75,6 +76,16 @@ CUT_MODES = [
 CUT_REQUESTS = {}
 CUT_READY = {}
 CUT_LOCK = threading.RLock()
+REQUESTS = []
+REQUEST_LOCK = threading.Lock()
+HOLD = {"path": None, "until": 0.0}
+HOLD_LOCK = threading.Lock()
+ASSESS_CONFIG = {"verdicts": {}, "delay": 0.0, "fail": 0}
+DEFAULT_PROMPT_KEY = "builtin/tldr"
+IMPORTED_SETS = {}
+PROCESSED_CONFIG = {"state": "items"}
+PORT = None
+SETUP_CONFIG = {"backend": None}
 PROMPTS = [
     ("glance", "Glance", False, True),
     ("tldr", "TL;DR", True, False),
@@ -95,11 +106,66 @@ def prompt_list():
         {"id": pid, "key": "builtin/" + pid, "label": label, "default": dflt, "panel_default": pd}
         for pid, label, dflt, pd in PROMPTS
     ]
+    sets = [{"id": "builtin", "name": "Built-in", "version": "1", "source_url": None, "prompts": prompts}]
+    sets.extend(IMPORTED_SETS.values())
     return {
-        "default": "builtin/tldr",
+        "default": DEFAULT_PROMPT_KEY,
         "panel_default": "builtin/glance",
-        "sets": [{"id": "builtin", "name": "Built-in", "version": "1", "source_url": None, "prompts": prompts}],
+        "sets": sets,
     }
+
+
+def all_prompt_keys():
+    return {prompt["key"] for prompt in prompt_list()["sets"][0]["prompts"]} | {
+        prompt["key"] for prompt_set in IMPORTED_SETS.values() for prompt in prompt_set["prompts"]
+    }
+
+
+def import_prompt_set(url):
+    parsed = urlparse(url)
+    parts = [part for part in parsed.path.split("/") if part]
+    set_id = parts[-1] if parts else "imported"
+    prompt_set = {
+        "id": set_id,
+        "name": set_id,
+        "version": "1",
+        "source_url": url,
+        "prompts": [{"id": "main", "key": f"{set_id}/main", "label": set_id, "default": False, "panel_default": False}],
+    }
+    IMPORTED_SETS[set_id] = prompt_set
+    return prompt_set
+
+
+def verdict(video):
+    video_id = video["video_id"]
+    custom = ASSESS_CONFIG["verdicts"].get(video_id)
+    if custom is None:
+        return {"video_id": video_id, "status": "ready", "action": "none", "mark_label": None, "flags": [],
+                "title_question": None, "answer_short": None, "insight_ready": False, "captions_ready": False}
+    return {"video_id": video_id, "status": custom.get("status", "ready"), "action": custom.get("action", "none"),
+            "mark_label": custom.get("label") if custom.get("action") == "mark" else None, "flags": [],
+            "title_question": None, "answer_short": custom.get("answer"), "insight_ready": False,
+            "captions_ready": False}
+
+
+def processed_items():
+    thumbnail = f"http://127.0.0.1:{PORT}/__mock/thumb/{{}}.png"
+    first = {
+        "video_id": "dQw4w9WgXcQ", "title": "A processed video", "thumbnail": thumbnail.format("dQw4w9WgXcQ"),
+        "updated_at": 1763900000.0, "summary": True,
+        "captions": [{"job_id": "capA", "lang": "tr", "translate_to": "en", "state": "ready", "progress": 1.0,
+                      "error": None, "created_at": 1763899900.0, "updated_at": 1763900000.0}],
+        "cuts": [{"request_id": "cutA", "state": "ready", "preset_id": "cut-demo", "preset_label": "Only the demo",
+                  "prompt": None, "error": None, "created_at": 1763899800.0, "updated_at": 1763899900.0}],
+    }
+    second = {
+        "video_id": "9bZkp7q19f0", "title": "Another processed video", "thumbnail": thumbnail.format("9bZkp7q19f0"),
+        "updated_at": 1763890000.0, "summary": False,
+        "captions": [{"job_id": "capB", "lang": "en", "translate_to": "en", "state": "processing", "progress": 0.4,
+                      "error": None, "created_at": 1763889900.0, "updated_at": 1763890000.0}],
+        "cuts": [],
+    }
+    return {"videos": [first, second]}
 
 
 def summary(video_id, prompt, hints):
@@ -124,7 +190,10 @@ def summary(video_id, prompt, hints):
         if p < 1.0:
             return {**base, "status": "pending", "transcript_status": "transcribing", "progress": round(p, 2), "estimate_s": STATE["estimate"]}
     if mode == "failed":
-        return {**base, "status": "failed", "error": "the language model request failed, try again later"}
+        answer = {**base, "status": "failed", "error": "the language model request failed, try again later"}
+        if STATE["reason"] is not None:
+            answer["reason"] = STATE["reason"]
+        return answer
     if prompt in ("panel", "builtin/glance"):
         text = "→ Yes, but only since version 3.\nA short gist of the video in a few plain words.\nThe second detail line sits here."
         if video_id.endswith("0"):
@@ -277,12 +346,36 @@ def preset_state(video_id, preset_id, mode="quick"):
     return "none"
 
 
+def record_request(handler):
+    url = urlparse(handler.path)
+    if url.path.startswith("/__mock/"):
+        return
+    with REQUEST_LOCK:
+        REQUESTS.append({
+            "method": handler.command,
+            "path": url.path,
+            "query": url.query,
+            "authorization": bool(handler.headers.get("Authorization")),
+            "cookie": bool(handler.headers.get("Cookie")),
+            "origin": bool(handler.headers.get("Origin")),
+        })
+
+
+def hold_request(path):
+    with HOLD_LOCK:
+        prefix = HOLD["path"]
+        until = HOLD["until"]
+    while prefix and path.startswith(prefix) and time.time() < until:
+        time.sleep(0.02)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "mock"
     protocol_version = "HTTP/1.1"
     static_dir = None
     media_dir = None
     base_url = ""
+    user_name = "emu"
 
     def log_message(self, fmt, *args):
         print(time.strftime("%H:%M:%S"), self.command, self.path, flush=True)
@@ -295,17 +388,29 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_OPTIONS(self):
+        url = urlparse(self.path)
+        record_request(self)
+        return self.send_json({"error": "method not allowed"}, 405)
+
     def do_POST(self):
         url = urlparse(self.path)
+        record_request(self)
+        hold_request(url.path)
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
         if url.path == "/v1/pair":
-            return self.send_json({"token": "utb_emulator", "user": "emu"})
+            return self.send_json({"token": "utb_emulator", "user": self.user_name})
         if url.path == "/v1/assess":
+            time.sleep(ASSESS_CONFIG["delay"])
+            if ASSESS_CONFIG["fail"]:
+                return self.send_json({"error": "the assess request failed"}, ASSESS_CONFIG["fail"])
             vids = json.loads(body or b"{}").get("videos", [])
-            return self.send_json({"results": [
-                {"video_id": v["video_id"], "status": "ready", "action": "none", "mark_label": None, "flags": [],
-                 "title_question": None, "answer_short": None, "insight_ready": False, "captions_ready": False} for v in vids]})
+            return self.send_json({"results": [verdict(v) for v in vids]})
+        if url.path == "/v1/prompts/import":
+            return self.send_json(import_prompt_set(json.loads(body or b"{}").get("url", "")))
+        if url.path == "/v1/prompts/refresh":
+            return self.send_json({"ok": True})
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/captions$", url.path)
         if m:
             vid = m.group(1)
@@ -391,8 +496,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         url = urlparse(self.path)
+        record_request(self)
+        hold_request(url.path)
         length = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
+        if url.path == "/v1/prompts/default":
+            key = (body.get("key") or "").strip()
+            if key not in all_prompt_keys():
+                return self.send_json({"error": "unknown prompt"}, 404)
+            global DEFAULT_PROMPT_KEY
+            DEFAULT_PROMPT_KEY = key
+            return self.send_json({"default": key})
         m = re.match(r"/v1/cut-requests/([a-z0-9]+)$", url.path)
         if m:
             with CUT_LOCK:
@@ -416,6 +530,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         url = urlparse(self.path)
+        record_request(self)
+        hold_request(url.path)
         m = re.match(r"/v1/cut-requests/([a-z0-9]+)$", url.path)
         if m:
             with CUT_LOCK:
@@ -429,8 +545,49 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urlparse(self.path)
+        record_request(self)
+        hold_request(url.path)
         q = parse_qs(url.query)
         path = url.path
+        if path == "/__mock/requests":
+            if q.get("clear", ["0"])[0] == "1":
+                with REQUEST_LOCK:
+                    REQUESTS.clear()
+                return self.send_json({"requests": []})
+            with REQUEST_LOCK:
+                return self.send_json({"requests": list(REQUESTS)})
+        if path == "/__mock/hold":
+            prefix = q.get("path", [""])[0]
+            seconds = float(q.get("seconds", ["0"])[0] or 0)
+            with HOLD_LOCK:
+                HOLD["path"] = prefix or None
+                HOLD["until"] = time.time() + seconds if (prefix and seconds > 0) else 0.0
+            return self.send_json({"path": HOLD["path"], "seconds": seconds})
+        if path == "/__mock/assess":
+            with REQUEST_LOCK:
+                if "delay" in q:
+                    ASSESS_CONFIG["delay"] = float(q["delay"][0])
+                if "fail" in q:
+                    ASSESS_CONFIG["fail"] = int(q["fail"][0])
+                if "video" in q:
+                    video = q["video"][0]
+                    action = q.get("action", ["none"])[0]
+                    ASSESS_CONFIG["verdicts"][video] = {
+                        "action": action,
+                        "status": q.get("status", ["ready"])[0],
+                        "label": q.get("label", [None])[0],
+                        "answer": q.get("answer", [None])[0],
+                    }
+                return self.send_json({"delay": ASSESS_CONFIG["delay"], "fail": ASSESS_CONFIG["fail"],
+                                       "verdicts": dict(ASSESS_CONFIG["verdicts"])})
+        if path == "/__mock/setup":
+            setup_q = parse_qs(url.query, keep_blank_values=True)
+            if "backend" in setup_q:
+                SETUP_CONFIG["backend"] = setup_q["backend"][0] or None
+            return self.send_json({"backend": SETUP_CONFIG["backend"] or self.base_url})
+        if path == "/__mock/processed":
+            PROCESSED_CONFIG["state"] = q.get("state", ["items"])[0]
+            return self.send_json(PROCESSED_CONFIG)
         if path == "/__mock/set":
             with LOCK:
                 if "mode" in q:
@@ -441,9 +598,12 @@ class Handler(BaseHTTPRequestHandler):
                 if "delay" in q:
                     STATE["delay"] = float(q["delay"][0])
                 STATE["message"] = q["message"][0] if "message" in q else None
+                STATE["reason"] = q["reason"][0] if "reason" in q else None
                 STATE["estimate"] = int(q["estimate"][0]) if "estimate" in q else DEFAULT_ESTIMATE_S
                 STATE["retry_after"] = int(q["retry_after"][0]) if "retry_after" in q else DEFAULT_RETRY_AFTER_S
                 STATE["start_progress"] = float(q["progress"][0]) if "progress" in q else 0.0
+                if "panel" in q:
+                    STATE["panel_status"] = None if q["panel"][0] == "ok" else int(q["panel"][0])
             return self.send_json({k: (list(v) if isinstance(v, set) else v) for k, v in STATE.items()})
         if path == "/__mock/captions":
             if "latency" in q:
@@ -485,7 +645,8 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/media/") and self.media_dir:
             return self.send_media(Path(self.media_dir) / Path(path[len("/media/"):]).name)
         if path == "/setup.json":
-            return self.send_json({"utubot_setup": 1, "name": "Emulator mock", "backend_url": self.base_url,
+            return self.send_json({"utubot_setup": 1, "name": "Emulator mock",
+                                   "backend_url": SETUP_CONFIG["backend"] or self.base_url,
                                    "update_url": self.base_url + "/app/update.json", "pairing": True,
                                    "defaults": {"assess": True, "summary_panel": True}})
         if path == "/app/update.json":
@@ -513,10 +674,19 @@ class Handler(BaseHTTPRequestHandler):
                 return
             return self.send_json({"error": "not found"}, 404)
         if path == "/v1/me":
-            return self.send_json({"user": "emu", "policy": {}, "features": {"assess": True, "insight": True, "captions": True,
+            return self.send_json({"user": self.user_name, "policy": {}, "features": {"assess": True, "insight": True, "captions": True,
                                                                             "cuts": True}, "admin": False})
         if path == "/v1/prompts":
             return self.send_json(prompt_list())
+        if path == "/v1/processed":
+            limit = int(q.get("limit", ["50"])[0] or 50)
+            if limit < 1 or limit > 200:
+                return self.send_json({"error": "limit must be 1 to 200"}, 400)
+            if PROCESSED_CONFIG["state"] == "fail":
+                return self.send_json({"error": "the processed request failed"}, 500)
+            if PROCESSED_CONFIG["state"] == "empty":
+                return self.send_json({"videos": []})
+            return self.send_json(processed_items())
         if path == "/v1/cut-requests":
             with CUT_LOCK:
                 docs = [cut_request_doc(r) for r in reversed(list(CUT_REQUESTS.values()))]
@@ -562,8 +732,11 @@ class Handler(BaseHTTPRequestHandler):
             })
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/summary$", path)
         if m:
+            prompt = (q.get("prompt") or ["builtin/tldr"])[0]
+            if prompt == "panel" and STATE["panel_status"]:
+                return self.send_json({"error": "the panel prompt is refused"}, STATE["panel_status"])
             time.sleep(STATE["delay"])
-            return self.send_json(summary(m.group(1), (q.get("prompt") or ["builtin/tldr"])[0], q))
+            return self.send_json(summary(m.group(1), prompt, q))
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/transcript$", path)
         if m:
             vid = m.group(1)
@@ -608,6 +781,8 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8790)
+    ap.add_argument("--host", action="append", help="listen address, repeatable (default 0.0.0.0)")
+    ap.add_argument("--user", default="emu", help="the pairing user name (default emu)")
     ap.add_argument("--static", default=None)
     ap.add_argument("--base", default=None)
     ap.add_argument("--media", default=None, help="folder served under /media/ (with byte ranges), for the captions harness of the debug build")
@@ -627,7 +802,15 @@ def main():
     Handler.static_dir = args.static
     Handler.media_dir = args.media
     Handler.base_url = args.base or f"http://10.0.2.2:{args.port}"
-    ThreadingHTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
+    Handler.user_name = args.user
+    global PORT
+    PORT = args.port
+    servers = [ThreadingHTTPServer((host, args.port), Handler) for host in (args.host or ["0.0.0.0"])]
+    threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in servers]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
 
 
 if __name__ == "__main__":
