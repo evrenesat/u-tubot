@@ -44,6 +44,15 @@
   immediately. Docs and the config example say to enable this only on a tailnet-only listener.
 - Tests: `tests/test_tailscale.py` covers the mapped flow and an authenticated write, case-insensitive mapping, unmapped and
   non-loopback peers (including a spoofed forwarded address), the default-off gate, password sign-in beside it, and loopback parsing.
+## 2026-11-25 (the viewer's cut choice, issue 103)
+
+- `GET /v1/videos/{id}/cuts` gains `selection` (`chosen` | `last` | `off`, with the ready `cut`): the video opens with the
+  viewer's choice for it, else the preset used last when it is ready here, else nothing so the client offers the ready cuts.
+- `cut_choices` (per user and video: preset, request, or off) and `cut_last_presets` (per user) are additive tables. Creating a
+  preset/prompt request or filling a waiting one records the choice; `PUT /v1/videos/{id}/cut-choice` records a pick or off.
+  Dismissing a request clears it when it was the choice. `CutService.choose`/`_selection` hold the rules.
+- Tests: `tests/test_cuts_api.py::TestCutChoice` for chosen cut wins, last-used preset, no ready cut for the last preset, several
+  ready cuts in any order, a typed cut, off and bad bodies. Contract, server docs and the TV/extension parity row updated.
 
 ## 2026-11-25 (a failed cut does not stick; no-filler accepts a nearly full keep, issue 99)
 

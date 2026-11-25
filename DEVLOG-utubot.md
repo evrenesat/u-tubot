@@ -11,6 +11,20 @@
 
 # u·tubot devlog
 
+## 2026-11-25 (a video opens with the chosen cut, issue 103)
+
+- The cut follower no longer takes the first ready preset: `GET /v1/videos/{id}/cuts` now carries a `selection`, and only that cut
+  is applied when the video opens. The selection is the viewer's choice for the video, else the preset they used last when it has a
+  ready cut here; with neither, the video plays uncut and every ready cut is offered with one Apply each (never the first silently,
+  also with "apply ready cuts automatically" on).
+- The backend keeps the choice per `(user, video)` and the last-used preset per user (`cut_choices`, `cut_last_presets`); creating
+  or filling a cut request records it, and the TV records a pick or an off with `PUT /v1/videos/{id}/cut-choice` (`UtubotClient.chooseCut`,
+  `UtubotManager.rememberCutChoice`/`forgetCutChoice`).
+- The player button shows the applied cut ("Cut: No filler · 12:40") through the new `PlayerUI.setButtonLabel` hook, and the video
+  menu still switches it or turns it off.
+- Tests: backend `TestCutChoice` (chosen wins, last used, no ready for the last preset, several ready in any order, typed choice, off),
+  TV follower/controller/parser/client cases. Extension parity row 30.
+
 ## 2026-11-25 (a failed cut retries; no-filler keeps nearly all, issue 99)
 
 - A failed cut request no longer sticks in the picker: the TV starts a fresh request when a failed preset is picked

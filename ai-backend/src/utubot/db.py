@@ -134,6 +134,12 @@ CREATE TABLE IF NOT EXISTS scene_labels(
   category TEXT NOT NULL, intensity INTEGER NOT NULL, confidence REAL NOT NULL,
   vocab_version INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS scene_labels_source ON scene_labels(source_key, release_key, category);
+CREATE TABLE IF NOT EXISTS cut_choices(
+  user TEXT NOT NULL, video_id TEXT NOT NULL, preset_id TEXT, request_id TEXT,
+  off INTEGER NOT NULL DEFAULT 0, updated_at REAL NOT NULL,
+  PRIMARY KEY(user, video_id));
+CREATE TABLE IF NOT EXISTS cut_last_presets(
+  user TEXT PRIMARY KEY, preset_id TEXT NOT NULL, updated_at REAL NOT NULL);
 """
 
 JOB_COLUMNS = {

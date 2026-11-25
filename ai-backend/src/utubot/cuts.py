@@ -1016,6 +1016,87 @@ class CutService:
     def presets(self, user: str) -> list[Prompt]:
         return self.prompts.cut_prompts(user)
 
+    # ---- the viewer's choice --------------------------------------------------------------------
+
+    def choose(
+        self,
+        user: str,
+        video_id: str,
+        *,
+        preset: str | None = None,
+        request: str | None = None,
+        off: bool = False,
+    ) -> None:
+        """Remember what the viewer chose for this video, and the preset used last across videos.
+
+        A preset or a request is one choice; `off` is the explicit choice to play uncut. The
+        last-used preset is updated only by a preset choice, so a typed cut does not move it.
+        """
+        if preset is not None and request is not None:
+            raise CutRefused("A cut choice is a preset or a request, not both.", status=400)
+        if not off and preset is None and request is None:
+            raise CutRefused("A cut choice needs a preset, a request or off.", status=400)
+        if off and (preset is not None or request is not None):
+            raise CutRefused("Turning the cut off names no preset or request.", status=400)
+
+        if off:
+            self.db.execute(
+                "INSERT INTO cut_choices(user,video_id,preset_id,request_id,off,updated_at)"
+                " VALUES(?,?,NULL,NULL,1,?) ON CONFLICT(user,video_id) DO UPDATE SET"
+                " preset_id=NULL, request_id=NULL, off=1, updated_at=excluded.updated_at",
+                [user, video_id, time.time()],
+            )
+            return
+
+        if preset is not None:
+            if not any(p.id == preset for p in self.presets(user)):
+                raise CutRefused(f"Unknown cut preset {preset}.")
+            self.db.execute(
+                "INSERT INTO cut_choices(user,video_id,preset_id,request_id,off,updated_at)"
+                " VALUES(?,?,?,NULL,0,?) ON CONFLICT(user,video_id) DO UPDATE SET"
+                " preset_id=excluded.preset_id, request_id=NULL, off=0,"
+                " updated_at=excluded.updated_at",
+                [user, video_id, preset, time.time()],
+            )
+            self._remember_preset(user, preset)
+            return
+
+        row = self._row(request)  # type: ignore[arg-type]
+        if row is None or row["user"] != user or row["video_id"] != video_id:
+            raise CutRefused("No such cut request for this video.", status=404)
+        self.db.execute(
+            "INSERT INTO cut_choices(user,video_id,preset_id,request_id,off,updated_at)"
+            " VALUES(?,?,?,?,0,?) ON CONFLICT(user,video_id) DO UPDATE SET"
+            " preset_id=excluded.preset_id, request_id=excluded.request_id, off=0,"
+            " updated_at=excluded.updated_at",
+            [user, video_id, row["preset_id"], request, time.time()],
+        )
+        if row["preset_id"]:
+            self._remember_preset(user, row["preset_id"])
+
+    def _remember_request(self, row: dict[str, Any]) -> None:
+        """A cut the viewer asked for (a preset or a typed description) is their choice for the video."""
+        if row["preset_id"]:
+            self.choose(row["user"], row["video_id"], preset=row["preset_id"])
+        elif row["prompt"] is not None:
+            self.choose(row["user"], row["video_id"], request=row["id"])
+
+    def _remember_preset(self, user: str, preset: str) -> None:
+        self.db.execute(
+            "INSERT INTO cut_last_presets(user,preset_id,updated_at) VALUES(?,?,?)"
+            " ON CONFLICT(user) DO UPDATE SET preset_id=excluded.preset_id,"
+            " updated_at=excluded.updated_at",
+            [user, preset, time.time()],
+        )
+
+    def _choice(self, user: str, video_id: str) -> dict[str, Any] | None:
+        row = self.db.one("SELECT * FROM cut_choices WHERE user=? AND video_id=?", [user, video_id])
+        return dict(row) if row else None
+
+    def _last_preset(self, user: str) -> str | None:
+        row = self.db.one("SELECT preset_id FROM cut_last_presets WHERE user=?", [user])
+        return row["preset_id"] if row else None
+
     # ---- rows -----------------------------------------------------------------------------------
 
     def _row(self, request_id: str) -> dict[str, Any] | None:
@@ -1126,6 +1207,8 @@ class CutService:
             user, video_id, preset, prompt, await_prompt, chosen_mode, force
         )
         if existing is not None:
+            if not await_prompt:
+                self._remember_request(existing)
             return existing
         if not await_prompt:
             self._check_cap(user)
@@ -1179,6 +1262,9 @@ class CutService:
             ts=now,
         )
         if not await_prompt:
+            row = self._row(request_id)
+            if row is not None:
+                self._remember_request(row)
             self._start(request_id)
         return self._row(request_id)  # type: ignore[return-value]
 
@@ -1247,6 +1333,7 @@ class CutService:
                 "message": "The description arrived from the phone; the cut is being built.",
             },
         )
+        self.choose(user, row["video_id"], request=request_id)
         self._start(request_id)
         return self._row(request_id)  # type: ignore[return-value]
 
@@ -1258,6 +1345,10 @@ class CutService:
         if task is not None:
             task.cancel()
         self._set_state(request_id, "dismissed", finished=True)
+        self.db.execute(
+            "DELETE FROM cut_choices WHERE user=? AND video_id=? AND request_id=?",
+            [user, row["video_id"], request_id],
+        )
         if row["job_id"]:
             now = time.time()
             self.db.execute(
@@ -1476,12 +1567,69 @@ class CutService:
                 "by_mode": {"quick": quick, "watched": watched},
             }
             out.append(entry)
+        by_id = {entry["id"]: entry for entry in out}
         return {
             "configured": self.configured,
             "default_mode": default,
             "modes": modes,
             "presets": out,
+            "selection": self._selection(user, video_id, by_id),
         }
+
+    def _selection(
+        self, user: str, video_id: str, presets: dict[str, dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        """What the video opens with: the viewer's choice for it, else the preset used last.
+
+        A choice that is not ready yet is still the choice: only its own request is followed, and
+        no other ready preset is applied in its place. Without a choice the last-used preset is
+        used only when it is ready; otherwise nothing is selected and the ready cuts are offered.
+        """
+        choice = self._choice(user, video_id)
+
+        if choice is not None:
+            if choice["off"]:
+                return {"source": "off", "off": True, "state": "none"}
+
+            if choice["request_id"]:
+                request = self.get(choice["request_id"], user)
+                if request is not None:
+                    return {
+                        "source": "chosen",
+                        "off": False,
+                        "preset_id": request.get("preset_id"),
+                        "request_id": request["id"],
+                        "state": request["state"],
+                        **({"cut": request["cut"]} if request.get("cut") else {}),
+                    }
+
+            preset_id = choice["preset_id"]
+            entry = presets.get(preset_id) if preset_id else None
+            if entry is not None:
+                return {
+                    "source": "chosen",
+                    "off": False,
+                    "preset_id": preset_id,
+                    "request_id": entry.get("request_id"),
+                    "state": entry["state"],
+                    **({"cut": entry["cut"]} if entry.get("cut") else {}),
+                }
+
+            return {"source": "chosen", "off": False, "preset_id": preset_id, "state": "none"}
+
+        last = self._last_preset(user)
+        entry = presets.get(last) if last else None
+        if entry is not None and entry["state"] == "ready":
+            return {
+                "source": "last",
+                "off": False,
+                "preset_id": last,
+                "request_id": entry.get("request_id"),
+                "state": "ready",
+                "cut": entry["cut"],
+            }
+
+        return None
 
     def _preset_state(self, user: str, video_id: str, prompt: Prompt, mode: str) -> dict[str, Any]:
         row = self.db.one(

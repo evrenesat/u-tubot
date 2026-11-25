@@ -158,6 +158,11 @@ public class EmbedPlayerView extends PlayerView implements PlaybackView {
     }
 
     @Override
+    public void setButtonLabel(int buttonId, CharSequence label) {
+
+    }
+
+    @Override
     public void setChannelIcon(String iconUrl) {
 
     }

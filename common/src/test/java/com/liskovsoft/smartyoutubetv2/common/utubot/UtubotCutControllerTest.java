@@ -27,10 +27,12 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Consumer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -433,6 +435,83 @@ public class UtubotCutControllerTest {
         assertNull(getPendingCut());
     }
 
+    /**
+     * The cut the viewer chose (or the preset used last) is what the video opens with, even when other cuts are ready and
+     * whatever "apply ready cuts automatically" says.
+     */
+    @Test
+    public void aChosenCut_isAppliedWhenTheVideoOpens() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+
+        mController.onCutChosen(VIDEO, cut);
+
+        assertTrue(mController.isApplied(cut));
+        assertNull(getPendingCut());
+        mController.onFinish();
+    }
+
+    /**
+     * No choice for this video and no ready cut for the last preset: every ready cut is offered, none applied by itself.
+     */
+    @Test
+    public void severalReadyCuts_areOfferedAndNoneApplied() {
+        mController.open(video(VIDEO), 240_000);
+        Cut first = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
+        Cut second = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+
+        mController.onCutsReady(VIDEO, Arrays.asList(first, second));
+
+        assertEquals(155, readyOfferId()); // READY_DIALOG_ID
+        List<OptionItem> options = readyApplyButtons();
+        assertEquals(2, options.size());
+        assertEquals("No filler \u00b7 4:00", options.get(0).getTitle());
+        assertEquals("Only the demo \u00b7 4:00", options.get(1).getTitle());
+        assertFalse(mController.isApplied(first));
+        assertFalse(mController.isApplied(second));
+
+        options.get(1).onSelect(true);
+
+        assertTrue(mController.isApplied(second));
+        assertFalse(mController.isApplied(first));
+        mController.onFinish();
+    }
+
+    /**
+     * A cut that is already ready in the list but is not the viewer's choice is never applied silently, even with the setting on.
+     */
+    @Test
+    public void anUnchosenReadyCut_isNotAppliedEvenWithTheAutoSetting() {
+        UtubotSettings.instance(mContext).setApplyReadyCutsEnabled(true);
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
+
+        mController.onCutsReady(VIDEO, Collections.singletonList(cut));
+
+        assertEquals(155, readyOfferId());
+        assertFalse(mController.isApplied(cut));
+        mController.onFinish();
+    }
+
+    /**
+     * The player's cut button names the cut that is on, with its real length, and goes back to the menu label when it is off.
+     */
+    @Test
+    public void thePlayerButtonNamesTheAppliedCut() {
+        mController.open(video(VIDEO), 2_480_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-half", "Half", 2_480_000);
+        cut.keptMs = 2_480_000;
+
+        mController.onCutChosen(VIDEO, cut);
+        assertTrue(mController.isApplied(cut));
+        assertEquals(mContext.getString(R.string.utubot_cut_player_label, "Half", "41:20"), mController.getButtonLabel());
+
+        assertTrue(mController.toggle(cut));
+        assertFalse(mController.isApplied(cut));
+        assertEquals(mContext.getString(R.string.utubot_cut_menu), mController.getButtonLabel());
+        mController.onFinish();
+    }
+
     @Test
     public void aKeptPart_isOneLineWithItsTimesAndLabel() {
         CutPart part = new CutPart();
@@ -464,6 +543,7 @@ public class UtubotCutControllerTest {
         private Video mVideo;
         private PlaybackView mPlayer;
         private long mDurationMs;
+        private String mButtonLabel;
 
         void attach(Context context) {
             setAltContext(context);
@@ -471,8 +551,12 @@ public class UtubotCutControllerTest {
 
         void open(Video video, long durationMs) {
             mVideo = video;
-            mPlayer = player(durationMs);
+            mPlayer = player(durationMs, true, label -> mButtonLabel = label);
             mDurationMs = durationMs;
+        }
+
+        String getButtonLabel() {
+            return mButtonLabel;
         }
 
         void releasePlayer() {
@@ -505,6 +589,10 @@ public class UtubotCutControllerTest {
     }
 
     private static PlaybackView player(long durationMs, boolean engineInitialized) {
+        return player(durationMs, engineInitialized, label -> { });
+    }
+
+    private static PlaybackView player(long durationMs, boolean engineInitialized, Consumer<String> onButtonLabel) {
         return (PlaybackView) Proxy.newProxyInstance(PlaybackView.class.getClassLoader(), new Class<?>[]{PlaybackView.class},
                 (proxy, method, args) -> {
                     if ("getDurationMs".equals(method.getName())) {
@@ -513,6 +601,11 @@ public class UtubotCutControllerTest {
 
                     if ("isEngineInitialized".equals(method.getName())) {
                         return engineInitialized;
+                    }
+
+                    if ("setButtonLabel".equals(method.getName())) {
+                        onButtonLabel.accept(String.valueOf(args[1]));
+                        return null;
                     }
 
                     Class<?> type = method.getReturnType();
@@ -569,6 +662,33 @@ public class UtubotCutControllerTest {
             Field field = UtubotCutController.class.getDeclaredField("mPendingCut");
             field.setAccessible(true);
             return (Cut) field.get(mController);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private Cut cutWithPreset(String videoId, String presetId, String label, long durationMs) {
+        Cut cut = cut(videoId);
+        cut.presetId = presetId;
+        cut.label = label;
+        cut.durationMs = durationMs;
+        cut.keptMs = durationMs;
+        return cut;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<OptionItem> readyApplyButtons() {
+        try {
+            Field field = AppDialogPresenter.class.getDeclaredField("mBackupCategories");
+            field.setAccessible(true);
+            List<OptionCategory> categories = (List<OptionCategory>) field.get(AppDialogPresenter.instance(mContext));
+            List<OptionItem> options = new ArrayList<>();
+
+            for (OptionCategory category : categories) {
+                options.addAll(category.options);
+            }
+
+            return options;
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
         }

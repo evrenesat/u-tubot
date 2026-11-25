@@ -14,6 +14,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutWatched;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPreset;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutSelection;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Me;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Prompt;
@@ -327,6 +328,19 @@ public final class UtubotParser {
             }
 
             list.presets = parsed;
+        }
+
+        JSONObject selectionJson = json.optJSONObject("selection");
+
+        if (selectionJson != null) {
+            CutSelection selection = new CutSelection();
+            selection.source = selectionJson.optString("source", null);
+            selection.off = selectionJson.optBoolean("off");
+            selection.presetId = optString(selectionJson, "preset_id");
+            selection.requestId = optString(selectionJson, "request_id");
+            selection.state = selectionJson.optString("state", UtubotModels.CutState.NONE);
+            selection.cut = parseCut(selectionJson.optJSONObject("cut"));
+            list.selection = selection;
         }
 
         return list;

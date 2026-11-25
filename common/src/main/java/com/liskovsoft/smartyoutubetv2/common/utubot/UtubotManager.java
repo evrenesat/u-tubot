@@ -854,6 +854,37 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     /**
+     * The viewer chose this preset for the video (the picker, the player, Apply on the ready prompt): the next open applies it and
+     * the preset becomes the one used last for the user. Best-effort: the cut already plays even when the write fails.
+     */
+    public void rememberCutChoice(String videoId, @Nullable String presetId) {
+        if (!mSettings.isConfigured() || mSettings.getToken().isEmpty() || videoId == null || presetId == null) {
+            return;
+        }
+
+        Observable.fromCallable(() -> {
+            newClient().chooseCut(videoId, presetId, null, false);
+            return true;
+        }).subscribeOn(Schedulers.io()).subscribe(ignored -> { },
+                error -> Log.d(TAG, "Can't remember the cut choice of %s: %s", videoId, error.getMessage()));
+    }
+
+    /**
+     * The viewer turned the cut off for this video: the next open plays uncut instead of taking the preset used last.
+     */
+    public void forgetCutChoice(String videoId) {
+        if (!mSettings.isConfigured() || mSettings.getToken().isEmpty() || videoId == null) {
+            return;
+        }
+
+        Observable.fromCallable(() -> {
+            newClient().chooseCut(videoId, null, null, true);
+            return true;
+        }).subscribeOn(Schedulers.io()).subscribe(ignored -> { },
+                error -> Log.d(TAG, "Can't remember the cut choice of %s: %s", videoId, error.getMessage()));
+    }
+
+    /**
      * The presets of a video and where their cuts stand, for the picker. Cancelled with the dialog.
      */
     public Observable<CutList> cutsObserve(String videoId) {

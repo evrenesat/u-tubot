@@ -14,6 +14,7 @@ import org.robolectric.annotation.Config;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -31,6 +32,11 @@ public class UtubotCutsParserTest {
             "{\"id\":\"cut-answer\",\"label\":\"Just the answer\",\"state\":\"building\"}," +
             "{\"id\":\"cut-demo\",\"label\":\"Only the demo\",\"state\":\"failed\",\"error\":\"the model service is busy\"}" +
             "]}";
+
+    private static final String CUTS_WITH_CHOICE = "{\"configured\":true,\"presets\":[" +
+            "{\"id\":\"cut-no-filler\",\"label\":\"No filler\",\"state\":\"ready\",\"cut\":" + CUT + "}," +
+            "{\"id\":\"cut-demo\",\"label\":\"Only the demo\",\"state\":\"ready\",\"cut\":" + CUT + "}]," +
+            "\"selection\":{\"source\":\"chosen\",\"preset_id\":\"cut-demo\",\"state\":\"ready\",\"cut\":" + CUT + "}}";
 
     private static final String REQUEST = "{\"id\":\"cut1\",\"video_id\":\"abcdefghijk\",\"state\":\"ready\",\"source\":\"Living room TV\"," +
             "\"preset_id\":\"cut-no-filler\",\"prompt\":null,\"error\":null,\"created_at\":\"2026-11-20T10:00:00Z\"," +
@@ -175,6 +181,24 @@ public class UtubotCutsParserTest {
 
         assertTrue(me.cuts);
         assertFalse(UtubotParser.parseMe("{\"user\":\"owner\",\"features\":{}}").cuts);
+    }
+
+    @Test
+    public void parsesTheCutTheVideoOpensWith() throws Exception {
+        CutList cuts = UtubotParser.parseCuts(CUTS_WITH_CHOICE);
+
+        assertNotNull(cuts.selection);
+        assertEquals("chosen", cuts.selection.source);
+        assertEquals("cut-demo", cuts.selection.presetId);
+        assertFalse(cuts.selection.off);
+        assertTrue(cuts.selection.isReady());
+        assertEquals("No filler", cuts.selection.cut.label);
+    }
+
+    @Test
+    public void aMissingSelectionLeavesItNull() throws Exception {
+        assertNull(UtubotParser.parseCuts(CUTS).selection);
+        assertNull(UtubotParser.parseCuts("{}").selection);
     }
 
     @Test

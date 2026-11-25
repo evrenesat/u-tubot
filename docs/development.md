@@ -264,8 +264,8 @@ $ADB shell input keyevent KEYCODE_DPAD_RIGHT ; $ADB shell input keyevent KEYCODE
 $ADB shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CutsHarnessActivity \
     --es video_id harnessCutA --es url http://10.0.2.2:18790/media/test.mp4 --ez await_prompt true
 $ADB exec-out screencap -p > cuts-qr-sheet.png
-# A cut that is ready when the video opens is announced ("Director's cut ready: …"), with a one-press Apply
-# (or applied by itself when Settings, u·tubot, "Apply ready cuts automatically" is on)
+# A cut that is ready when the video opens but was not chosen for that video is announced ("Director's cut ready: …"),
+# with a one-press Apply; a chosen or last-used cut is applied by itself instead (issue 103)
 $NS curl "localhost:18790/__mock/cuts?video=harnessCutA&state=ready"
 $ADB shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CutsHarnessActivity \
     --es video_id harnessCutA --es url http://10.0.2.2:18790/media/test.mp4

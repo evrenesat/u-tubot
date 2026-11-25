@@ -368,6 +368,29 @@ public class UtubotClient {
     }
 
     /**
+     * Remembers what the viewer chose for a video (`PUT /v1/videos/{id}/cut-choice`): a preset, one of their requests, or off.
+     */
+    public void chooseCut(String videoId, @Nullable String presetId, @Nullable String requestId, boolean off) throws IOException {
+        JSONObject body = new JSONObject();
+
+        try {
+            if (off) {
+                body.put("off", true);
+            } else if (presetId != null) {
+                body.put("preset", presetId);
+            } else if (requestId != null) {
+                body.put("request", requestId);
+            } else {
+                throw new IOException("A cut choice needs a preset, a request or off");
+            }
+        } catch (JSONException e) {
+            throw new IOException(e.getMessage());
+        }
+
+        send(builder("/videos/" + videoId + "/cut-choice", true).put(json(body)), 0);
+    }
+
+    /**
      * One cut request, long-polling while it waits or builds (`GET /v1/cuts/{id}`)
      *
      * @param waitMs how long the backend may hold the answer, 0 for its default

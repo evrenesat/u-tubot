@@ -7,6 +7,9 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPreset;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Follows the director's cuts of the video that plays. It asks the backend once where the video's cuts stand and, while a request for
  * it is waiting or building, long-polls that request until the cut is ready, so one built on the phone reaches the player while the
@@ -46,6 +49,22 @@ public final class UtubotCutFollower {
          *                  there when the video opened
          */
         void onCutReady(String videoId, Cut cut, boolean requested);
+
+        /**
+         * The video opens with the cut the viewer chose (or the preset used last): it is applied without an offer.
+         */
+        default void onCutChosen(String videoId, Cut cut) {
+            onCutReady(videoId, cut, true);
+        }
+
+        /**
+         * No cut is chosen for the video and the last-used preset has none ready: the ready cuts are offered, none applied.
+         */
+        default void onCutsReady(String videoId, List<Cut> cuts) {
+            if (!cuts.isEmpty()) {
+                onCutReady(videoId, cuts.get(0), false);
+            }
+        }
     }
 
     public interface Clock {
@@ -183,28 +202,55 @@ public final class UtubotCutFollower {
             return;
         }
 
-        for (CutPreset preset : cuts.presets) {
-            if (preset.isReady()) {
-                Listener listener = mListener;
+        Listener listener = mListener;
 
-                if (listener != null) {
-                    listener.onCutReady(videoId, preset.cut, false);
-                }
+        if (cuts.selection != null && cuts.selection.cut != null && !cuts.selection.off) {
+            // The chosen cut, or the preset used last: applied, never replaced by the first ready one
+            if (listener != null) {
+                listener.onCutChosen(videoId, cuts.selection.cut);
+            }
+        } else if (cuts.selection == null && listener != null) {
+            // Nothing was chosen and the last preset has no ready cut: offer what is ready, apply none
+            List<Cut> ready = readyCuts(cuts);
 
-                break;
+            if (!ready.isEmpty()) {
+                listener.onCutsReady(videoId, ready);
             }
         }
 
-        for (CutPreset preset : cuts.presets) {
-            if (isPending(preset.state) && preset.requestId != null) {
-                mRequestId = preset.requestId;
-                mRequested = false;
-                scheduleNext();
-                return;
+        if (cuts.selection != null && cuts.selection.requestId != null && !cuts.selection.off
+                && isPending(cuts.selection.state)) {
+            // The viewer chose a request that is still building: follow that one, not a preset in the list
+            mRequestId = cuts.selection.requestId;
+            mRequested = false;
+            scheduleNext();
+            return;
+        }
+
+        if (cuts.selection == null) {
+            for (CutPreset preset : cuts.presets) {
+                if (isPending(preset.state) && preset.requestId != null) {
+                    mRequestId = preset.requestId;
+                    mRequested = false;
+                    scheduleNext();
+                    return;
+                }
             }
         }
 
         stopPolling();
+    }
+
+    private static List<Cut> readyCuts(CutList cuts) {
+        List<Cut> ready = new ArrayList<>();
+
+        for (CutPreset preset : cuts.presets) {
+            if (preset.isReady()) {
+                ready.add(preset.cut);
+            }
+        }
+
+        return ready;
     }
 
     private void fetchRequest() {
