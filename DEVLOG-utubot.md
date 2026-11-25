@@ -142,6 +142,22 @@
   `BrowsePresenterCacheTest`'s style. `:common:testStutubotDebugUnitTest` and `:smarttubetv:compileStutubotDebugJavaWithJavac`
   are green with JDK 25.
 
+## 2026-11-24 (update notification, u-tubot#80)
+
+- The scheduled check (`AppUpdatePresenter.startAutomatic`) asks `/app/update.json` on every run (20 s after the start, then every 6 h)
+  while "Notify about updates" is on, instead of being gated by the shared checker's 60 second "recently checked" window. The update
+  dialog opens over the main menu as before; Back or "Not now" stores the offered version (`UtubotSettings`, dismissed update) so an
+  automatic check doesn't offer it again until a newer one, while the manual "Check for updates" shows it. Tests: `AppUpdatePresenterTest`.
+- The flavor decides "newer" by the channel's `versionCode` against the installed one (`UtubotUpdateChecker.isNewer`), as the backend
+  publishes one per release and a version name can be shared (a build's `-dev` suffix); a manifest without codes falls back to the shared
+  checker's version-name comparison. Test: `UtubotUpdateCheckerTest`.
+- Review round 2: the dismissal stores the version name and code, so a higher code under the same name is offered again; changing the
+  backend or update address clears it. A manifest with no download address is an error instead of "no update", and a cached APK whose
+  name matches but whose code does not is discarded so the offered build is fetched. Tests: `AppUpdatePresenterTest`,
+  `UtubotUpdateCheckerTest`.
+- Parity: the browser extension has no update UI of its own (the browser updates it), so there is no extension row for this feature.
+- Verified with JDK 25: `:common:testStutubotDebugUnitTest` (1646 tests, 0 failures, 0 errors, 7 skipped), `:smarttubetv:assembleStutubotDebug`.
+
 ## 2026-11-24 (browse cache review round 4)
 
 - Channels multi-grid on a cached replay: only the view's first auto-selection keeps the cached uploads; every later channel the

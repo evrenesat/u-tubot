@@ -22,6 +22,7 @@ import com.liskovsoft.smartyoutubetv2.common.utils.LoadingManager;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdateCheckerListener {
@@ -35,6 +36,7 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
     private final Runnable mRetryCheck = this::forceCheck;
     private boolean mIsForceCheck;
     private boolean mIsForceCheckRunning;
+    private boolean mIsInstalling;
     private int mFailedAttempts;
 
     public AppUpdatePresenter(Context context) {
@@ -112,6 +114,26 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         }
     }
 
+    /**
+     * A check the app makes by itself (the schedule after the start and every few hours): it always asks the channel, not
+     * gated by the shared checker's 15 minute/60 second "recently checked" window, and only when update notifications are on.
+     * It returns whether a check was started.
+     */
+    public boolean startAutomatic() {
+        if (mIsForceCheckRunning || !mUpdateChecker.isUpdateCheckEnabled()) {
+            return false;
+        }
+
+        if (getUpdateUrls().length == 0) {
+            return false;
+        }
+
+        mIsForceCheck = false;
+        forceCheck();
+
+        return true;
+    }
+
     void forceCheck() {
         mUpdateChecker.forceCheckForUpdates(getUpdateUrls());
     }
@@ -127,7 +149,13 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         if (mIsForceCheck) {
             finishForceCheck();
             showUpdateDialog(versionName, changelog, apkPath);
-        } else if (UtubotSettings.isBuiltIn() || GeneralData.instance(getContext()).isOldUpdateNotificationsEnabled()) {
+        } else if (UtubotSettings.isBuiltIn()) {
+            if (UtubotSettings.instance(getContext()).isUpdateDismissed(versionName, offeredVersionCode())) {
+                return;
+            }
+
+            showUpdateDialog(versionName, changelog, apkPath);
+        } else if (GeneralData.instance(getContext()).isOldUpdateNotificationsEnabled()) {
             showUpdateDialog(versionName, changelog, apkPath);
         } else {
             pinUpdateSection(versionName, changelog, apkPath);
@@ -158,7 +186,7 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         onFinish();
     }
 
-    private void showUpdateDialog(String versionName, List<String> changelog, String apkPath) {
+    void showUpdateDialog(String versionName, List<String> changelog, String apkPath) {
         if (getContext() == null) {
             return;
         }
@@ -169,18 +197,49 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
             return;
         }
 
+        List<String> changes = changelog != null ? changelog : Collections.emptyList();
+        int versionCode = offeredVersionCode();
+        mIsInstalling = false;
         mSettingsPresenter.appendSingleButton(
                 UiOptionItem.from(getContext().getString(R.string.install_update), optionItem -> {
-                    GeneralData.instance(getContext()).setChangelog(changelog);
+                    mIsInstalling = true;
+                    GeneralData.instance(getContext()).setChangelog(changes);
                     mUpdateChecker.installUpdate();
                 }, false));
-        mSettingsPresenter.appendStringsCategory(getContext().getString(R.string.update_changelog), createChangelogOptions(changelog));
+
+        if (UtubotSettings.isBuiltIn()) {
+            mSettingsPresenter.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.update_not_now), optionItem -> {
+                setUpdateDismissed(versionName, versionCode);
+                mSettingsPresenter.closeDialog();
+            }, false));
+        }
+
+        if (!changes.isEmpty()) {
+            mSettingsPresenter.appendStringsCategory(getContext().getString(R.string.update_changelog), createChangelogOptions(changes));
+        }
         //mSettingsPresenter.appendSingleSwitch(UiOptionItem.from(getContext().getString(R.string.show_again), optionItem -> {
         //    mUpdateChecker.enableUpdateCheck(optionItem.isSelected());
         //}, mUpdateChecker.isUpdateCheckEnabled()));
 
         //mSettingsPresenter.setOnFinish(getOnFinish());
-        mSettingsPresenter.showDialog(String.format("%s %s", getContext().getString(R.string.app_name), versionName), AppUpdatePresenter::unhold);
+        mSettingsPresenter.showDialog(String.format("%s %s", getContext().getString(R.string.app_name), versionName),
+                !UtubotSettings.isBuiltIn() ? AppUpdatePresenter::unhold
+                        : () -> {
+                            if (!mIsInstalling) {
+                                setUpdateDismissed(versionName, versionCode);
+                            }
+                            AppUpdatePresenter.unhold();
+                        });
+    }
+
+    int offeredVersionCode() {
+        return mUpdateChecker instanceof UtubotUpdateChecker ? ((UtubotUpdateChecker) mUpdateChecker).getLatestVersionNumber() : 0;
+    }
+
+    private void setUpdateDismissed(String versionName, int versionCode) {
+        if (UtubotSettings.isBuiltIn()) {
+            UtubotSettings.instance(getContext()).setDismissedUpdate(versionName, versionCode);
+        }
     }
 
     boolean canShowUpdateDialog() {

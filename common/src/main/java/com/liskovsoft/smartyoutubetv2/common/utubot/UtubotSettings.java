@@ -38,6 +38,8 @@ public class UtubotSettings {
     private static final String KEY_PAIR_PROMPT_DONE = "pair_prompt_done";
     private static final String KEY_SETUP_PROMPT_DONE = "setup_prompt_done";
     private static final String KEY_UPDATE_URL = "update_url";
+    private static final String KEY_DISMISSED_UPDATE = "dismissed_update";
+    private static final String KEY_DISMISSED_UPDATE_CODE = "dismissed_update_code";
     private static final String KEY_PENDING_PROMPT_SETS = "pending_prompt_sets";
     private static final String LIST_SEPARATOR = "\n";
     @SuppressLint("StaticFieldLeak")
@@ -76,6 +78,7 @@ public class UtubotSettings {
         mPrefs.edit().putString(KEY_URL, value).apply();
 
         if (!previous.equals(value)) {
+            clearDismissedUpdate();
             notifyConnectionChanged();
         }
     }
@@ -111,6 +114,7 @@ public class UtubotSettings {
             setUrl("");
             // The update address of that backend, imported or derived, goes with it
             mPrefs.edit().remove(KEY_UPDATE_URL).apply();
+            clearDismissedUpdate();
             return;
         }
 
@@ -168,7 +172,64 @@ public class UtubotSettings {
     }
 
     public void setUpdateUrl(String url) {
-        mPrefs.edit().putString(KEY_UPDATE_URL, url != null ? url.trim() : "").apply();
+        String previous = getUpdateUrl();
+        String value = url != null ? url.trim() : "";
+
+        mPrefs.edit().putString(KEY_UPDATE_URL, value).apply();
+
+        if (!previous.equals(value)) {
+            clearDismissedUpdate();
+        }
+    }
+
+    /**
+     * The version of the last update notification the user dismissed: it isn't offered again until a newer version comes.
+     * Empty when none was dismissed.
+     */
+    public String getDismissedUpdateVersion() {
+        return mPrefs.getString(KEY_DISMISSED_UPDATE, "");
+    }
+
+    public int getDismissedUpdateVersionCode() {
+        return mPrefs.getInt(KEY_DISMISSED_UPDATE_CODE, 0);
+    }
+
+    public void setDismissedUpdateVersion(String versionName) {
+        setDismissedUpdate(versionName, 0);
+    }
+
+    public void setDismissedUpdate(String versionName, int versionCode) {
+        mPrefs.edit()
+                .putString(KEY_DISMISSED_UPDATE, versionName != null ? versionName.trim() : "")
+                .putInt(KEY_DISMISSED_UPDATE_CODE, versionCode)
+                .apply();
+    }
+
+    private void clearDismissedUpdate() {
+        mPrefs.edit().remove(KEY_DISMISSED_UPDATE).remove(KEY_DISMISSED_UPDATE_CODE).apply();
+    }
+
+    /**
+     * True while the version the channel offers is the one the user dismissed (until a newer one).
+     */
+    public boolean isUpdateDismissed(String versionName) {
+        return isUpdateDismissed(versionName, 0);
+    }
+
+    public boolean isUpdateDismissed(String versionName, int versionCode) {
+        String dismissed = getDismissedUpdateVersion();
+
+        if (dismissed.isEmpty() || !dismissed.equals(versionName != null ? versionName.trim() : "")) {
+            return false;
+        }
+
+        int dismissedCode = getDismissedUpdateVersionCode();
+
+        if (dismissedCode > 0 && versionCode > 0) {
+            return dismissedCode == versionCode;
+        }
+
+        return true;
     }
 
     /**

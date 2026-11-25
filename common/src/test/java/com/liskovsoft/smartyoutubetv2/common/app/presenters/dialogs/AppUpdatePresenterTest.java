@@ -5,6 +5,7 @@ import android.content.Context;
 
 import com.liskovsoft.appupdatechecker2.AppUpdateChecker;
 import com.liskovsoft.appupdatechecker2.AppUpdateCheckerListener;
+import com.liskovsoft.appupdatechecker2.other.SettingsManager;
 import com.liskovsoft.smartyoutubetv2.common.utubot.StoredSettings;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
@@ -25,6 +26,7 @@ import org.robolectric.util.ReflectionHelpers;
 import java.io.File;
 import java.net.UnknownHostException;
 import java.time.Duration;
+import java.util.List;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -42,7 +44,9 @@ public class AppUpdatePresenterTest {
     public void setUp() {
         mActivity = Robolectric.buildActivity(Activity.class).setup().get();
         // The stutubot flavor checks only the update URL of an imported setup
-        UtubotSettings.instance(mActivity).setUpdateUrl("https://updates.example.com/app/update.json");
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        settings.setUpdateUrl("https://updates.example.com/app/update.json");
+        settings.setDismissedUpdateVersion("");
         mPresenter = new CountingPresenter(mActivity);
     }
 
@@ -228,6 +232,89 @@ public class AppUpdatePresenterTest {
         assertTrue(ReflectionHelpers.getField(new AppUpdatePresenter(mActivity), "mUpdateChecker") instanceof UtubotUpdateChecker);
     }
 
+    /**
+     * The automatic check asks the channel on the schedule even when the shared checker's short "recently checked" window says
+     * no (u-tubot#80: the check runs on app start and on the schedule). Notifications control it.
+     */
+    @Test
+    public void theAutomaticCheckAlwaysAsksTheChannelWhenNotificationsAreOn() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        SettingsManager settings = new SettingsManager(mActivity);
+        settings.setMinIntervalMs(SettingsManager.CHECK_INTERVAL_DEFAULT_MS);
+        settings.setLastCheckedMs(System.currentTimeMillis());
+
+        assertTrue(mPresenter.startAutomatic());
+        assertEquals("not gated by the shared checker's 60 second check window", 1, mPresenter.mChecks);
+
+        settings.setMinIntervalMs(-1);
+        assertFalse(mPresenter.startAutomatic());
+        assertEquals("notifications off: no check", 1, mPresenter.mChecks);
+
+        settings.setMinIntervalMs(SettingsManager.CHECK_INTERVAL_DEFAULT_MS);
+        UtubotSettings.instance(mActivity).setUpdateUrl("");
+        assertFalse("no update source", mPresenter.startAutomatic());
+        assertEquals(1, mPresenter.mChecks);
+    }
+
+    /**
+     * A dismissed automatic notification stays silent for that version and comes back with the next one; the manual check shows
+     * even the dismissed version, as the user asked for it.
+     */
+    @Test
+    public void aDismissedVersionIsNotOfferedAgainUntilANewerOne() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        UtubotSettings.instance(mActivity).setDismissedUpdateVersion("0.9.0");
+
+        mPresenter.onUpdateFound("0.9.0", java.util.Collections.singletonList("Fixes"), "/cache/update.apk");
+        assertEquals(0, mPresenter.mShown);
+
+        mPresenter.onUpdateFound("0.9.1", java.util.Collections.singletonList("Fixes"), "/cache/update.apk");
+        assertEquals(1, mPresenter.mShown);
+
+        mPresenter.start(true);
+        mPresenter.onUpdateFound("0.9.0", java.util.Collections.singletonList("Fixes"), "/cache/update.apk");
+        assertEquals("the manual check shows it", 2, mPresenter.mShown);
+    }
+
+    @Test
+    public void aDismissedNameWithAHigherCodeIsANewVersion() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        UtubotSettings.instance(mActivity).setDismissedUpdate("0.3.10", 3011);
+
+        mPresenter.mOfferedVersionCode = 3011;
+        mPresenter.onUpdateFound("0.3.10", java.util.Collections.singletonList("Fixes"), "/cache/update.apk");
+        assertEquals("the dismissed build is silent", 0, mPresenter.mShown);
+
+        mPresenter.mOfferedVersionCode = 3012;
+        mPresenter.onUpdateFound("0.3.10", java.util.Collections.singletonList("Fixes"), "/cache/update.apk");
+        assertEquals("the same name with a higher code is a new version", 1, mPresenter.mShown);
+    }
+
+    @Test
+    public void theDismissedVersionIsTheOnlyOneSuppressed() {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+
+        assertFalse(settings.isUpdateDismissed("0.9.0"));
+        settings.setDismissedUpdate("0.9.0", 900);
+
+        assertTrue(settings.isUpdateDismissed("0.9.0", 900));
+        assertTrue("a stored address with spaces is the same version", settings.isUpdateDismissed(" 0.9.0 ", 900));
+        assertFalse("a higher code under the same name", settings.isUpdateDismissed("0.9.0", 901));
+        assertFalse(settings.isUpdateDismissed("0.9.1", 900));
+        assertFalse(settings.isUpdateDismissed(""));
+    }
+
+    @Test
+    public void aNewUpdateUrlClearsTheDismissedVersion() {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        settings.setDismissedUpdate("0.9.0", 900);
+
+        settings.setUpdateUrl("https://other.example.com/app/update.json");
+
+        assertFalse("the dismissed version belongs to the old channel", settings.isUpdateDismissed("0.9.0", 900));
+        assertEquals("", settings.getDismissedUpdateVersion());
+    }
+
     private void fail() {
         mPresenter.onUpdateError(new UnknownHostException("github.com"));
     }
@@ -239,6 +326,8 @@ public class AppUpdatePresenterTest {
     private static class CountingPresenter extends AppUpdatePresenter {
         private int mChecks;
         private int mDeferred;
+        private int mShown;
+        private int mOfferedVersionCode;
         private boolean mCanShowDialog = true;
 
         CountingPresenter(Context context) {
@@ -258,6 +347,22 @@ public class AppUpdatePresenterTest {
         @Override
         void forceCheck() {
             mChecks++;
+        }
+
+        @Override
+        int offeredVersionCode() {
+            return mOfferedVersionCode;
+        }
+
+        @Override
+        void showUpdateDialog(String versionName, List<String> changelog, String apkPath) {
+            // The real dialog needs the UI; the call the presenter makes is what is counted
+            if (!canShowUpdateDialog()) {
+                deferUpdate();
+                return;
+            }
+
+            mShown++;
         }
     }
 }

@@ -15,7 +15,7 @@ so the other flavors behave as before.
 | `leanbackassistant/build.gradle` | `stutubot` flavor with `matchingFallbacks` | module variant matching |
 | `smarttubetv/build.gradle` | `stutubot` flavor, applicationId, version, release signing from `UTUBOT_KEYSTORE*` or `keystore.properties`, APK name `u-tubot_<ver>_<abi>.apk` | side-by-side install, signed releases |
 | `common/src/stutubot/res/values/update_urls.xml` | empty `update_urls` array | no built-in update source: the stored `update_url` of the imported setup is used |
-| `app/presenters/dialogs/AppUpdatePresenter.java` | `getUpdateUrls()`: stored setup URL (or the one derived from the backend) for the built-in flavor, none means no check; the update dialog always opens for the built-in flavor; `UtubotUpdateChecker` instead of the shared checker; an update found while the player is open or the app is in the background is reported to `UtubotUpdates.onUpdateDeferred()` | self-update from the user's own backend, https-only downloads, no lost prompt |
+| `app/presenters/dialogs/AppUpdatePresenter.java` | `getUpdateUrls()`: stored setup URL (or the one derived from the backend) for the built-in flavor, none means no check; the update dialog opens for the built-in flavor (automatic and manual), with "Not now" and the dismissed version name and code stored so the automatic check stays silent for that build until a newer one; `startAutomatic()` asks the channel on every scheduled check regardless of the shared checker's short "recently checked" window; `UtubotUpdateChecker` instead of the shared checker; an update found while the player is open or the app is in the background is reported to `UtubotUpdates.onUpdateDeferred()` | self-update from the user's own backend, https-only downloads, no lost prompt |
 | `app/presenters/dialogs/BootDialogPresenter.java` | `UtubotUpdates.start` instead of the one check at boot | check shortly after the start, then every 6 hours |
 | `tv/ui/main/MainApplication.java` | `UtubotAppHooks.install` | busy badge on every screen but the player, which screen is up (video menu) |
 | `smarttubetv/src/stutubot/res/` | app label; icon, alternative icon, banner and the three header logos, rendered from `assets/brand/*.svg` by `assets/brand/render.py` | own identity, not Electric Eel's |
@@ -120,14 +120,21 @@ so the other flavors behave as before.
   kept for 700 ms) fed by `UtubotBusyTracker`, which counts every `UtubotClient` call in flight.
 - Auto-update (`UtubotUpdates`, `UtubotUpdateSchedule`): 20 s after the app starts, then every 6 hours (a check that can't happen now, e.g.
   the player is open, is tried again after 5 minutes), through `AppUpdatePresenter` (the checker of `SharedModules`, `appupdatechecker2`: version
-  check, APK of the device's ABI, update dialog, installer). On by default; Settings, Updates, "Notify about updates" is its switch.
+  check, APK of the device's ABI, update dialog, installer). The scheduled check (`startAutomatic`) asks the channel on every run, whatever
+  the shared checker's 60 second "recently checked" window says, and only while "Notify about updates" is on. On by default; Settings, Updates,
+  "Notify about updates" is its switch. An automatic notification dismissed with Back or "Not now" stores that version name and
+  code (`UtubotSettings.setDismissedUpdate`) and isn't offered again; a higher code, even under the same name, is.
   An update found while the player is open (or the app is in the background) is not dropped: `AppUpdatePresenter` tells
   `UtubotUpdates.onUpdateDeferred()`, the schedule checks again after 5 minutes, and `UtubotAppHooks` calls
   `UtubotUpdates.onScreenAvailable()` when a screen other than the player resumes, which brings that check forward to 5 seconds
   later. The dialog never opens during playback (`AppUpdatePresenter.canShowUpdateDialog`).
-  `UtubotUpdateChecker` (a subclass of the shared `AppUpdateChecker`) filters the APK addresses of `update.json` before the shared
+  `UtubotUpdateChecker` (a subclass of the shared `AppUpdateChecker`) decides whether the channel is newer by its `versionCode`
+  (the backend publishes one per release; a version name can be shared while the code grew), falling back to the shared checker's
+  version-name comparison when a manifest has no code, and filters the APK addresses of `update.json` before the shared
   downloader sees them: https, or http for a private host (`UtubotSetup.isPrivateHost`), judged as OkHttp reads the address; the
   shared checker only asks `URLUtil.isValidUrl`. With none left the check fails ("The update file offers no https download").
+  A cached download whose version name matches but whose code does not is discarded, so the shared checker fetches the offered
+  build instead of reusing the old file.
   Redirects are the downloader's own; the installer checks the package name and the signing key of whatever it gets.
   `UtubotSettings.getUpdateUrl()` returns the stored `update_url`, or `<backend>/app/update.json` when none was ever stored (a
   backend typed on 0.2.0); a setup that stored an empty address keeps none.
@@ -210,8 +217,9 @@ The flavor has no update URL of its own: `AppUpdatePresenter` uses the `update_u
 ```
 
 `downloadUrlList_<abi>` (the device's primary ABI from `DeviceHelpers.getPrimaryAbi`) wins over `downloadUrlList`. The newest
-key by version-name comparison is the latest; the app compares it with its own version name. The downloaded APK must carry the
-package `dev.utubot.tv` and the same signing key, otherwise Android refuses it. The backend writes the file with
+key by version-name comparison is the latest; the shared checker compares it with the installed version name, and the flavor then
+decides by the channel's `versionCode` against the installed one (the names are a fallback when a manifest has no code). The
+downloaded APK must carry the package `dev.utubot.tv` and the same signing key, otherwise Android refuses it. The backend writes the file with
 `utubot app publish APK... --version-name V --version-code N --changelog TEXT`, or pulls the newest GitHub Release with
 `utubot app sync-github`. Versions are automatic (`utubot.version`, `docs/development.md`, "Versions").
 
