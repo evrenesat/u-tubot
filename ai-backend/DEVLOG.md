@@ -28,6 +28,15 @@
   holds unless the owner turns it on): least recently used entries go when a download would start at the quota, never an entry used
   within `evict_protect_s` or the file just stored. New nullable column `media_archive.last_used_at`, stamped by `lookup`.
 - Summary cache key is unchanged (video, prompt key, content hash, language); the model is already part of the content hash.
+## 2026-11-25 (example-config tests off the host data dir)
+
+- Problem: backend CI was red on the captions start-offset branch. The three tests that load
+  `config.example.toml` used its `data_dir` (`/var/lib/utubot`) and so read the host's `users.toml`,
+  which belongs to the service and cannot be read by the test runner.
+- `tests/conftest.py`: an `example_config` fixture loads the example with `users_path` pointed at
+  `tmp_path/users.toml`, keeping the example's declared users and defaults and touching no host file.
+- `test_glance.py`, `test_prompts_summary.py`, `test_security.py`: use the fixture; `test_security`
+  also asserts the example's `data_dir` stays and the users path is the temp file.
 
 ## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
 

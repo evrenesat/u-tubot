@@ -302,10 +302,8 @@ def test_task_field_keeps_old_content_hashes():
         validate_prompt_set(pset(extra={"prompts": [{**pset()["prompts"][0], "task": "x"}]}))
 
 
-def test_example_config_has_glance_defaults():
-    from utubot.config import load_config
-
-    cfg = load_config(Path(__file__).parent.parent / "config.example.toml")
+def test_example_config_has_glance_defaults(example_config):
+    cfg = example_config
     assert cfg.summary.panel_prompt == "builtin/glance" and cfg.summary.auto_long is False
     assert cfg.llm.glance is None
     task = cfg.llm.glance_task()

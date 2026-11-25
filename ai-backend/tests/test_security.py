@@ -364,14 +364,19 @@ def test_default_trusted_proxies():
     assert Config().security.trusted_proxies == ["127.0.0.1", "::1"]
 
 
-def test_example_config_loads():
-    from pathlib import Path
-
-    cfg = load_config(Path(__file__).parent.parent / "config.example.toml")
+def test_example_config_loads(example_config):
+    cfg = example_config
     assert cfg.llm.default_provider == "local"
     assert cfg.llm.providers["local"].api_key_env is None
     assert cfg.llm.triage.reasoning_effort == "none"
     assert cfg.users[0].admin is True
+
+
+def test_example_config_never_reads_the_host_users_file(example_config, tmp_path):
+    # A service-owned data dir exists only on a host that runs the backend; loading the
+    # example config in a test must not touch it (its users.toml is not ours to read)
+    assert example_config.server.data_dir == "/var/lib/utubot"
+    assert example_config.users_path == tmp_path / "users.toml"
 
 
 def test_provider_defaults_are_generic():
