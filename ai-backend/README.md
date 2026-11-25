@@ -36,7 +36,8 @@ option. Highlights:
 - `[summary]` token budget and strategy, `panel_prompt` (side-panel prompt, `builtin/glance`), `auto_long` (also build the long
   summary in the background, off by default).
 - `[security]` rate limits, pairing limits, request size cap, web sign-in (sessions, password hashing, lockout), `trusted_proxies` for
-  `X-Forwarded-For` and `X-Forwarded-Proto` (loopback only by default); `[models]` the cached model list.
+  `X-Forwarded-For` and `X-Forwarded-Proto` (loopback only by default); `[auth]` optional passwordless sign-in from a Tailscale Serve
+  identity header (`tailscale_identity`, `tailscale_users`); `[models]` the cached model list.
 - `[default_policy]` and `[[users]] policy` hold the defaults of every per-user setting (filtering, models per task, transcript
   policy, TV settings); users override them in the web UI.
 - `[assess]` batch size, wait cap, tier-2 daily cap per user (30).
@@ -63,7 +64,8 @@ browser sign-in (`/v1/auth/login`, `/v1/auth/logout`) and `/app/*` (update.json,
 needs `Authorization: Bearer <token>` or, for the web UI, the HttpOnly session cookie (writes then also need the `X-CSRF-Token`
 header; caption `.vtt` accepts the bearer header, and `?token=` only for players that cannot set headers; URL tokens end up in logs and history, so avoid them).
 `utubot user add NAME [--admin]` creates a user token; `utubot user passwd NAME` sets the web sign-in password; `utubot user pair NAME` prints a one-time
-6-digit code that a device exchanges at `POST /v1/pair` for its own revocable token.
+6-digit code that a device exchanges at `POST /v1/pair` for its own revocable token. A tailnet-only listener can instead sign the web UI in
+from the `Tailscale-User-Login` header that Tailscale Serve sets (`[auth]`, `docs/server.md`).
 
 ## CLI
 

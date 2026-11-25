@@ -64,11 +64,13 @@ from .processed import ProcessedService
 from .prompts import PANEL_ALIAS, TASK_CUTS, Prompt, PromptError, PromptStore, validate_prompt_set
 from .security import (
     PROXY_SECRET_HEADER,
+    TAILSCALE_LOGIN_HEADER,
     BodyLimitMiddleware,
     RateLimited,
     RateLimiter,
     client_ip,
     is_https,
+    is_loopback,
     origin_allowed,
 )
 from .settings import SettingsError, SettingsService
@@ -77,7 +79,7 @@ from .status import StatusService, UpdatesStatus
 from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
 from .videoref import VIDEO_ID_RE
-from .webauth import SESSION_TOKEN_ID, WebAuth, csrf_valid
+from .webauth import SESSION_TOKEN_ID, VIA_TAILSCALE, WebAuth, csrf_valid, hash_session
 from .webroutes import Deps, install_web_routes
 from .youtube import Clock, YoutubeGate
 from .youtube_fixtures import OfflineYoutubeFetcher
@@ -374,6 +376,13 @@ def create_app(
             raise HTTPException(403, "csrf token missing or wrong")
         check_same_origin(request)
 
+    def tailscale_identity(request: Request) -> UserConfig | None:
+        """The mapped user when Tailscale Serve named one, from the loopback peer only."""
+        if not is_loopback(request.client.host if request.client else None):
+            return None
+        name = cfg.auth.tailscale_user(request.headers.get(TAILSCALE_LOGIN_HEADER))
+        return svc.auth.find_user(name) if name else None
+
     def authenticate(request: Request, token: str | None) -> UserConfig:
         if token:
             principal = svc.auth.resolve(token)
@@ -385,17 +394,33 @@ def create_app(
             return principal.user
         cookie = session_cookie(request)
         session = svc.webauth.resolve_session(cookie)
-        if session is None or cookie is None:
+        if session is not None and cookie is not None:
+            if request.method not in SAFE_METHODS:
+                check_csrf(request, cookie)
+            svc.limiter.check(
+                f"ses:{session.user.name}:{session.id_hash[:12]}",
+                cfg.security.rate_per_token_per_min,
+            )
+            request.state.principal = Principal(session.user, SESSION_TOKEN_ID)
+            if session.refreshed:
+                request.state.session_refresh = cookie
+            return session.user
+        user = tailscale_identity(request)
+        if user is None or request.method not in SAFE_METHODS:
             raise Unauthorized
-        if request.method not in SAFE_METHODS:
-            check_csrf(request, cookie)
-        svc.limiter.check(
-            f"ses:{session.user.name}:{session.id_hash[:12]}", cfg.security.rate_per_token_per_min
+        token = svc.webauth.create_session(
+            user.name,
+            ip_of(request),
+            request.headers.get("user-agent", ""),
+            VIA_TAILSCALE,
         )
-        request.state.principal = Principal(session.user, SESSION_TOKEN_ID)
-        if session.refreshed:
-            request.state.session_refresh = cookie
-        return session.user
+        request.state.session_refresh = token
+        request.state.session_established = token
+        svc.limiter.check(
+            f"ses:{user.name}:{hash_session(token)[:12]}", cfg.security.rate_per_token_per_min
+        )
+        request.state.principal = Principal(user, SESSION_TOKEN_ID)
+        return user
 
     def current_user(request: Request) -> UserConfig:
         return authenticate(request, bearer(request))

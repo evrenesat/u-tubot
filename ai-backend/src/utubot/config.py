@@ -686,6 +686,31 @@ class ServerConfig(BaseModel):
         return f"{base}/app/{filename}"
 
 
+class AuthConfig(BaseModel):
+    """Sign-in from a Tailscale Serve identity header.
+
+    Off by default. Enable it only on a tailnet-only listener: Tailscale Serve connects from
+    loopback and names the signed-in tailnet user in `Tailscale-User-Login`; each login listed
+    in `tailscale_users` signs in as the local user it maps to.
+    """
+
+    tailscale_identity: bool = False
+    tailscale_users: dict[str, str] = Field(default_factory=dict)
+
+    def tailscale_user(self, login: str | None) -> str | None:
+        """The local user mapped to a tailnet login; matching is case-insensitive."""
+        if not self.tailscale_identity or not login:
+            return None
+        clean = login.strip()
+        if not clean:
+            return None
+        folded = clean.casefold()
+        for name, local in self.tailscale_users.items():
+            if name.strip().casefold() == folded:
+                return local.strip() or None
+        return None
+
+
 class SecurityConfig(BaseModel):
     trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1", "::1"])
     client_ip_header: str = ""
@@ -769,6 +794,7 @@ class AppConfig(BaseModel):
 
 class Config(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     assess: AssessConfig = Field(default_factory=AssessConfig)

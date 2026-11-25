@@ -58,6 +58,18 @@ def _in(nets, host: str) -> bool:
 
 
 PROXY_SECRET_HEADER = "X-Utubot-Proxy-Secret"
+TAILSCALE_LOGIN_HEADER = "tailscale-user-login"
+
+
+def is_loopback(host: str | None) -> bool:
+    """True for a loopback peer address, including an IPv4 address written as IPv4-mapped IPv6."""
+    try:
+        addr = ipaddress.ip_address((host or "").strip())
+    except ValueError:
+        return False
+    if addr.version == 6 and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return addr.is_loopback
 
 
 def _single_ip(value: str | None) -> str | None:

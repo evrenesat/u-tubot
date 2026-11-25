@@ -36,6 +36,7 @@ SCOPE_NAME_MAX_CHARS = 64
 SESSION_TOKEN_ID = "session"
 VIA_PASSWORD = "password"
 VIA_TOKEN = "token"
+VIA_TAILSCALE = "tailscale"
 GENERIC_LOGIN_ERROR = "invalid username or password"
 GENERIC_TOKEN_ERROR = "invalid token"
 LOCKED_MESSAGE = "too many failed sign-ins; try again later"

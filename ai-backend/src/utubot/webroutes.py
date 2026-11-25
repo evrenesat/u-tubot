@@ -123,7 +123,7 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
 
     @app.get("/v1/auth/session")
     async def session(request: Request, user: UserConfig = Depends(current_user)):
-        cookie = d.session_cookie(request)
+        cookie = d.session_cookie(request) or getattr(request.state, "session_established", None)
         bearer = request.headers.get("authorization", "")
         via_cookie = bool(cookie) and not bearer.lower().startswith("bearer ")
         return {

@@ -33,6 +33,18 @@
 
 # DEVLOG
 
+## 2026-11-25 (Tailscale Serve sign-in, UTB-105)
+
+- New optional `[auth]` section: `tailscale_identity` (default off) and `tailscale_users` (tailnet login to local user;
+  case-insensitive). With it on, a safe request (`GET`, `HEAD`, `OPTIONS`) from a loopback peer carrying
+  `Tailscale-User-Login` signs in as the mapped local user and gets the normal session cookie. The raw peer is checked, not
+  `X-Forwarded-For`; unmapped logins and unknown local users are refused; writes keep the session CSRF requirement, and a request
+  with no session cannot start one through an unsafe method. Password, token, device tokens and the public site are unchanged.
+- `GET /v1/auth/session` reports the session created on that request as cookie-backed with its CSRF token, so the page can write
+  immediately. Docs and the config example say to enable this only on a tailnet-only listener.
+- Tests: `tests/test_tailscale.py` covers the mapped flow and an authenticated write, case-insensitive mapping, unmapped and
+  non-loopback peers (including a spoofed forwarded address), the default-off gate, password sign-in beside it, and loopback parsing.
+
 ## 2026-11-25 (a failed cut does not stick; no-filler accepts a nearly full keep, issue 99)
 
 - Problem: the TV picker ignored a `failed` preset (no new request), and `cut-no-filler` refused a 96-99 % keep
