@@ -288,6 +288,94 @@ public class UtubotCutControllerTest {
     }
 
     /**
+     * The cuts answer of the open can still carry the preset used last (or the old choice) because the choice write of the picker
+     * races it: it must not replace the cut the viewer just picked for this video.
+     */
+    @Test
+    public void aStaleLastCut_doesNotReplaceTheCutPickedBeforeTheOpen() {
+        Cut picked = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        Cut staleLast = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
+        mCutsAnswers.add(cutsEmpty());
+        mController.applyOnOpen(picked);
+        mController.open(video(VIDEO), 240_000);
+
+        mController.onNewVideo(video(VIDEO));
+        mController.onCutChosen(VIDEO, staleLast);
+        mController.onVideoLoaded(video(VIDEO));
+
+        assertTrue(mController.isApplied(picked));
+        assertFalse(mController.isApplied(staleLast));
+        assertNull(getPendingCut());
+        mController.onFinish();
+    }
+
+    /**
+     * Turning the cut off writes the choice asynchronously too: a cuts answer built before the off lands must not bring the old
+     * chosen/last cut back when the video reopens.
+     */
+    @Test
+    public void aStaleCut_doesNotOverrideTheOffJustChosen() {
+        mController.open(video(VIDEO), 240_000);
+        Cut old = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        assertTrue(mController.toggle(old));
+        assertTrue(mController.toggle(old)); // the applied cut again: off, and the off write goes out
+
+        mController.onFinish();
+        mController.open(video(VIDEO), 240_000);
+        mCutsAnswers.add(cutsEmpty());
+        mController.onNewVideo(video(VIDEO));
+
+        Cut staleLast = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
+        mController.onCutChosen(VIDEO, staleLast);
+        mController.onVideoLoaded(video(VIDEO));
+
+        assertFalse(mController.isApplied(staleLast));
+        assertNull(getPendingCut());
+        mController.onFinish();
+    }
+
+    /**
+     * A stale ready list must not offer cuts the viewer just turned off, while the off write is still in flight.
+     */
+    @Test
+    public void aStaleReadyList_doesNotOfferCutsAfterTheOff() {
+        mController.open(video(VIDEO), 240_000);
+        Cut old = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        assertTrue(mController.toggle(old));
+        assertTrue(mController.toggle(old));
+
+        mController.onFinish();
+        mController.open(video(VIDEO), 240_000);
+        mCutsAnswers.add(cutsEmpty());
+        mController.onNewVideo(video(VIDEO));
+
+        mController.onCutsReady(VIDEO, Collections.singletonList(
+                cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000)));
+
+        assertFalse(readyOfferId() == 155);
+        mController.onFinish();
+    }
+
+    /**
+     * A request followed from the list can finish after the viewer picked another cut here: it must neither replace that pick nor
+     * offer itself over it.
+     */
+    @Test
+    public void aReadyRequest_doesNotReplaceTheCutPickedAfterItStarted() {
+        mController.open(video(VIDEO), 240_000);
+        Cut picked = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
+        Cut olderRequest = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        assertTrue(mController.toggle(picked));
+
+        mController.onCutReady(VIDEO, olderRequest, false);
+
+        assertTrue(mController.isApplied(picked));
+        assertFalse(mController.isApplied(olderRequest));
+        assertFalse(readyOfferId() == 155);
+        mController.onFinish();
+    }
+
+    /**
      * The player's picker applies a ready cut and takes it off again on the same row
      */
     @Test

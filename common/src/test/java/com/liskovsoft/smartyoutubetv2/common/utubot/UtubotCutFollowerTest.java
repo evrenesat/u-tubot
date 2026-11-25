@@ -357,6 +357,28 @@ public class UtubotCutFollowerTest {
     }
 
     @Test
+    public void aChosenPresetWithNoReadyCut_offersTheOtherReadyCuts() {
+        CutList cuts = cutsWithSelection(
+                new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"},
+                "cut-demo", UtubotModels.CutState.FAILED);
+        cuts.selection.cut = null;
+
+        for (CutPreset preset : cuts.presets) {
+            if ("cut-demo".equals(preset.id)) {
+                preset.state = UtubotModels.CutState.FAILED;
+                preset.cut = null;
+            }
+        }
+
+        mCutsAnswers.add(cuts);
+        mFollower.follow(VIDEO, mChoiceListener);
+
+        assertEquals(Collections.singletonList(Collections.singletonList("No filler")), mOffered);
+        assertTrue(mChosen.isEmpty());
+        assertTrue(mPlainReady.isEmpty());
+    }
+
+    @Test
     public void aChosenRequestStillBuilding_isFollowedAndAppliedAsChosen() {
         CutList cuts = cutsWithSelection(
                 new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"},

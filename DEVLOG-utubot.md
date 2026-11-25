@@ -11,6 +11,16 @@
 
 # u·tubot devlog
 
+## 2026-11-25 (cuts: the explicit pick wins over stale answers, issue 103)
+
+- The TV keeps the viewer's own pick or off per video until the backend carries it: a cuts answer or a followed request that was
+  built before that write landed can no longer replace the cut the viewer just picked or bring one back after an off. The pick
+  guards its open and is dropped on finish; an off stays until the viewer picks a cut on this TV again.
+- A chosen preset with no ready cut (its request failed or no longer matches the video) offers the other ready cuts instead of
+  opening the video uncut with no offer. A chosen request that is still building is followed, not offered around.
+- Tests: stale last/off/ready answers and a late followed request in `UtubotCutControllerTest`, a chosen preset without a ready
+  cut in `UtubotCutFollowerTest`.
+
 ## 2026-11-25 (a video opens with the chosen cut, issue 103)
 
 - The cut follower no longer takes the first ready preset: `GET /v1/videos/{id}/cuts` now carries a `selection`, and only that cut

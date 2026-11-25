@@ -206,14 +206,17 @@ public final class UtubotCutFollower {
         }
 
         Listener listener = mListener;
+        boolean followSelection = cuts.selection != null && cuts.selection.requestId != null && !cuts.selection.off
+                && isPending(cuts.selection.state);
 
         if (cuts.selection != null && cuts.selection.cut != null && !cuts.selection.off) {
             // The chosen cut, or the preset used last: applied, never replaced by the first ready one
             if (listener != null) {
                 listener.onCutChosen(videoId, cuts.selection.cut);
             }
-        } else if (cuts.selection == null && listener != null) {
-            // Nothing was chosen and the last preset has no ready cut: offer what is ready, apply none
+        } else if ((cuts.selection == null || !cuts.selection.off) && !followSelection && listener != null) {
+            // Nothing was chosen, or the chosen preset has no ready cut (it failed, or its cut no longer matches the video):
+            // offer what is ready, apply none. A chosen request still building is followed instead, not offered around.
             List<Cut> ready = readyCuts(cuts);
 
             if (!ready.isEmpty()) {
@@ -221,8 +224,7 @@ public final class UtubotCutFollower {
             }
         }
 
-        if (cuts.selection != null && cuts.selection.requestId != null && !cuts.selection.off
-                && isPending(cuts.selection.state)) {
+        if (followSelection) {
             // The viewer chose a request that is still building: follow that one, not a preset in the list, and
             // apply it as the chosen cut when it becomes ready
             mRequestId = cuts.selection.requestId;
