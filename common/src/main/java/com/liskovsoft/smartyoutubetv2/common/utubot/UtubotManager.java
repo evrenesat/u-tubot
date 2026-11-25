@@ -70,6 +70,12 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
         }
     };
     private final UtubotDiskCache mDisk;
+    /**
+     * The generation of the connection of the settings: a switch while the disk cache is being opened makes the opening of the old
+     * connection drop what it loaded instead of publishing its scope over the new one. Guarded by {@code mConnectionLock}.
+     */
+    private long mConnectionGeneration;
+    private final Object mConnectionLock = new Object();
     /** The scope of the disk cache for the connection of the settings, null until the backend told its version */
     private volatile String mDiskScope;
     private String mSessionPrompt;
@@ -78,9 +84,13 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     private UtubotCutFollower mCutsFollower;
 
     private UtubotManager(Context context) {
+        this(context, UtubotDiskCache.instance(context));
+    }
+
+    UtubotManager(Context context, UtubotDiskCache disk) {
         mContext = context.getApplicationContext();
         mSettings = UtubotSettings.instance(mContext);
-        mDisk = UtubotDiskCache.instance(mContext);
+        mDisk = disk;
         mSettings.addConnectionListener(this::onConnectionChanged);
     }
 
@@ -104,7 +114,11 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      * Another backend or another token: the verdicts, summaries, captions and prompts of the old connection are not the new one's
      */
     void onConnectionChanged() {
-        mVerdicts.clear();
+        synchronized (mConnectionLock) {
+            mConnectionGeneration++;
+            mDiskScope = null;
+            mVerdicts.clear();
+        }
 
         synchronized (mSummaries) {
             mSummaryGeneration++;
@@ -114,8 +128,6 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
         synchronized (mCaptions) {
             mCaptions.clear();
         }
-
-        mDiskScope = null;
 
         UtubotCaptionsFollower follower;
         UtubotCutFollower cutsFollower;
@@ -226,7 +238,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      *
      * @return the disk cache is open for the connection of the client
      */
-    private boolean useDiskCache(UtubotClient client) {
+    boolean useDiskCache(UtubotClient client) {
         if (mDiskScope != null) {
             return isCurrent(client);
         }
@@ -238,17 +250,37 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
                 return false;
             }
 
-            synchronized (mDisk) {
-                mDisk.useScope(scope);
+            long generation;
+            List<Verdict> stored;
 
-                for (Verdict verdict : mDisk.loadVerdicts()) {
+            synchronized (mDisk) {
+                synchronized (mConnectionLock) {
+                    if (!isCurrent(client)) {
+                        return false;
+                    }
+
+                    generation = mConnectionGeneration;
+                }
+
+                mDisk.useScope(scope);
+                stored = mDisk.loadVerdicts();
+            }
+
+            synchronized (mConnectionLock) {
+                // A switch while the old connection's disk was being opened: what it loaded belongs to the old backend
+                if (generation != mConnectionGeneration || !isCurrent(client)) {
+                    return false;
+                }
+
+                for (Verdict verdict : stored) {
                     if (mVerdicts.get(verdict.videoId) == null) {
                         mVerdicts.put(verdict);
                     }
                 }
+
+                mDiskScope = scope;
             }
 
-            mDiskScope = scope;
             return true;
         } catch (IOException | RuntimeException error) {
             Log.d(TAG, "The disk cache stays closed: %s", error.getMessage());

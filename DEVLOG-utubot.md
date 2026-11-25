@@ -239,6 +239,10 @@
   is shown but not stored again; the manager's summary generation moves under the same lock as the clear, so neither the memory nor
   the disk gets the old prompt's text back. `UtubotSummaryCacheTest` waits a blocked request through a refresh and checks both caches,
   then a new request on the same backend version.
+- Review r1: a connection switch while the disk cache is being opened no longer publishes the old scope over the new one (the opening
+  captures the connection generation under the disk lock and drops what it loaded when the generation moved); `UtubotDiskScopeRaceTest`
+  blocks the read through a token switch. The extension parity matrix and `ai/CONTRACT.md` ("Clients") record that the 3-day disk cache
+  is TV only, and the archive docs and `store` log match the opt-in LRU eviction (a just stored file is never evicted right after).
 
 ## 2026-11-24 (CI app job: Robolectric no longer downloads at test time)
 

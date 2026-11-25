@@ -395,6 +395,8 @@ contract is built for both. Exceptions, each with its reason:
   (`POST /v1/videos/{id}/cuts {"prompt"}`) and opens the cut sheet (`/cuts/{request_id}`) in a tab.
 - The sponsor-segment merge of a cut jump: TV only. The browser has no built-in sponsor skip.
 - The browse cache: TV only. YouTube's site owns its own loading.
+- The 3-day disk cache of ready verdicts and summaries: TV only. It is scoped to the backend version; the extension
+  keeps its caches in `storage.session`, which ends with the browser session, and does not keep failures either.
 - `GET /app/update.json`: TV only. Firefox updates extensions itself.
 
 The extension sends the bearer token from its background context only, to the backend's own origin, with no cookies

@@ -9,9 +9,9 @@ through `store`, which copies it into `files/<sha256[:2]>/<sha256>.<ext>` and re
 The quota (`[archive] quota_bytes`, 0: no limit) is a ceiling the archive never frees by itself:
 `require_room` refuses a download that would start past it (the job fails with a clear message
 and nothing was downloaded), and `store` warns when a file pushes the usage over it. Removing
-entries is an explicit admin act (`remove`) — the archive never deletes on its own, its root is
-refused when it sits inside the media scratch directory, and the scratch sweep of `media_dir`
-never sees these files.
+entries is an explicit admin act (`remove`) and, without the opt-in below, the archive never
+deletes on its own; its root is refused when it sits inside the media scratch directory, and the
+scratch sweep of `media_dir` never sees these files.
 
 The one exception is the owner's opt-in `[archive] eviction = "lru"`: `require_room` (and `store`,
 when a file overshoots) then frees the least recently used entries until the usage fits the quota
@@ -208,7 +208,9 @@ class MediaArchive:
     ) -> dict[str, Any]:
         """Copy `src` into the archive under its sha256 and record it for this video.
 
-        Identical bytes are stored once; the scratch original is removed afterwards. Raises
+        Identical bytes are stored once; the scratch original is removed afterwards. With
+        `eviction = "lru"` a store that leaves the archive over its quota evicts what it can, never
+        the just stored file, and logs a warning when the archive stays over it. Raises
         `MediaArchiveError` when the file could not be kept (`work` names the scratch directory
         that must then survive, so the download is not lost).
         """
@@ -272,7 +274,7 @@ class MediaArchive:
             self.evict_to_fit(self.cfg.archive.quota_bytes, keep=(video_id, sha256))
         if self.cfg.archive.quota_bytes > 0 and self.usage() > self.cfg.archive.quota_bytes:
             log.warning(
-                "media archive over its quota: %d of %d bytes (the file was kept anyway)",
+                "media archive over its quota: %d of %d bytes (the just stored file is kept; it is never evicted right after its store)",
                 self.usage(),
                 self.cfg.archive.quota_bytes,
             )
