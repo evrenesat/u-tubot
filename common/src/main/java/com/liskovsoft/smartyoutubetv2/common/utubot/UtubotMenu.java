@@ -406,6 +406,10 @@ public final class UtubotMenu {
                         MessageHelpers.showMessage(context, context.getString(R.string.utubot_cut_state_building));
                     }
                     UtubotManager.instance(context).cutRequested(video.videoId, request.id, request.state);
+
+                    if (UtubotCutWatcher.isPending(request.state)) {
+                        UtubotCutNotices.instance(context).ordered(request.id, video.videoId, video.getTitle());
+                    }
                 }, error -> MessageHelpers.showLongMessage(context,
                         context.getString(R.string.utubot_cut_failed, describeError(context, error))));
     }
@@ -420,6 +424,10 @@ public final class UtubotMenu {
                 .subscribe(request -> {
                     showPhoneSheet(context, request);
                     UtubotManager.instance(context).cutRequested(video.videoId, request.id, request.state);
+
+                    if (UtubotCutWatcher.isPending(request.state)) {
+                        UtubotCutNotices.instance(context).ordered(request.id, video.videoId, video.getTitle());
+                    }
                 }, error -> MessageHelpers.showLongMessage(context,
                         context.getString(R.string.utubot_cut_describe_failed, describeError(context, error))));
     }

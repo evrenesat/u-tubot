@@ -17,7 +17,7 @@ so the other flavors behave as before.
 | `common/src/stutubot/res/values/update_urls.xml` | empty `update_urls` array | no built-in update source: the stored `update_url` of the imported setup is used |
 | `app/presenters/dialogs/AppUpdatePresenter.java` | `getUpdateUrls()`: stored setup URL (or the one derived from the backend) for the built-in flavor, none means no check; the update dialog opens for the built-in flavor (automatic and manual), with "Not now" and the dismissed version name and code stored so the automatic check stays silent for that build until a newer one; `startAutomatic()` asks the channel on every scheduled check regardless of the shared checker's short "recently checked" window; `UtubotUpdateChecker` instead of the shared checker; an update found while the player is open or the app is in the background is reported to `UtubotUpdates.onUpdateDeferred()` | self-update from the user's own backend, https-only downloads, no lost prompt |
 | `app/presenters/dialogs/BootDialogPresenter.java` | `UtubotUpdates.start` instead of the one check at boot | check shortly after the start, then every 6 hours |
-| `tv/ui/main/MainApplication.java` | `UtubotAppHooks.install` | busy badge on every screen but the player, which screen is up (video menu) |
+| `tv/ui/main/MainApplication.java` | `UtubotAppHooks.install` | busy badge on every screen but the player, which screen is up (video menu), the screen state of the cut-ready pop-up, and the cut watcher started |
 | `smarttubetv/src/stutubot/res/` | app label; icon, alternative icon, banner and the three header logos, rendered from `assets/brand/*.svg` by `assets/brand/render.py` | own identity, not Electric Eel's |
 | `smarttubetv/src/stutubot/AndroidManifest.xml` | literal `android:label="u·tubot"` on `<application>` (merged over main's `@string/app_name`; keep both the same) | the system installer's "App installed" screen read the label without resources and showed the class name |
 | `common/src/stutubot/res/values/links.xml` | releases, sources, web site, feedback and About addresses of this repository, no donations, no Submit data server, the "Based on Electric Eel and SmartTube" credit | no upstream link is shown as ours |
@@ -211,6 +211,15 @@ so the other flavors behave as before.
   An engine release keeps the follower and the cut (only a finish ends the follower), and an engine re-init re-applies the cut of the same video; a
   same-video reload re-arms a cut that was still waiting for the length, and an engine release keeps such a pending one for its re-init. The skip rules live in `UtubotCutSkipper` (unit-tested); the emulator check (`CutsHarnessActivity`) plays a local MP4
   against the mock backend (docs/development.md, "Checking the director's cuts").
+- Director's cuts, ready wherever the viewer is (issue 96). A cut this TV orders while it is still waiting or building is kept in
+  `UtubotCutWaitlist` (the app may be closed before it is ready). `UtubotCutWatcher` follows every such request through
+  `GET /v1/cuts/{id}` from `UtubotAppHooks` on any screen, not only the player; `UtubotCutNotices` asks one at a time
+  "Director's cut ready: <video title> (<real length>). Play?". Yes carries the cut through the #64 path
+  (`UtubotCutController.applyOnOpen`) and opens the video; No, or Back, only closes the question, so the screen and the playback
+  position stay as they were. A ready cut found on the first check after a start (the app was closed when it finished) is not
+  announced; a failed build shows its reason as a short message (at the next screen when there was none). A cut of the video that
+  plays is left to the player's own follower, so it is not asked again. The list ends with ready, failed or dismissed requests and
+  drops anything older than 30 minutes; a backend or token change clears it.
 - With the Summary view open the focus never rests on the screen under it: the first D-pad key, OK or Enter after the grid took
   the focus back restores the view's focus and is used (`UtubotKeys.actsOnFocus`).
 

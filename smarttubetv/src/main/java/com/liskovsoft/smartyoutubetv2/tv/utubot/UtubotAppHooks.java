@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.Application;
 import android.os.Bundle;
 
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutNotices;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotScreen;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUiHost;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUpdates;
@@ -26,19 +28,27 @@ public final class UtubotAppHooks {
             return;
         }
 
+        UtubotCutNotices.instance(application).install();
+
         application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             // The controller holds its activity weakly: a value that held its key would keep the entry from ever being collected
             private final Map<Activity, UtubotBadgeController> mControllers = new WeakHashMap<>();
 
             @Override
             public void onActivityResumed(Activity activity) {
-                if (!(activity instanceof AppDialogActivity)) {
+                boolean isDialog = activity instanceof AppDialogActivity;
+                UtubotScreen.onResumed(activity, isDialog);
+
+                if (!isDialog) {
                     UtubotUiHost.setPlayerScreen(activity instanceof PlaybackActivity);
 
                     if (!(activity instanceof PlaybackActivity)) {
                         // The player closed or the app came back: an update that was found meanwhile is offered now
                         UtubotUpdates.onScreenAvailable();
                     }
+
+                    // A cut or its failure that arrived while no screen was up is shown on this one
+                    UtubotCutNotices.instance(activity).onScreenAvailable();
                 }
 
                 if (activity instanceof PlaybackActivity) {
@@ -57,6 +67,8 @@ public final class UtubotAppHooks {
 
             @Override
             public void onActivityPaused(Activity activity) {
+                UtubotScreen.onPaused(activity);
+
                 UtubotBadgeController controller = mControllers.get(activity);
 
                 if (controller != null) {
@@ -66,6 +78,7 @@ public final class UtubotAppHooks {
 
             @Override
             public void onActivityDestroyed(Activity activity) {
+                UtubotScreen.onPaused(activity);
                 UtubotBadgeController controller = mControllers.remove(activity);
 
                 if (controller != null) {

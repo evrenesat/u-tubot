@@ -96,3 +96,7 @@ repository, and the credit to Electric Eel and SmartTube.
   newest change first. Each tile says what is ready there, and opening one plays the video with its HQ captions selected and with
   the director's cut you chose for it (or the preset you used last); with no such ready cut it offers every ready cut through its
   one-press Apply. See [server.md](server.md#processed-videos).
+- Director's cuts: order one from the video menu and keep browsing or watching something else while it is built. When it becomes
+  ready while the app is open, the TV asks **"Director's cut ready: <video title> (<length>). Play?"** wherever you are: **Yes**
+  opens that video with the cut on, **No** leaves the screen and the playback position as they were. A cut that finished while the
+  app was closed is waiting in the video's cut picker and the Processed section.

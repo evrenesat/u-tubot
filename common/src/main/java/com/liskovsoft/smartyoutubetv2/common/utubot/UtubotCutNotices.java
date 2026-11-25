@@ -1,0 +1,281 @@
+package com.liskovsoft.smartyoutubetv2.common.utubot;
+
+import android.annotation.SuppressLint;
+import android.content.Context;
+
+import androidx.annotation.Nullable;
+
+import com.liskovsoft.sharedutils.helpers.MessageHelpers;
+import com.liskovsoft.sharedutils.mylogger.Log;
+import com.liskovsoft.smartyoutubetv2.common.R;
+import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
+import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
+import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
+import com.liskovsoft.smartyoutubetv2.common.app.presenters.PlaybackPresenter;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutWaitlist.Entry;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import io.reactivex.Observable;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.schedulers.Schedulers;
+
+/**
+ * The app-wide side of a cut that becomes ready while the viewer is somewhere else (issue 96): it keeps the cuts this TV ordered,
+ * follows them through the cut-request status endpoint, and asks "Director's cut ready: ... Play?" wherever the app is. Yes opens the
+ * video through the #64 cut path; No, or Back, only closes the question. A failure is a short message; a cut found ready at startup
+ * (the app was closed when it finished) is not announced.
+ */
+public final class UtubotCutNotices {
+    private static final String TAG = UtubotCutNotices.class.getSimpleName();
+    private static final int PROMPT_DIALOG_ID = 156;
+    private static final long DIALOG_RETRY_MS = 1_000;
+    @SuppressLint("StaticFieldLeak")
+    private static UtubotCutNotices sInstance;
+    private final Context mContext;
+    private final UtubotSettings mSettings;
+    private final UtubotCutWaitlist mWaitlist;
+    private final UtubotCutPromptQueue mPrompts;
+    private final List<String> mFailures = new ArrayList<>();
+    private UtubotCutWatcher mWatcher;
+    private boolean mInstalled;
+    private boolean mPromptShown;
+    private boolean mRetryPosted;
+
+    private UtubotCutNotices(Context context) {
+        mContext = context.getApplicationContext();
+        mSettings = UtubotSettings.instance(mContext);
+        mWaitlist = UtubotCutWaitlist.prefs(mContext);
+        mPrompts = new UtubotCutPromptQueue(this::presentPrompt, this::openWithCut);
+    }
+
+    public static synchronized UtubotCutNotices instance(Context context) {
+        if (sInstance == null) {
+            sInstance = new UtubotCutNotices(context);
+        }
+
+        return sInstance;
+    }
+
+    /**
+     * Installed once with the app: the requests kept on the device are checked again, and the list follows a backend or token change.
+     */
+    public synchronized void install() {
+        if (mInstalled) {
+            return;
+        }
+
+        mInstalled = true;
+        mSettings.addConnectionListener(this::onConnectionChanged);
+        watcher().start();
+    }
+
+    /**
+     * A cut this TV just asked for while it was still waiting or building.
+     */
+    public void ordered(String requestId, String videoId, @Nullable String title) {
+        if (requestId == null || videoId == null) {
+            return;
+        }
+
+        Entry entry = new Entry(requestId, videoId, title, System.currentTimeMillis());
+        mWaitlist.add(entry);
+
+        if (mInstalled) {
+            watcher().watch(entry);
+        }
+    }
+
+    /**
+     * A screen that is not a dialog came up: show what was kept while the app had no screen, and try a question that was blocked.
+     */
+    public void onScreenAvailable() {
+        flushFailures();
+        mPrompts.retry();
+    }
+
+    public synchronized void onConnectionChanged() {
+        if (mWatcher != null) {
+            mWatcher.stop();
+        }
+
+        mWaitlist.clear();
+        mPrompts.clear();
+        mFailures.clear();
+
+        if (mPromptShown) {
+            Context screen = UtubotScreen.screenContext();
+
+            if (screen != null) {
+                AppDialogPresenter.instance(screen).closeDialog();
+            }
+        }
+
+        mPromptShown = false;
+
+        if (mInstalled) {
+            watcher().start();
+        }
+    }
+
+    private void onCutReady(Entry entry, Cut cut) {
+        if (!UtubotScreen.isForeground()) {
+            // The app was closed or in the background when the cut became ready: it stays in the picker and the Processed section
+            return;
+        }
+
+        if (isPlayingVideo(entry.videoId)) {
+            // The player's own follower announces and applies a cut of the video that plays (#64)
+            return;
+        }
+
+        mPrompts.add(new UtubotCutPromptQueue.Item(entry, cut));
+    }
+
+    private void onCutFailed(Entry entry, @Nullable String error) {
+        String text = error != null && !error.trim().isEmpty()
+                ? mContext.getString(R.string.utubot_cut_failed, error)
+                : mContext.getString(R.string.utubot_cut_failed_plain);
+
+        if (UtubotScreen.isForeground()) {
+            MessageHelpers.showMessage(mContext, text);
+        } else {
+            mFailures.add(text);
+        }
+    }
+
+    private boolean presentPrompt(UtubotCutPromptQueue.Item item, UtubotCutPromptQueue.Answer answer) {
+        Context screen = UtubotScreen.screenContext();
+
+        if (screen == null || !UtubotScreen.isForeground()) {
+            return false; // nothing is up: onScreenAvailable tries again
+        }
+
+        AppDialogPresenter dialog = AppDialogPresenter.instance(screen);
+
+        if (mPromptShown || dialog.isDialogShown()) {
+            schedulePromptRetry();
+            return false;
+        }
+
+        String title = item.entry.title != null && !item.entry.title.trim().isEmpty()
+                ? item.entry.title.trim() : screen.getString(R.string.utubot_cut);
+        String length = UtubotCutController.formatLength(item.cut.keptMs);
+        String text = length.isEmpty()
+                ? screen.getString(R.string.utubot_cut_ready_play_no_length, title)
+                : screen.getString(R.string.utubot_cut_ready_play, title, length);
+
+        final boolean[] answered = {false};
+        OptionItem yes = UiOptionItem.from(screen.getString(R.string.utubot_cut_play_yes), option -> {
+            answered[0] = true;
+            dialog.closeDialog();
+            answer.play();
+        });
+        OptionItem no = UiOptionItem.from(screen.getString(R.string.utubot_cut_play_no), option -> {
+            answered[0] = true;
+            dialog.closeDialog();
+            answer.stay();
+        });
+
+        dialog.appendSingleButton(yes);
+        dialog.appendSingleButton(no);
+        dialog.setId(PROMPT_DIALOG_ID);
+        dialog.setOnFinish(() -> {
+            mPromptShown = false;
+
+            if (!answered[0]) {
+                answered[0] = true;
+                answer.stay();
+            }
+        });
+        dialog.enableTransparent(true);
+        dialog.enableExpandable(false);
+
+        mPromptShown = true;
+        dialog.showDialog(text);
+
+        return true;
+    }
+
+    private void openWithCut(UtubotCutPromptQueue.Item item) {
+        Context screen = UtubotScreen.screenContext();
+        Context context = screen != null ? screen : mContext;
+
+        UtubotCutController controller = PlaybackPresenter.instance(context).getController(UtubotCutController.class);
+
+        if (controller != null) {
+            controller.applyOnOpen(item.cut);
+        }
+
+        Video video = Video.from(item.entry.videoId);
+        video.title = item.entry.title;
+
+        PlaybackPresenter.instance(context).openVideo(video);
+    }
+
+    private boolean isPlayingVideo(String videoId) {
+        Context screen = UtubotScreen.screenContext();
+        Context context = screen != null ? screen : mContext;
+        UtubotCutController controller = PlaybackPresenter.instance(context).getController(UtubotCutController.class);
+
+        return controller != null && controller.isPlaying(videoId);
+    }
+
+    private void schedulePromptRetry() {
+        if (mRetryPosted) {
+            return;
+        }
+
+        mRetryPosted = true;
+        UtubotScheduler.mainThread().postDelayed(() -> {
+            mRetryPosted = false;
+            mPrompts.retry();
+        }, DIALOG_RETRY_MS);
+    }
+
+    private void flushFailures() {
+        if (mFailures.isEmpty()) {
+            return;
+        }
+
+        for (String text : mFailures) {
+            MessageHelpers.showMessage(mContext, text);
+        }
+
+        mFailures.clear();
+    }
+
+    private synchronized UtubotCutWatcher watcher() {
+        if (mWatcher == null) {
+            mWatcher = new UtubotCutWatcher(UtubotScheduler.mainThread(), this::fetchRequest, System::currentTimeMillis,
+                    mWaitlist, new UtubotCutWatcher.Listener() {
+                @Override
+                public void onCutReady(Entry entry, Cut cut) {
+                    UtubotCutNotices.this.onCutReady(entry, cut);
+                }
+
+                @Override
+                public void onCutFailed(Entry entry, String error) {
+                    UtubotCutNotices.this.onCutFailed(entry, error);
+                }
+            });
+        }
+
+        return mWatcher;
+    }
+
+    private void fetchRequest(String requestId, int waitMs, UtubotCutWatcher.Callback callback) {
+        UtubotClient client = UtubotManager.instance(mContext).newClient();
+
+        Observable.<CutRequest>fromCallable(() -> client.cut(requestId, waitMs))
+                .subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
+                .subscribe(callback::onResult, error -> {
+                    Log.d(TAG, "No cut request %s: %s", requestId, error.getMessage());
+                    callback.onError(error);
+                });
+    }
+}

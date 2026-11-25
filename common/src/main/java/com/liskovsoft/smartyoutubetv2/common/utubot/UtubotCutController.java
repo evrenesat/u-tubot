@@ -341,6 +341,15 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     }
 
     /**
+     * The video is the one this player really has started: a remembered video of a closed player or a released engine is not playing
+     */
+    public boolean isPlaying(@Nullable String videoId) {
+        Video video = getVideo();
+
+        return videoId != null && isLivePlayer() && video != null && Helpers.equals(video.videoId, videoId);
+    }
+
+    /**
      * The video that plays: a destroyed view returned by the presenter, or one whose engine is released, carries the last video but is
      * no playback (a list picker for that video must start it again through {@link #applyOnOpen(Cut)}, not toggle a cut here)
      */
