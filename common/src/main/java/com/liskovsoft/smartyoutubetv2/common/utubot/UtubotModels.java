@@ -8,6 +8,7 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The objects of the u-tubot wire contract (ai/CONTRACT.md)
@@ -297,6 +298,26 @@ public final class UtubotModels {
         }
     }
 
+    /** A cut mode: Quick (transcript only) or Watched (picture analysis too) */
+    public static final class CutMode {
+        public static final String QUICK = "quick";
+        public static final String WATCHED = "watched";
+        public String id;
+        public String label;
+        public boolean defaultMode;
+        public boolean available = true;
+        @Nullable public String reason;
+        public long etaSec = UNKNOWN;
+    }
+
+    /** What a Watched cut looked at: its grid count, vision model, and the partial/coarse flags */
+    public static final class CutWatched {
+        public int grids = UNKNOWN;
+        public String model;
+        public boolean partial;
+        public boolean coarse;
+    }
+
     /** A kept part of a cut, for display */
     public static final class CutPart {
         public String label;
@@ -321,6 +342,8 @@ public final class UtubotModels {
         public String transcriptHash;
         public String presetId;
         public String model;
+        public String mode = CutMode.QUICK;
+        @Nullable public CutWatched watched;
         public String builtAt;
     }
 
@@ -341,11 +364,35 @@ public final class UtubotModels {
         public boolean canRequest() {
             return CutState.NONE.equals(state) || CutState.FAILED.equals(state);
         }
+
+        /** The same preset's state for a mode (the top-level fields describe the caller's default) */
+        @Nullable public Map<String, CutPreset> byMode = Collections.emptyMap();
+
+        public CutPreset forMode(String mode) {
+            if (byMode != null) {
+                CutPreset chosen = byMode.get(mode);
+                if (chosen != null) {
+                    return chosen;
+                }
+            }
+            return this;
+        }
     }
 
     public static final class CutList {
         public boolean configured;
+        public String defaultMode = CutMode.QUICK;
+        public List<CutMode> modes = Collections.emptyList();
         public List<CutPreset> presets = Collections.emptyList();
+
+        public CutMode mode(String id) {
+            for (CutMode mode : modes) {
+                if (id != null && id.equals(mode.id)) {
+                    return mode;
+                }
+            }
+            return null;
+        }
     }
 
     /** A cut request (`GET /v1/cuts/{id}`): what the phone queue shows and the TV long-polls */
@@ -360,7 +407,10 @@ public final class UtubotModels {
         public String title;
         public String channel;
         public long durationSec = UNKNOWN;
-        /** Where a building request stands: transcript, model or checking */
+        public String mode = CutMode.QUICK;
+        /** The remaining estimate of a Watched build, in seconds */
+        public long etaSec = UNKNOWN;
+        /** Where a building request stands: transcript, video, grids, describing, model or checking */
         public String stage;
         @Nullable public Cut cut;
 
@@ -419,6 +469,7 @@ public final class UtubotModels {
     public static final class ProcessedCut {
         public String requestId;
         public String state = CutState.WAITING;
+        public String mode = CutMode.QUICK;
         @Nullable public String presetId;
         @Nullable public String presetLabel;
         @Nullable public String prompt;

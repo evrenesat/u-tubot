@@ -1,6 +1,6 @@
 import { api } from "../api.js";
 import { h, mount } from "../dom.js";
-import { bigCode, button, card, empty, every, errorText, fmtAgo, fmtDuration, note, numberInput, field, switchRow, toast } from "../components.js";
+import { bigCode, button, card, empty, every, errorText, fmtAgo, fmtDuration, note, numberInput, field, segmented, switchRow, toast } from "../components.js";
 
 // Settings the TV will read from the server in a later release.
 export function tvSettingsForm(settingsPath, doc, onUpdate) {
@@ -33,6 +33,42 @@ export function tvSettingsForm(settingsPath, doc, onUpdate) {
     switchRow("Check for app updates", "The TV asks this server for a newer app.", current.update_checks, (v) => (draft.update_checks = v)),
     msg,
     button("Save TV settings", save, { kind: "primary" }),
+  );
+}
+
+// Your default cut mode, per user; a pick in the TV picker or the cut sheet can still choose the other mode.
+export function cutModeForm(settingsPath, doc, onUpdate) {
+  const current = doc.settings.cuts || {};
+  const value = current.cut_mode || "quick";
+  let draft = value;
+  const msg = h("p", { class: "bad", text: "" });
+  const control = segmented(
+    [
+      ["quick", "Quick"],
+      ["watched", "Watched"],
+    ],
+    value,
+    (v) => (draft = v),
+  );
+  async function save() {
+    msg.textContent = "";
+    if (draft === value) {
+      toast("Nothing changed");
+      return;
+    }
+    try {
+      onUpdate(await api(settingsPath, { method: "PUT", body: { version: doc.version, settings: { cuts: { cut_mode: draft } } } }));
+      toast("Cut mode saved");
+    } catch (err) {
+      msg.textContent = errorText(err);
+    }
+  }
+  return card(
+    "Cut mode",
+    note("Quick reads the transcript only; Watched also looks at the picture and takes longer. The TV offers Quick when a watched cut fails."),
+    control,
+    msg,
+    button("Save cut mode", save, { kind: "primary" }),
   );
 }
 
@@ -103,6 +139,10 @@ export async function render(view) {
       ),
       card("Linked TVs", devicesHost),
       tvSettingsForm("/v1/me/settings", doc, (next) => {
+        doc = next;
+        draw();
+      }),
+      cutModeForm("/v1/me/settings", doc, (next) => {
         doc = next;
         draw();
       }),

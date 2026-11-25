@@ -2,6 +2,8 @@ package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutMode;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPreset;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Me;
 
@@ -98,6 +100,54 @@ public class UtubotCutsParserTest {
     @Test
     public void aRequestWithoutACutIsNotReady() throws Exception {
         assertFalse(UtubotParser.parseCutRequest(REQUEST.replace("\"cut\":" + CUT, "\"cut\":null")).isReady());
+    }
+
+    @Test
+    public void parsesTheModesAndTheWatchedStateOfAPreset() throws Exception {
+        String watchedCut = CUT.replace("\"model\":\"fast\"",
+                "\"model\":\"fast\",\"mode\":\"watched\",\"watched\":{\"grids\":24,\"model\":\"qwen-vision\",\"partial\":false,\"coarse\":false}");
+        String cuts = "{\"configured\":true,\"default_mode\":\"quick\",\"modes\":[" +
+                "{\"id\":\"quick\",\"label\":\"Quick\",\"default\":true,\"available\":true}," +
+                "{\"id\":\"watched\",\"label\":\"Watched \u00b7 about 12 min\",\"default\":false," +
+                "\"available\":true,\"eta_s\":720}],\"presets\":[" +
+                "{\"id\":\"cut-no-filler\",\"label\":\"No filler\",\"state\":\"none\"," +
+                "\"by_mode\":{\"quick\":{\"state\":\"ready\",\"cut\":" + CUT + "}," +
+                "\"watched\":{\"state\":\"building\",\"request_id\":\"cut2\"}}}," +
+                "{\"id\":\"cut-demo\",\"label\":\"Only the demo\",\"state\":\"failed\"," +
+                "\"by_mode\":{\"quick\":{\"state\":\"none\"}," +
+                "\"watched\":{\"state\":\"failed\",\"error\":\"the engine is in use\"}}}," +
+                "{\"id\":\"cut-answer\",\"label\":\"Just the answer\",\"state\":\"ready\",\"cut\":" +
+                watchedCut + "}]}";
+
+        CutList parsed = UtubotParser.parseCuts(cuts);
+
+        assertEquals("quick", parsed.defaultMode);
+        assertEquals(2, parsed.modes.size());
+        assertEquals("watched", parsed.modes.get(1).id);
+        assertEquals(720, parsed.modes.get(1).etaSec);
+        assertTrue(parsed.modes.get(0).defaultMode);
+
+        CutPreset preset = parsed.presets.get(0);
+        assertTrue(preset.forMode(CutMode.QUICK).isReady());
+        assertEquals("cut2", preset.forMode(CutMode.WATCHED).requestId);
+        assertEquals("the engine is in use", parsed.presets.get(1).forMode(CutMode.WATCHED).error);
+
+        Cut watched = parsed.presets.get(2).cut;
+        assertEquals(CutMode.WATCHED, watched.mode);
+        assertEquals(24, watched.watched.grids);
+        assertEquals("qwen-vision", watched.watched.model);
+        assertFalse(watched.watched.partial);
+    }
+
+    @Test
+    public void aWatchedRequestCarriesItsModeAndEstimate() throws Exception {
+        CutRequest request = UtubotParser.parseCutRequest(REQUEST
+                .replace("\"state\":\"ready\"", "\"state\":\"building\",\"mode\":\"watched\",\"eta_s\":120")
+                .replace("\"stage\":null", "\"stage\":\"describing\""));
+
+        assertEquals(CutMode.WATCHED, request.mode);
+        assertEquals(120, request.etaSec);
+        assertEquals("describing", request.stage);
     }
 
     @Test

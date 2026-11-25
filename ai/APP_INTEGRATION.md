@@ -169,6 +169,14 @@ so the other flavors behave as before.
   summary and one line per kept part ("2:10 - 3:05  The demo", `UtubotCutController.formatPart`), so the owner judges the cut on
   the TV before applying it (the phone sheet's parts list is the same information). Saved presets and the Android Share target are
   phone-only in v1 (the saved presets become rows of this same picker).
+- Director's cuts, Quick and Watched (`UtubotMenu.showCuts`): the picker's first row is the mode
+  ("Mode: Quick (default)" or `modes[].label`, with the server's reason when unavailable); its choice holds
+  for this picker session. Presets show `by_mode[selected]`, a ready row's title appends `· Watched`, and a
+  failed Watched preset shows its reason plus "Use Quick" (`POST {"preset","mode":"quick"}`). Asking for a
+  Watched build passes `"mode":"watched"` and toasts the `modes[].eta_s` ("Watched cut is being prepared,
+  about 12 min. Keep watching."). The follower long-polls the watched request through `video` and `grids`
+  and its ready announcement is unchanged. The device's personal default is read-only here (shown as the
+  default); it is changed in the web UI Settings ("Cut mode"), whose setter is `PUT settings.cuts.cut_mode`.
 - Director's cuts, while playing (`UtubotCutController`, a playback controller next to `SponsorBlockController`). The player's
   "Director's cut…" button (`UtubotCutAction`, next to the video stats button while the flavor is built in and a backend is set)
   opens the picker of the video that plays and reaches the controller's `onButtonClicked`. When a video opens it checks once where

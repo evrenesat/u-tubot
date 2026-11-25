@@ -99,6 +99,13 @@ public class UtubotCutsClientTest {
     }
 
     @Test
+    public void requestCutWithAWatchedMode_sendsTheMode() throws IOException {
+        new UtubotClient(base(), TOKEN).requestCut("abcdefghijk", "cut-demo", null, false, null, "watched");
+
+        assertEquals("{\"preset\":\"cut-demo\",\"mode\":\"watched\"}", mBody.get());
+    }
+
+    @Test
     public void requestCutAwaitingThePrompt_sendsAwaitPrompt() throws IOException {
         new UtubotClient(base(), TOKEN).requestCut("abcdefghijk", null, null, true, null);
 

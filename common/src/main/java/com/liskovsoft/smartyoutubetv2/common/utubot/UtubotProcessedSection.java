@@ -11,6 +11,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.data.VideoGroup;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutState;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.JobState;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedCaption;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutMode;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedCut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedItem;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
@@ -152,14 +153,16 @@ public final class UtubotProcessedSection {
     }
 
     private static String cutLabel(Context context, ProcessedCut cut) {
+        String label;
         if (cut.presetLabel != null && !cut.presetLabel.trim().isEmpty()) {
-            return cut.presetLabel.trim();
+            label = cut.presetLabel.trim();
+        } else if (cut.prompt != null && !cut.prompt.trim().isEmpty()) {
+            label = cut.prompt.trim();
+        } else {
+            label = context.getString(R.string.utubot_cut);
         }
-
-        if (cut.prompt != null && !cut.prompt.trim().isEmpty()) {
-            return cut.prompt.trim();
-        }
-
-        return context.getString(R.string.utubot_cut);
+        return CutMode.WATCHED.equals(cut.mode)
+                ? label + context.getString(R.string.utubot_cut_watched_suffix)
+                : label;
     }
 }

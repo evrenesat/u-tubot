@@ -1,5 +1,6 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutMode;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedItem;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
 
@@ -22,7 +23,7 @@ public class UtubotProcessedParserTest {
             "\"error\":null,\"created_at\":1763899900.0,\"updated_at\":1763900000.0}," +
             "{\"job_id\":\"job2\",\"lang\":\"tr\",\"translate_to\":null,\"state\":\"processing\",\"progress\":0.5," +
             "\"error\":null,\"created_at\":1763899800.0,\"updated_at\":1763899900.0}]," +
-            "\"cuts\":[{\"request_id\":\"cut1\",\"state\":\"ready\",\"preset_id\":\"cut-demo\",\"preset_label\":\"Only the demo\"," +
+            "\"cuts\":[{\"request_id\":\"cut1\",\"state\":\"ready\",\"mode\":\"watched\",\"preset_id\":\"cut-demo\",\"preset_label\":\"Only the demo\"," +
             "\"prompt\":null,\"error\":null,\"created_at\":1763899700.0,\"updated_at\":1763899800.0}," +
             "{\"request_id\":\"cut2\",\"state\":\"failed\",\"preset_id\":null,\"preset_label\":null," +
             "\"prompt\":\"Keep the demo\",\"error\":\"the model service is busy\",\"created_at\":1763899600.0,\"updated_at\":1763899700.0}]}";
@@ -68,6 +69,7 @@ public class UtubotProcessedParserTest {
         assertEquals("cut1", first.cuts.get(0).requestId);
         assertEquals("ready", first.cuts.get(0).state);
         assertEquals("cut-demo", first.cuts.get(0).presetId);
+        assertEquals(CutMode.WATCHED, first.cuts.get(0).mode);
         assertEquals("Only the demo", first.cuts.get(0).presetLabel);
         assertNull(first.cuts.get(0).prompt);
         assertEquals(1763899800.0, first.cuts.get(0).updatedAt, 0.0);

@@ -861,7 +861,15 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     public Observable<CutRequest> requestCutObserve(String videoId, @Nullable String presetId, @Nullable String prompt,
                                                     boolean awaitPrompt, @Nullable VideoMeta meta) {
-        return cancellable(client -> client.requestCut(videoId, presetId, prompt, awaitPrompt, meta));
+        return requestCutObserve(videoId, presetId, prompt, awaitPrompt, meta, null);
+    }
+
+    /**
+     * The same request with an explicit cut mode (null follows the caller's default)
+     */
+    public Observable<CutRequest> requestCutObserve(String videoId, @Nullable String presetId, @Nullable String prompt,
+                                                    boolean awaitPrompt, @Nullable VideoMeta meta, @Nullable String mode) {
+        return cancellable(client -> client.requestCut(videoId, presetId, prompt, awaitPrompt, meta, mode));
     }
 
     /**
