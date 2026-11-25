@@ -596,7 +596,7 @@ async def test_the_credit_drop_is_off_with_review_off(tmp_path):
     assert CREDIT in texts(result)
 
 
-def test_a_cached_answer_loses_its_credit_lines_without_a_new_cache_version():
+def test_a_cached_answer_loses_its_credit_lines():
     from utubot.captions.asr import ASRResult
     from utubot.captions.pipeline import ASR_CACHE_VERSION, drop_cached_credits
 
@@ -607,4 +607,4 @@ def test_a_cached_answer_loses_its_credit_lines_without_a_new_cache_version():
     )
     cleaned = drop_cached_credits(result, CaptionsConfig())
     assert [s.text for s in cleaned.segments] == ["hello"] and len(cleaned.words) == 1
-    assert cleaned.stats["hallucination_drops"] == 1 and ASR_CACHE_VERSION == 3
+    assert cleaned.stats["hallucination_drops"] == 1 and ASR_CACHE_VERSION == 4

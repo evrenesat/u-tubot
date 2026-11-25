@@ -52,6 +52,7 @@ from .asr import (
     make_asr,
     normalize_language,
     run_ffmpeg,
+    transcode_wav,
     wav_duration,
 )
 from .diarize import Diarizer, assign_speakers, make_diarizer
@@ -94,7 +95,7 @@ Progress = Callable[[float], None]
 ASR_CACHE_STAGE = "asr"
 
 
-ASR_CACHE_VERSION = 3  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review)
+ASR_CACHE_VERSION = 4  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review, 4: audio start offset)
 TIMING_VERSION = 5  # the caption timing scheme of a stored track (`captions.timing_version`)
 SEGMENT_METRICS = 3  # no_speech_prob, avg_logprob, compression_ratio follow start, end, text
 
@@ -490,20 +491,16 @@ class CaptionPipeline:
         progress(0.2)
         wav = work / "audio16k.wav"
         with events.stage(events.FFMPEG) as st:
-            await run_ffmpeg(
-                "-i",
-                str(src),
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                str(c.sample_rate),
-                "-c:a",
-                "pcm_s16le",
-                str(wav),
-            )
+            offset = await transcode_wav(src, wav, c.sample_rate)
             audio_s = wav_duration(wav, c.sample_rate)
-            st.set(audio_s=round(audio_s, 1), bytes=file_size(wav), sample_rate=c.sample_rate)
+            detail = {
+                "audio_s": round(audio_s, 1),
+                "bytes": file_size(wav),
+                "sample_rate": c.sample_rate,
+            }
+            if offset:
+                detail["start_offset_s"] = round(offset, 3)
+            st.set(**detail)
         if audio_s > c.max_duration_s:
             raise YoutubeVideoError(REASON_TOO_LONG)
         # the ASR cache is keyed by the separation mode too: the answer depends on the audio that

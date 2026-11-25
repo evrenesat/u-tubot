@@ -25,7 +25,7 @@ from ..db import Database
 from ..media_archive import KIND_AUDIO, MediaArchive
 from ..transcripts import parse_vtt
 from .align import detect_silences
-from .asr import normalize_language, run_ffmpeg
+from .asr import audio_start_offset, normalize_language, run_ffmpeg
 from .chunking import bare
 from .engines import AsrRouter, EngineFactory
 from .pipeline import ASR_CACHE_STAGE, ASR_CACHE_VERSION, asr_from_cache
@@ -223,6 +223,7 @@ async def score_track(
         engine_factory=engine_factory,
     )
     total = await asyncio.to_thread(audio_duration, source)
+    audio_offset = await audio_start_offset(source)
     onsets_all: list[float] = []
     per_window: list[dict[str, Any]] = []
     ref_windows: list[tuple[float, float, list[Word]]] = []
@@ -230,6 +231,7 @@ async def score_track(
     with tempfile.TemporaryDirectory(prefix="score-", dir=cfg.media_dir) as scratch:
         for begin in begins(total, at, windows, window_s):
             length = min(window_s, total - begin)
+            origin = max(begin, audio_offset)
             wav = Path(scratch) / f"w{int(begin)}.wav"
             await run_ffmpeg(
                 "-ss", str(begin), "-t", str(length), "-i", str(source), "-vn", "-ac", "1",
@@ -241,10 +243,11 @@ async def score_track(
             silences = await asyncio.to_thread(detect_silences, wav, c.silence_min_s)
             words, _stats = repair_words(result.words, silences, c)
             local = phrase_onsets([(w.start, w.end) for w in words], c.sentence_gap_s)
-            # a window cut mid-speech makes its first "onset" a cut, not a phrase start
-            onsets = [begin + t for t in (local[1:] if begin > 0 else local)]
+            # a window cut mid-speech makes its first "onset" a cut, not a phrase start; the
+            # first window can start before a late first sample, where nothing was cut
+            onsets = [origin + t for t in (local[1:] if begin > 0 and origin == begin else local)]
             onsets_all += onsets
-            ref_windows.append((begin, begin + length, words))
+            ref_windows.append((origin, origin + length, words))
             score = score_starts(cue_starts, onsets, c)
             per_window.append(
                 {
