@@ -197,8 +197,8 @@ so the other flavors behave as before.
   keeps "off" for that video. A waiting or building request for the video is long-polled (`GET /v1/cuts/{id}?wait_ms=10000`, at most 30 min, 5
   errors in a row) and applied from the current position when it becomes ready. A cut applies only to a video of its own length (±2 s,
   `cut.duration_ms` against the player's). While a cut is on, its dropped ranges are skipped with the sponsor-skip machinery:
-  `UtubotCutSkipper` skips a drop when the playback crosses into its start by itself (a seek of the user wins and plays, backwards
-  moves too), the jump goes past every sponsor segment set to skip that overlaps or touches the destination (`SponsorBlockController.
+  `UtubotCutSkipper` skips a drop when the playback crosses into it by itself (any flowing tick that lands inside it, however deep;
+  a seek of the user wins and plays, backwards moves too), the jump goes past every sponsor segment set to skip that overlaps or touches the destination (`SponsorBlockController.
   getActiveSegments`, the same 3 s grouping the sponsor block uses itself), so there is one jump, not two. Each skip shows a
   transparent dialog "Skipped 1:20" with a Back that returns to the skipped part for 5 s; nothing extra while another dialog is up.
   The skipped parts are dimmed on the seek bar (`UtubotCutSeekBar`, see the SponsorBlockController row above). Picking the applied cut
