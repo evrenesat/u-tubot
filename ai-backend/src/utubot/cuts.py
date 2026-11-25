@@ -30,7 +30,14 @@ from .db import Database
 from .llm import INTERACTIVE, LLMClient, LLMError
 from .media_archive import MediaArchive
 from .prompts import CUT_PRESET_INSTRUCTIONS, Prompt, PromptStore
-from .transcripts import ROLLING_MIN_WORDS, SOURCE_ASR, Transcript, TranscriptService, fmt_ts
+from .transcripts import (
+    CAPTION_MANUAL,
+    ROLLING_MIN_WORDS,
+    SOURCE_ASR,
+    Transcript,
+    TranscriptService,
+    fmt_ts,
+)
 from .youtube import YoutubeGate
 
 log = logging.getLogger("utubot.cuts")
@@ -250,10 +257,14 @@ def _ends_sentence(text: str) -> bool:
     return text.rstrip(" '\"”’)]}」』").endswith(tuple(SENTENCE_END))
 
 
-def build_units(segments: list[tuple[float, float, str]], cfg) -> list[Unit]:
+def build_units(
+    segments: list[tuple[float, float, str]], cfg, *, rolling: bool = True
+) -> list[Unit]:
     """Merge caption fragments into sentence-like units: a new unit starts on a pause over
     `cuts.unit_max_pause_s` or after sentence punctuation, and a unit never grows past
-    `cuts.unit_max_s`. Rolling caption fragments do not repeat the previous fragment's tail."""
+    `cuts.unit_max_s`. With `rolling` (YouTube's automatic captions) a fragment repeating the
+    previous one's tail loses that repeat; an authored caption or ASR text keeps a genuine
+    repetition (the same words said twice)."""
     max_pause = cfg.unit_max_pause_s
     max_len = cfg.unit_max_s
     units: list[Unit] = []
@@ -284,12 +295,13 @@ def build_units(segments: list[tuple[float, float, str]], cfg) -> list[Unit]:
             # boundary is a rolling caption window, so the repeated tail goes with it.
             after_pause = pause > max_pause
             flush()
-        if parts:
-            text = _drop_rolling_repeat(text, prev_raw)
-        elif not after_pause:
-            # The first fragment after a sentence/length flush still repeats the previous
-            # fragment; a one-word repeat ("Done.") is possible at that boundary.
-            text = _drop_rolling_repeat(text, prev_raw, min_words=1)
+        if rolling:
+            if parts:
+                text = _drop_rolling_repeat(text, prev_raw)
+            elif not after_pause:
+                # The first fragment after a sentence/length flush still repeats the previous
+                # fragment; a one-word repeat ("Done.") is possible at that boundary.
+                text = _drop_rolling_repeat(text, prev_raw, min_words=1)
         if not text:
             prev_end = max(seg_end, prev_end or 0.0)
             prev_raw = raw_text
@@ -1908,7 +1920,10 @@ class CutService:
         instruction, preset_id, source = self._instruction(row)
         with events.stage(STAGE_TRANSCRIPT, video_id=video_id):
             transcript = await self._ensure_transcript(request_id, row)
-            units = build_units(transcript.segments or [], self.cfg.cuts)
+            # Only YouTube's automatic caption windows roll and repeat their tail; an authored
+            # caption or ASR text may genuinely say the same words again, so it keeps them.
+            rolling = transcript.source != SOURCE_ASR and transcript.caption_kind != CAPTION_MANUAL
+            units = build_units(transcript.segments or [], self.cfg.cuts, rolling=rolling)
             if not units:
                 raise CutRefused("This transcript has no timed speech to cut.")
             thash = transcript_hash(transcript.segments)

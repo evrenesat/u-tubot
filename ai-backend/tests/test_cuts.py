@@ -108,6 +108,16 @@ class TestBuildUnits:
         )
         assert [u.text for u in two_words] == ["We tested it. It works.", "And it is fast."]
 
+    def test_an_authored_caption_keeps_a_genuine_repeat(self):
+        # "Done." twice at a sentence boundary is a rolling window in an auto caption, but an
+        # authored caption (or ASR) may genuinely say it twice; only auto captions drop it.
+        rolling = build_units(segs((0.0, 2.0, "Done."), (2.1, 4.0, "Done. It worked.")), CFG)
+        assert [u.text for u in rolling] == ["Done.", "It worked."]
+        authored = build_units(
+            segs((0.0, 2.0, "Done."), (2.1, 4.0, "Done. It worked.")), CFG, rolling=False
+        )
+        assert [u.text for u in authored] == ["Done.", "Done. It worked."]
+
     def test_a_sentence_closed_by_a_quote_or_bracket_ends_a_unit(self):
         units = build_units(
             segs(

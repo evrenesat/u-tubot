@@ -505,7 +505,8 @@ them, old cuts lack them, and a client that cannot show transitions skips as tod
 
 Build rules (mirrored from the backend config, `[cuts]`): caption fragments are merged into
 numbered sentence-like units (new unit on a pause over 0.6 s or sentence punctuation, 15 s
-cap; a rolling caption fragment's repeated tail is dropped); the model answers JSON with kept unit id ranges (`from`/`to`), a label per part, a
+cap; only an auto-caption fragment's repeated tail is dropped (an authored caption or ASR
+text keeps a genuine repeat); the model answers JSON with kept unit id ranges (`from`/`to`), a label per part, a
 one-line summary and `kept_s`; ids are validated (must exist, sorted, never overlapping) with
 one repair round; kept parts are merged (gaps under 2 s) and short parts (under 4 s) dropped
 on the model's boundaries clamped to the video first, then the kept boundaries are padded 0.3 s
