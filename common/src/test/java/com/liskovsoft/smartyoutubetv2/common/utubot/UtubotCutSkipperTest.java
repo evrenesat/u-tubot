@@ -107,6 +107,18 @@ public class UtubotCutSkipperTest {
     }
 
     @Test
+    public void aFastTickLandingDeepInsideADrop_isStillASkip() {
+        mSkipper.onPosition(50_000, 4f);
+
+        // an 18.4 s tick at 4x is under the 20 s seek threshold, but it lands 8.4 s into the
+        // drop: still a crossing the playback made by itself, so the whole drop must be skipped
+        UtubotCutSkipper.Decision decision = mSkipper.onPosition(68_400, 4f);
+
+        assertTrue(decision.isJump());
+        assertEquals(SKIP_1_END, decision.jumpToMs);
+    }
+
+    @Test
     public void aShortForwardSeek_intoADrop_winsAndPlays() {
         mSkipper.onPosition(58_000, 1f);
 
