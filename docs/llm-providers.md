@@ -46,10 +46,18 @@ placeholders: set the models for your provider.
 | `[llm.answer]` | `ask` and the answer to a title's question | prose |
 | `[llm.analysis]` | insight and the transcript-based second tier (short answer, inflation) | JSON |
 | `[llm.captions]` | optional caption translation | JSON array |
+| `[llm.cuts]` | director's-cut timelines from transcript units (Quick and Watched) | JSON with kept unit id ranges |
+| `[llm.cuts_vision]` | Watched grids: one 2x2 image per scene, described for the editor | JSON scene facts; optional but required for Watched |
 
 Each takes `model`, optional `provider`, `fallback`, `reasoning_effort`, `max_tokens`, `temperature`. A model may be written
 `provider:model` (`model = "openrouter:anthropic/claude-sonnet-5.5"`). A prompt in a prompt set can set its own `model` the same way;
 see [prompt-sets.md](prompt-sets.md).
+
+`[llm.cuts]` has no default: quality matters and the cuts routes stay off until an alias is named (`scripts/cut_bench.py` scores
+candidates offline). `[llm.cuts_vision]` is needed only for Watched mode; it must be a vision-capable model on one provider, and its
+`fallback` models must name that same provider because frame grids never go to a second endpoint. A vision answer is untrusted JSON:
+a malformed answer gets one retry, an unseen grid stays empty, and over 20 % unseen scenes fail the Watched request with a Quick
+offer. Set `reasoning_effort = "none"` on the vision task unless your endpoint specifically benefits from deliberation.
 
 ### The glance task
 

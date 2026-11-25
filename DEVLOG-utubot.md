@@ -1,3 +1,14 @@
+## 2026-11-24 (director's cuts: Quick/Watched backend)
+
+- Backend now serves two cut modes: Quick stays transcript-only and the default; Watched is an opt-in picture path that stores a
+  small video copy, describes 2x2 frame grids with `[llm.cuts_vision]`, joins them to transcript units and asks the same
+  `[llm.cuts]` editor. The request/cut documents, stage list, picker state, `progress`/`eta_s`, failure `fallback` to Quick, and
+  per-user `cut_mode` are additive; the contract and server docs carry them. Watch modules are adapted from the owner's r2t4
+  scene-analyser under MIT (`ai-backend/THIRD_PARTY.md`, `watch/LICENSE`). Tests never use YouTube or a real model, and the CI
+  backend installs the `watched` extra.
+- The TV/phone/extension mode UI and `scripts/emulator_mock_backend.py` are still to do; no bake-off/labelled-set gate was run in
+  this environment (owner-only work on the owner's model endpoint).
+
 # u·tubot devlog
 
 ## 2026-11-25 (a failed cut retries; no-filler keeps nearly all, issue 99)

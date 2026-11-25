@@ -33,7 +33,11 @@ In `data_dir` (SQLite and `users.toml`):
 - per-user: policy overrides, prompt sets, summaries, feedback you submitted, caption jobs;
 - no audio after a caption or transcription job finishes (unless `keep_media = true`), no YouTube credentials;
 - short-lived failure notes for a video (a failed fetch or model task, minutes), which `POST /v1/videos/{id}/retry` clears;
-  successful caches (transcripts, analyses, summaries, captions) stay.
+  successful caches (transcripts, analyses, summaries, captions) stay;
+- Watched cuts keep a small video copy (at most 360p, capped at 90 minutes and 1 GiB) in the media archive and 2x2 scene grids in
+  the scratch directory; the grids are removed after a build unless `[cuts.watched] keep_grids = true`, the video copy stays until an
+  admin removes the archive entry (which also drops that video's scene and description caches), and the TDT/description rows hold
+  short scene summaries, kinds, on-screen text and optional content labels.
 - whether YouTube has captions for a video (3 days), and the state of the YouTube request gate (a cooldown end time).
 
 Logs may contain client IPs, video ids and errors. Tokens are never logged. Client IPs are used in memory for rate limits.
@@ -41,7 +45,9 @@ Logs may contain client IPs, video ids and errors. Tokens are never logged. Clie
 ## What goes to the LLM provider
 
 Whatever provider you configure receives: titles, channel names and short descriptions (triage), transcripts and your prompt text
-(summaries, analysis, answers), caption text (translation). Your topic lists are part of the triage request. Use a local model if this
+(summaries, analysis, answers), caption text (translation). Watched mode sends sampled video frames as 2x2 JPEG grids only to the
+provider named by `[llm.cuts_vision]`, with its transcript window and carried scene summaries; its fallbacks must stay on that same
+provider, so pictures never reach a second endpoint. A local provider keeps the frames on your machine; a cloud one receives them. Your topic lists are part of the triage request. Use a local model if this
 matters; a cloud provider's own retention and training policy applies otherwise. API keys stay in the server's environment.
 
 The ASR backend `openai` receives the audio of videos you prepare captions for or transcribe in the background; `faster_whisper` keeps it local. Diarization downloads

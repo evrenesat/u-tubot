@@ -192,6 +192,11 @@ controllers: the `PlaybackPresenter`'s `UtubotCutController` (and `SponsorBlockC
 backend is applied with the app's own skip logic. The mock backend knows the cuts routes (ai/CONTRACT.md "Director's cuts"): builds are
 ready after `--cuts-delay` seconds, `{"await_prompt":true}` waits for the phone, and `/__mock/cuts?video=ID&state=ready|none|failed`
 sets a cut that is ready when the video opens. The mock cut of a 240 s video skips 60–108 s and 168–204 s.
+The mock also serves the Watched mode: `--cuts-watched-delay` (20 s default) builds a watched request through `video`, `grids`,
+`describing` and `in_line` stages with progress and `eta_s`; `POST .../cuts` accepts `{"mode":"watched"}` (a failed watched request
+answers `"fallback":"none"`), `PUT /v1/cut-requests/{id}` switches a waiting request's mode, and
+`/__mock/cuts?video=ID&mode=watched&state=ready|none|failed` sets its preset state separately. The picker then shows the mode row,
+the mode-specific preset labels and states, and a failed Watched preset's Retry and Use Quick.
 
 ```sh
 ffmpeg -f lavfi -i testsrc=size=640x360:rate=25 -f lavfi -i sine=frequency=440 -t 240 -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart temp/media/test.mp4

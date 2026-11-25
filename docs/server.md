@@ -74,8 +74,18 @@ published in `/setup.json` and in APK download links), `users_file` (default `da
 `model`, optional `provider`, `fallback`, `reasoning_effort`, `max_tokens`, `temperature`. `[llm.glance]` runs the short side-panel
 summary; when absent the glance uses `[llm.summary]` with `reasoning_effort = "none"`, and when present `reasoning_effort` defaults
 to `"none"` and `max_tokens` to 160. `[llm.cuts]` (optional) is the model that builds director's cuts — an explicit alias, no
-default; without the table every cuts route reports "not configured". Pick it with the offline test set
-(`uv run python scripts/cut_bench.py`, [Director's cuts](#directors-cuts)). See [llm-providers.md](llm-providers.md).
+default; without the table every cuts route reports "not configured". `[llm.cuts_vision]` (optional) is the vision model for
+Watched mode; without it Watched is unavailable, Quick still works, and every fallback in this table must name the same provider
+because the grids never go elsewhere. Pick the cuts model with the offline test set (`uv run python scripts/cut_bench.py`,
+[Director's cuts](#directors-cuts)). See [llm-providers.md](llm-providers.md).
+
+**`[cuts]`**: the director's-cut engine. `default_mode` (`quick` or `watched`), the unit/keep rules (`unit_max_pause_s`, `unit_max_s`, `merge_gap_s`, `min_part_s`, `pad_before_s`,
+`pad_after_s`, `min_keep_frac`, `max_keep_frac`, `max_input_tokens`), the queue (`max_active_per_user`,
+`default_wait_ms`, `wait_ms_cap`, `transcript_wait_s`, `poll_s`, `max_report_chars`) and `release_duration_tolerance_ms`. Watched adds
+`[cuts.watched]`: `enabled`, `max_video_minutes` (90), video size/format and free-space floors, the ffmpeg scene/analysis/chunk
+thresholds, `max_grids` (240) with its cap, the vision context (`recent_window_count`, `carry_forward_scenes`, `describe_context_chars`,
+`max_input_tokens`, `max_unseen_frac`), `describe_concurrency`/`max_concurrent`, the timeouts and the ETA/progress weights. Every
+key and its default is in `config.example.toml`.
 
 **`[assess]`**: `batch_size` (titles per triage call), `coalesce_ms`, `max_videos_per_request`, `wait_ms_cap`, `default_wait_ms`,
 `background_concurrency`, `tier2_daily_cap_per_user` (transcript-based deep analyses per user per UTC day, default `30`),
@@ -116,7 +126,7 @@ Updates from GitHub ([Updates](#updates)): `github_repo`, `signing_cert_sha256`,
 page `release_check_ttl_s` (600), `release_check_error_ttl_s` (60), `release_check_min_interval_s` (30).
 
 **`[default_policy]`** and **`[[users]]`**: see [policy.md](policy.md). They also carry the defaults of the [per-user
-settings](#per-user-settings): `models`, `auto_transcribe`, `auto_transcribe_max_minutes`, `summary_delay_ms`, `update_checks`,
+settings](#per-user-settings): `models`, `auto_transcribe`, `auto_transcribe_max_minutes`, `cut_mode`, `summary_delay_ms`, `update_checks`,
 `mark_only`, `summary_panel`, `auto_captions`, `auto_long`.
 
 Environment: `UTUBOT_CONFIG`, the provider key variables you named, `UTUBOT_ASR_API_KEY` and every other variable named by an
@@ -226,7 +236,9 @@ content-addressed by its sha256 under `[archive] path` (default `<data dir>/arch
 bytes are stored once; the scratch copy under `data_dir/media` is removed when the job is done, as before.
 
 Pipelines read from the archive first: a job whose video is already archived never contacts YouTube for its audio (no gate wait,
-the report shows "From the media archive"), and only a miss leads to a download, which the job then stores. Removing entries is
+the report shows "From the media archive"), and only a miss leads to a download, which the job then stores. Watched cuts read or
+store a `kind=video` entry; `utubot media import <video_id> <file> [--kind video|audio]` adds an already-downloaded file without
+network (the default kind is `video`, which is what the grid tests and offline benches use). Removing entries is
 an explicit admin act — *Admin → Media archive* in the web UI (usage against the quota, one row per video with format, size,
 sha256 and age, a *Remove* button) or `DELETE /v1/admin/archive/{video_id}` (`GET /v1/admin/archive` lists it). Unless the
 opt-in eviction below is on, nothing in the archive is deleted automatically, and the scratch sweep of `data_dir/media` never touches
@@ -333,7 +345,8 @@ only; anybody else gets `404`). It shows
   for the owner only.
 
 The log is the `job_events` table: one row per event (`job_id`, `ts`, `stage`, `status`, `detail` JSON), written as the stage happens, so a
-running job shows its progress and a crashed one shows where it stopped. Stages: `queued`, `promoted`, `started` (attempt and time
+running job shows its progress and a crashed one shows where it stopped. A director's-cuts job adds `video`, `grids`, `describing`
+and `in_line` to the stages below if it runs Watched. Stages: `queued`, `promoted`, `started` (attempt and time
 waited), `gate_wait` (the YouTube class and how long the gate held the job), `caption_recheck` (found, none, delayed or skipped and why; `found` also says how many YouTube word times (`words`) and which `caption_kind` (`manual|auto`) the stored captions have),
 `audio_download` (format id, original/dubbed/unmarked track, language, bytes, length, seconds, and `source`: `downloaded` or `from_archive`),
 `media_archive` (bytes and the sha256 prefix of what was kept; skipped when the audio came from the archive), `ffmpeg`, `chunking` (chunks and their sizes), `asr` and `asr_chunk` (engine, model, seconds, characters, detected language per chunk),
@@ -401,6 +414,7 @@ open pages cannot overwrite each other; scripts using a bearer token may leave i
 | `filtering` | `hide_topics`, `mark_topics`, the five thresholds, `inflated_min_duration_s`, `answer_in_label`, `mark_only` |
 | `summaries` | `language`, `auto_long` |
 | `transcripts` | `auto_transcribe` (`off`, `on_dwell`, `on_open`, default `on_open`), `auto_transcribe_max_minutes` (default 30), `captions_translate_to` (subtitle language: a code such as `en`, or `off` to keep the spoken language; unset follows `[captions] translate_to`) |
+| `cuts` | `cut_mode` (`quick` default or `watched`): the viewer's default director's-cut mode; a request can still choose the other mode |
 | `tv` | `summary_delay_ms`, `summary_panel`, `auto_captions`, `update_checks` |
 
 **Precedence**, for each setting, highest first:
@@ -412,7 +426,7 @@ open pages cannot overwrite each other; scripts using a bearer token may leave i
 4. the built-in default.
 
 A setting still unset at that point follows the server setting it mirrors, so there is one place to change it for everyone:
-`auto_long` follows `[summary] auto_long`; `mark_only`, `summary_panel` and `auto_captions` follow `[setup.defaults]` (the values a
+`cut_mode` follows `[cuts] default_mode`; `auto_long` follows `[summary] auto_long`; `mark_only`, `summary_panel` and `auto_captions` follow `[setup.defaults]` (the values a
 TV applies when it imports `/setup.json`); a task without a model follows its `[llm.<task>]` table (`glance` follows `[llm.glance]`,
 else `[llm.summary]`); the prompt defaults follow `builtin/tldr` and `[summary] panel_prompt`. When a model is actually used a prompt's
 own `model` (in the prompt set) wins over the user's model for that task, which wins over `[llm.<task>]`.
@@ -475,10 +489,32 @@ or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#direct
   that do not fit one call are narrowed in rounds (`max_reduce_rounds`). A failed excerpt is
   retried once, then the cut fails naming the part. Typed prompts keep their meaning: the map
   collects candidates for the prompt, the reduce applies it.
-- The stages of a build are in its job report (kind `cuts`): `transcript` → `model` →
+- **Watched** is opt-in picture analysis, chosen with mode `watched` (Quick is the default). It
+  stores a small video copy (`bestvideo` at most 360p, up to 90 minutes/1 GiB) in the media
+  archive, samples 2x2 grids with `ffmpeg`, and describes each grid with `[llm.cuts_vision]`
+  (`[cuts.watched]` holds every threshold). Descriptions are cached per video and video
+  description; a later preset for the same video reuses them, but each preset's editor prompt is
+  built again. A silent stretch over 4 s becomes a `(no speech)` unit, so a silent demo can be
+  kept by id. Boundaries may move outward up to 1 s to a real shot cut, never across a speech
+  unit. One Watched build runs at a time per server; a second request shows `in_line` and waits.
+  A grid/video cache is invalidated by a new video file or a transcript change, not by a preset.
+  The watched editor reuses the target-length rank selection of Quick (the model is asked for a
+  target and the server drops the lowest-ranked parts until it fits).
+- **Watched failures offer Quick.** Over 20 % unseen scenes, a busy/absent vision endpoint, an
+  over-limit video, low disk, a too-slow estimate (over `describe_s_per_grid_max` per grid) or
+  the 1-hour build deadline fail the request with a plain reason; the request carries
+  `fallback` = the same preset's Quick state, so the app can build Quick in one press. Quick
+  itself never carries a fallback. The app can choose the mode per picker session; the viewer's
+  default is `cut_mode` in Settings (web UI), following `[cuts] default_mode`.
+- The stages of a build are in its job report (kind `cuts`): Quick runs `transcript` → `model` →
   `checking` (long videos: `transcript` → `map` → `reduce` → `checking`; `map` events carry
-  `done`/`of`, and the request document's `progress` mirrors them), with the model's raw answer trimmed into the row. Cut jobs never appear in the
-  caption worker's cancel/retry paths — a cut is retried or dismissed from its cut sheet.
+  `done`/`of`, and the request document's `progress` mirrors them); Watched runs `transcript` →
+  `video` → `grids` → `describing` → `model` → `checking` (cached stages report `skipped`), and a
+  queued watched request shows `in_line` while another build holds the one slot. The job page
+  shows `progress`/`eta_s` and the new stages, with the model's raw answer trimmed into the row.
+  Cut jobs never appear in the caption worker's cancel/retry paths — a cut is retried or
+  dismissed from its cut sheet. Admins can read the newest TDT with
+  `GET /v1/admin/videos/{id}/tdt`; removing the archive entry drops its watched caches too.
 - A description typed on the cut sheet can be saved as the owner's own preset (phone only in
   v1): `POST /v1/cut-presets` stores it in the user's `cut-presets` prompt set, so it becomes a
   chip on later sheets and a row of the TV picker; `GET` lists them and `DELETE` removes one.

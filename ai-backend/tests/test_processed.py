@@ -53,12 +53,13 @@ def add_cut(
     preset: str | None = "cut-demo",
     prompt: str | None = None,
     state: str = "ready",
+    mode: str = "quick",
     updated_at: float | None = None,
 ) -> None:
     now = updated_at if updated_at is not None else time.time()
     env.svc.db.execute(
         "INSERT INTO cut_requests(id,user,video_id,source,preset_id,prompt,state,error,"
-        "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        "created_at,updated_at,mode) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         [
             f"cut{video_id[:4]}{int(now)}",
             user,
@@ -70,6 +71,7 @@ def add_cut(
             None,
             now - 60,
             now,
+            mode,
         ],
     )
 
@@ -123,7 +125,7 @@ async def test_mixed_items_are_one_per_video_newest_first(env):
     assert len(first["cuts"]) == 1
     cut = first["cuts"][0]
     assert cut["state"] == "ready" and cut["preset_id"] == "cut-demo"
-    assert cut["preset_label"] == "Only the demo"
+    assert cut["preset_label"] == "Only the demo" and cut["mode"] == "quick"
 
     second = videos[1]
     assert second["title"] == "Title from the job"
@@ -131,6 +133,14 @@ async def test_mixed_items_are_one_per_video_newest_first(env):
     assert second["summary"] is False
     assert second["captions"][0]["state"] == "processing"
     assert second["cuts"] == []
+
+
+async def test_a_watched_cut_entry_carries_its_mode(env):
+    add_cut(env, VID1, preset="cut-demo", mode="watched")
+
+    videos = (await env.client.get("/v1/processed")).json()["videos"]
+    assert len(videos) == 1
+    assert videos[0]["cuts"][0]["mode"] == "watched"
 
 
 async def test_limit_returns_that_many_videos_not_jobs(env):
