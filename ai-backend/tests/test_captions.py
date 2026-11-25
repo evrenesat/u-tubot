@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 
@@ -563,8 +564,35 @@ async def test_translate_empty_item_counts_as_failed(env):
 
 
 @pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="ffmpeg missing")
-async def test_forced_caption_job_skips_youtube_captions(env):
-    env.fetcher.text = "[00:00] YouTube words here. " * 5
+async def test_forced_caption_job_skips_stored_youtube_captions(env):
+    env.svc.db.execute(
+        "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,segments)"
+        " VALUES(?,?,?,?,?,?)",
+        [
+            VID,
+            "en",
+            "youtube_captions",
+            "YouTube words here.",
+            time.time(),
+            json.dumps([[0.0, 1.0, "YouTube words here."]]),
+        ],
+    )
+    env.svc.db.execute(
+        "INSERT INTO captions(video_id,lang,label,speakers,vtt,created_at) VALUES(?,?,?,?,?,?)",
+        [
+            VID,
+            "en",
+            "English (YouTube)",
+            1,
+            "WEBVTT\n\n1\n00:00:00.000 --> 00:00:01.000\nYouTube words here.\n",
+            time.time(),
+        ],
+    )
+    assert (
+        env.svc.db.one("SELECT source FROM transcripts WHERE video_id=?", [VID])["source"]
+        == "youtube_captions"
+    )
+
     started = await env.client.post(
         f"/v1/videos/{VID}/captions", json={"lang": "auto", "force": True}
     )
@@ -573,5 +601,82 @@ async def test_forced_caption_job_skips_youtube_captions(env):
     assert env.svc.db.one("SELECT force FROM jobs WHERE id=?", [job_id])["force"] == 1
     body = await wait_status(env.client, {"ready", "failed"})
     assert body["status"] == "ready", body
-    assert env.fetcher.calls == []
-    assert "Hello there." in (await env.client.get(body["tracks"][0]["url"])).text
+    assert not env.fetcher.calls
+    vtt = (await env.client.get(body["tracks"][0]["url"])).text
+    assert "Hello there." in vtt and "YouTube words here" not in vtt
+    assert env.svc.db.one("SELECT COUNT(*) AS n FROM captions WHERE video_id=?", [VID])["n"] == 1
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="ffmpeg missing")
+async def test_force_set_while_a_caption_job_runs_wins(env):
+    queue = env.svc.jobs
+
+    async def improve(*args, **kwargs):
+        raise AssertionError("the forced job must not improve YouTube captions")
+
+    original = queue._recheck_for_captions
+
+    async def recheck_then_force(video_id, priority):
+        found = await original(video_id, priority)
+        queue.db.execute("UPDATE jobs SET force=1 WHERE status='running'")
+        return found
+
+    queue.pipeline.improve = improve
+    queue._recheck_for_captions = recheck_then_force
+    started = await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})
+    assert started.json()["status"] == "queued"
+    body = await wait_status(env.client, {"ready", "failed"})
+    assert body["status"] == "ready", body
+    assert env.llm.audio_calls
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="ffmpeg missing")
+async def test_non_english_automatic_captions_are_rebuilt_from_the_audio(env):
+    from utubot.transcripts import CAPTION_AUTO
+
+    env.fetcher.lang = "hi"
+    env.fetcher.text = "नमस्ते दोस्त"
+    env.fetcher.segments = [(0.0, 1.0, "नमस्ते दोस्त")]
+    env.fetcher.caption_kind = CAPTION_AUTO
+    queue = env.svc.jobs
+
+    async def improve(*args, **kwargs):
+        raise AssertionError("non-English automatic captions must not be improved as text")
+
+    queue.pipeline.improve = improve
+    started = await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})
+    assert started.json()["status"] == "queued"
+    body = await wait_status(env.client, {"ready", "failed"})
+    assert body["status"] == "ready", body
+    assert env.llm.audio_calls
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="ffmpeg missing")
+async def test_the_release_gate_must_attest_before_a_track_is_stored(env, tmp_path):
+    from utubot.captions.gate import GATE_VERSION, write_attestation
+
+    attestation = tmp_path / "gate.json"
+    env.cfg.captions.gate_required = True
+    env.cfg.captions.gate_attestation = str(attestation)
+    started = await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})
+    assert started.json()["status"] == "queued"
+    job_id = started.json()["job_id"]
+    body = await wait_status(env.client, {"ready", "failed"})
+    assert body["status"] == "failed"
+    failed = env.svc.db.one(
+        "SELECT detail FROM job_events WHERE job_id=? AND status='failed' ORDER BY id DESC LIMIT 1",
+        [job_id],
+    )
+    assert "release gate has not passed" in json.loads(failed["detail"])["technical"]
+    row = env.svc.db.one("SELECT COUNT(*) AS n FROM captions WHERE video_id=?", [VID])
+    assert row["n"] == 0
+
+    write_attestation(attestation, {"version": GATE_VERSION, "passed": True, "failures": []})
+    started = await env.client.post(
+        f"/v1/videos/{VID}/captions", json={"lang": "auto", "force": True}
+    )
+    assert started.json()["status"] == "queued"
+    body = await wait_status(env.client, {"ready", "failed"})
+    assert body["status"] == "ready", body
+    row = env.svc.db.one("SELECT COUNT(*) AS n FROM captions WHERE video_id=?", [VID])
+    assert row["n"] == 1

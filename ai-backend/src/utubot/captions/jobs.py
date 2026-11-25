@@ -12,7 +12,13 @@ from ..db import Database
 from ..errors import MSG_JOB, MSG_JOB_RETRIES, MSG_TRANSCRIBE
 from ..llm import BACKGROUND, INTERACTIVE
 from ..media_archive import MediaArchiveError, MediaArchiveFull
-from ..transcripts import SOURCE_ASR, SOURCE_CAPTIONS, NoCaptions, TranscriptService
+from ..transcripts import (
+    CAPTION_AUTO,
+    SOURCE_ASR,
+    SOURCE_CAPTIONS,
+    NoCaptions,
+    TranscriptService,
+)
 from ..youtube import CLASS_MEDIA, FETCH_CLASSES, YoutubeDelayed, YoutubeVideoError
 from . import events
 from .asr import normalize_language
@@ -535,6 +541,27 @@ class JobQueue:
             "UPDATE jobs SET progress=?, updated_at=? WHERE id=?", [value, time.time(), job_id]
         )
 
+    def _job_forced(self, job: dict[str, Any]) -> bool:
+        """Re-read `force`: the user may have set it after this worker claimed the job."""
+        row = self.db.one("SELECT force FROM jobs WHERE id=?", [job["id"]])
+        return bool(row and row["force"])
+
+    @staticmethod
+    def _emit_forced() -> None:
+        events.emit(
+            events.CAPTION_RECHECK,
+            events.SKIPPED,
+            reason="forced",
+            message="The user asked for the audio: YouTube captions were not used.",
+        )
+
+    def _rebuild_non_english(self, found: Any) -> bool:
+        """Whether automatic captions in a language other than English are rebuilt from the audio."""
+        if not self.cfg.captions.prefer_asr_non_english or found.caption_kind != CAPTION_AUTO:
+            return False
+        base = normalize_language(found.lang)
+        return bool(base) and base.split("-")[0] != "en"
+
     async def _run_captions(self, job: dict[str, Any]) -> None:
         """HQ captions, lean: captions of the video are improved, missing ones are made from audio.
 
@@ -546,13 +573,8 @@ class JobQueue:
         video_id = job["video_id"]
         priority = job["priority"]
         gate = self.pipeline.gate
-        if job["force"]:
-            events.emit(
-                events.CAPTION_RECHECK,
-                events.SKIPPED,
-                reason="forced",
-                message="The user asked for the audio: YouTube captions were not used.",
-            )
+        if self._job_forced(job):
+            self._emit_forced()
             await self.pipeline.run(
                 video_id,
                 job["lang"],
@@ -582,12 +604,30 @@ class JobQueue:
             )
             return
         found = await self._recheck_for_captions(video_id, priority)
+        if self._job_forced(job):
+            self._emit_forced()
+            found = None
         if (
             found is not None
             and found.source == SOURCE_CAPTIONS
             and found.segments
             and self._lang_matches(job["lang"], found.lang)
         ):
+            if self._rebuild_non_english(found):
+                events.emit(
+                    events.ASR,
+                    events.WARN,
+                    reason="non_english_captions",
+                    message="The automatic captions are not in English; the track is rebuilt from the audio.",
+                )
+                await self.pipeline.run(
+                    video_id,
+                    job["lang"],
+                    job["translate_to"],
+                    lambda f: self._set_progress(job["id"], f),
+                    priority,
+                )
+                return
             await self.pipeline.improve(
                 video_id,
                 found.segments,
@@ -680,22 +720,20 @@ class JobQueue:
         video_id = job["video_id"]
         priority = job["priority"]
         gate = self.pipeline.gate
-        forced = bool(job["force"])
+        forced = self._job_forced(job)
         check = (
             gate.interactive_ok(*FETCH_CLASSES)
             if priority == INTERACTIVE
             else gate.healthy(*FETCH_CLASSES)
         )
         if forced:
-            events.emit(
-                events.CAPTION_RECHECK,
-                events.SKIPPED,
-                reason="forced",
-                message="The user asked for the audio: YouTube captions were not used.",
-            )
+            self._emit_forced()
         elif check:
             if await self._recheck_captions(video_id, priority):
-                return
+                if not self._job_forced(job):
+                    return
+                forced = True
+                self._emit_forced()
         else:
             events.emit(
                 events.CAPTION_RECHECK,
@@ -718,7 +756,7 @@ class JobQueue:
             model=out.model,
             segments=out.segment_rows(),
             job_id=job["id"],
-            replace=forced,
+            replace=forced or self._job_forced(job),
         )
         events.emit(
             events.STORED,

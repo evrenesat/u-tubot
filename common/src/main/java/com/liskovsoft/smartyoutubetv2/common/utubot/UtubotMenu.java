@@ -178,11 +178,11 @@ public final class UtubotMenu {
         RxHelper.disposeActions(sAction);
         sAction = UtubotManager.instance(context).cutsObserve(video.videoId)
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(cuts -> showCutsDialog(context, video, cuts),
+                .subscribe(cuts -> showCutsDialog(context, video, cuts, false),
                         error -> MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_failed, error.getMessage())));
     }
 
-    private static void showCutsDialog(Context context, Video video, CutList cuts) {
+    private static void showCutsDialog(Context context, Video video, CutList cuts, boolean force) {
         if (!cuts.configured) {
             MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_not_configured));
             return;
@@ -195,13 +195,13 @@ public final class UtubotMenu {
         CutMode modeInfo = cuts.mode(mode);
 
         dialog.appendSingleButton(UiOptionItem.from(modeTitle(context, cuts, mode),
-                option -> pickTheOtherMode(context, video, cuts)));
+                option -> pickTheOtherMode(context, video, cuts, force)));
 
         for (CutPreset preset : cuts.presets) {
             CutPreset shown = preset.forMode(mode);
 
             dialog.appendSingleButton(UiOptionItem.from(presetTitle(context, shown), stateText(context, shown, controller),
-                    option -> onPresetPicked(context, video, shown, controller, mode, cuts)));
+                    option -> onPresetPicked(context, video, shown, controller, mode, cuts, force)));
 
             // A ready cut shows its kept parts under the preset, so the owner can judge it on the
             // TV before applying it (checkpoint 4; the phone sheet already does this).
@@ -212,10 +212,13 @@ public final class UtubotMenu {
             // A failed Watched preset offers the same preset in Quick with one press.
             if (CutMode.WATCHED.equals(mode) && UtubotModels.CutState.FAILED.equals(shown.state)) {
                 dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_use_quick),
-                        option -> startPresetRequest(context, video, shown.id, CutMode.QUICK, cuts)));
+                        option -> startPresetRequest(context, video, shown.id, CutMode.QUICK, cuts, force)));
             }
         }
 
+        dialog.appendSingleButton(UiOptionItem.from(context.getString(
+                force ? R.string.utubot_cut_force_on : R.string.utubot_cut_force_off),
+                option -> showCutsDialog(context, video, cuts, !force)));
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_describe_on_phone),
                 option -> describeOnPhone(context, video, mode)));
         dialog.showDialog(context.getString(R.string.utubot_cut));
@@ -249,7 +252,7 @@ public final class UtubotMenu {
     /**
      * The other mode; an unavailable one says its reason instead of switching
      */
-    private static void pickTheOtherMode(Context context, Video video, CutList cuts) {
+    private static void pickTheOtherMode(Context context, Video video, CutList cuts, boolean force) {
         String other = CutMode.WATCHED.equals(selectedMode(cuts)) ? CutMode.QUICK : CutMode.WATCHED;
         CutMode info = cuts.mode(other);
         if (info == null) {
@@ -261,7 +264,7 @@ public final class UtubotMenu {
         }
         sCutMode = other;
         AppDialogPresenter.instance(context).closeDialog();
-        showCutsDialog(context, video, cuts);
+        showCutsDialog(context, video, cuts, force);
     }
 
     private static String presetTitle(Context context, CutPreset preset) {
@@ -323,8 +326,8 @@ public final class UtubotMenu {
     }
 
     private static void onPresetPicked(Context context, Video video, CutPreset preset, @Nullable UtubotCutController controller,
-                                       String mode, CutList cuts) {
-        if (UtubotModels.CutState.READY.equals(preset.state) && preset.cut != null) {
+                                       String mode, CutList cuts, boolean force) {
+        if (!force && UtubotModels.CutState.READY.equals(preset.state) && preset.cut != null) {
             AppDialogPresenter.instance(context).closeDialog(); // the state text is stale the moment the cut is toggled or the video opens
 
             if (controller != null && controller.toggle(preset.cut)) {
@@ -340,19 +343,20 @@ public final class UtubotMenu {
             return;
         }
 
-        if (!preset.canRequest()) {
-            return; // waiting or building: the state is the information; nothing to do
+        if (!force && !preset.canRequest()) {
+            return; // waiting or building without force: the state is the information; nothing to do
         }
 
-        startPresetRequest(context, video, preset.id, mode, cuts);
+        startPresetRequest(context, video, preset.id, mode, cuts, force);
     }
 
     /**
      * Asks for one preset in a mode (Quick or Watched); Watched says its estimate before the video keeps playing.
      */
-    private static void startPresetRequest(Context context, Video video, String presetId, String mode, CutList cuts) {
+    private static void startPresetRequest(Context context, Video video, String presetId, String mode, CutList cuts,
+                                           boolean force) {
         RxHelper.disposeActions(sAction);
-        sAction = UtubotManager.instance(context).requestCutObserve(video.videoId, presetId, null, false, UtubotMeta.from(video), mode)
+        sAction = UtubotManager.instance(context).requestCutObserve(video.videoId, presetId, null, false, UtubotMeta.from(video), mode, force)
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(request -> {
                     if (CutMode.WATCHED.equals(mode)) {

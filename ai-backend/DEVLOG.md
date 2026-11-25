@@ -76,15 +76,25 @@
   `POST /v1/videos/ID/captions` skip the caption recheck (`caption_recheck` says `skipped` / `forced`) and build from the audio even when
   captions exist. A forced transcript replaces a stored caption transcript (`TranscriptService.store_asr(replace=...)`); an ASR
   transcript already stored is still `ready`, and a queued job is promoted (`jobs.force_job`) instead of adding a second one.
-- `jobs.force` (additive column, default 0) keeps the request on the job, so a retry stays forced. The transcript endpoint reports
-  `transcribing` while a forced job runs although the old captions are still stored.
-- Web UI: "Ignore YouTube captions" switch in *Transcribe a video*; TV: "Transcribe from audio" in the video menu.
+- `jobs.force` (additive column, default 0) keeps the request on the job, so a retry stays forced. A force that arrives while the job is
+  already running wins too: the caption and transcript runners re-read it after the recheck and switch to the audio path. The transcript
+  endpoint reports `transcribing` while a forced job runs although the old captions are still stored.
+- Non-English automatic (ASR) tracks are rebuilt from the audio in their own language (`prefer_asr_non_english`, default true) instead
+  of proofreading YouTube's text; manual and English tracks keep the improve path.
+- Cuts can force it too: `"force": true` on `POST /v1/videos/ID/cuts` (additive `cut_requests.force`), TV cut sheet toggle, and a forced
+  request never joins an unforced one. An existing timed caption transcript is replaced by the ASR one.
+- Web UI: "Ignore YouTube captions" switch in *Transcribe a video*; TV: "Transcribe from audio" and the cut sheet's
+  "Transcribe with u·tubot" toggle.
 - `captions-gate` (offline) compares a candidate `captions-score --json` with YouTube auto captions/a baseline: `hit >= gate_hit_min`
   and `gate_hit_margin` over the baseline, `loose` not below and `>= gate_loose_min`, `words.within_s >= gate_words_within_min`, at most
-  `gate_max_short_cues` cues under `gate_short_cue_s`, and a recorded meaning score not below the baseline. Thresholds are `[captions]
-  gate_*`. The Hindi fixture and its recorded meaning evaluation are owner work; no fixture is checked in here.
-- Tests: forced transcript over existing captions, force promotion, forced caption job skips YouTube (`test_captions.py`,
-  `test_transcript_flow.py`), gate pass/fail/missing meaning (`test_caption_gate.py`).
+  `gate_max_short_cues` cues under `gate_short_cue_s`, cue-offset median `<= gate_median_max_s` (0.30 s) and p95 `<= gate_p95_max_s`
+  (1.0 s) with neither worse than the baseline, and `meaning` (`--reference-translation`; token F1) `>= gate_meaning_min` (0.5) and
+  strictly above the baseline. `--attestation` writes the result even on failure; `gate_required` makes a job refuse to store without a
+  current passing attestation. Thresholds are `[captions] gate_*`.
+- The Hindi fixture and its recorded reference/meaning evaluation are still owner work: no recorded fixture is checked in here.
+- Tests: forced transcript over existing captions, force promotion and mid-run force (`test_captions.py`, `test_transcript_flow.py`),
+  non-English ASR rebuild, gate-required storage, cut force (`test_cuts_api.py`), gate pass/fail/median/p95/meaning/attestation
+  (`test_caption_gate.py`), meaning (`test_meaning.py`), Android force body (`UtubotCutsClientTest`).
 
 ## 2026-11-25 (example-config tests off the host data dir, backend CI red)
 

@@ -318,7 +318,7 @@ public class UtubotClient {
      */
     public CutRequest requestCut(String videoId, @Nullable String presetId, @Nullable String prompt, boolean awaitPrompt,
                                  @Nullable VideoMeta meta) throws IOException {
-        return requestCut(videoId, presetId, prompt, awaitPrompt, meta, null);
+        return requestCut(videoId, presetId, prompt, awaitPrompt, meta, null, false);
     }
 
     /**
@@ -326,8 +326,28 @@ public class UtubotClient {
      */
     public CutRequest requestCut(String videoId, @Nullable String presetId, @Nullable String prompt, boolean awaitPrompt,
                                  @Nullable VideoMeta meta, @Nullable String mode) throws IOException {
+        return requestCut(videoId, presetId, prompt, awaitPrompt, meta, mode, false);
+    }
+
+    /**
+     * As above; `force` builds from u·tubot's own audio transcript even when the video has captions.
+     */
+    public CutRequest requestCut(String videoId, @Nullable String presetId, @Nullable String prompt, boolean awaitPrompt,
+                                 @Nullable VideoMeta meta, boolean force) throws IOException {
+        return requestCut(videoId, presetId, prompt, awaitPrompt, meta, null, force);
+    }
+
+    /**
+     * The full request: an explicit cut mode and `force`.
+     */
+    public CutRequest requestCut(String videoId, @Nullable String presetId, @Nullable String prompt, boolean awaitPrompt,
+                                 @Nullable VideoMeta meta, @Nullable String mode, boolean force) throws IOException {
         return parse(() -> {
             JSONObject body = new JSONObject();
+
+            if (force) {
+                body.put("force", true);
+            }
 
             if (awaitPrompt) {
                 body.put("await_prompt", true);

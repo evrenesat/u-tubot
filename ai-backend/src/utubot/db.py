@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS cut_requests(
   updated_at REAL NOT NULL, finished_at REAL,
   mode TEXT NOT NULL DEFAULT 'quick', progress REAL,
   source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
-  release_duration_ms INTEGER);
+  release_duration_ms INTEGER, force INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS cut_requests_user ON cut_requests(user, created_at);
 CREATE INDEX IF NOT EXISTS cut_requests_video ON cut_requests(video_id);
 CREATE TABLE IF NOT EXISTS cuts(
@@ -163,6 +163,7 @@ CUT_REQUEST_COLUMNS = {
     "source_key": "TEXT",
     "release_key": "TEXT",
     "release_duration_ms": "INTEGER",
+    "force": "INTEGER NOT NULL DEFAULT 0",
 }
 CUTS_COLUMNS = {
     "mode": "TEXT NOT NULL DEFAULT 'quick'",

@@ -123,6 +123,8 @@
     <string name="utubot_cut_skipped">Skipped %s</string>
     <string name="utubot_cut_back">Back</string>
     <string name="utubot_cut_other_length">This cut was built for a different length of the video</string>
+    <string name="utubot_cut_force_off">Transcribe with u·tubot</string>
+    <string name="utubot_cut_force_on">Transcribe with u·tubot (on)</string>
     <string name="utubot_cut_describe_on_phone">Describe on phone…</string>
     <string name="utubot_cut_describe_hint">Scan this with your phone, or open the address on it, and describe the cut there. The video keeps playing.</string>
     <string name="utubot_cut_describe_failed">The phone sheet could not be prepared: %s</string>

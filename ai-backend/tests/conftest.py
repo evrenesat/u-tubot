@@ -112,6 +112,7 @@ class FakeFetcher:
         self.error: Exception | None = None
         self.meta_extra: dict = {}
         self.segments: list[tuple[float, float, str]] | None = None
+        self.caption_kind: str | None = None
         self.meta_calls: list[str] = []
         self.meta_error: Exception | None = None
 
@@ -137,7 +138,13 @@ class FakeFetcher:
             raise self.error
         if self.fail:
             raise RuntimeError("youtube blocked")
-        return FetchResult(self._meta(video_id), self.text, self.lang, segments=self.segments)
+        return FetchResult(
+            self._meta(video_id),
+            self.text,
+            self.lang,
+            segments=self.segments,
+            caption_kind=self.caption_kind,
+        )
 
 
 @pytest.fixture

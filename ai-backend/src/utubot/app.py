@@ -1035,6 +1035,7 @@ def create_app(
             prompt=body.prompt,
             await_prompt=body.await_prompt,
             mode=body.mode,
+            force=body.force,
         )
         return {"request_id": row["id"], "state": row["state"]}
 

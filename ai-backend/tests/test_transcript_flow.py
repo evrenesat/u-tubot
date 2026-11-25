@@ -737,3 +737,20 @@ async def test_forcing_turns_an_active_transcript_job_instead_of_adding_one(env)
     assert forced["job_id"] == first["job_id"]
     row = env.svc.db.one("SELECT force FROM jobs WHERE id=?", [first["job_id"]])
     assert row["force"] == 1
+
+
+@NEEDS_FFMPEG
+async def test_force_set_while_a_transcript_job_runs_wins(env):
+    queue = env.svc.jobs
+    original = queue._recheck_captions
+
+    async def recheck_then_force(video_id, priority):
+        found = await original(video_id, priority)
+        queue.db.execute("UPDATE jobs SET force=1 WHERE status='running'")
+        return found
+
+    queue._recheck_captions = recheck_then_force
+    started = (await env.client.post(f"/v1/videos/{VID}/transcribe")).json()
+    assert started["transcript_status"] == "transcribing"
+    done = await wait_transcript(env, "ok")
+    assert done["source"] == "asr"

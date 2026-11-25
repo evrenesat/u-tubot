@@ -34,7 +34,7 @@ from ..youtube import (
     classify_failure,
     ytdlp_runtime_options,
 )
-from . import events, reference
+from . import events, gate, reference
 from .align import (
     AlignStats,
     caption_cues,
@@ -1046,6 +1046,10 @@ class CaptionPipeline:
         `timing` says how the cue times were made (stored in the `timing` column with
         `TIMING_VERSION`); a track made in legacy mode passes none and stays `timing_version` NULL.
         """
+        if self.cfg.captions.gate_required:
+            reason = gate.check_attestation(self.cfg.captions.gate_attestation)
+            if reason:
+                raise PipelineError(f"the caption release gate has not passed: {reason}")
         if translate_to and translate_to != track_lang:
             with events.stage(events.TRANSLATE, source=track_lang, to=translate_to) as st:
                 split, tstats = SplitStats(), TranslateStats()

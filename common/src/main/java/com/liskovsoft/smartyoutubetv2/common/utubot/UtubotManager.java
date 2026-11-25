@@ -865,7 +865,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     public Observable<CutRequest> requestCutObserve(String videoId, @Nullable String presetId, @Nullable String prompt,
                                                     boolean awaitPrompt, @Nullable VideoMeta meta) {
-        return requestCutObserve(videoId, presetId, prompt, awaitPrompt, meta, null);
+        return requestCutObserve(videoId, presetId, prompt, awaitPrompt, meta, null, false);
     }
 
     /**
@@ -873,7 +873,24 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     public Observable<CutRequest> requestCutObserve(String videoId, @Nullable String presetId, @Nullable String prompt,
                                                     boolean awaitPrompt, @Nullable VideoMeta meta, @Nullable String mode) {
-        return cancellable(client -> client.requestCut(videoId, presetId, prompt, awaitPrompt, meta, mode));
+        return requestCutObserve(videoId, presetId, prompt, awaitPrompt, meta, mode, false);
+    }
+
+    /**
+     * As above; `force` builds from u·tubot's own audio transcript even when the video has captions
+     */
+    public Observable<CutRequest> requestCutObserve(String videoId, @Nullable String presetId, @Nullable String prompt,
+                                                    boolean awaitPrompt, @Nullable VideoMeta meta, boolean force) {
+        return requestCutObserve(videoId, presetId, prompt, awaitPrompt, meta, null, force);
+    }
+
+    /**
+     * The full request: an explicit cut mode and `force`
+     */
+    public Observable<CutRequest> requestCutObserve(String videoId, @Nullable String presetId, @Nullable String prompt,
+                                                    boolean awaitPrompt, @Nullable VideoMeta meta, @Nullable String mode,
+                                                    boolean force) {
+        return cancellable(client -> client.requestCut(videoId, presetId, prompt, awaitPrompt, meta, mode, force));
     }
 
     /**

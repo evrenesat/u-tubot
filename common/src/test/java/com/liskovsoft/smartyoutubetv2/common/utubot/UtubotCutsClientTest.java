@@ -106,6 +106,13 @@ public class UtubotCutsClientTest {
     }
 
     @Test
+    public void requestCutWithForce_sendsForce() throws IOException {
+        new UtubotClient(base(), TOKEN).requestCut("abcdefghijk", "cut-no-filler", null, false, null, true);
+
+        assertEquals("{\"force\":true,\"preset\":\"cut-no-filler\"}", mBody.get());
+    }
+
+    @Test
     public void requestCutAwaitingThePrompt_sendsAwaitPrompt() throws IOException {
         new UtubotClient(base(), TOKEN).requestCut("abcdefghijk", null, null, true, null);
 
