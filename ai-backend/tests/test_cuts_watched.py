@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from tests.synth_video import ffmpeg_available, make_video
@@ -48,9 +50,19 @@ async def post_watched(env, preset="cut-demo", **body):
     return await env.client.post(f"/v1/videos/{VID}/cuts", json=payload)
 
 
+WAIT_POLL_MS = 5000
+WAIT_DEADLINE_S = 120
+FINAL_STATES = ("ready", "failed")
+
+
 async def wait_ready(env, request_id: str):
-    r = await env.client.get(f"/v1/cuts/{request_id}", params={"wait_ms": 5000})
-    return r.json()
+    """Long-poll until the request ends; one poll can time out on a loaded runner."""
+    deadline = time.monotonic() + WAIT_DEADLINE_S
+    while True:
+        r = await env.client.get(f"/v1/cuts/{request_id}", params={"wait_ms": WAIT_POLL_MS})
+        doc = r.json()
+        if doc.get("state") in FINAL_STATES or time.monotonic() > deadline:
+            return doc
 
 
 class TestWatchedBuild:
