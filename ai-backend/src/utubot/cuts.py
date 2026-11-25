@@ -72,6 +72,39 @@ REMOVAL_PRESET_IDS = frozenset({"cut-no-filler", "cut-answer", "cut-demo"})
 NO_FILLER_PRESET_ID = "cut-no-filler"
 
 
+def source_ref(row: dict[str, Any]) -> dict[str, Any]:
+    """The one reader of the source columns: a row's source, its release and its cache source.
+
+    Old rows have no source_key: they mean `youtube:<video_id>`, and their cache source stays the
+    video id byte-for-byte. Other sources use `source_key|release_key` where a video id stands.
+    """
+    video_id = row.get("video_id")
+    kind = row.get("source_kind") or "youtube"
+    key = row.get("source_key") or f"youtube:{video_id}"
+    release_key = row.get("release_key")
+    release_duration_ms = row.get("release_duration_ms")
+    youtube = kind == "youtube" and key.startswith("youtube:")
+    return {
+        "kind": kind,
+        "key": key,
+        "release_key": release_key,
+        "release_duration_ms": release_duration_ms,
+        "cache_source": video_id if youtube else f"{key}|{release_key or ''}",
+    }
+
+
+def source_document(ref: dict[str, Any]) -> dict[str, Any] | None:
+    """The optional cut-document `source` object; absent means the YouTube video id as today."""
+    if ref["kind"] == "youtube":
+        return None
+    source = {"kind": ref["kind"], "key": ref["key"]}
+    if ref["release_key"] is not None:
+        source["release_key"] = ref["release_key"]
+    if ref["release_duration_ms"] is not None:
+        source["release_duration_ms"] = ref["release_duration_ms"]
+    return source
+
+
 def cut_clock(ms: int) -> str:
     """Milliseconds as the clients show a length: `1:12`, or `1:02:03` past an hour."""
     seconds = max(0, int(round(ms / 1000.0)))
@@ -1648,6 +1681,10 @@ class CutService:
                     duration_s=duration_s,
                     target_s=target_s,
                 )
+            src = source_ref(row)
+            source_obj = source_document(src)
+            if source_obj is not None:
+                doc["source"] = source_obj
             self.db.execute(
                 "INSERT OR REPLACE INTO cuts(cache_key,video_id,version,preset_id,prompt,model,"
                 "transcript_hash,json,duration_s,kept_s,created_at,mode,source_kind,source_key,"
@@ -1665,10 +1702,10 @@ class CutService:
                     doc["kept_ms"] / 1000.0,
                     time.time(),
                     "quick",
-                    row["source_kind"] or "youtube",
-                    row["source_key"] or f"youtube:{video_id}",
-                    row["release_key"],
-                    row["release_duration_ms"],
+                    src["kind"],
+                    src["key"],
+                    src["release_key"],
+                    src["release_duration_ms"],
                 ],
             )
             self.db.execute(

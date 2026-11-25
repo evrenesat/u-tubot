@@ -477,6 +477,13 @@ built for (`duration_ms`); a client does not apply a cut whose video length diff
 2 s. `transcript_hash` identifies the transcript the cut was built from; clients carry it and do not
 compare it (they hold no transcript). `skip_ranges_ms` is the sorted,
 non-overlapping complement of `parts`.
+`source` is the transcript's origin (`youtube_captions` or `asr`) on YouTube cuts. A cut of another
+source (a film or episode, not built yet) may carry it as `{"kind","key","release_key"?,
+"release_duration_ms"?}` instead; a client that ignores it reads the YouTube `video_id` as today.
+A cut may also carry optional `transitions` (`[{"after_part","type","duration_ms","asset":{"ref",
+"sha256"?},"engine","engine_version","status"}]`, status `none|pending|ready|failed`) from the later
+feature that generates them. Both fields are additive: `parts` and `skip_ranges_ms` never depend on
+them, old cuts lack them, and a client that cannot show transitions skips as today.
 
 Build rules (mirrored from the backend config, `[cuts]`): caption fragments are merged into
 numbered sentence-like units (new unit on a pause over 0.6 s or sentence punctuation, 15 s

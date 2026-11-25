@@ -31,6 +31,8 @@ from ..cuts import (
     parse_chapters,
     parse_cut_answer,
     select_for_target,
+    source_document,
+    source_ref,
     target_band,
     transcript_hash,
 )
@@ -198,6 +200,7 @@ class WatchedBuilder:
                 seconds_stage=plan.diagnostics.get("phase_timings_sec"),
             )
             if cached is None:
+                src = source_ref(row)
                 self.db.execute(
                     "INSERT OR REPLACE INTO video_scenes(cache_key,video_id,source_kind,source_key,"
                     "release_key,release_duration_ms,video_sha256,settings_key,scene_cuts,manifest,"
@@ -205,10 +208,10 @@ class WatchedBuilder:
                     [
                         self.scene_cache_key(entry["sha256"], self.cfg),
                         video_id,
-                        row["source_kind"] or "youtube",
-                        row["source_key"] or f"youtube:{video_id}",
-                        row["release_key"],
-                        row["release_duration_ms"],
+                        src["kind"],
+                        src["key"],
+                        src["release_key"],
+                        src["release_duration_ms"],
                         entry["sha256"],
                         settings_key(self.cfg.cuts.watched),
                         json.dumps(plan.scene_cuts),
@@ -304,6 +307,7 @@ class WatchedBuilder:
             return
         from .tdt import prompt_hash
 
+        src = source_ref(row)
         self._store_labels(desc_key, row, payload)
         self.db.execute(
             "INSERT OR REPLACE INTO scene_descriptions(cache_key,video_id,source_kind,source_key,"
@@ -312,10 +316,10 @@ class WatchedBuilder:
             [
                 desc_key,
                 row["video_id"],
-                row["source_kind"] or "youtube",
-                row["source_key"] or f"youtube:{row['video_id']}",
-                row["release_key"],
-                row["release_duration_ms"],
+                src["kind"],
+                src["key"],
+                src["release_key"],
+                src["release_duration_ms"],
                 entry["sha256"],
                 settings_key(self.cfg.cuts.watched),
                 model,
@@ -339,14 +343,15 @@ class WatchedBuilder:
             for entry in content:
                 if not isinstance(entry, dict) or entry.get("category") not in CATEGORIES:
                     continue
+                src = source_ref(row)
                 self.db.execute(
                     "INSERT INTO scene_labels(descriptions_key,source_key,release_key,segment_id,"
                     "start_ms,end_ms,category,intensity,confidence,vocab_version)"
                     " VALUES(?,?,?,?,?,?,?,?,?,?)",
                     [
                         desc_key,
-                        row["source_key"] or f"youtube:{row['video_id']}",
-                        row["release_key"],
+                        src["key"],
+                        src["release_key"],
                         str(segment.get("segment_id") or ""),
                         int((segment.get("start") or 0) * 1000),
                         int((segment.get("end") or 0) * 1000),
@@ -488,6 +493,10 @@ class WatchedBuilder:
                 duration_s=duration_s,
                 partial=partial,
             )
+        src = source_ref(row)
+        source_obj = source_document(src)
+        if source_obj is not None:
+            doc["source"] = source_obj
         self.db.execute(
             "INSERT OR REPLACE INTO cuts(cache_key,video_id,version,preset_id,prompt,model,"
             "transcript_hash,json,duration_s,kept_s,created_at,mode,source_kind,source_key,"
@@ -505,10 +514,10 @@ class WatchedBuilder:
                 doc["kept_ms"] / 1000.0,
                 time.time(),
                 "watched",
-                row["source_kind"] or "youtube",
-                row["source_key"] or f"youtube:{video_id}",
-                row["release_key"],
-                row["release_duration_ms"],
+                src["kind"],
+                src["key"],
+                src["release_key"],
+                src["release_duration_ms"],
             ],
         )
         self.db.execute(

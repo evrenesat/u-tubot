@@ -38,6 +38,25 @@ public class UtubotCutsParserTest {
             "\"stage\":null,\"cut\":" + CUT + "}";
 
     @Test
+    public void aCutWithAnOptionalSourceOrTransitionsParsesAsToday() throws Exception {
+        String cut = CUT
+                .replace("\"source\":\"youtube_captions\"",
+                        "\"source\":{\"kind\":\"imdb\",\"key\":\"imdb:tt0123456:s01e03\",\"release_duration_ms\":240000}")
+                .replace("\"preset_id\":\"cut-no-filler\"",
+                        "\"preset_id\":\"cut-no-filler\",\"transitions\":"
+                                + "[{\"after_part\":0,\"type\":\"fade\",\"duration_ms\":500,"
+                                + "\"asset\":{\"ref\":\"a\"},\"engine\":\"e\",\"engine_version\":\"1\",\"status\":\"ready\"}]");
+        String cuts = "{\"configured\":true,\"presets\":[{\"id\":\"cut-no-filler\","
+                + "\"label\":\"No filler\",\"state\":\"ready\",\"cut\":" + cut + "}]}";
+
+        CutList parsed = UtubotParser.parseCuts(cuts);
+
+        assertEquals(240_000, parsed.presets.get(0).cut.durationMs);
+        assertEquals(2, parsed.presets.get(0).cut.parts.size());
+        assertTrue(parsed.presets.get(0).isReady());
+    }
+
+    @Test
     public void parsesThePresetsOfAVideo() throws Exception {
         CutList cuts = UtubotParser.parseCuts(CUTS);
 
