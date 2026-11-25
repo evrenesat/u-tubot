@@ -755,7 +755,8 @@ The ABI comes from the file name. The command copies the files into `app_dir`, r
 - `/app/latest/<abi>.apk`: stable redirect to the newest file, for Downloader codes
 - `/app/info.json` and the Download section of `/`: version, links, checksums and your `[app] downloader_codes`
 
-Publish APKs signed with the same key as the installed app. TVs only learn about a version greater than their own `versionName`.
+Publish APKs signed with the same key as the installed app. TVs compare the manifest's `versionCode` with their own (the
+`versionName` decides only when the manifest has no code).
 
 ## Backups
 

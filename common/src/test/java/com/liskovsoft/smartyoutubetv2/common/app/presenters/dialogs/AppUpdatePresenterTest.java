@@ -277,16 +277,42 @@ public class AppUpdatePresenterTest {
     }
 
     @Test
+    public void aDismissedNameWithAHigherCodeIsANewVersion() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        UtubotSettings.instance(mActivity).setDismissedUpdate("0.3.10", 3011);
+
+        mPresenter.mOfferedVersionCode = 3011;
+        mPresenter.onUpdateFound("0.3.10", java.util.Collections.singletonList("Fixes"), "/cache/update.apk");
+        assertEquals("the dismissed build is silent", 0, mPresenter.mShown);
+
+        mPresenter.mOfferedVersionCode = 3012;
+        mPresenter.onUpdateFound("0.3.10", java.util.Collections.singletonList("Fixes"), "/cache/update.apk");
+        assertEquals("the same name with a higher code is a new version", 1, mPresenter.mShown);
+    }
+
+    @Test
     public void theDismissedVersionIsTheOnlyOneSuppressed() {
         UtubotSettings settings = UtubotSettings.instance(mActivity);
 
         assertFalse(settings.isUpdateDismissed("0.9.0"));
-        settings.setDismissedUpdateVersion("0.9.0");
+        settings.setDismissedUpdate("0.9.0", 900);
 
-        assertTrue(settings.isUpdateDismissed("0.9.0"));
-        assertTrue("a stored address with spaces is the same version", settings.isUpdateDismissed(" 0.9.0 "));
-        assertFalse(settings.isUpdateDismissed("0.9.1"));
+        assertTrue(settings.isUpdateDismissed("0.9.0", 900));
+        assertTrue("a stored address with spaces is the same version", settings.isUpdateDismissed(" 0.9.0 ", 900));
+        assertFalse("a higher code under the same name", settings.isUpdateDismissed("0.9.0", 901));
+        assertFalse(settings.isUpdateDismissed("0.9.1", 900));
         assertFalse(settings.isUpdateDismissed(""));
+    }
+
+    @Test
+    public void aNewUpdateUrlClearsTheDismissedVersion() {
+        UtubotSettings settings = UtubotSettings.instance(mActivity);
+        settings.setDismissedUpdate("0.9.0", 900);
+
+        settings.setUpdateUrl("https://other.example.com/app/update.json");
+
+        assertFalse("the dismissed version belongs to the old channel", settings.isUpdateDismissed("0.9.0", 900));
+        assertEquals("", settings.getDismissedUpdateVersion());
     }
 
     private void fail() {
@@ -301,6 +327,7 @@ public class AppUpdatePresenterTest {
         private int mChecks;
         private int mDeferred;
         private int mShown;
+        private int mOfferedVersionCode;
         private boolean mCanShowDialog = true;
 
         CountingPresenter(Context context) {
@@ -320,6 +347,11 @@ public class AppUpdatePresenterTest {
         @Override
         void forceCheck() {
             mChecks++;
+        }
+
+        @Override
+        int offeredVersionCode() {
+            return mOfferedVersionCode;
         }
 
         @Override

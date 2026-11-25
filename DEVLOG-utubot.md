@@ -151,7 +151,12 @@
 - The flavor decides "newer" by the channel's `versionCode` against the installed one (`UtubotUpdateChecker.isNewer`), as the backend
   publishes one per release and a version name can be shared (a build's `-dev` suffix); a manifest without codes falls back to the shared
   checker's version-name comparison. Test: `UtubotUpdateCheckerTest`.
+- Review round 2: the dismissal stores the version name and code, so a higher code under the same name is offered again; changing the
+  backend or update address clears it. A manifest with no download address is an error instead of "no update", and a cached APK whose
+  name matches but whose code does not is discarded so the offered build is fetched. Tests: `AppUpdatePresenterTest`,
+  `UtubotUpdateCheckerTest`.
 - Parity: the browser extension has no update UI of its own (the browser updates it), so there is no extension row for this feature.
+- Verified with JDK 25: `:common:testStutubotDebugUnitTest` (1646 tests, 0 failures, 0 errors, 7 skipped), `:smarttubetv:assembleStutubotDebug`.
 
 ## 2026-11-24 (browse cache review round 4)
 

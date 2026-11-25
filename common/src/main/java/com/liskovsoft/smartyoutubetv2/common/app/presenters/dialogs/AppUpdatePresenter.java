@@ -22,6 +22,7 @@ import com.liskovsoft.smartyoutubetv2.common.utils.LoadingManager;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdateCheckerListener {
@@ -149,8 +150,7 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
             finishForceCheck();
             showUpdateDialog(versionName, changelog, apkPath);
         } else if (UtubotSettings.isBuiltIn()) {
-            // The user dismissed this version already: the automatic notification stays silent until the next one
-            if (UtubotSettings.instance(getContext()).isUpdateDismissed(versionName)) {
+            if (UtubotSettings.instance(getContext()).isUpdateDismissed(versionName, offeredVersionCode())) {
                 return;
             }
 
@@ -197,23 +197,26 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
             return;
         }
 
+        List<String> changes = changelog != null ? changelog : Collections.emptyList();
+        int versionCode = offeredVersionCode();
         mIsInstalling = false;
         mSettingsPresenter.appendSingleButton(
                 UiOptionItem.from(getContext().getString(R.string.install_update), optionItem -> {
                     mIsInstalling = true;
-                    GeneralData.instance(getContext()).setChangelog(changelog);
+                    GeneralData.instance(getContext()).setChangelog(changes);
                     mUpdateChecker.installUpdate();
                 }, false));
 
         if (UtubotSettings.isBuiltIn()) {
-            // Dismissing it once suppresses this version: the automatic check offers only a newer one until then
             mSettingsPresenter.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.update_not_now), optionItem -> {
-                setUpdateDismissed(versionName);
+                setUpdateDismissed(versionName, versionCode);
                 mSettingsPresenter.closeDialog();
             }, false));
         }
 
-        mSettingsPresenter.appendStringsCategory(getContext().getString(R.string.update_changelog), createChangelogOptions(changelog));
+        if (!changes.isEmpty()) {
+            mSettingsPresenter.appendStringsCategory(getContext().getString(R.string.update_changelog), createChangelogOptions(changes));
+        }
         //mSettingsPresenter.appendSingleSwitch(UiOptionItem.from(getContext().getString(R.string.show_again), optionItem -> {
         //    mUpdateChecker.enableUpdateCheck(optionItem.isSelected());
         //}, mUpdateChecker.isUpdateCheckEnabled()));
@@ -223,19 +226,19 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
                 !UtubotSettings.isBuiltIn() ? AppUpdatePresenter::unhold
                         : () -> {
                             if (!mIsInstalling) {
-                                setUpdateDismissed(versionName);
+                                setUpdateDismissed(versionName, versionCode);
                             }
                             AppUpdatePresenter.unhold();
                         });
     }
 
-    /**
-     * Back or "Not now" closes the dialog without installing: the dismissed version isn't offered by an automatic check again.
-     * A newer version clears it by being different.
-     */
-    private void setUpdateDismissed(String versionName) {
+    int offeredVersionCode() {
+        return mUpdateChecker instanceof UtubotUpdateChecker ? ((UtubotUpdateChecker) mUpdateChecker).getLatestVersionNumber() : 0;
+    }
+
+    private void setUpdateDismissed(String versionName, int versionCode) {
         if (UtubotSettings.isBuiltIn()) {
-            UtubotSettings.instance(getContext()).setDismissedUpdateVersion(versionName);
+            UtubotSettings.instance(getContext()).setDismissedUpdate(versionName, versionCode);
         }
     }
 
