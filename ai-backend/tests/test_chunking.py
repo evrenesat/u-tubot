@@ -7,6 +7,7 @@ import pytest
 from utubot.captions.chunking import (
     MIN_TAIL_S,
     Span,
+    StitchStats,
     plan_chunks,
     shift,
     stitch_segments,
@@ -132,6 +133,30 @@ def test_words_are_stitched_the_same_way():
     second = [Word(8.2, 8.5, "the"), Word(8.6, 9.0, "menu"), Word(9.2, 9.6, "now")]
     stitched = stitch_words([first, second], spans)
     assert [w.text for w in stitched] == ["open", "the", "menu", "now"]
+
+
+def test_a_single_word_repeated_at_the_seam_is_removed_by_its_time():
+    spans = [Span(0, 0.0, 10.0), Span(1, 8.0, 20.0)]
+    first = [Word(8.4, 9.0, "again")]
+    second = [Word(8.6, 9.4, "again"), Word(10.0, 11.0, "later")]
+    assert [w.text for w in stitch_words([first, second], spans)] == ["again", "later"]
+
+
+def test_a_word_repeated_at_a_different_time_is_kept():
+    spans = [Span(0, 0.0, 10.0), Span(1, 8.0, 20.0)]
+    first = [Word(8.4, 8.8, "no")]
+    second = [Word(9.1, 9.5, "no")]
+    assert [w.text for w in stitch_words([first, second], spans)] == ["no", "no"]
+
+
+def test_a_seam_repeat_is_dropped_once_and_the_next_identical_word_is_kept():
+    spans = [Span(0, 0.0, 10.0), Span(1, 8.0, 20.0)]
+    first = [Word(8.6, 9.0, "very")]
+    second = [Word(8.8, 9.2, "very"), Word(9.3, 9.6, "very"), Word(10.0, 11.0, "good")]
+    stats = StitchStats()
+    stitched = stitch_words([first, second], spans, stats)
+    assert [w.text for w in stitched] == ["very", "very", "good"]
+    assert stats.repeated_words == 1
 
 
 def test_shift_moves_times_without_touching_the_input():
