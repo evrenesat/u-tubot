@@ -28,6 +28,25 @@
   holds unless the owner turns it on): least recently used entries go when a download would start at the quota, never an entry used
   within `evict_protect_s` or the file just stored. New nullable column `media_archive.last_used_at`, stamped by `lookup`.
 - Summary cache key is unchanged (video, prompt key, content hash, language); the model is already part of the content hash.
+## 2026-11-25 (per-channel default cut mode, issue 62)
+
+- Problem: every cut of a channel had to repeat its mode.
+- `db.py`: additive `cut_channel_modes` table keyed by `(user, channel_id)`, with the channel name
+  and the selected mode; no existing table changes.
+- `cuts.py`: omitted mode resolves in order request (per video) > channel default > user setting >
+  server default, and `mode_rule` records which rule decided. A stored `watched` default still
+  falls back to `quick` while watched is unavailable. Channel defaults belong to one user;
+  clearing one is idempotent.
+- `app.py` / `models.py`: `GET /v1/cut-channels`, `PUT` and `DELETE /v1/cut-channels/{id}`;
+  `channel_id` rides on the cut read/write routes and on `PUT /v1/cut-requests/{id}`. Requests
+  store `mode` and `mode_rule`; writes that explicitly ask for unavailable watched answer `409`.
+- Web UI: channel list with a mode per channel and a clear action; the cut sheet sets the same
+  default from the video's channel. TV `stutubot`: "Always use Quick for this channel" in the cut
+  sheet, with a revert action; the contract parity row covers the extension until its checkpoint.
+- Docs: `ai/CONTRACT.md`, `docs/server.md`, `docs/policy.md`, `ai/BROWSER_EXTENSION_PLAN.md`.
+- Tests: resolution order and per-video override in `test_cuts_api.py`, mode settings in
+  `test_settings.py`, mock-backend coverage, Java client/parser tests.
+
 ## 2026-11-25 (example-config tests off the host data dir)
 
 - Problem: backend CI was red on the captions start-offset branch. The three tests that load
