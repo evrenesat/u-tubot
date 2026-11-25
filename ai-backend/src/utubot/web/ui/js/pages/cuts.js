@@ -301,6 +301,7 @@ async function queue(view) {
         toast(mode ? "Channel default saved" : "Channel follows your default");
         await reload();
       } catch (err) {
+        picker.value = row.mode || "";
         toast(errorText(err), "bad");
         await reload();
       }

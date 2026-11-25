@@ -899,6 +899,20 @@ class TestChannelModes:
         assert card["channel_id"] == self.CHANNEL
         await cuts_env.client.delete(f"/v1/cut-requests/{rid}")
 
+    async def test_the_list_finds_a_channel_only_the_request_knew_about(self, cuts_env):
+        # Older requests may carry the channel id without the video's metadata being cached.
+        made = cuts_env.svc.cuts.create("owner", VID, await_prompt=True, channel_id=self.CHANNEL)
+        listing = (await cuts_env.client.get("/v1/cut-channels")).json()["channels"]
+        assert listing == [
+            {
+                "channel_id": self.CHANNEL,
+                "channel_name": None,
+                "mode": None,
+                "updated_at": None,
+            }
+        ]
+        await cuts_env.client.delete(f"/v1/cut-requests/{made['id']}")
+
     async def test_clearing_falls_back_to_the_owner_then_the_server(self, cuts_env):
         await cuts_env.client.put(f"/v1/cut-channels/{self.CHANNEL}", json={"mode": "quick"})
         await cuts_env.client.put(

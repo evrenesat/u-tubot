@@ -46,6 +46,9 @@
 - Docs: `ai/CONTRACT.md`, `docs/server.md`, `docs/policy.md`, `ai/BROWSER_EXTENSION_PLAN.md`.
 - Tests: resolution order and per-video override in `test_cuts_api.py`, mode settings in
   `test_settings.py`, mock-backend coverage, Java client/parser tests.
+- Review fix: `GET /v1/cut-channels` also finds a channel from the `channel_id` stored on a cut
+  request when the video's metadata is not cached; a failed save in the web UI puts its picker
+  back on the stored mode instead of leaving the rejected one shown.
 
 ## 2026-11-25 (example-config tests off the host data dir)
 

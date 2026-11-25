@@ -1087,12 +1087,12 @@ class CutService:
         )
         channels = {row["channel_id"]: dict(row) for row in rows}
         seen = self.db.all(
-            "SELECT DISTINCT video_id FROM cut_requests WHERE user=?",
+            "SELECT DISTINCT video_id, channel_id FROM cut_requests WHERE user=?",
             [user],
         )
         for row in seen:
             meta = self._meta(row["video_id"])
-            channel_id = meta.get("channel_id")
+            channel_id = row["channel_id"] or meta.get("channel_id")
             if not isinstance(channel_id, str):
                 continue
             channel_id = channel_id.strip()[:MAX_CHANNEL_ID_CHARS]
