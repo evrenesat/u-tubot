@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ from utubot_ci_changes import (  # noqa: E402
     Classification,
     ci_green,
     classify_files,
+    classify_or_everything,
     extension_release_decision,
     parity_fails,
     release_decision,
@@ -233,3 +235,115 @@ def test_ci_green_command_reads_json_files(tmp_path):
         check=True,
     )
     assert result.returncode == 0
+
+
+def test_an_unknown_file_list_runs_every_job_and_never_releases():
+    assert classify_or_everything(None) == Classification(
+        backend=True, app=True, release=False, extension=True, extension_release=False
+    )
+    assert classify_or_everything(["extension/src/content/main.js"]) == classify_files(
+        ["extension/src/content/main.js"]
+    )
+
+
+FAILING_GH = """#!/bin/sh
+exit 1
+"""
+
+
+def classify_without_the_api(
+    tmp_path,
+    event: str,
+    *,
+    gh_script: str = FAILING_GH,
+    sha: str = "a" * 40,
+    before: str = "b" * 40,
+) -> list[str]:
+    """Run `classify` with a gh that cannot list anything, as during an API outage."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(gh_script, encoding="utf-8")
+    gh.chmod(0o755)
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "EVENT_NAME": event,
+        "PR_NUMBER": "7",
+        "BEFORE": before,
+        "SHA": sha,
+        "REPO": "evrenesat/u-tubot",
+        "GITHUB_OUTPUT": str(tmp_path / "output"),
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+    }
+    result = subprocess.run(
+        [sys.executable, str(REPO / "scripts/utubot_ci_changes.py"), "classify"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert (tmp_path / "output").read_text(encoding="utf-8").splitlines() == lines
+    return lines
+
+
+def test_a_failed_listing_on_a_pull_request_runs_everything(tmp_path):
+    assert classify_without_the_api(tmp_path, "pull_request") == [
+        "backend=true",
+        "app=true",
+        "release=false",
+        "extension=true",
+        "extension_release=false",
+    ]
+
+
+def test_a_failed_listing_on_a_push_still_decides_the_release(tmp_path):
+    # No tag listing either: the push may be a release, and a lost release breaks the update chain.
+    assert classify_without_the_api(tmp_path, "push") == [
+        "backend=true",
+        "app=true",
+        "release=true",
+        "extension=true",
+        "extension_release=true",
+    ]
+
+
+TAGS_ONLY_GH = """#!/bin/sh
+case "$*" in
+  *matching-refs*) printf 'refs/tags/utubot-v0.9.0\\n'; exit 0 ;;
+esac
+exit 1
+"""
+
+
+def test_a_failed_listing_after_a_tag_still_releases(tmp_path):
+    # The tags answer, the compare does not: the app files since the tag are unknown, so the push releases.
+    assert classify_without_the_api(tmp_path, "push", gh_script=TAGS_ONLY_GH) == [
+        "backend=true",
+        "app=true",
+        "release=true",
+        "extension=true",
+        "extension_release=true",
+    ]
+
+
+def test_a_failed_listing_fails_the_parity_check_closed(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(FAILING_GH, encoding="utf-8")
+    gh.chmod(0o755)
+    result = subprocess.run(
+        [sys.executable, str(REPO / "scripts/utubot_ci_changes.py"), "parity"],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            "EVENT_NAME": "pull_request",
+            "PR_NUMBER": "7",
+            "REPO": "evrenesat/u-tubot",
+            "PR_BODY": "- [x] AI feature parity: nothing to say",
+        },
+    )
+    assert result.returncode == 1
+    assert "could not be listed" in result.stderr

@@ -36,6 +36,7 @@ PLAN = "ai/BROWSER_EXTENSION_PLAN.md"
 CONTRACT = "ai/CONTRACT.md"
 PARITY_BOX = re.compile(r"(?im)^\s*[-*]\s*\[[xX]\]\s*AI feature parity")
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
+REPO_ROOT = Path(__file__).resolve().parent.parent
 EXTENSION_TAG = re.compile(r"^utubot-ext-v(\d+\.\d+\.\d+)$")
 
 
@@ -127,24 +128,43 @@ def gh_lines(args: list[str]) -> list[str]:
     return [line for line in answer.stdout.splitlines() if line.strip()]
 
 
-def changed_files(event: str, sha: str, before: str, pr_number: str) -> list[str]:
+def gh_lines_or_none(args: list[str]) -> list[str] | None:
+    """The lines, or None when the GitHub API cannot answer: a listing failure runs everything, it never skips a job."""
+    try:
+        return gh_lines(args)
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
+def changed_files(event: str, sha: str, before: str, pr_number: str) -> list[str] | None:
     repo = os.environ["REPO"]
     zero = "0" * 40
     if event == "pull_request":
-        return gh_lines(["--paginate", f"repos/{repo}/pulls/{pr_number}/files", "--jq", '.[] | .filename, (.previous_filename // empty)'])
+        return gh_lines_or_none(["--paginate", f"repos/{repo}/pulls/{pr_number}/files", "--jq", '.[] | .filename, (.previous_filename // empty)'])
     if before != zero:
-        return gh_lines(["--paginate", f"repos/{repo}/compare/{before}...{sha}", "--jq", '.files[] | .filename, (.previous_filename // empty)'])
+        return gh_lines_or_none(["--paginate", f"repos/{repo}/compare/{before}...{sha}", "--jq", '.files[] | .filename, (.previous_filename // empty)'])
     return []
 
 
-def extension_tags() -> list[str]:
-    repo = os.environ["REPO"]
-    return [tag.removeprefix("refs/tags/") for tag in gh_lines(["--paginate", f"repos/{repo}/git/matching-refs/tags/utubot-ext-v", "--jq", ".[].ref"])]
+def classify_or_everything(files: list[str] | None) -> Classification:
+    """An unknown file list runs both test jobs, like the inline script's defaults."""
+    if files is None:
+        return Classification(backend=True, app=True, release=False, extension=True, extension_release=False)
+    return classify_files(files)
 
 
-def apk_tags() -> list[str]:
+def extension_tags() -> list[str] | None:
     repo = os.environ["REPO"]
-    tags = [tag.removeprefix("refs/tags/utubot-v") for tag in gh_lines(["--paginate", f"repos/{repo}/git/matching-refs/tags/utubot-v", "--jq", ".[].ref"])]
+    refs = gh_lines_or_none(["--paginate", f"repos/{repo}/git/matching-refs/tags/utubot-ext-v", "--jq", ".[].ref"])
+    return None if refs is None else [ref.removeprefix("refs/tags/") for ref in refs]
+
+
+def apk_tags() -> list[str] | None:
+    repo = os.environ["REPO"]
+    refs = gh_lines_or_none(["--paginate", f"repos/{repo}/git/matching-refs/tags/utubot-v", "--jq", ".[].ref"])
+    if refs is None:
+        return None
+    tags = [ref.removeprefix("refs/tags/utubot-v") for ref in refs]
     return [tag for tag in tags if VERSION.match(tag)]
 
 
@@ -154,7 +174,7 @@ def classify_command(args: argparse.Namespace) -> int:
     before = os.environ.get("BEFORE", "")
     pr_number = os.environ.get("PR_NUMBER", "")
     files = args.files.read().splitlines() if args.files else changed_files(event, sha, before, pr_number)
-    result = classify_files(files)
+    result = classify_or_everything(files)
 
     push = event == "push"
     release = False
@@ -163,16 +183,19 @@ def classify_command(args: argparse.Namespace) -> int:
         newest = max(tags, key=lambda value: tuple(int(part) for part in value.split("."))) if tags else None
         since = None
         if newest:
-            since = gh_lines(["--paginate", f"repos/{os.environ['REPO']}/compare/utubot-v{newest}...{sha}", "--jq", '.files[] | .filename, (.previous_filename // empty)'])
+            since = gh_lines_or_none(["--paginate", f"repos/{os.environ['REPO']}/compare/utubot-v{newest}...{sha}", "--jq", '.files[] | .filename, (.previous_filename // empty)'])
         release = release_decision(push, since, bool(newest))
         if release:
             result = Classification(backend=result.backend, app=True, release=True, extension=result.extension, extension_release=False)
 
     extension_release = False
     if push:
-        version_file = Path(args.version_file or "extension/version")
+        # The workflow runs this from the repository root; tests run it from ai-backend, so anchor the default here.
+        version_file = Path(args.version_file) if args.version_file else REPO_ROOT / "extension" / "version"
         version = version_file.read_text().strip() if version_file.is_file() else ""
-        extension_release = extension_release_decision(push, version, extension_tags())
+        # A failed tag listing must not lose a version bump either: treat it as "no tag yet".
+        tags = extension_tags()
+        extension_release = extension_release_decision(push, version, tags if tags is not None else [])
 
     result = Classification(result.backend, result.app, release, result.extension, extension_release)
     lines = [f"{key}={str(value).lower()}" for key, value in result.__dict__.items()]
@@ -191,6 +214,9 @@ def parity_command(args: argparse.Namespace) -> int:
     files = args.files.read().splitlines() if args.files else changed_files(
         event, os.environ.get("SHA", ""), os.environ.get("BEFORE", ""), os.environ.get("PR_NUMBER", "")
     )
+    if files is None:
+        print("AI feature parity: the changed files could not be listed; the parity check needs the list, so it fails closed", file=sys.stderr)
+        return 1
     body = os.environ.get("PR_BODY", "")
     if parity_fails(files, body):
         print("AI feature parity: the pull request touches u-tubot AI code or the contract, changes nothing under extension/ and not the plan, and its parity box is not ticked", file=sys.stderr)

@@ -22,12 +22,17 @@ export class SetupError extends Error {
   }
 }
 
+function unbracket(host) {
+  const name = (host ?? "").trim();
+  return name.startsWith("[") && name.endsWith("]") ? name.slice(1, -1) : name;
+}
+
 export function isPrivateHost(host) {
   if (!host) {
     return false;
   }
 
-  const name = host.toLowerCase();
+  const name = unbracket(host).toLowerCase();
 
   if (name.includes(":")) {
     return name === "::1" || name.startsWith("fc") || name.startsWith("fd") || name.startsWith("fe80");
@@ -88,14 +93,16 @@ export function resolveUrl(input) {
   const scheme = isPrivateHost(url.hostname) ? "http" : "https";
   const rawPath = url.pathname === "" || url.pathname === "/" ? SETUP_PATH : url.pathname;
   const port = url.port ? `:${url.port}` : "";
-  const hostPart = url.hostname.includes(":") ? `[${url.hostname}]` : url.hostname;
+  const bare = unbracket(url.hostname);
+  const hostPart = bare.includes(":") ? `[${bare}]` : bare;
 
   return `${scheme}://${hostPart}${port}${rawPath}${url.search}`;
 }
 
 export function originOf(address) {
   const url = parseAddress((address ?? "").trim());
-  return `${url.protocol}//${url.hostname.toLowerCase()}${url.port ? `:${url.port}` : ""}`;
+  const host = unbracket(url.hostname).toLowerCase();
+  return `${url.protocol}//${host.includes(":") ? `[${host}]` : host}${url.port ? `:${url.port}` : ""}`;
 }
 
 export function requireUrl(value, what) {

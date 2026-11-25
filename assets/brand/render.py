@@ -10,6 +10,8 @@ The banner repeats the markup of the symbol and the wordmark (one file, no exter
 The Settings tile icon (`settings_utubot.png`, white on transparent like the other Settings icons) is cut from the monochrome symbol:
 the tile is dropped, the white shapes and the light dot stay, the grey ones (the u, the ring around the dot) become holes. It is fitted
 into the canvas and padding of `settings_about.png`, measured from that file.
+The browser extension's icons (`extension/assets/icons/`) are the symbol at the manifest's three sizes; `extension/tests/unit/icons.test.js`
+pixel-compares them with this script's output, so a stale copy fails the extension tests.
 """
 import io
 import re
@@ -26,6 +28,7 @@ PREVIEW_DIR = BRAND_DIR / "png"
 SETTINGS_ICONS = REPO_ROOT / "common" / "src" / "main" / "res" / "drawable-nodpi"
 SETTINGS_ICON = SETTINGS_ICONS / "settings_utubot.png"
 SETTINGS_ICON_REFERENCE = SETTINGS_ICONS / "settings_about.png"
+EXTENSION_ICONS = REPO_ROOT / "extension" / "assets" / "icons"
 
 # (svg, destination, width, height, background): no background is transparent
 INK = "#0F1124"
@@ -50,6 +53,10 @@ TARGETS = [
     ("utubot-symbol.svg", FLAVOR_RES / "app_logo.png", 180, 180, None),
     ("utubot-symbol.svg", FLAVOR_RES / "app_logo_semi_red.png", 180, 180, None),
     ("utubot-symbol-mono.svg", FLAVOR_RES / "app_logo_semi_grey.png", 180, 180, None),
+    # Browser extension action and management icons (the sizes of extension/manifest.base.json)
+    ("utubot-symbol.svg", EXTENSION_ICONS / "icon-48.png", 48, 48, None),
+    ("utubot-symbol.svg", EXTENSION_ICONS / "icon-96.png", 96, 96, None),
+    ("utubot-symbol.svg", EXTENSION_ICONS / "icon-128.png", 128, 128, None),
     # Previews for the README and pull requests
     ("utubot-symbol.svg", PREVIEW_DIR / "utubot-symbol.png", 512, 512, None),
     ("utubot-symbol-alt.svg", PREVIEW_DIR / "utubot-symbol-alt.png", 512, 512, None),

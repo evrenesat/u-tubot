@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { isPrivateHost, parseSetup, requireUrl, resolveUrl, SetupError } from "../../src/background/setup.js";
+import { isPrivateHost, originOf, parseSetup, requireUrl, resolveUrl, SetupError } from "../../src/background/setup.js";
 
 const rejects = (fn) => assert.throws(fn, SetupError);
 
@@ -32,12 +32,28 @@ test("http is only for private addresses", () => {
 });
 
 test("private hosts", () => {
-  for (const host of ["10.0.0.1", "172.16.5.5", "172.31.255.1", "192.168.0.9", "127.0.0.1", "169.254.1.1", "::1", "fd00::1", "localhost", "nas.local"]) {
+  for (const host of ["10.0.0.1", "172.16.5.5", "172.31.255.1", "192.168.0.9", "127.0.0.1", "169.254.1.1", "::1", "fd00::1", "localhost", "nas.local", "[::1]", "[fd00::1]", "[FE80::1]"]) {
     assert.equal(isPrivateHost(host), true, host);
   }
-  for (const host of ["172.32.0.1", "100.128.0.1", "8.8.8.8", "example.com", ""]) {
+  for (const host of ["172.32.0.1", "100.128.0.1", "8.8.8.8", "example.com", "", "[2001:db8::1]"]) {
     assert.equal(isPrivateHost(host), false, host);
   }
+});
+
+test("bracketed IPv6 addresses work like the TV's", () => {
+  assert.equal(resolveUrl("http://[::1]:8790/setup.json"), "http://[::1]:8790/setup.json");
+  assert.equal(resolveUrl("http://[fd00::1]:8790/setup.json"), "http://[fd00::1]:8790/setup.json");
+  assert.equal(resolveUrl("[::1]:8790"), "http://[::1]:8790/setup.json");
+  assert.equal(resolveUrl("[fd00::1]"), "http://[fd00::1]/setup.json");
+  assert.equal(resolveUrl("[2001:db8::1]:8443"), "https://[2001:db8::1]:8443/setup.json");
+  assert.equal(resolveUrl("https://[2001:db8::1]:8443"), "https://[2001:db8::1]:8443");
+  rejects(() => resolveUrl("http://[2001:db8::1]/setup.json"));
+  const setup = parseSetup('{"utubot_setup":1,"backend_url":"http://[fd00::1]:8790"}');
+  assert.equal(setup.backendUrl, "http://[fd00::1]:8790");
+  rejects(() => parseSetup('{"utubot_setup":1,"backend_url":"http://[2001:db8::1]"}'));
+  assert.equal(originOf("http://[::1]:8790/setup.json"), "http://[::1]:8790");
+  assert.equal(originOf("https://[2001:DB8::1]/setup.json"), "https://[2001:db8::1]");
+  assert.equal(requireUrl("http://[::1]:8790/setup.json", "what"), "http://[::1]:8790/setup.json");
 });
 
 test("parses the setup file", () => {

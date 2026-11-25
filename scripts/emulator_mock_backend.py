@@ -530,6 +530,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         url = urlparse(self.path)
+        record_request(self)
+        hold_request(url.path)
         m = re.match(r"/v1/cut-requests/([a-z0-9]+)$", url.path)
         if m:
             with CUT_LOCK:

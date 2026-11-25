@@ -68,6 +68,9 @@ class Mock:
     def put(self, path: str, **kwargs):
         return self.client.put(self.base + path, **kwargs)
 
+    def delete(self, path: str, **kwargs):
+        return self.client.delete(self.base + path, **kwargs)
+
     def close(self) -> None:
         self.client.close()
         self.process.terminate()
@@ -113,6 +116,28 @@ def test_request_log_records_a_request_without_header_values(mock):
     assert all("secret" not in repr(entry) for entry in entries)
     assert mock.get("/__mock/requests?clear=1").json() == {"requests": []}
     assert mock.get("/__mock/requests").json() == {"requests": []}
+
+
+def test_delete_is_logged_and_held_like_the_other_methods(mock):
+    video = "hhhhhhhhhhh"
+    created = mock.post(f"/v1/videos/{video}/cuts", json={"await_prompt": True}).json()
+    request = mock.get("/v1/cut-requests").json()["requests"][0]
+    assert created["state"] == "waiting"
+    mock.get("/__mock/requests?clear=1")
+    started = time.time()
+    assert mock.delete(f"/v1/cut-requests/{request['id']}").status_code == 200
+    assert time.time() - started < 1.0
+    mock.get(f"/__mock/hold?path=/v1/cut-requests/{request['id']}&seconds=1")
+    started = time.time()
+    dismissed = mock.delete(f"/v1/cut-requests/{request['id']}").json()
+    assert dismissed["state"] == "dismissed"
+    assert time.time() - started >= 0.8
+    mock.get("/__mock/hold?seconds=0")
+    entries = mock.get("/__mock/requests").json()["requests"]
+    assert [(entry["method"], entry["path"]) for entry in entries] == [
+        ("DELETE", f"/v1/cut-requests/{request['id']}"),
+        ("DELETE", f"/v1/cut-requests/{request['id']}"),
+    ]
 
 
 def test_options_answers_405_and_is_logged(mock):

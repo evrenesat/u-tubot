@@ -1,5 +1,25 @@
 # u·tubot browser extension devlog
 
+## 2026-11-25 (checkpoints 0-3: first review round, fixes)
+
+- `src/background/setup.js`: `isPrivateHost`, `hostPart` (`resolveUrl`) and `originOf` strip the brackets of an IPv6 host
+  literal before comparing or matching it, and put them back when the address is written into a URL, like the TV's
+  `UtubotSetup.hostOf`. `[::1]:8790`, `[fd00::1]` and `[FE80::1]` are private; `[2001:db8::1]` stays public. A test covers
+  `resolveUrl`, `parseSetup`, `originOf` and `requireUrl` with bracketed addresses.
+- `scripts/utubot_ci_changes.py`: a failed `gh` listing no longer fails `classify`. `gh_lines_or_none` returns `None` and the
+  run falls back to the inline script's defaults: both test jobs run, release only through its own decisions, and a failed
+  tag listing means "no tag yet", so a version bump is not lost. `parity` needs the list, so it still fails closed with its
+  own message. Tests run a failing `gh` first on `PATH` for a pull request, a push and the parity check.
+- `scripts/emulator_mock_backend.py`: `do_DELETE` records the request and honours the hold with the other methods, so
+  `DELETE /v1/cut-requests/<id>` shows in `/__mock/requests` and `__mock/hold` delays it. `test_emulator_mock.py` fails on the
+  old code.
+- `extension/assets/icons/`: the three PNGs are now rendered from `assets/brand/utubot-symbol.svg` by `assets/brand/render.py`
+  (new `EXTENSION_ICONS` targets at the manifest's 48, 96 and 128), and `tests/unit/icons.test.js` decodes them to check the
+  manifest paths, the square transparent canvas and the two brand colours against the symbol.
+- Evidence: `npm run lint`, `npm test` (49 pass), the five builds; `ruff check`/`format --check` and
+  `pytest tests/test_ci_changes.py tests/test_emulator_mock.py` (40 pass). `render.py` itself was run from a scratch venv with
+  cairosvg (no system install here) and rewrote the icons identically.
+
 ## 2026-11-24 (checkpoints 0-3: review pass and fixes)
 
 - Checked every Done When of checkpoints 0, 1, 2 and 3 against the plan on `main`. The skeleton, classifiers, mock controls,
