@@ -557,7 +557,8 @@ downloader_codes = { arm64-v8a = "", armeabi-v7a = "" }
 #                                           # (`apksigner verify --print-certs APK`); every APK must match it
 # apksigner_path = "/path/to/android-sdk/build-tools/<version>/apksigner"
 #                                           # optional: verify with apksigner; unset uses the built-in v2/v3 verifier (RSA keys)
-# github_token_env = "UTUBOT_GITHUB_TOKEN"  # optional env var with a GitHub token (only raises the API rate limit)
+# github_token_env = "UTUBOT_GITHUB_TOKEN"  # preferred: env var with a GitHub token, raises the API rate limit
+#                                           # without one the sync uses ETag/304 and skips runs until X-RateLimit-Reset
 # keep_versions = 0                         # versions of APK files kept in app_dir after a sync; 0 keeps all
 # apksigner_timeout_s = 120.0
 # sync_timeout_s = 60.0                     # per HTTP request

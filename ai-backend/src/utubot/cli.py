@@ -122,7 +122,9 @@ def cmd_app_sync_github(args: argparse.Namespace) -> int:
             cfg, repo, include_prerelease=args.prerelease, dry_run=args.dry_run
         )
     except appsync.TransientError as exc:
-        print(f"warning: {exc}; will retry on the next run", file=sys.stderr)
+        if exc.notice:
+            retry = "" if exc.rate_limit_reset else "; will retry on the next run"
+            print(f"warning: {exc}{retry}", file=sys.stderr)
         if not args.dry_run:
             appchannel.record_sync(cfg, "unreachable", error=str(exc))
         return appsync.EXIT_TEMPFAIL

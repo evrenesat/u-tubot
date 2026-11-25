@@ -18,6 +18,9 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
   "Notify about updates" is on, the app shows the update dialog shortly after it starts and again on its schedule, without opening
   Settings, Updates. Choosing "Not now" (or Back) dismisses that build until a newer one arrives, even when the name is reused;
   "Check for updates" still shows it.
+- Server: `utubot app sync-github` asks GitHub for the release list conditionally (ETag/304) and remembers `X-RateLimit-Reset`, so
+  the timer no longer spends the anonymous quota on unchanged runs or prints the same rate-limit warning every time; a token via
+  `[app] github_token_env` remains the preferred setup.
 - Switching between browse sections is instant: each section first shows the cards it had the last time, from memory or from a
   cache kept on the TV across restarts, and only then refreshes in the background, at most every 5, 10, 20, 30 or 60 minutes
   (Settings, u·tubot, Browse refresh; 10 by default). The refreshed rows update in place and keep the card that had the focus;

@@ -72,7 +72,10 @@ All are served without auth: `/app/update.json`, `/app/<file>.apk`, the stable `
 
 To follow the project's GitHub Releases instead of publishing by hand, set `[app] github_repo` and `signing_cert_sha256` in the
 config and run `utubot app sync-github` (idempotent; every APK is checked against its SHA-256 and the pinned signing certificate
-with `apksigner` or the built-in v2/v3 verifier). Run it from a timer; see `../../docs/server.md`, Updates.
+with `apksigner` or the built-in v2/v3 verifier). Run it from a timer; see `../../docs/server.md`, Updates. Give it a token through
+`[app] github_token_env`: that is the preferred setup and raises GitHub's API rate limit. Without one the sync still works through
+conditional requests (an unchanged list answers `304`), and a rate-limited run is remembered from `X-RateLimit-Reset` so later
+timer runs skip GitHub until the window resets.
 
 ## Ops
 
