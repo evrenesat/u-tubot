@@ -105,6 +105,19 @@ def source_document(ref: dict[str, Any]) -> dict[str, Any] | None:
     return source
 
 
+def source_matches(left: dict[str, Any], right: dict[str, Any], tolerance_ms: int) -> bool:
+    """Same source and release, and a length within the configured tolerance."""
+    if left["key"] != right["key"]:
+        return False
+    if left.get("release_key") or right.get("release_key"):
+        if left.get("release_key") != right.get("release_key"):
+            return False
+    a, b = left.get("release_duration_ms"), right.get("release_duration_ms")
+    if a is None or b is None:
+        return True
+    return abs(a - b) <= tolerance_ms
+
+
 def cut_clock(ms: int) -> str:
     """Milliseconds as the clients show a length: `1:12`, or `1:02:03` past an hour."""
     seconds = max(0, int(round(ms / 1000.0)))
@@ -917,6 +930,7 @@ def cut_document(
     preset_id: str | None,
     built_at: float | None = None,
     target_s: int | None = None,
+    transitions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The wire document the phone and the TV read: kept parts, skip ranges in ms, the transcript
     hash and the length the cut was built for (the TV refuses a cut whose length differs)."""
@@ -924,7 +938,7 @@ def cut_document(
     if not duration_ms and parts:
         duration_ms = parts[-1].end_ms
     kept_ms = sum(p.end_ms - p.start_ms for p in parts)
-    return {
+    doc = {
         "version": CUT_DOC_VERSION,
         "video_id": video_id,
         "transcript_hash": thash,
@@ -942,6 +956,9 @@ def cut_document(
         "mode": "quick",
         "built_at": built_at or time.time(),
     }
+    if transitions is not None:
+        doc["transitions"] = transitions
+    return doc
 
 
 class CutService:
@@ -1477,6 +1494,12 @@ class CutService:
         }
 
     def _preset_state(self, user: str, video_id: str, prompt: Prompt, mode: str) -> dict[str, Any]:
+        if mode == "watched":
+            from .watch import watched_available
+
+            ok, reason = watched_available(self.cfg)
+            if not ok:
+                return {"state": "unavailable", "reason": reason}
         row = self.db.one(
             "SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id=? AND mode=?"
             " AND state IN ('waiting','building','needs_transcript')"

@@ -5,6 +5,7 @@ import hashlib
 import json
 import sqlite3
 import time
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -847,7 +848,7 @@ class TestADatabaseFromBeforeCutModes:
         segs = set_transcript(fetcher)
         thash = transcript_hash(segs)
         instruction = CUT_PRESET_INSTRUCTIONS["demo"]
-        version = CutService._version("cut-demo", instruction, None)
+        version = CutService._version(SimpleNamespace(cfg=cfg), "cut-demo", instruction, None)
         old_key = hashlib.sha256(f"{VID}|{version}|cutmodel|{thash}".encode()).hexdigest()
         old_doc = {
             "version": 1,
