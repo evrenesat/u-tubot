@@ -762,10 +762,7 @@ def _one_pass(
         data = _ask(model_fn, repair, out)
         parts = parse_cut_answer(data, units)
     if target_s:
-        duration_s = meta.get("duration_s")
-        parts, _total_s = select_for_target(
-            parts, units, cfg, target_s, float(duration_s) if duration_s else None
-        )
+        parts, _total_s = select_for_target(parts, units, cfg, target_s, meta.get("duration_s"))
     return data, parts
 
 
@@ -797,12 +794,12 @@ def score_request(
             _data, parts = asyncio.run(
                 engine.pick_parts(units, chapters, meta, request.instruction, target_s)
             )
-    except ValueError:
-        out.format_error = "the answer was not the JSON object"
-        out.wall_s = time.monotonic() - started
-        return out
     except CutFormatError as exc:
         out.format_error = exc.problem
+        out.wall_s = time.monotonic() - started
+        return out
+    except ValueError:
+        out.format_error = "the answer was not the JSON object"
         out.wall_s = time.monotonic() - started
         return out
     except (CutRefused, LLMError) as exc:

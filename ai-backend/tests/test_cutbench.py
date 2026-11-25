@@ -164,6 +164,21 @@ class TestScorer:
         assert "Your previous answer was rejected" in calls[1][-1]["content"]
         assert result.keep > 0.9, result.row()
 
+    def test_a_second_bad_ids_answer_reports_the_ids_problem(self):
+        transcript = TRANSCRIPTS[0]
+        request = transcript.requests[0]
+        calls: list = []
+
+        def model_fn(messages):
+            calls.append(messages)
+            return answer([(0, 2)]), {}
+
+        result = score_request(transcript, request, model_fn, "fake")
+        assert result.format_error is not None
+        assert result.format_error.startswith("part 1 names units 0-2; the transcript has")
+        assert result.repairs == 1
+        assert len(calls) == 2
+
     def test_two_unparsable_answers_are_a_format_error_not_a_crash(self):
         transcript = TRANSCRIPTS[0]
         request = transcript.requests[0]

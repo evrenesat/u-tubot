@@ -99,6 +99,15 @@ class TestBuildUnits:
         units = build_units(segs((0.0, 2.0, "Yes."), (5.0, 7.0, "Yes.")), CFG)
         assert [u.text for u in units] == ["Yes.", "Yes."]
 
+    def test_drops_a_rolling_repeat_after_a_sentence_boundary(self):
+        one_word = build_units(segs((0.0, 2.0, "Done."), (2.1, 4.0, "Done. It worked.")), CFG)
+        assert [u.text for u in one_word] == ["Done.", "It worked."]
+        two_words = build_units(
+            segs((0.0, 3.0, "We tested it. It works."), (3.1, 5.0, "It works. And it is fast.")),
+            CFG,
+        )
+        assert [u.text for u in two_words] == ["We tested it. It works.", "And it is fast."]
+
     def test_a_sentence_closed_by_a_quote_or_bracket_ends_a_unit(self):
         units = build_units(
             segs(
@@ -178,6 +187,16 @@ class TestFinalize:
     def test_the_last_part_never_pads_past_the_video_end(self):
         parts, _ = finalize_parts([Part("a", 10000, 20000)], CFG, guard=False, duration_s=20.2)
         assert parts[0].end_ms == 20_200  # clamped to the duration, not 20500
+
+    def test_a_part_clamped_by_the_video_end_can_fall_under_the_minimum(self):
+        parts, _ = finalize_parts(
+            [Part("keep", 10000, 20000), Part("edge", 97000, 101000)],
+            CFG,
+            guard=False,
+            duration_s=100.0,
+        )
+        # "edge" is 4 s on the model's boundaries but only 3 s before the video ends.
+        assert [p.label for p in parts] == ["keep"]
 
     def test_merges_small_gaps_and_drops_short_parts(self):
         parts, _ = finalize_parts(
@@ -520,6 +539,28 @@ class TestTargetLength:
         parts = ranked(units, [(1, 6, 1), (11, 16, 2)])
         chosen, total = select_for_target(parts, units, CFG, 300)
         assert len(chosen) == 2 and total < target_band(300, CFG.length_tolerance)[0]
+
+    def test_short_parts_never_reach_the_target_band(self):
+        # 14 parts of 3.5 s: padding would make them 4.3 s each and reach 60.2 s, but
+        # finalize_parts drops every one, so the target must come back short instead.
+        units = [Unit(i, (i - 1) * 6.0, (i - 1) * 6.0 + 3.5, f"unit {i}") for i in range(1, 15)]
+        parts = [
+            Part(f"p{i}", int(u.start * 1000), int(u.end * 1000))
+            for i, u in enumerate(units, start=1)
+        ]
+        chosen, total = select_for_target(parts, units, CFG, 60, duration_s=100.0)
+        assert chosen == [] and total == 0.0
+
+    def test_target_selection_clamps_a_part_at_the_video_end(self):
+        units = [Unit(1, 0.0, 10.0, "keep"), Unit(2, 97.0, 101.0, "edge")]
+        parts = [
+            Part("keep", 0, 10000, rank=2),
+            Part("edge", 97000, 101000, rank=1),
+        ]
+        # "edge" is 4 s raw but 3 s clamped to the 100 s video; it cannot be selected.
+        chosen, total = select_for_target(parts, units, CFG, 10, duration_s=100.0)
+        assert [p.label for p in chosen] == ["keep"]
+        assert total == 10.5
 
     def test_prompt_names_the_target_and_asks_for_ranks(self):
         units = eleven_minute_units()

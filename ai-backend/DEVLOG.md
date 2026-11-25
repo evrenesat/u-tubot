@@ -33,6 +33,32 @@
 
 # DEVLOG
 
+## 2026-11-25 (director's cuts review r1: sentence repeats, bench errors, target lengths)
+
+1. Rolling caption repeats were dropped only while a unit was open. After a sentence or length
+   flush the repeated first fragment started the next unit, so "Done." / "Done. It worked." sent
+   "Done." twice into the prompt. The flush reason now matters: a sentence or length flush drops
+   the repeated run (one word is enough at that boundary), while a pause flush still keeps a
+   repeated line. Tests: one- and two-word repeats after `.`, and the pause case stays.
+2. `cutbench.score_request` caught `ValueError` before `CutFormatError` (a `ValueError`
+   subclass), so a valid-JSON answer with bad unit ids after the repair round was recorded as
+   "the answer was not the JSON object". The ids handler now comes first; a test checks the ids
+   message after the repair round.
+3. Target selection and `finalize_parts` measured different parts. Selection charged padding
+   (14 parts of 3.5 s reached 60.2 s) but finalize dropped all of them, so the request ended in
+   "Nothing was worth keeping"; and a part that was 4 s on the model's boundaries could clamp
+   under 4 s at the video end. Both now check `min_part_s` on the model's boundaries clamped to
+   the video, selection charges the final padded/clamped length and `_trim_to` applies the same
+   minimum, so the parts it counts survive finalize. Tests: the 14 short parts come back short,
+   a part clamped at the end is dropped, and a trimmed/selected end-clamped part is skipped.
+4. The r0 reference bench omitted `bench-router highlights-1min`, the only length-accuracy cell.
+   The full 16-request, offline reference run (hand-marked keep spans mapped to units, no LLM)
+   now scores keep 0.9726, skip 1.000, score +0.9726, 0 refusals, 51.01 s mean kept, 1.31 parts,
+   mean length error 0.015. That cell kept 1 part of 60.90 s for the 60 s target (length error
+   0.015): `Part 1` units 10-18 (46.04 s) and `Part 2` units 19-21 (12.66 s), merged and padded
+   to 60.90 s. Its keep is 0.562 because the fixture's hand-marked keep spans are longer than a
+   one-minute target; skip is 1.000.
+
 ## 2026-11-25 (Tailscale Serve sign-in, UTB-105)
 
 - New optional `[auth]` section: `tailscale_identity` (default off) and `tailscale_users` (tailnet login to local user;

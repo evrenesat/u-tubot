@@ -234,13 +234,13 @@ def _effective_end(index: int, segments: list[tuple[float, float, str]]) -> floa
     return segments[index + 1][0] if index + 1 < len(segments) else start
 
 
-def _drop_rolling_repeat(text: str, previous: str) -> str:
+def _drop_rolling_repeat(text: str, previous: str, min_words: int = ROLLING_MIN_WORDS) -> str:
     """A caption rolling window repeats the tail of the previous fragment at the start of this
     one; only that repeated run is dropped, like `transcripts.parse_json3_words` does."""
     words = text.split()
     previous_words = previous.split()
     for k in range(min(len(previous_words), len(words)), 0, -1):
-        if k >= ROLLING_MIN_WORDS and previous_words[-k:] == words[:k]:
+        if k >= min_words and previous_words[-k:] == words[:k]:
             return " ".join(words[k:])
     return text
 
@@ -278,14 +278,22 @@ def build_units(segments: list[tuple[float, float, str]], cfg) -> list[Unit]:
         seg_end = _effective_end(index, segments)
         pause = 0.0 if prev_end is None else seg_start - prev_end
         too_long = start is not None and seg_end - start > max_len
+        after_pause = False
         if parts and (pause > max_pause or too_long or _ends_sentence(prev_text)):
+            # A pause keeps a repeated line (live or edited speech); a sentence or length
+            # boundary is a rolling caption window, so the repeated tail goes with it.
+            after_pause = pause > max_pause
             flush()
         if parts:
             text = _drop_rolling_repeat(text, prev_raw)
-            if not text:
-                prev_end = max(seg_end, prev_end or 0.0)
-                prev_raw = raw_text
-                continue
+        elif not after_pause:
+            # The first fragment after a sentence/length flush still repeats the previous
+            # fragment; a one-word repeat ("Done.") is possible at that boundary.
+            text = _drop_rolling_repeat(text, prev_raw, min_words=1)
+        if not text:
+            prev_end = max(seg_end, prev_end or 0.0)
+            prev_raw = raw_text
+            continue
         if seg_end - seg_start > max_len:
             # One caption block longer than the cap is split across its own length, evenly by time.
             words = text.split()
@@ -594,96 +602,83 @@ def effective_target_s(
     return target_s
 
 
-def _padded_s(part: Part, cfg) -> float:
-    return (part.end_ms - part.start_ms) / 1000.0 + cfg.pad_before_s + cfg.pad_after_s
+def _duration_ms(duration_s: float | None) -> int | None:
+    return int(duration_s * 1000) if duration_s else None
 
 
-def _trim_to(part: Part, units: list[Unit], budget_s: float, cfg) -> Part | None:
+def _final_bounds(part: Part, cfg, duration_ms: int | None) -> tuple[int, int]:
+    """The padded boundaries of a kept part, clamped to the video."""
+    start = max(0, part.start_ms - int(cfg.pad_before_s * 1000))
+    end = part.end_ms + int(cfg.pad_after_s * 1000)
+    if duration_ms is not None:
+        end = min(end, duration_ms)
+    return start, end
+
+
+def _clamped_s(part: Part, duration_s: float | None = None) -> float:
+    """The part on the model's boundaries, after clamping its end to the video."""
+    duration_ms = _duration_ms(duration_s)
+    end_ms = part.end_ms if duration_ms is None else min(part.end_ms, duration_ms)
+    return max(0, end_ms - part.start_ms) / 1000.0
+
+
+def _padded_s(part: Part, cfg, duration_s: float | None = None) -> float:
+    """The length the finished cut will have: padding added and clamped to the video."""
+    duration_ms = _duration_ms(duration_s)
+    start, end = _final_bounds(part, cfg, duration_ms)
+    return max(0, end - start) / 1000.0
+
+
+def _trim_to(
+    part: Part, units: list[Unit], budget_s: float, cfg, duration_s: float | None = None
+) -> Part | None:
     """The leading units of `part` that fit `budget_s` (padding included), cut at a unit
-    boundary; None when not even the first unit fits or the part has no unit ids."""
+    boundary; None when not even the first unit fits, the part has no unit ids, or the trim
+    would fall under `min_part_s` on its clamped boundaries."""
     if part.first is None or part.last is None:
         return None
-    last = None
+    trimmed = None
     for n in range(part.first, part.last + 1):
-        if units[n - 1].end - units[part.first - 1].start + cfg.pad_before_s + cfg.pad_after_s > (
-            budget_s
-        ):
-            break
-        last = n
-    if last is None:
-        return None
-    return Part(
-        part.label,
-        part.start_ms,
-        int(units[last - 1].end * 1000),
-        part.rank,
-        part.first,
-        last,
-    )
-
-
-def _finalized_s(parts: list[Part], cfg, duration_s: float) -> float:
-    """The length `finalize_parts` would keep, without changing the caller's parts."""
-    try:
-        _kept, kept_s = finalize_parts(
-            sorted(parts, key=lambda p: p.start_ms),
-            cfg,
-            guard=False,
-            duration_s=duration_s,
-        )
-    except CutRefused:
-        return 0.0
-    return kept_s or 0.0
-
-
-def _trim_to_finalized(
-    part: Part, chosen: list[Part], units: list[Unit], cfg, high: float, duration_s
-):
-    """The leading units of `part` that keep `chosen` at or under `high` after finalizing."""
-    if part.first is None or part.last is None:
-        return None
-    fit = None
-    lo, hi = part.first, part.last
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        trial = Part(
+        candidate = Part(
             part.label,
             part.start_ms,
-            int(units[mid - 1].end * 1000),
+            int(units[n - 1].end * 1000),
             part.rank,
             part.first,
-            mid,
+            n,
         )
-        if _finalized_s([*chosen, trial], cfg, duration_s) <= high:
-            fit = trial
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    return fit
+        if _padded_s(candidate, cfg, duration_s) > budget_s:
+            break
+        trimmed = candidate
+    if trimmed is None or _clamped_s(trimmed, duration_s) < cfg.min_part_s:
+        return None
+    return trimmed
 
 
 def select_for_target(
-    parts: list[Part], units: list[Unit], cfg, target_s: int, duration_s: float | None = None
+    parts: list[Part],
+    units: list[Unit],
+    cfg,
+    target_s: int,
+    duration_s: float | None = None,
 ) -> tuple[list[Part], float]:
     """Pick parts by importance until the target is met; `(parts in video order, length in s)`.
 
     Parts are taken by rank (parts without one count in video order, after the ranked ones).
     A part that would push the total past the band is trimmed at a unit boundary to fit; the
-    selection stops once the target is reached. A model answer shorter than the band returns
-    everything it gave, so the caller can see the shortfall.
-
-    With `duration_s` the length is measured after `finalize_parts` (the kept length the caller
-    will return), so padding and gap merging cannot push an otherwise fitting selection over
-    the band. The returned parts are still un-finalized: finalizing pads them once more."""
+    selection stops once the target is reached. Parts under `min_part_s` on their clamped
+    boundaries are never selected (padding does not make them keepable), so the same parts
+    survive `finalize_parts`. The charged length is the final padded length, which is what the
+    finished cut keeps. A model answer shorter than the band returns its keepable parts, so the
+    caller can see the shortfall.
+    """
     low, high = target_band(target_s, cfg.length_tolerance)
-    if duration_s is None:
-        pool_s = sum(_padded_s(p, cfg) for p in parts)
-    else:
-        pool_s = _finalized_s(parts, cfg, duration_s)
+    eligible = [i for i, part in enumerate(parts) if _clamped_s(part, duration_s) >= cfg.min_part_s]
+    pool_s = sum(_padded_s(parts[i], cfg, duration_s) for i in eligible)
     if pool_s < low:
-        return sorted(parts, key=lambda p: p.start_ms), pool_s
+        return [parts[i] for i in eligible], pool_s
     order = sorted(
-        range(len(parts)),
+        eligible,
         key=lambda i: (parts[i].rank if parts[i].rank is not None else len(parts) + i + 1, i),
     )
     chosen: list[Part] = []
@@ -692,25 +687,14 @@ def select_for_target(
         if total >= target_s:
             break
         part = parts[i]
-        if duration_s is None:
-            length = _padded_s(part, cfg)
-            if total + length > high:
-                trimmed = _trim_to(part, units, high - total, cfg)
-                if trimmed is None:
-                    continue
-                part, length = trimmed, _padded_s(trimmed, cfg)
-            chosen.append(part)
-            total += length
-        else:
-            length = _finalized_s([*chosen, part], cfg, duration_s)
-            if length > high:
-                trimmed = _trim_to_finalized(part, chosen, units, cfg, high, duration_s)
-                if trimmed is None:
-                    continue
-                part = trimmed
-                length = _finalized_s([*chosen, part], cfg, duration_s)
-            chosen.append(part)
-            total = length
+        length = _padded_s(part, cfg, duration_s)
+        if total + length > high:
+            trimmed = _trim_to(part, units, high - total, cfg, duration_s)
+            if trimmed is None:
+                continue
+            part, length = trimmed, _padded_s(trimmed, cfg, duration_s)
+        chosen.append(part)
+        total += length
     chosen.sort(key=lambda p: p.start_ms)
     return chosen, total
 
@@ -905,9 +889,10 @@ def finalize_parts(
 ) -> tuple[list[Part], float | None]:
     """Merge and drop the kept parts, then pad their boundaries; check how much survives.
 
-    Gaps under `cuts.merge_gap_s` are merged and parts under `cuts.min_part_s` are dropped on
-    the model's own boundaries first, so padding cannot pull a dropped gap into a merge or
-    keep a part the model made too short. Only then are the kept boundaries padded
+    Gaps under `cuts.merge_gap_s` are merged first, so padding cannot pull a dropped gap into a
+    merge. Parts under `cuts.min_part_s` are then dropped on the model's boundaries clamped to
+    the video (a part ending past the video can shrink under the minimum), before any padding,
+    so padding cannot keep a part the model made too short. Only the kept boundaries are padded
     `pad_before_s`/`pad_after_s`. A cut keeping under `min_keep_frac` ("this would remove almost
     everything", only while the lower guard is on) is refused. A cut over `max_keep_frac`
     ("nothing to cut", only while the upper guard is on) is refused too; both guards default to
@@ -919,15 +904,12 @@ def finalize_parts(
             merged[-1] = Part(merged[-1].label, merged[-1].start_ms, part.end_ms)
         else:
             merged.append(Part(part.label, part.start_ms, part.end_ms))
-    duration_ms = int(duration_s * 1000) if duration_s else None
+    duration_ms = _duration_ms(duration_s)
     kept: list[Part] = []
     for part in merged:
-        if part.end_ms - part.start_ms < cfg.min_part_s * 1000:
+        if _clamped_s(part, duration_s) < cfg.min_part_s:
             continue
-        start = max(0, part.start_ms - int(cfg.pad_before_s * 1000))
-        end = part.end_ms + int(cfg.pad_after_s * 1000)
-        if duration_ms is not None:
-            end = min(end, duration_ms)  # the last part must not pad past the video end
+        start, end = _final_bounds(part, cfg, duration_ms)
         kept.append(Part(part.label, start, end))
     if not kept:
         raise CutRefused("Nothing was worth keeping, so there is no cut.")
@@ -2254,9 +2236,7 @@ class CutEngine:
                 parts = expand_candidate_parts(parts, candidates, units)
             if not target_s:
                 return data, parts
-            duration = meta.get("duration_s")
-            duration_s = float(duration) if duration else None
-            chosen, total_s = select_for_target(parts, units, cfg, target_s, duration_s)
+            chosen, total_s = select_for_target(parts, units, cfg, target_s, meta.get("duration_s"))
             low, high = target_band(target_s, cfg.length_tolerance)
             if total_s >= low:
                 return data, chosen
@@ -2505,7 +2485,13 @@ class CutEngine:
                 )  # fmt: skip
             kept = expand_candidate_parts(parts, group, units)
             if share and kept:
-                kept, _ = select_for_target(kept, units, cfg, int(share * (1 + cfg.over_ask_frac)))
+                kept, _ = select_for_target(
+                    kept,
+                    units,
+                    cfg,
+                    int(share * (1 + cfg.over_ask_frac)),
+                    meta.get("duration_s"),
+                )
             return candidates_from(kept)
 
         with events.stage(STAGE_REDUCE, candidates=len(cands), groups=len(groups), round=round_no):

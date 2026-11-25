@@ -508,7 +508,8 @@ numbered sentence-like units (new unit on a pause over 0.6 s or sentence punctua
 cap; a rolling caption fragment's repeated tail is dropped); the model answers JSON with kept unit id ranges (`from`/`to`), a label per part, a
 one-line summary and `kept_s`; ids are validated (must exist, sorted, never overlapping) with
 one repair round; kept parts are merged (gaps under 2 s) and short parts (under 4 s) dropped
-on the model's boundaries first, then boundaries are padded 0.3 s before and 0.5 s after.
+on the model's boundaries clamped to the video first, then the kept boundaries are padded 0.3 s
+before and 0.5 s after.
 Keeping under 10 % of the video ("this would remove almost everything") is refused only for
 the broad `cut-no-filler` preset: a targeted answer, demo or owner prompt may legitimately be
 short. Keeping over 95 % ("nothing to cut") is refused only for a typed prompt without a
@@ -527,9 +528,10 @@ preset_target_s`, today `cut-highlights-5` = 300 s) and a tolerance (`length_tol
 0.15 = +/- 15 %). The model is told the target, asked to keep about `over_ask_frac` (0.2) more and to
 give every part a `rank` (1 = most important; optional, an answer without ranks counts in video
 order). The server takes parts by rank until the target is reached, trims the last one at a unit
-boundary so the total stays inside the band, and checks the kept length again after padding,
-merging and dropping parts, so finalization cannot leave the band. It returns them in video order.
-An answer below the band gets one retry that names the measured length; a second short answer fails the request
+boundary so the total stays inside the band, and returns them in video order. The selection charges
+the padded, video-clamped length and never selects a part under `min_part_s` on its model
+boundaries, so the parts it counts are the parts `finalize_parts` keeps. An answer below the
+band gets one retry that names the measured length; a second short answer fails the request
 ("The model kept only N s of the T s this cut aims for"). A preset with a target skips the keep
 fraction guard; a video no longer than the band's top is cut without a target. Clients show the real
 length (`kept_ms`) next to the preset label, for example "Highlights in 5 min · 5:02" (TV picker; the
