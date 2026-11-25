@@ -28,10 +28,12 @@ from .align import detect_silences
 from .asr import audio_start_offset, normalize_language, run_ffmpeg
 from .chunking import bare
 from .engines import AsrRouter, EngineFactory
+from .meaning import meaning_block
 from .pipeline import ASR_CACHE_STAGE, ASR_CACHE_VERSION, asr_from_cache
 from .syncscore import (
     PERCENTILE_HIGH,
     PERCENTILE_LOW,
+    PERCENTILE_TAIL,
     SECONDS_DIGITS,
     SHARE_DIGITS,
     percentile,
@@ -99,7 +101,15 @@ def words_block(
         total += len(ref_words)
         errors += match_errors(ref_words, inside, begin)
     if not errors:
-        return {"matched": 0, "matched_share": 0.0, "median_s": None, "p10_s": None, "p90_s": None, "within_s": 0.0}  # fmt: skip
+        return {
+            "matched": 0,
+            "matched_share": 0.0,
+            "median_s": None,
+            "p10_s": None,
+            "p90_s": None,
+            "p95_s": None,
+            "within_s": 0.0,
+        }
     ordered = sorted(errors)
     within = sum(1 for e in ordered if abs(e) <= cfg.captions.sync_late_s)
     return {
@@ -108,6 +118,7 @@ def words_block(
         "median_s": round(statistics.median(ordered), SECONDS_DIGITS),
         "p10_s": round(percentile(ordered, PERCENTILE_LOW), SECONDS_DIGITS),
         "p90_s": round(percentile(ordered, PERCENTILE_HIGH), SECONDS_DIGITS),
+        "p95_s": round(percentile(ordered, PERCENTILE_TAIL), SECONDS_DIGITS),
         "within_s": round(within / len(ordered), SHARE_DIGITS),
     }
 
@@ -175,12 +186,15 @@ async def score_track(
     transport: httpx.AsyncBaseTransport | None = None,
     engine_factory: EngineFactory | None = None,
     review: bool = False,
+    reference_translation: str | None = None,
 ) -> dict[str, Any]:
     """The sync score of a stored track of `video_id` against windows transcribed by `reference`.
 
     `lang` picks the track; by default the newest one that has a `timing_version`, else the newest.
     `spoken` is the audio's language (default: the transcript's). `at` lists window starts in
-    seconds instead of evenly spaced windows.
+    seconds instead of evenly spaced windows. `reference_translation` is a VTT/SRT/text file
+    translated from the video's speech; its token F1 against this track becomes the report's
+    `meaning` block, the input the release gate compares.
     """
     c = cfg.captions
     if transport is None and engine_factory is None and _automated():
@@ -207,6 +221,7 @@ async def score_track(
         "cues": len(cues),
         "first_cue_start_s": round(min(cue_starts), 3) if cue_starts else None,
         "max_cue_s": round(max((end - start for start, end, _t in cues), default=0.0), 3),
+        "short_cues": sum(1 for start, end, _t in cues if end - start < c.gate_short_cue_s),
     }
     archive = MediaArchive(cfg, db)
     entry = archive.lookup(video_id, KIND_AUDIO)
@@ -262,6 +277,15 @@ async def score_track(
             )
             wav.unlink(missing_ok=True)
     cached = cached_engine_words(db, video_id)
+    meaning = (
+        meaning_block(
+            " ".join(text for _start, _end, text in cues),
+            reference_translation,
+            c.gate_meaning_min,
+        )
+        if reference_translation
+        else None
+    )
     return {
         "video_id": video_id,
         "track": track,
@@ -272,5 +296,6 @@ async def score_track(
         or all(win["language"] == language for win in per_window),
         "windows": per_window,
         "words": words_block(ref_windows, cached, cfg) if cached else None,
+        "meaning": meaning,
         "overall": score_starts(cue_starts, onsets_all, c).as_detail(),
     }

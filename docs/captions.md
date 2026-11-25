@@ -58,7 +58,13 @@ Speaker diarization is out of scope for now (owner, 2026-11-13); the pipeline on
 ## Improving existing captions
 
 When the video already has a caption track, it supplies the wording to compare with and the cues for what the engine did not hear
-(`[Music]`, speech it missed); the **times come from the audio**:
+(`[Music]`, speech it missed); the **times come from the audio**. An **automatic (ASR) track in another language** is not improved as
+text: `[captions] prefer_asr_non_english` (default true) rebuilds it from the audio in its own language through the normal transcript
+path, then translates it. Manual tracks and English tracks keep the improve path. Clients also offer **"Transcribe with u·tubot"**
+(TV cut sheet and caption menu, web Captions tab, `force` in `POST /v1/videos/{id}/cuts` and `/captions`, `/transcribe?force=true`) to ignore YouTube's
+captions for that video; a force set while a job is already running turns that job rather than starting another one.
+
+The improve path:
 
 - **Real word times** (the normal case): the cues are built from the engine's own word times (`align.cues_from_words`), exactly as on
   the audio-only path, so no spoken word is dropped for lying outside a caption window. A caption cue is kept as a *fill* cue when it is a
@@ -106,7 +112,7 @@ event is the audio's verdict on the finished cues: the share of cue time over so
 silence. `char_timed_cues` counts the cues whose times were still shared over their text by character count (the job page shows it; the
 stored `captions.timing` carries the final number after proofreading and translation).
 
-**Measuring and regenerating.** `utubot captions-score VIDEO_ID --reference ENGINE [--windows N | --at SECONDS ...] [--window-s S] [--lang TRACK] [--spoken L] [--review] [--json]`
+**Measuring and regenerating.** `utubot captions-score VIDEO_ID --reference ENGINE [--windows N | --at SECONDS ...] [--window-s S] [--lang TRACK] [--spoken L] [--review] [--reference-translation FILE] [--json]`
 cuts evenly spaced windows (or windows starting at each `--at`) of the *archived* audio, transcribes them with the named engine, and reports how close the nearest cue start
 is to each phrase onset of that reference: `hit` (cue start within -`sync_early_s` .. +`sync_late_s`, 0.5 / 0.3 s), `loose` (within
 `sync_loose_s`, 1 s) and the median and spread of the error. `--lang` picks the track (default: the newest with a `timing_version`, else the newest); the output says which track was scored and gives
@@ -114,7 +120,19 @@ its first cue start and longest cue. The reference is the engine's own answer: t
 The spoken language is the transcript's with a YouTube track suffix (`-orig`, `-auto`, `-asr`) removed (`hi-orig` is `hi`) and is *forced* on the reference; each window reports the
 language the engine answered in and the Latin share of its words, and `reference_language_ok` is false (the command prints a warning) when any window answered in another language:
 the onsets of such a reference say nothing about the speech. The JSON also has a `words` block (`null` without cached engine words): the video's cached raw engine words compared token by token with the
-windows' words (`matched`, `matched_share`, `median_s`, `p10_s`, `p90_s`, `within_s` within `sync_late_s`). It checks the engine against itself with different windowing (chunk seams, long-chunk drift), not a systematic bias.
+windows' words (`matched`, `matched_share`, `median_s`, `p10_s`, `p90_s`, `p95_s`, `within_s` within `sync_late_s`). `--reference-translation FILE`
+(a VTT/SRT track or plain text in the target language) adds a `meaning` block: token-F1 of the candidate track's text against it and whether it
+clears `captions.gate_meaning_min`; without a reference the block is `null`. It checks the engine against itself with different windowing (chunk seams, long-chunk drift), not a systematic bias.
+`utubot captions-gate --candidate REPORT.json --baseline REPORT.json [--attestation FILE] [--json]` compares two `captions-score --json`
+reports (the new track and YouTube's automatic captions, or another engine's track) and fails unless the candidate clears
+`captions.gate_hit_min` (0.60), is `gate_hit_margin` (0.20) over the baseline's `hit`, keeps `loose` at or above the baseline and
+`gate_loose_min` (0.85), has `words.within_s` at least `gate_words_within_min` (0.85), has at most `gate_max_short_cues` (2) cues under
+`gate_short_cue_s` (0.7 s), keeps the cue-offset **median** at or under `gate_median_max_s` (0.30 s) and its **p95** at or under
+`gate_p95_max_s` (1.0 s) — each also no worse than the baseline — and its `meaning` score at least `gate_meaning_min` (0.5) and
+**strictly above** the baseline's (matching a baseline is not a win; a report without `meaning` fails). `--attestation` writes the
+`{version, passed, failures, candidate, baseline}` result even on failure; `captions.gate_required = true` makes a captions job refuse to
+store any track until that file records a passing run of the current gate version (`gate_attestation`). The command reads files only and
+never touches YouTube or a model; the thresholds are `captions.gate_*` in the config, and the owner records the evaluation fixtures.
 `utubot captions-regen [--video ID]... [--legacy] [--limit N] [--dry-run]` queues a background captions job for each stored track
 whose `timing_version` is missing or older than the current scheme (`--legacy`: only tracks that have none), at most
 `regen_limit_default` (20) per run unless `--limit` says otherwise; a track is not listed when a newer track of the video already has
@@ -383,7 +401,9 @@ only). The backend never summarises such a video from its title. What happens in
   claimed before background jobs, uses the gate and the engines at interactive priority, and may use any engine. A side-panel job is a
   background job; when the user then opens the video, it is promoted. Background-only engines never take interactive jobs.
 - **Explicit.** `POST /v1/videos/ID/transcribe` queues a job regardless of the policy (one per user and video; asking again returns
-  the same job).
+  the same job). A forced job (`?force=true`, and `"force": true` for `POST /v1/videos/ID/captions`, the TV's "Transcribe from audio")
+  skips the caption recheck and builds from the audio even when YouTube captions exist; a forced transcript replaces a stored caption
+  transcript (an existing ASR transcript is still `ready`).
 - **YouTube limits the caption API.** When the caption class is cooling (or its probe is out, see
   [server.md](server.md#youtube-limits-and-the-transcription-fallback)), or a caption fetch has just been refused (429, 403), and the
   `media` class is healthy and an engine can take the video, the request is treated like "no captions": the policy above decides between

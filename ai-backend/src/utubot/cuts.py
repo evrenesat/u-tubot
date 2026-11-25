@@ -1105,6 +1105,7 @@ class CutService:
         prompt: str | None = None,
         await_prompt: bool = False,
         mode: str | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Queue a cut. Exactly one of `preset` / `prompt`; `await_prompt` creates an empty
         request the phone fills later. An identical active request is returned as-is."""
@@ -1121,7 +1122,9 @@ class CutService:
                 raise CutRefused(f"Unknown cut preset {preset}.")
         if await_prompt and preset is not None:
             raise CutRefused("A request that waits for a description cannot name a preset.")
-        existing = self._active_same(user, video_id, preset, prompt, await_prompt, chosen_mode)
+        existing = self._active_same(
+            user, video_id, preset, prompt, await_prompt, chosen_mode, force
+        )
         if existing is not None:
             return existing
         if not await_prompt:
@@ -1137,7 +1140,8 @@ class CutService:
         )
         self.db.execute(
             "INSERT INTO cut_requests(id,user,video_id,source,preset_id,prompt,state,job_id,"
-            "created_at,updated_at,mode,source_kind,source_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "created_at,updated_at,mode,source_kind,source_key,force)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 request_id,
                 user,
@@ -1152,6 +1156,7 @@ class CutService:
                 chosen_mode,
                 "youtube",
                 f"youtube:{video_id}",
+                1 if force else 0,
             ],
         )
         origin = events.current_origin()
@@ -1185,27 +1190,29 @@ class CutService:
         prompt: str | None,
         await_prompt: bool,
         mode: str = "quick",
+        force: bool = False,
     ) -> dict[str, Any] | None:
+        """An active request for the same cut: a forced one never joins an unforced one."""
         states = (*BUILDING_STATES, "waiting")
         marks = ",".join("?" * len(states))
+        where = f"user=? AND video_id=? AND force=? AND mode=? AND state IN ({marks})"
         if await_prompt:
             row = self.db.one(
-                f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id IS NULL"
-                f" AND prompt IS NULL AND mode=? AND state IN ({marks})"
-                " ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, mode, *states],
+                f"SELECT * FROM cut_requests WHERE {where} AND preset_id IS NULL"
+                " AND prompt IS NULL ORDER BY created_at DESC LIMIT 1",
+                [user, video_id, 1 if force else 0, mode, *states],
             )
         elif prompt is not None:
             row = self.db.one(
-                f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND prompt=? AND mode=?"
-                f" AND state IN ({marks}) ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, prompt, mode, *states],
+                f"SELECT * FROM cut_requests WHERE {where} AND prompt=?"
+                " ORDER BY created_at DESC LIMIT 1",
+                [user, video_id, 1 if force else 0, mode, *states, prompt],
             )
         else:
             row = self.db.one(
-                f"SELECT * FROM cut_requests WHERE user=? AND video_id=? AND preset_id=?"
-                f" AND mode=? AND state IN ({marks}) ORDER BY created_at DESC LIMIT 1",
-                [user, video_id, preset, mode, *states],
+                f"SELECT * FROM cut_requests WHERE {where} AND preset_id=?"
+                " ORDER BY created_at DESC LIMIT 1",
+                [user, video_id, 1 if force else 0, mode, *states, preset],
             )
         return dict(row) if row else None
 
@@ -1874,8 +1881,9 @@ class CutService:
         summaries lose that cached text too and must refetch it themselves — accepted, because
         a transcript without timings is useless for cuts."""
         video_id = row["video_id"]
+        forced = bool(row.get("force"))
         cached = self.transcripts.cached(video_id)
-        if cached is not None and cached.segments:
+        if cached is not None and cached.segments and (not forced or cached.source == SOURCE_ASR):
             return cached
         if self._meta(video_id).get("is_live"):
             raise CutRefused("This is a live stream; live videos cannot be cut.")
@@ -1894,7 +1902,11 @@ class CutService:
             {"message": "No timed transcript yet; queued a refresh and waiting for it."},
         )
         job = self.jobs.enqueue_transcript(
-            row["user"], video_id, self._meta(video_id).get("title"), priority=INTERACTIVE
+            row["user"],
+            video_id,
+            self._meta(video_id).get("title"),
+            priority=INTERACTIVE,
+            force=forced,
         )
         deadline = time.monotonic() + self.cfg.cuts.transcript_wait_s
         while time.monotonic() < deadline:

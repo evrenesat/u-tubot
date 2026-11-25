@@ -61,6 +61,7 @@ class CaptionsRequest(BaseModel):
 
     lang: str = "auto"
     translate_to: str | None = None
+    force: bool = False
 
 
 class CutCreateRequest(BaseModel):
@@ -71,6 +72,7 @@ class CutCreateRequest(BaseModel):
     prompt: str | None = Field(None, max_length=2000)
     await_prompt: bool = False
     mode: str | None = Field(None, max_length=16)
+    force: bool = False
 
 
 class CutPromptBody(BaseModel):

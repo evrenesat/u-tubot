@@ -14,6 +14,7 @@ import {
   progressBar,
   segmented,
   slider,
+  switchRow,
   textInput,
   toast,
 } from "../components.js";
@@ -147,6 +148,13 @@ export async function render(view) {
   const host = h("div", { class: "stack" });
   const jobsHost = h("div", { class: "stack" });
   const ref = textInput("", { placeholder: "video id or YouTube link", maxlength: 500 });
+  let force = false;
+  const forceSwitch = switchRow(
+    "Ignore YouTube captions",
+    "Build from the audio even when the video already has captions.",
+    false,
+    (v) => (force = v),
+  );
   const msg = h("p", { class: "muted", text: "" });
 
   async function loadJobs() {
@@ -167,11 +175,14 @@ export async function render(view) {
     }
     try {
       if (kind === "transcript") {
-        const r = await api("/v1/videos/" + id + "/transcribe", { method: "POST" });
+        const r = await api("/v1/videos/" + id + "/transcribe", {
+          method: "POST",
+          query: force ? { force: true } : undefined,
+        });
         msg.className = "ok";
         msg.textContent = r.status === "ready" ? "This video already has a transcript." : "Queued. Estimated " + (r.estimate_s ? fmtDuration(r.estimate_s) : "a few minutes") + ".";
       } else {
-        const r = await api("/v1/videos/" + id + "/captions", { method: "POST", body: { lang: "auto" } });
+        const r = await api("/v1/videos/" + id + "/captions", { method: "POST", body: { lang: "auto", force } });
         msg.className = "ok";
         msg.textContent = "High-quality captions " + r.status + ".";
       }
@@ -194,6 +205,7 @@ export async function render(view) {
       card(
         "Transcribe a video",
         field("Video", ref, "Paste a link or an 11-character id."),
+        forceSwitch,
         h("div", { class: "row" }, button("Transcribe", () => start("transcript"), { kind: "primary" }), button("HQ captions", () => start("captions"), { kind: "sec" })),
         msg,
       ),

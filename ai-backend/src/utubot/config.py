@@ -541,6 +541,23 @@ class CaptionsConfig(BaseModel):
     # `utubot captions-score` defaults
     score_windows: int = Field(default=4, ge=1)
     score_window_s: float = Field(default=120.0, gt=0)
+    # `utubot captions-gate`: a candidate track ships only when it beats the baseline on sync
+    gate_hit_min: float = 0.60
+    gate_hit_margin: float = 0.20
+    gate_loose_min: float = 0.85
+    gate_words_within_min: float = 0.85
+    gate_max_short_cues: int = Field(default=2, ge=0)
+    gate_short_cue_s: float = Field(default=0.7, gt=0)
+    # the cue-offset tail: absolute median and p95 seconds, and no worse than the baseline
+    gate_median_max_s: float = Field(default=0.30, gt=0)
+    gate_p95_max_s: float = Field(default=1.0, gt=0)
+    # token F1 against a reference translation (`captions/meaning.py`)
+    gate_meaning_min: float = Field(default=0.5, ge=0, le=1)
+    # a captions job refuses to store a track unless a `captions-gate` attestation says it passed
+    gate_required: bool = False
+    gate_attestation: str | None = None
+    # non-English automatic captions are rebuilt from the audio instead of improved as text
+    prefer_asr_non_english: bool = True
 
     @field_validator("translate_to")
     @classmethod

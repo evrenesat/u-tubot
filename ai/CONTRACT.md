@@ -204,11 +204,13 @@ runs an ad-hoc prompt (not cached long-term) — for quick iteration.
 plus the extra fields of [Transcript status](#transcript-status) when it is not `ok`.
 
 ### `POST /v1/videos/{id}/transcribe`
-Queue a background transcription of the audio for a video without captions (the answer to "Transcribe in
-background?"). Optional query fields `title`, `channel`, `duration_s` as for `insight`. The backend downloads the
+Queue a background transcription of the audio (the answer to "Transcribe in
+background?"). Optional query fields `title`, `channel`, `duration_s` as for `insight`, and `force` (bool) to
+build from the audio even when YouTube captions are already stored. The backend downloads the
 audio (paced with every other YouTube request), runs its speech recognition and stores the text as the video's
 transcript with source `asr`. Idempotent: asking again while the user's job is queued or running returns that job.
-Nothing is queued when a transcript already exists.
+Without `force`, nothing is queued when a transcript already exists; with `force` a stored caption transcript is
+replaced (an ASR transcript already there is still returned as `ready`).
 
 ```json
 {"video_id":"...","job_id":"a1b2c3d4e5f6","status":"queued|running|ready",
@@ -318,9 +320,11 @@ raises `count`. This is how to see whether a TV actually downloaded a track.
 `lang` picks the track; default the first). Same access as the report; `404` when nothing is stored.
 
 ### `POST /v1/videos/{id}/captions`
-Queue high-quality captions. Body: `{"lang":"auto","translate_to":null}`. An unset `translate_to`
+Queue high-quality captions. Body: `{"lang":"auto","translate_to":null,"force":false}`. An unset `translate_to`
 follows the user's `captions_translate_to` setting, which unset follows `[captions] translate_to` (default `"en"`):
 captions come out in English whatever the source language; `"off"` keeps the source language instead.
+`force: true` skips the YouTube caption recheck and builds the track from the audio even when captions exist (the
+caption-recheck event says `skipped` / `forced`).
 → `{"status":"queued|running|ready|failed","job_id":"...","eta_s":null}`
 
 ### `GET /v1/videos/{id}/captions`
@@ -444,6 +448,9 @@ routes answer `200` with `"configured": false`, and `GET /v1/me` features carrie
   TV's "Describe on phone…").
   The caller's known video facts ride as query params (`title`, `channel`, `duration_s`,
   `is_live`) so the phone queue can show them before the backend learns them itself.
+  Optional `"force":true` builds the transcript from the audio even when YouTube captions exist,
+  as `force` does for transcribe and captions; it is not echoed in the request document, and a
+  forced request never joins an unforced active one.
   Duplicate active requests (same video + preset/prompt/waiting) return the existing row; a
   `failed` row never blocks a new request, so asking for the same preset again starts a fresh
   build and keeps the failure in the history. A per-user cap on concurrent builds answers `429`.

@@ -471,6 +471,20 @@ sparse_chunk_ratio = 0.15          # a chunk with fewer characters per second th
 sparse_min_chunks = 3              # ... when the file has at least this many chunks
 score_windows = 4                  # `utubot captions-score`: number of evenly spaced windows transcribed
 score_window_s = 120.0             # `utubot captions-score`: seconds per window
+gate_hit_min = 0.60                # `utubot captions-gate`: candidate `hit` floor
+gate_hit_margin = 0.20             # ... and how far over the baseline's `hit` it must be
+gate_loose_min = 0.85              # ... `loose` floor; it must also not be below the baseline
+gate_words_within_min = 0.85       # ... share of engine words within the late bound
+gate_max_short_cues = 2            # ... most cues shorter than `gate_short_cue_s`
+gate_short_cue_s = 0.7             # ... "too short to read" threshold
+gate_median_max_s = 0.30           # ... absolute median cue offset against the audio (seconds)
+gate_p95_max_s = 1.0               # ... and the p95 tail; both must also not be worse than the baseline
+gate_meaning_min = 0.5             # ... token-F1 floor against `--reference-translation`; it must also beat the baseline
+prefer_asr_non_english = true      # a non-English automatic track is rebuilt from the audio in its own language
+                                   # (then translated) instead of being proofread as YouTube's text
+gate_required = false              # a captions job refuses to store a track unless `captions-gate --attestation`
+                                   # last passed for this candidate
+gate_attestation = "data/captions-gate.json"  # JSON written by `utubot captions-gate --attestation`
 
 # An engine chain: each engine is used when its key variable is set (none needed when api_key_env is omitted).
 # Per audio file the router picks, among healthy engines that serve the video's language, the lowest `priority`

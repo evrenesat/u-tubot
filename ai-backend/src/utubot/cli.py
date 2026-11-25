@@ -196,6 +196,7 @@ def cmd_captions_score(args: argparse.Namespace) -> int:
                 windows=args.windows,
                 window_s=args.window_s,
                 review=args.review,
+                reference_translation=args.reference_translation,
             )
         )
     except ScoreError as exc:
@@ -230,6 +231,7 @@ def cmd_captions_score(args: argparse.Namespace) -> int:
     print(
         f"  overall   onsets {total['onsets']:>3}  hit {total['hit']:.2f}  loose {total['loose']:.2f}"
         f"  median {total['median_s']:+.2f}s  p10 {total['p10_s']:+.2f}s  p90 {total['p90_s']:+.2f}s"
+        f"  p95 {total['p95_s']:+.2f}s"
     )
     block = doc.get("words")
     if block:
@@ -240,7 +242,55 @@ def cmd_captions_score(args: argparse.Namespace) -> int:
         )
     else:
         print("  words     no cached engine words for this video")
+    meaning = doc.get("meaning")
+    if meaning:
+        print(
+            f"  meaning   F1 {meaning['score']:.3f} against {meaning['reference']}"
+            f"  ({'passes' if meaning['passed'] else 'under'} the floor)"
+        )
+    else:
+        print("  meaning   no --reference-translation given")
     return 0
+
+
+def cmd_captions_gate(args: argparse.Namespace) -> int:
+    """Compare two score reports (candidate and baseline) against the release thresholds."""
+    from .captions.gate import compare, write_attestation
+
+    cfg = load_config(args.config)
+    try:
+        with open(args.candidate, encoding="utf-8") as fh:
+            candidate = json.load(fh)
+        with open(args.baseline, encoding="utf-8") as fh:
+            baseline = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"captions-gate failed: {exc}", file=sys.stderr)
+        return 1
+    result = compare(candidate, baseline, cfg.captions)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print("PASS" if result["passed"] else "FAIL")
+        for line in result["failures"]:
+            print(f"  {line}")
+        cand = result["candidate"]
+        base = result["baseline"]
+        print(
+            f"  candidate hit {cand['hit']:.3f} loose {cand['loose']:.3f}"
+            f" median {cand['median_s']} p95 {cand['p95_s']}"
+            f" words {cand['words_within']} meaning {cand['meaning']}"
+        )
+        print(
+            f"  baseline  hit {base['hit']:.3f} loose {base['loose']:.3f}"
+            f" median {base['median_s']} p95 {base['p95_s']} meaning {base['meaning']}"
+        )
+    if args.attestation:
+        try:
+            write_attestation(args.attestation, result)
+        except OSError as exc:
+            print(f"captions-gate failed to write the attestation: {exc}", file=sys.stderr)
+            return 1
+    return 0 if result["passed"] else 1
 
 
 def cmd_captions_regen(args: argparse.Namespace) -> int:
@@ -404,12 +454,31 @@ def main(argv: list[str] | None = None) -> int:
         "--window-s", type=float, help="seconds per window (default: [captions] score_window_s)"
     )
     score.add_argument(
+        "--reference-translation",
+        help="a VTT/SRT/text translation of the video: its token F1 against the track is the report's meaning",
+    )
+    score.add_argument(
         "--review",
         action="store_true",
         help="also run the chunk review (re-listen, drop hallucinated text) on the reference; off by default so the reference is the engine's own answer",
     )
     score.add_argument("--json", action="store_true", help="print JSON")
     score.set_defaults(func=cmd_captions_score)
+    gate = sub.add_parser(
+        "captions-gate",
+        help=(
+            "compare two captions-score JSON reports (candidate vs baseline) against the release"
+            " thresholds (offline: reads files only)"
+        ),
+    )
+    gate.add_argument("--candidate", required=True, help="captions-score --json of the new track")
+    gate.add_argument("--baseline", required=True, help="captions-score --json of the baseline")
+    gate.add_argument("--json", action="store_true", help="print JSON")
+    gate.add_argument(
+        "--attestation",
+        help="write this run's result here (JSON); a gate-required backend reads the same file",
+    )
+    gate.set_defaults(func=cmd_captions_gate)
     regen = sub.add_parser(
         "captions-regen",
         help="queue captions jobs for tracks made before the current timing scheme",

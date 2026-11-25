@@ -20,6 +20,7 @@ from .types import Cue
 
 PERCENTILE_LOW = 0.10
 PERCENTILE_HIGH = 0.90
+PERCENTILE_TAIL = 0.95
 SHARE_DIGITS = 3
 SECONDS_DIGITS = 3
 
@@ -32,6 +33,7 @@ class SyncScore:
     median_s: float  # median of (nearest cue start - onset)
     p10_s: float
     p90_s: float
+    p95_s: float
 
     def as_detail(self) -> dict[str, Any]:
         return {
@@ -41,6 +43,7 @@ class SyncScore:
             "median_s": round(self.median_s, SECONDS_DIGITS),
             "p10_s": round(self.p10_s, SECONDS_DIGITS),
             "p90_s": round(self.p90_s, SECONDS_DIGITS),
+            "p95_s": round(self.p95_s, SECONDS_DIGITS),
         }
 
 
@@ -64,7 +67,7 @@ def score_starts(cue_starts: list[float], onsets: list[float], cfg: CaptionsConf
     """How close the nearest cue start is to each reference onset (negative: the cue leads)."""
     starts = sorted(cue_starts)
     if not starts or not onsets:
-        return SyncScore(len(onsets), 0.0, 0.0, 0.0, 0.0, 0.0)
+        return SyncScore(len(onsets), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     errors: list[float] = []
     for onset in onsets:
         at = bisect.bisect_left(starts, onset)
@@ -80,6 +83,7 @@ def score_starts(cue_starts: list[float], onsets: list[float], cfg: CaptionsConf
         statistics.median(errors),
         percentile(ordered, PERCENTILE_LOW),
         percentile(ordered, PERCENTILE_HIGH),
+        percentile(ordered, PERCENTILE_TAIL),
     )
 
 

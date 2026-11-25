@@ -260,13 +260,13 @@ class Transcription:
         Never carries a job id: jobs belong to the user who queued them (see `status`).
         """
         cached = self.transcripts.cached(video_id)
-        if cached:
+        job = self.jobs.transcript_job(video_id)
+        if cached and not (job and job["status"] in ACTIVE and job.get("force")):
             ok = {"transcript_status": OK, "source": cached.source, "lang": cached.lang}
             if cached.source == SOURCE_ASR:
                 ok.update(engine=cached.engine, model=cached.model)
             return ok
         meta = self._meta(video_id, hint)
-        job = self.jobs.transcript_job(video_id)
         if job and job["status"] in ACTIVE:
             return {
                 "transcript_status": TRANSCRIBING,
@@ -349,17 +349,21 @@ class Transcription:
         hint: dict[str, Any] | None = None,
         priority: int = INTERACTIVE,
         trigger: dict[str, Any] | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Queue (or rejoin) the user's ASR transcript job for a video.
 
         The user asked for it, so it is interactive unless the caller says otherwise (`BACKGROUND`:
         started on the user's behalf by a passive trigger). `trigger` says why it was queued (for
         the job's event log): explicit by default, or the automatic-transcription policy that fired.
+        `force` builds from the audio even when YouTube captions are already stored; an existing
+        ASR transcript still counts as ready.
         """
         base = {"video_id": video_id}
         state = self.state(video_id, hint)
         if state and state["transcript_status"] == OK:
-            return {**base, "status": "ready", "progress": 1.0, **state}
+            if not force or state.get("source") == SOURCE_ASR:
+                return {**base, "status": "ready", "progress": 1.0, **state}
         meta = self._meta(video_id, hint)
         if not self.can_transcribe(meta):
             raise TranscribeRefused(400, MSG_NO_CAPTIONS_UNAVAILABLE)
@@ -372,9 +376,14 @@ class Transcription:
                 raise TranscribeRefused(
                     429, "too many transcriptions queued, wait for one to finish"
                 )
-            job = self.jobs.enqueue_transcript(user, video_id, meta.get("title"), priority, trigger)
-        elif priority == INTERACTIVE:
-            self.jobs.promote_transcript(video_id)
+            job = self.jobs.enqueue_transcript(
+                user, video_id, meta.get("title"), priority, trigger, force=force
+            )
+        else:
+            if force and not job["force"]:
+                job = self.jobs.force_job(job["id"])
+            if priority == INTERACTIVE:
+                self.jobs.promote_transcript(video_id)
         return {
             **base,
             "status": job["status"],

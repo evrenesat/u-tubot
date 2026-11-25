@@ -119,7 +119,8 @@ background long summaries in flight including the transcript fetch; further ones
 **`[captions]`**: the ASR engine chain (`[[captions.asr_engines]]`, or the single `asr_*` keys), chunking, diarization and the estimate
 inputs, see [captions.md](captions.md). Also `asr_unhealthy_s` (`300`), `asr_failure_window_s` (`600`), `asr_warmup_wait_s` (`90`), `asr_warmup_retry_s` (`3`), `asr_warmup_max_step_s` (`20`), `asr_chunk_overlap_s` (`2`), `download_overhead_s` and
 `download_speed_factor` (the estimate shown before a transcription), `transcribe_max_active_per_user` (default `5`), `job_max_attempts`
-(`3`), `media_orphan_age_s` (`3600`), `max_download_bytes` (400 MiB), `audio_format` (yt-dlp's fallback selector).
+(`3`), `media_orphan_age_s` (`3600`), `max_download_bytes` (400 MiB), `audio_format` (yt-dlp's fallback selector), and the
+`gate_*` thresholds of the offline `captions-gate` ([captions.md](captions.md)).
 
 **`[setup]`, `[setup.defaults]`**: the public `/setup.json`: `name`, `pairing`, optional `prompt_set_urls`, and the switch values
 the app applies on import (`assess`, `mark_only`, `answer_in_menu`, `summary_panel`, `auto_captions`).
@@ -210,7 +211,10 @@ still worked, now it only pauses caption fetches.
 jobs (`waiting`, `processing`, `ready`, `failed`). Jobs wait while the `media` breaker is open and run when it closes (a caption or metadata limit does not hold them back); a job that YouTube
 keeps refusing is retried `captions.job_max_attempts` (3) times and then fails. Before spending effort on the audio a transcript job
 asks YouTube once more for captions and uses them if they exist (ASR never replaces captions stored first, and captions fetched later never replace ASR). Videos that are live or longer than
-`captions.max_duration_s` (3 h) cannot be transcribed (`can_transcribe: false`).
+`captions.max_duration_s` (3 h) cannot be transcribed (`can_transcribe: false`). With `force` (`POST /v1/videos/ID/transcribe?force=true`,
+or `"force": true` for `POST /v1/videos/ID/captions`) the backend skips that caption check and builds from the audio even when captions exist;
+a stored caption transcript is replaced, an existing ASR transcript is still `ready`. While a forced transcript job runs,
+`GET /v1/videos/ID/transcript` answers `transcribing` even though the old captions are still stored.
 
 A systemd service often lacks `deno` on its `PATH`: set `[youtube] js_runtime_path` (and `remote_components = ["ejs:github"]`) so yt-dlp
 can solve YouTube's JavaScript challenge, see [captions.md](captions.md#youtubes-javascript-challenge).

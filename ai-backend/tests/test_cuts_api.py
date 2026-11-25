@@ -635,6 +635,26 @@ class TestTranscriptPath:
         # The ASR transcript arrived through the transcript job; its unit came from the audio.
         assert doc["cut"]["transcript_hash"]
 
+    async def test_force_ignores_timed_captions_and_rebuilds_from_audio(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.cfg.cuts.min_keep_frac = 0.0
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 1, "label": "All"}],
+            "summary": "s",
+            "kept_s": 4,
+        }
+        r = await post_cut(cuts_env, preset="cut-no-filler", force=True)
+        rid = r.json()["request_id"]
+        row = cuts_env.svc.db.one("SELECT force FROM cut_requests WHERE id=?", [rid])
+        assert row["force"] == 1
+        for _ in range(30):
+            doc = await wait_ready(cuts_env, rid, wait_ms=15000)
+            if doc["state"] in ("ready", "failed"):
+                break
+        assert doc["state"] == "ready", doc
+        stored = cuts_env.svc.db.one("SELECT source FROM transcripts WHERE video_id=?", [VID])
+        assert stored["source"] == "asr"
+
     async def test_untranscribable_video_fails_with_a_plain_reason(self, cuts_env):
         cuts_env.fetcher.error = YoutubeVideoError("private")
         r = await post_cut(cuts_env, preset="cut-no-filler")

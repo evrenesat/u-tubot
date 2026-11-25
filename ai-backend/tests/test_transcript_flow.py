@@ -710,3 +710,47 @@ async def test_an_empty_caption_track_hold_answers_delayed_everywhere(env):
     status = (await env.client.get(f"/v1/videos/{VID}/transcript")).json()
     assert status["transcript_status"] == "delayed" and status["retry_after_s"] == 3600
     assert env.fetcher.calls == [] and env.llm.calls == []
+
+
+# ---- forcing the audio instead of YouTube captions ---------------------------------------------
+
+
+@NEEDS_FFMPEG
+async def test_forced_transcribe_builds_from_audio_when_captions_exist(env):
+    ready = (await summary(env)).json()
+    assert ready["source"] == "youtube_captions"
+    calls = len(env.fetcher.calls)
+    asked = (await env.client.post(f"/v1/videos/{VID}/transcribe", params={"force": True})).json()
+    assert asked["transcript_status"] == "transcribing" and asked["job_id"]
+    assert env.svc.db.one("SELECT force FROM jobs WHERE id=?", [asked["job_id"]])["force"] == 1
+    done = await wait_transcript(env, "ok")
+    assert done["source"] == "asr"
+    assert len(env.fetcher.calls) == calls
+    again = (await env.client.post(f"/v1/videos/{VID}/transcribe", params={"force": True})).json()
+    assert again["status"] == "ready" and again["source"] == "asr"
+
+
+async def test_forcing_turns_an_active_transcript_job_instead_of_adding_one(env):
+    env.fetcher.text = None
+    first = (await env.client.post(f"/v1/videos/{VID}/transcribe")).json()
+    forced = (await env.client.post(f"/v1/videos/{VID}/transcribe", params={"force": True})).json()
+    assert forced["job_id"] == first["job_id"]
+    row = env.svc.db.one("SELECT force FROM jobs WHERE id=?", [first["job_id"]])
+    assert row["force"] == 1
+
+
+@NEEDS_FFMPEG
+async def test_force_set_while_a_transcript_job_runs_wins(env):
+    queue = env.svc.jobs
+    original = queue._recheck_captions
+
+    async def recheck_then_force(video_id, priority):
+        found = await original(video_id, priority)
+        queue.db.execute("UPDATE jobs SET force=1 WHERE status='running'")
+        return found
+
+    queue._recheck_captions = recheck_then_force
+    started = (await env.client.post(f"/v1/videos/{VID}/transcribe")).json()
+    assert started["transcript_status"] == "transcribing"
+    done = await wait_transcript(env, "ok")
+    assert done["source"] == "asr"
