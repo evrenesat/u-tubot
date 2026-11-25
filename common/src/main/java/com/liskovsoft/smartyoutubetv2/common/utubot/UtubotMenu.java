@@ -171,7 +171,7 @@ public final class UtubotMenu {
      */
     public static void showCuts(Context context, Video video) {
         RxHelper.disposeActions(sAction);
-        sAction = UtubotManager.instance(context).cutsObserve(video.videoId)
+        sAction = UtubotManager.instance(context).cutsObserve(video.videoId, UtubotMeta.from(video))
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(cuts -> showCutsDialog(context, video, cuts),
                         error -> MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_failed, error.getMessage())));
@@ -198,9 +198,45 @@ public final class UtubotMenu {
             }
         }
 
+        appendChannelDefault(context, dialog, video, cuts);
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_describe_on_phone),
                 option -> describeOnPhone(context, video)));
         dialog.showDialog(context.getString(R.string.utubot_cut));
+    }
+
+    /**
+     * "Always use quick cuts for this channel" (or watched), and once a channel has its own mode, "Follow your default" to
+     * clear it. The channel's mode wins over the user's choice and the server default (request > channel > user > server).
+     */
+    private static void appendChannelDefault(Context context, AppDialogPresenter dialog, Video video, CutList cuts) {
+        String channelId = cuts.channelId != null ? cuts.channelId : video.channelId;
+
+        if (channelId == null || cuts.defaultMode == null) {
+            return;
+        }
+
+        String channelName = cuts.channelName != null ? cuts.channelName : video.getAuthor();
+        boolean ownMode = cuts.channelMode != null;
+        String label = ownMode
+                ? context.getString(R.string.utubot_cut_channel_follow)
+                : context.getString(R.string.utubot_cut_channel_always, modeLabel(context, cuts.defaultMode));
+
+        dialog.appendSingleButton(UiOptionItem.from(label, option -> saveChannelDefault(context, channelId, channelName,
+                ownMode ? null : cuts.defaultMode)));
+    }
+
+    private static void saveChannelDefault(Context context, String channelId, @Nullable String channelName, @Nullable String mode) {
+        RxHelper.disposeActions(sAction);
+        sAction = UtubotManager.instance(context).channelCutModeObserve(channelId, mode, channelName)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(saved -> MessageHelpers.showMessage(context, context.getString(R.string.utubot_cut_channel_saved)),
+                        error -> MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_failed,
+                                describeError(context, error))));
+    }
+
+    private static String modeLabel(Context context, String mode) {
+        return context.getString(UtubotModels.CutMode.WATCHED.equals(mode)
+                ? R.string.utubot_cut_mode_watched : R.string.utubot_cut_mode_quick);
     }
 
     private static String presetTitle(CutPreset preset) {

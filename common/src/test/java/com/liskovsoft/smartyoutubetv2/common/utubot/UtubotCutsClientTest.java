@@ -32,6 +32,7 @@ public class UtubotCutsClientTest {
     private final AtomicReference<String> mQuery = new AtomicReference<>();
     private final AtomicReference<String> mBody = new AtomicReference<>();
     private final AtomicReference<String> mAuth = new AtomicReference<>();
+    private final AtomicReference<String> mMethod = new AtomicReference<>();
 
     @Before
     public void start() throws IOException {
@@ -48,6 +49,13 @@ public class UtubotCutsClientTest {
             return new TinyHttpServer.Response(200, "{\"configured\":true,\"presets\":[" +
                     "{\"id\":\"cut-no-filler\",\"label\":\"No filler\",\"state\":\"ready\",\"request_id\":\"cut1\",\"cut\":" + CUT + "}," +
                     "{\"id\":\"cut-answer\",\"label\":\"Just the answer\",\"state\":\"none\"}]}");
+        });
+        mServer.on("/v1/cut-channels/UCabc", request -> {
+            mAuth.set(request.headers.get("authorization"));
+            mQuery.set(request.query);
+            mBody.set(request.body);
+            mMethod.set(request.method);
+            return new TinyHttpServer.Response(200, "{\"channel_id\":\"UCabc\",\"mode\":\"quick\"}");
         });
         mServer.on("/v1/cuts/cut1", request -> {
             mAuth.set(request.headers.get("authorization"));
@@ -76,6 +84,32 @@ public class UtubotCutsClientTest {
         assertTrue(cuts.presets.get(0).isReady());
         assertEquals(60_000, cuts.presets.get(0).cut.skipRangesMs.get(0)[0]);
         assertEquals("Bearer " + TOKEN, mAuth.get());
+    }
+
+    @Test
+    public void cutsSendsTheChannelId() throws IOException {
+        UtubotClient client = new UtubotClient(base(), TOKEN);
+        VideoMeta meta = new VideoMeta();
+        meta.videoId = "abcdefghijk";
+        meta.channel = "A channel";
+        meta.channelId = "UCabc";
+
+        CutList cuts = client.cuts("abcdefghijk", meta);
+
+        assertTrue(cuts.configured);
+        assertTrue(URLDecoder.decode(mQuery.get(), StandardCharsets.UTF_8).contains("channel_id=UCabc"));
+    }
+
+    @Test
+    public void channelModeIsSetAndCleared() throws IOException {
+        UtubotClient client = new UtubotClient(base(), TOKEN);
+
+        client.setChannelMode("UCabc", "quick", "A channel");
+        assertEquals("PUT", mMethod.get());
+        assertEquals("{\"mode\":\"quick\",\"channel_name\":\"A channel\"}", mBody.get());
+
+        client.clearChannelMode("UCabc");
+        assertEquals("DELETE", mMethod.get());
     }
 
     @Test

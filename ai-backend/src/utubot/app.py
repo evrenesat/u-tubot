@@ -40,7 +40,7 @@ from .config import (
 )
 from .content import ContentService
 from .cuts import CutRefused, CutService, watched_available
-from .db import Database
+from .db import MAX_CHANNEL_ID_CHARS, Database
 from .llm import LLMClient
 from .media_archive import ENTRY_LIMIT, MediaArchive
 from .modelcatalog import ModelCatalog
@@ -48,6 +48,7 @@ from .models import (
     AskRequest,
     AssessRequest,
     CaptionsRequest,
+    CutChannelMode,
     CutCreateRequest,
     CutPresetSave,
     CutPromptBody,
@@ -475,10 +476,17 @@ def create_app(
     def qmeta(
         title: str | None = None,
         channel: str | None = None,
+        channel_id: str | None = Query(None, max_length=MAX_CHANNEL_ID_CHARS),
         duration_s: int | None = None,
         is_live: bool | None = Query(None),
     ) -> QueryMeta:
-        return QueryMeta(title=title, channel=channel, duration_s=duration_s, is_live=is_live)
+        return QueryMeta(
+            title=title,
+            channel=channel,
+            channel_id=channel_id,
+            duration_s=duration_s,
+            is_live=is_live,
+        )
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
@@ -996,10 +1004,43 @@ def create_app(
     # ---- director's cuts ------------------------------------------------------------------------
 
     @app.get("/v1/videos/{video_id}/cuts")
-    async def cuts_presets(video_id: str, user: UserConfig = Depends(current_user)):
-        """The cut presets and their state for this video: what the picker on the TV shows."""
+    async def cuts_presets(
+        video_id: str,
+        meta: QueryMeta = Depends(qmeta),
+        user: UserConfig = Depends(current_user),
+    ):
+        """The cut presets and their state for this video: what the picker on the TV shows.
+
+        The optional video facts (the TV knows the channel id) are stored for the queue; the
+        channel's stored default decides the picker's mode when the owner has one.
+        """
         check_video_id(video_id)
-        return svc.cuts.presets_state(user.name, video_id, user.policy.cut_mode)
+        if meta.as_dict():
+            svc.transcripts.store_meta(video_id, meta.as_dict())
+        return svc.cuts.presets_state(user.name, video_id, user.policy.cut_mode, meta.channel_id)
+
+    @app.get("/v1/cut-channels")
+    async def cut_channels(user: UserConfig = Depends(current_user)):
+        """The owner's per-channel cut defaults: what the phone's channel list shows."""
+        return {"channels": svc.cuts.channel_modes(user.name)}
+
+    @app.put("/v1/cut-channels/{channel_id}")
+    async def cut_channel_set(
+        channel_id: str,
+        body: CutChannelMode,
+        user: UserConfig = Depends(current_user),
+    ):
+        """Set the owner's default cut mode for a channel; `mode: null` clears it again."""
+        if body.mode is None:
+            svc.cuts.clear_channel_mode(user.name, channel_id)
+            return {"channel_id": channel_id, "channel_name": body.channel_name, "mode": None}
+        return svc.cuts.set_channel_mode(user.name, channel_id, body.mode, body.channel_name)
+
+    @app.delete("/v1/cut-channels/{channel_id}")
+    async def cut_channel_clear(channel_id: str, user: UserConfig = Depends(current_user)):
+        """Forget a channel's default, so the owner's or the server's default decides again."""
+        svc.cuts.clear_channel_mode(user.name, channel_id)
+        return {"ok": True}
 
     @app.post("/v1/videos/{video_id}/cuts")
     async def cuts_create(
@@ -1013,7 +1054,7 @@ def create_app(
         phone…"). The video facts the caller knows are stored so the phone queue shows them."""
         check_video_id(video_id)
         mark_origin(request, user)
-        if meta.title or meta.channel or meta.duration_s is not None or meta.is_live is not None:
+        if meta.as_dict():
             svc.transcripts.store_meta(video_id, meta.as_dict())
         row = svc.cuts.create(
             user.name,
@@ -1024,6 +1065,7 @@ def create_app(
             await_prompt=body.await_prompt,
             mode=body.mode,
             user_mode=user.policy.cut_mode,
+            channel_id=meta.channel_id,
         )
         return {"request_id": row["id"], "state": row["state"]}
 
@@ -1043,10 +1085,24 @@ def create_app(
 
     @app.put("/v1/cut-requests/{request_id}")
     async def cuts_fill(
-        request_id: str, body: CutPromptBody, user: UserConfig = Depends(current_user)
+        request_id: str,
+        body: CutPromptBody,
+        meta: QueryMeta = Depends(qmeta),
+        user: UserConfig = Depends(current_user),
     ):
         """Fill a waiting request with the typed (or spoken) description; the build starts."""
-        return svc.cuts.fill(request_id, user.name, body.prompt, body.mode, user.policy.cut_mode)
+        if meta.as_dict():
+            row = svc.cuts.get(request_id, user.name)
+            if row is not None:
+                svc.transcripts.store_meta(row["video_id"], meta.as_dict())
+        return svc.cuts.fill(
+            request_id,
+            user.name,
+            body.prompt,
+            body.mode,
+            user.policy.cut_mode,
+            channel_id=meta.channel_id,
+        )
 
     @app.delete("/v1/cut-requests/{request_id}")
     async def cuts_dismiss(request_id: str, user: UserConfig = Depends(current_user)):

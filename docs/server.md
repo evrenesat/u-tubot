@@ -449,13 +449,22 @@ or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#direct
 Cut modes are `quick` (the model cuts from the transcript alone) and `watched` (the model sees the
 video). This checkpoint builds only `quick`: `watched` is advertised in `modes` but unavailable,
 `GET /v1/me` reports `features.cuts_watched: false`, and a request that explicitly asks for it
-answers `409`. The server default is `[cuts] default_mode`; a user's `cuts.cut_mode` setting
-overrides it, and both downgrade an unavailable `watched` to `quick` instead of refusing an
-omitted mode.
+answers `409`. The mode of a request resolves in order: its own explicit `mode`, the owner's
+stored default for the video's channel, the `cuts.cut_mode` setting, then `[cuts] default_mode`;
+the answer says which rule decided (`request`, `channel`, `user` or `server`). Every default
+downgrades an unavailable `watched` to `quick` instead of refusing an omitted mode, while still
+reporting the rule that decided.
+
+The owner can store a default per channel from the TV cut sheet or the Cuts tab: the web UI lists
+every channel seen in their cut requests, with its current override, and a `quick` / `watched` /
+"follow the user" choice. A channel default wins over `cuts.cut_mode`; clearing it falls back to
+the user's choice, then the server default. Channel overrides belong to one user and need the
+video's `channel_id` (the clients send it with the video facts).
 
 - Requests are rows in `cut_requests` (`waiting` → `building`/`needs_transcript` → `ready`/
   `failed`, or `dismissed`); the phone queue is `GET /v1/cut-requests`, the TV long-polls
-  `GET /v1/cuts/{id}`. The QR target `GET /cuts/{id}` redirects into the web UI's cut sheet.
+  `GET /v1/cuts/{id}`. The QR target `GET /cuts/{id}` redirects into the web UI's cut sheet,
+  which also edits per-channel defaults (`GET|PUT|DELETE /v1/cut-channels`).
 - Builds are their own async tasks (never the caption worker's queue) with a per-user cap
   (`[cuts] max_active_per_user`). A missing timed transcript queues a transcript job and the
   build shows `needs_transcript` until it lands (10 min, then it fails with a plain reason).

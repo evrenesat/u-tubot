@@ -402,6 +402,7 @@ is the toolbar button's popup (on Android: the extension's entry in the extensio
 | 28 | App self-update from the setup's `update_url` (`UtubotUpdates`) | `GET /app/update.json` | Not applicable: Firefox updates extensions (`update_url` of the manifest, or the store) | Not applicable |
 | 29 | Own identity, About links, unofficial disclaimer | none | Name, icons, About section in the options page with this repository's links and the disclaimer | Same |
 | 30 | Cut modes: quick default, watched only when the server advertises it, per-user choice (`UtubotCutsSettings`) | `GET /v1/me` features `cuts_watched`, `GET /v1/me/settings` `cuts.cut_mode`, `GET /v1/videos/{id}/cuts` `modes`/`by_mode`, `409` for an unavailable watched request | Options page "Cuts" section: quick chosen; watched disabled with the server's reason until `cuts_watched`; the choice is saved as `settings.cuts.cut_mode` | Same |
+| 31 | Channel cut defaults: the cut picker stores "Always use this mode for this channel" or clears it (`UtubotMenu.showCuts`) | `GET /v1/videos/{id}/cuts?channel_id`, `GET|PUT|DELETE /v1/cut-channels`, `mode_rule` on cuts, `channel_id` on requests; resolution is request > channel > user > server | "Cut" tab and sheet: the channel's mode, a quick/watched/follow-user choice, sent as `PUT /v1/cut-channels/{id}`; watched stays disabled until `cuts_watched` | Same |
 
 ## 4. Architecture
 

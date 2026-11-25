@@ -440,24 +440,46 @@ video). Checkpoint 1 only builds `quick`: `watched` is advertised but unavailabl
 `GET /v1/me` features carries `"cuts_watched": false` until a server enables it. The server's
 default comes from `[cuts] default_mode`; a user's choice is the `cuts.cut_mode` setting. A request
 that explicitly asks for `watched` while it is unavailable answers
-`409 {"error":"Watched cuts are not configured on this server."}`. An omitted mode uses the user's
-setting, else the server default, downgrading an unavailable `watched` to `quick`.
+`409 {"error":"Watched cuts are not configured on this server."}`. An omitted mode resolves in
+order: the owner's stored default for the video's channel, else the user's setting, else the
+server default; the rule that decided is reported as `mode_rule`. A default `watched` while it is
+unavailable still reports its rule but runs `quick`.
+
+Channel defaults (addendum, 2026-11-25): the owner can store a mode per channel, from the TV's
+cut sheet or the web UI. A channel is identified by the YouTube `channel_id` the client sends with
+the video facts (at most 64 characters); channels never seen with an id cannot have a default.
+
+- `GET /v1/cut-channels` -> `{"channels":[{"channel_id","channel_name"?,"mode":"quick"|"watched"|
+  null,"updated_at"?}]}`, by channel name then id. A channel the owner has cut but not given a
+  default appears with `"mode": null`, so the lists that offer a choice stay complete.
+- `PUT /v1/cut-channels/{channel_id}` body `{"mode":"quick"|"watched"|null,"channel_name"?}` ->
+  the stored row. `mode: null` clears the default, after which the next rule decides again. Storing
+  `watched` while it is unavailable answers the same `409` as an explicit watched request.
+- `DELETE /v1/cut-channels/{channel_id}` -> `{"ok":true}`; clearing is idempotent.
+- Channel defaults belong to their owner; another user's list and resolution never see them.
 
 - `GET /v1/videos/{id}/cuts` -> `{"configured":bool,"default_mode":"quick"|"watched",
+  "mode_rule":"request"|"channel"|"user"|"server",
+  "channel_id"?,"channel_name"?,"channel_mode"?,
   "modes":[{"id","label","default","available","reason"?}],
   "presets":[{"id","label","state","request_id"?,"error"?,"cut"?,
-  "by_mode":{"quick":{...},"watched":{...}}}]}`. The top-level preset state is for
-  `default_mode`; `by_mode` repeats it per mode, with `{"state":"unavailable","reason":...}` for a
-  mode that cannot be built. State is `none` | `waiting` | `building` | `needs_transcript` |
-  `ready` | `failed` for this video; `ready` carries the cut document. The read route reports the
-  downgrade but never answers `409`.
+  "by_mode":{"quick":{...},"watched":{...}}}]}`. `mode_rule` says which default decided
+  `default_mode`; `channel_mode` is the owner's stored override for the video's channel, `null`
+  when there is none. The optional `channel_id` query param (with the other video facts) lets the
+  picker resolve and report channel defaults before a cut is requested. The top-level preset
+  state is for `default_mode`; `by_mode` repeats it per mode, with
+  `{"state":"unavailable","reason":...}` for a mode that cannot be built. State is `none` |
+  `waiting` | `building` | `needs_transcript` | `ready` | `failed` for this video; `ready`
+  carries the cut document. The read route reports downgrades but never answers `409`.
 - `POST /v1/videos/{id}/cuts` body `{"preset":"<preset id>"}` | `{"prompt":"<what to keep>"}` |
   `{"await_prompt":true}`, plus optional `"mode":"quick"|"watched"` ->
   `{"request_id","state"}`. `preset`/`prompt` are mutually exclusive (sending both answers
   `400`); `await_prompt` creates a `waiting` request the phone fills (the TV's "Describe on
   phone…"). An unknown mode is a `400`.
-  The caller's known video facts ride as query params (`title`, `channel`, `duration_s`,
-  `is_live`) so the phone queue can show them before the backend learns them itself.
+  The caller's known video facts ride as query params (`title`, `channel`, `channel_id`,
+  `duration_s`, `is_live`) so the phone queue can show them and channel defaults can resolve
+  before the backend learns them itself. `channel_id` also rides on the read route and on
+  `PUT /v1/cut-requests/{id}`.
   Duplicate active requests (same video + preset/prompt/waiting + mode) return the existing row; a
   `failed` row never blocks a new request, so asking for the same preset again starts a fresh
   build and keeps the failure in the history. A per-user cap on concurrent builds answers `429`.
@@ -467,15 +489,18 @@ setting, else the server default, downgrading an unavailable `watched` to `quick
 - `GET /v1/cut-requests` -> `{"requests":[...]}` newest first (max 100), the phone queue.
 - `PUT /v1/cut-requests/{id}` `{"prompt"}`, with optional `"mode"`, fills a `waiting` request and
   starts the build (`409` when it is not waiting any more, or when the mode is `watched` and
-  unavailable); an omitted mode keeps the row's mode. `DELETE /v1/cut-requests/{id}` dismisses a
-  request (a building one is stopped); dismissed requests leave the queue.
+  unavailable); an omitted mode keeps the row's mode and `mode_rule`. `DELETE
+  /v1/cut-requests/{id}` dismisses a request (a building one is stopped); dismissed requests
+  leave the queue.
 - `GET /cuts/{request_id}` (no auth): `302` to `/#/cuts/{request_id}`, the QR target that opens
   the request's cut sheet in the web UI.
 
 Request document (both the queue cards and the single request):
-`{"id","video_id","state","source","mode","preset_id","prompt","error","created_at","updated_at",
-"title"?,"channel"?,"duration_s"?,"stage"?,"progress"?,"fallback"?,"cut"?,"job_id"?,
-"instruction"?,"raw_answer"?}`.
+`{"id","video_id","state","source","mode","mode_rule","preset_id","prompt","error","created_at",
+"updated_at","title"?,"channel"?,"channel_id"?,"duration_s"?,"stage"?,"progress"?,"fallback"?,
+"cut"?,"job_id"?,"instruction"?,"raw_answer"?}`. `mode_rule` is `request`, `channel`, `user` or
+`server`; it is fixed when the request is created and kept when a waiting request is filled
+without a mode.
 `source` stays the requester origin (`"API token"`, `"prompt"`, `"preset"`), not the video
 source. `stage` (`transcript`|`model`|`checking`, and for a video too long for one request
 `map`|`reduce`; clients show an unknown stage as its name) rides while building; `progress`

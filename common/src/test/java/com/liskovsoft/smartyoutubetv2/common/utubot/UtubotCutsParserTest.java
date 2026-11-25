@@ -24,14 +24,15 @@ public class UtubotCutsParserTest {
             "\"skip_ranges_ms\":[[60000,108000]],\"kept_ms\":192000,\"source\":\"youtube_captions\"," +
             "\"preset_id\":\"cut-no-filler\",\"model\":\"fast\",\"built_at\":\"2026-11-20T10:00:00Z\"}";
 
-    private static final String CUTS = "{\"configured\":true,\"presets\":[" +
+    private static final String CUTS = "{\"configured\":true,\"default_mode\":\"watched\",\"mode_rule\":\"channel\"," +
+            "\"channel_id\":\"UCabc\",\"channel_name\":\"A channel\",\"channel_mode\":\"watched\",\"presets\":[" +
             "{\"id\":\"cut-no-filler\",\"label\":\"No filler\",\"state\":\"ready\",\"request_id\":\"cut1\",\"cut\":" + CUT + "}," +
             "{\"id\":\"cut-answer\",\"label\":\"Just the answer\",\"state\":\"building\"}," +
             "{\"id\":\"cut-demo\",\"label\":\"Only the demo\",\"state\":\"failed\",\"error\":\"the model service is busy\"}" +
             "]}";
 
     private static final String REQUEST = "{\"id\":\"cut1\",\"video_id\":\"abcdefghijk\",\"state\":\"ready\",\"source\":\"Living room TV\"," +
-            "\"preset_id\":\"cut-no-filler\",\"prompt\":null,\"error\":null,\"created_at\":\"2026-11-20T10:00:00Z\"," +
+            "\"mode\":\"watched\",\"mode_rule\":\"channel\",\"channel_id\":\"UCabc\",\"preset_id\":\"cut-no-filler\",\"prompt\":null,\"error\":null,\"created_at\":\"2026-11-20T10:00:00Z\"," +
             "\"updated_at\":\"2026-11-20T10:01:00Z\",\"title\":\"A video\",\"channel\":\"A channel\",\"duration_s\":240," +
             "\"stage\":null,\"cut\":" + CUT + "}";
 
@@ -40,6 +41,11 @@ public class UtubotCutsParserTest {
         CutList cuts = UtubotParser.parseCuts(CUTS);
 
         assertTrue(cuts.configured);
+        assertEquals("watched", cuts.defaultMode);
+        assertEquals("channel", cuts.modeRule);
+        assertEquals("UCabc", cuts.channelId);
+        assertEquals("A channel", cuts.channelName);
+        assertEquals("watched", cuts.channelMode);
         assertEquals(3, cuts.presets.size());
 
         assertEquals("cut-no-filler", cuts.presets.get(0).id);
@@ -79,6 +85,9 @@ public class UtubotCutsParserTest {
         assertEquals("cut-no-filler", request.presetId);
         assertEquals("A video", request.title);
         assertEquals("A channel", request.channel);
+        assertEquals("watched", request.mode);
+        assertEquals("channel", request.modeRule);
+        assertEquals("UCabc", request.channelId);
         assertEquals(240, request.durationSec);
         assertEquals("No filler", request.cut.label);
         assertEquals(2, request.cut.parts.size());

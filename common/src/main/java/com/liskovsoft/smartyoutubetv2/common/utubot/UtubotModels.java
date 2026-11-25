@@ -285,6 +285,14 @@ public final class UtubotModels {
     //region Director's cuts
 
     /** The state of a preset for a video (the picker) and of a request (the queue and the follower) */
+    public static final class CutMode {
+        public static final String QUICK = "quick";
+        public static final String WATCHED = "watched";
+
+        private CutMode() {
+        }
+    }
+
     public static final class CutState {
         public static final String NONE = "none";
         public static final String WAITING = "waiting";
@@ -345,6 +353,14 @@ public final class UtubotModels {
 
     public static final class CutList {
         public boolean configured;
+        /** The mode a new cut uses here: the request, its channel, its user, then the server */
+        public String defaultMode;
+        /** request, channel, user or server: which of those decided {@link #defaultMode} */
+        public String modeRule;
+        @Nullable public String channelId;
+        @Nullable public String channelName;
+        /** The channel's own mode, null when it follows the user default; it wins over the user's choice */
+        @Nullable public String channelMode;
         public List<CutPreset> presets = Collections.emptyList();
     }
 
@@ -359,6 +375,10 @@ public final class UtubotModels {
         public String error;
         public String title;
         public String channel;
+        @Nullable public String channelId;
+        /** The mode the cut is built in, and the rule that chose it: request, channel, user or server */
+        public String mode;
+        @Nullable public String modeRule;
         public long durationSec = UNKNOWN;
         /** Where a building request stands: transcript, model or checking */
         public String stage;

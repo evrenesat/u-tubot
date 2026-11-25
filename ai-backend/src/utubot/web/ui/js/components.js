@@ -123,6 +123,7 @@ export function select(options, value, onChange) {
   const sel = h("select", {});
   for (const opt of options) {
     const o = h("option", { value: opt.value, text: opt.label });
+    if (opt.disabled) o.disabled = true;
     if (opt.value === value) o.selected = true;
     sel.appendChild(o);
   }

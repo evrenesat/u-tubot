@@ -40,6 +40,8 @@ presets carry `by_mode`, and the presets answer carries `default_mode` and `mode
     GET  /v1/videos/ID/cuts                the presets, their states in each mode, and the modes
     GET  /v1/cuts/REQUEST?wait_ms=N        the request, long-polled while waiting or building
     GET  /v1/cut-requests                  the queue; PUT/DELETE /v1/cut-requests/REQUEST fill and dismiss
+    GET|PUT|DELETE /v1/cut-channels[/CHANNEL_ID]
+                                           per-channel defaults; a request's channel_id resolves through them
     GET /__mock/cuts?video=ID&state=ready|none|failed[&mode=quick|watched][&preset=ID][&duration=MS][&stage=model]
                                            a ready cut without a request (the TV announces it when the video opens)
     GET /__mock/cuts[?watched=1]           the delays and whether watched is offered
@@ -51,7 +53,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 DEFAULT_MESSAGE = "No captions. Transcribe the audio in the background?"
 DEFAULT_DELAYED_ERROR = "YouTube is slowing us down, trying again shortly"
@@ -73,6 +75,7 @@ CUT_MODES = (("quick", "Quick"), ("watched", "Watched"))
 WATCHED_REASON = "Watched cuts are not configured on this server."
 CUT_REQUESTS = {}
 CUT_READY = {}
+CUT_CHANNEL_MODES = {}
 CUT_LOCK = threading.RLock()
 PROMPTS = [
     ("glance", "Glance", False, True),
@@ -190,6 +193,44 @@ def cut_document(duration_ms, video_id, label="No filler", preset_id="cut-no-fil
     }
 
 
+def cut_channel_id(q):
+    value = (q.get("channel_id") or [""])[0].strip()
+    return value[:64] or None
+
+
+def resolve_cut_mode(explicit, channel_id):
+    """(effective mode, deciding rule, stored channel mode, owner mode, server mode)"""
+    channel_mode = CUT_CHANNEL_MODES.get(channel_id, {}).get("mode") if channel_id else None
+    user_mode = None
+    server_mode = "quick"
+    if explicit:
+        mode, rule = explicit, "request"
+    elif channel_mode:
+        mode, rule = channel_mode, "channel"
+    elif user_mode:
+        mode, rule = user_mode, "user"
+    else:
+        mode, rule = server_mode, "server"
+    if mode == "watched" and not CUTS_CONFIG["watched_available"]:
+        mode = "quick"
+    return mode, rule, channel_mode, user_mode, server_mode
+
+
+def cut_channel_rows():
+    """The channels the owner cut or gave a mode, by name then id"""
+    rows = {cid: dict(row) for cid, row in CUT_CHANNEL_MODES.items()}
+    for request in CUT_REQUESTS.values():
+        cid = request.get("channel_id")
+        if not cid:
+            continue
+        if cid not in rows:
+            rows[cid] = {"channel_id": cid, "channel_name": request.get("channel"), "mode": None,
+                         "updated_at": None}
+        elif not rows[cid].get("channel_name"):
+            rows[cid]["channel_name"] = request.get("channel")
+    return sorted(rows.values(), key=lambda row: ((row.get("channel_name") or "").lower(), row["channel_id"]))
+
+
 def cut_request_doc(request, wait=False):
     """The request document; with wait=True the answer is held while the request waits or builds (the long poll)"""
     deadline = time.time() + wait / 1000.0 if wait else 0.0
@@ -203,12 +244,15 @@ def cut_request_doc(request, wait=False):
                 "state": state,
                 "source": request["source"],
                 "mode": mode,
+                "mode_rule": request.get("mode_rule", "server"),
                 "preset_id": request.get("preset_id"),
                 "prompt": request.get("prompt"),
                 "error": request.get("error"),
                 "created_at": request["created_at"],
                 "updated_at": request.get("updated_at", request["created_at"]),
             }
+            if request.get("channel_id"):
+                doc["channel_id"] = request["channel_id"]
             if request.get("title"):
                 doc["title"] = request["title"]
             if request.get("channel"):
@@ -334,8 +378,10 @@ class Handler(BaseHTTPRequestHandler):
         await_prompt = bool(body.get("await_prompt"))
         preset = body.get("preset")
         prompt = body.get("prompt")
-        mode = body.get("mode") or "quick"
-        if mode == "watched" and not CUTS_CONFIG["watched_available"]:
+        explicit = body.get("mode") or None
+        cid = cut_channel_id(q)
+        mode, mode_rule, channel_mode, user_mode, server_mode = resolve_cut_mode(explicit, cid)
+        if explicit == "watched" and not CUTS_CONFIG["watched_available"]:
             return self.send_json({"error": WATCHED_REASON}, 409)
         with CUT_LOCK:
             for request in CUT_REQUESTS.values():
@@ -352,7 +398,8 @@ class Handler(BaseHTTPRequestHandler):
             request = {
                 "id": rid, "video_id": vid, "state": "waiting" if await_prompt else "building",
                 "source": "TV", "preset_id": preset, "prompt": prompt, "await_prompt": await_prompt,
-                "mode": mode,
+                "mode": mode, "mode_rule": mode_rule, "channel_id": cid,
+                "channel_mode": channel_mode, "user_mode": user_mode, "server_mode": server_mode,
                 "title": (q.get("title") or [None])[0], "channel": (q.get("channel") or [None])[0],
                 "duration_s": float((q.get("duration_s") or [0])[0] or 0) or None,
                 "duration_ms": int(float((q.get("duration_s") or [0])[0] or 240) * 1000),
@@ -408,15 +455,38 @@ class Handler(BaseHTTPRequestHandler):
                 prompt = (body.get("prompt") or "").strip()
                 if not prompt:
                     return self.send_json({"error": "the prompt is empty"}, 400)
-                chosen_mode = body.get("mode") or request.get("mode", "quick")
-                if chosen_mode == "watched" and not CUTS_CONFIG["watched_available"]:
+                explicit = body.get("mode") or None
+                if explicit == "watched" and not CUTS_CONFIG["watched_available"]:
                     return self.send_json({"error": WATCHED_REASON}, 409)
+                if explicit:
+                    chosen_mode, request["mode_rule"] = explicit, "request"
+                else:
+                    chosen_mode = request.get("mode", "quick")
                 request["mode"] = chosen_mode
                 request["prompt"] = prompt
                 request["state"] = "building"
                 delay = CUTS_CONFIG["watched_delay"] if chosen_mode == "watched" else CUTS_CONFIG["delay"]
                 request["ready_at"] = time.time() + delay
             return self.send_json(cut_request_doc(request))
+        m = re.match(r"/v1/cut-channels/([^/]+)$", url.path)
+        if m:
+            cid = unquote(m.group(1))[:64]
+            mode = body.get("mode")
+            if mode not in (None, "quick", "watched"):
+                return self.send_json({"error": "mode must be quick or watched"}, 400)
+            if mode == "watched" and not CUTS_CONFIG["watched_available"]:
+                return self.send_json({"error": WATCHED_REASON}, 409)
+            with CUT_LOCK:
+                if mode is None:
+                    CUT_CHANNEL_MODES.pop(cid, None)
+                    row = {"channel_id": cid, "channel_name": body.get("channel_name"), "mode": None,
+                           "updated_at": None}
+                else:
+                    old = CUT_CHANNEL_MODES.get(cid, {})
+                    row = {"channel_id": cid, "channel_name": body.get("channel_name") or old.get("channel_name"),
+                           "mode": mode, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+                    CUT_CHANNEL_MODES[cid] = row
+            return self.send_json(row)
         return self.send_json({"ok": True})
 
     def do_DELETE(self):
@@ -430,6 +500,11 @@ class Handler(BaseHTTPRequestHandler):
                 request["state"] = "dismissed"
                 request["ready_at"] = None
             return self.send_json(cut_request_doc(request))
+        m = re.match(r"/v1/cut-channels/([^/]+)$", url.path)
+        if m:
+            with CUT_LOCK:
+                CUT_CHANNEL_MODES.pop(unquote(m.group(1))[:64], None)
+            return self.send_json({"ok": True})
         return self.send_json({"error": "not found"}, 404)
 
     def do_GET(self):
@@ -533,6 +608,9 @@ class Handler(BaseHTTPRequestHandler):
             with CUT_LOCK:
                 docs = [cut_request_doc(r) for r in reversed(list(CUT_REQUESTS.values()))]
             return self.send_json({"requests": docs[:100]})
+        if path == "/v1/cut-channels":
+            with CUT_LOCK:
+                return self.send_json({"channels": cut_channel_rows()})
         m = re.match(r"/v1/cuts/([a-z0-9]+)$", path)
         if m:
             with CUT_LOCK:
@@ -544,8 +622,9 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/cuts$", path)
         if m:
             vid = m.group(1)
+            cid = cut_channel_id(q)
             with CUT_LOCK:
-                default_mode = "quick"
+                default_mode, mode_rule, channel_mode, _, _ = resolve_cut_mode(None, cid)
                 presets = []
                 for pid, label in CUT_PRESETS:
                     preset = {"id": pid, "label": label}
@@ -561,8 +640,13 @@ class Handler(BaseHTTPRequestHandler):
                     if not available:
                         entry["reason"] = WATCHED_REASON
                     modes.append(entry)
-            return self.send_json({"configured": True, "default_mode": default_mode,
-                                   "modes": modes, "presets": presets})
+            answer = {"configured": True, "default_mode": default_mode, "mode_rule": mode_rule,
+                      "modes": modes, "presets": presets}
+            if cid:
+                answer["channel_id"] = cid
+                answer["channel_name"] = (CUT_CHANNEL_MODES.get(cid) or {}).get("channel_name")
+                answer["channel_mode"] = channel_mode
+            return self.send_json(answer)
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/summary$", path)
         if m:
             time.sleep(STATE["delay"])

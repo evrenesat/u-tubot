@@ -125,6 +125,11 @@
     <string name="utubot_cut_describe_on_phone">Describe on phone…</string>
     <string name="utubot_cut_describe_hint">Scan this with your phone, or open the address on it, and describe the cut there. The video keeps playing.</string>
     <string name="utubot_cut_describe_failed">The phone sheet could not be prepared: %s</string>
+    <string name="utubot_cut_channel_always">Always use %1$s for this channel</string>
+    <string name="utubot_cut_channel_follow">Follow your default on this channel</string>
+    <string name="utubot_cut_channel_saved">Channel default saved</string>
+    <string name="utubot_cut_mode_quick">quick cuts</string>
+    <string name="utubot_cut_mode_watched">watched cuts</string>
     <string name="utubot_cut_state_none">Build this cut</string>
     <string name="utubot_cut_state_waiting">Waiting for your description on the phone</string>
     <string name="utubot_cut_state_building">Building…</string>
