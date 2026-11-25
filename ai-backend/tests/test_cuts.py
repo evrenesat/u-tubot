@@ -6,6 +6,7 @@ from utubot.config import CutsConfig
 from utubot.cuts import (
     Candidate,
     CutFormatError,
+    CutRefused,
     Part,
     Unit,
     build_units,
@@ -165,6 +166,34 @@ class TestFinalize:
     def test_nothing_kept_is_refused(self):
         with pytest.raises(Exception, match="Nothing was worth keeping"):
             finalize_parts([Part("a", 0, 1000)], CFG, guard=False, duration_s=None)
+
+    def test_guard_messages_say_what_was_found_and_what_to_try(self):
+        with pytest.raises(CutRefused) as low:
+            finalize_parts([Part("a", 0, 5000)], CFG, guard=True, duration_s=600.0)
+        assert "0:06 of 10:00" in low.value.message
+        assert "1 %" in low.value.message and "Try" in low.value.message
+        with pytest.raises(CutRefused) as high:
+            finalize_parts([Part("a", 0, 590_000)], CFG, guard=True, duration_s=600.0)
+        assert "Nothing to cut" in high.value.message
+        assert "9:50 of 10:00" in high.value.message and "Try" in high.value.message
+
+    def test_the_upper_guard_can_be_off_while_the_lower_guard_stays(self):
+        parts, _ = finalize_parts(
+            [Part("a", 0, 590_000)],
+            CFG,
+            guard=True,
+            guard_max=False,
+            duration_s=600.0,
+        )
+        assert parts[0].end_ms == 590_500
+        with pytest.raises(CutRefused, match="remove almost everything"):
+            finalize_parts(
+                [Part("a", 0, 5000)],
+                CFG,
+                guard=True,
+                guard_max=False,
+                duration_s=600.0,
+            )
 
 
 class TestDocument:

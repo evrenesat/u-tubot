@@ -63,6 +63,36 @@ PRESET_LABELS = {
     "cut-demo": "Only the demo",
     "cut-highlights-5": "Highlights in 5 min",
 }
+# Removal presets keep whatever the video has left worth keeping; keeping nearly all of it is a
+# valid result ("little or no filler"), so only the lower keep guard applies to them.
+REMOVAL_PRESET_IDS = frozenset({"cut-no-filler", "cut-answer", "cut-demo"})
+NO_FILLER_PRESET_ID = "cut-no-filler"
+
+
+def cut_clock(ms: int) -> str:
+    """Milliseconds as the clients show a length: `1:12`, or `1:02:03` past an hour."""
+    seconds = max(0, int(round(ms / 1000.0)))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+def removal_summary(
+    preset_id: str | None, parts: list[Part], duration_s: float | None, fallback: str
+) -> str:
+    """The one-line result of a removal preset: what it removed, or that there was nothing to."""
+    if preset_id not in REMOVAL_PRESET_IDS or not duration_s:
+        return fallback
+    duration_ms = int(duration_s * 1000)
+    kept_ms = sum(p.end_ms - p.start_ms for p in parts)
+    removed_ms = max(0, duration_ms - kept_ms)
+    if removed_ms <= 0:
+        return "No filler found" if preset_id == NO_FILLER_PRESET_ID else "Nothing was removed"
+    percent = max(1, round(removed_ms / duration_ms * 100))
+    if preset_id == NO_FILLER_PRESET_ID:
+        return f"Removed {cut_clock(removed_ms)} of filler, {percent} % of the video"
+    return f"Removed {cut_clock(removed_ms)}, {percent} % of the video"
+
 
 CUT_SYSTEM = (
     "You build director's cuts of YouTube videos for a TV viewer: you choose which numbered "
@@ -720,14 +750,20 @@ def split_candidates(
 
 
 def finalize_parts(
-    parts: list[Part], cfg, *, guard: bool, duration_s: float | None
+    parts: list[Part],
+    cfg,
+    *,
+    guard: bool,
+    duration_s: float | None,
+    guard_max: bool | None = None,
 ) -> tuple[list[Part], float | None]:
     """Pad, merge and drop the kept parts; check how much of the video survives.
 
     Gaps under `cuts.merge_gap_s` are merged, parts under `cuts.min_part_s` are dropped, and
     boundaries are padded `pad_before_s`/`pad_after_s`. A cut keeping under `min_keep_frac`
-    ("this would remove almost everything") or over `max_keep_frac` ("nothing to cut") is
-    refused, unless `guard` is off (the highlights presets accept their real length).
+    ("removes almost everything") is refused while `guard` is on. A cut over `max_keep_frac`
+    ("nothing to cut") is refused only while `guard_max` is on (it defaults to `guard`); a
+    named preset turns it off, because a removal preset that keeps nearly all is a valid answer.
     """
     merged: list[Part] = []
     duration_ms = int(duration_s * 1000) if duration_s else None
@@ -745,11 +781,20 @@ def finalize_parts(
         raise CutRefused("Nothing was worth keeping, so there is no cut.")
     kept_ms = sum(p.end_ms - p.start_ms for p in kept)
     if guard and duration_s:
-        frac = kept_ms / (duration_s * 1000)
+        duration_ms = int(duration_s * 1000)
+        frac = kept_ms / duration_ms
         if frac < cfg.min_keep_frac:
-            raise CutRefused("This cut would remove almost everything, so it was not applied.")
-        if frac > cfg.max_keep_frac:
-            raise CutRefused("Nothing to cut: this keeps nearly the whole video.")
+            raise CutRefused(
+                f"This cut would remove almost everything: it keeps only "
+                f"{cut_clock(kept_ms)} of {cut_clock(duration_ms)} ({round(frac * 100)} %). "
+                "Try a less aggressive cut, or another preset."
+            )
+        if (guard if guard_max is None else guard_max) and frac > cfg.max_keep_frac:
+            raise CutRefused(
+                f"Nothing to cut: this keeps {cut_clock(kept_ms)} of "
+                f"{cut_clock(duration_ms)} ({round(frac * 100)} %). "
+                "Try a more specific cut, or another preset."
+            )
     return kept, round(kept_ms / 1000.0, 1)
 
 
@@ -1315,15 +1360,26 @@ class CutService:
             data, parts = await self.engine.pick_parts(units, chapters, meta, instruction, target_s)
             with events.stage(STAGE_CHECKING):
                 guard = target_s is None and not (preset_id or "").endswith("highlights-5")
+                # A named preset is a deliberate removal instruction, so keeping nearly all of the
+                # video is a result, not "nothing to cut"; a typed prompt without a target keeps
+                # the upper guard.
+                guard_max = guard and preset_id is None
                 parts, _kept_s = finalize_parts(
-                    parts, self.cfg.cuts, guard=guard, duration_s=duration_s
+                    parts,
+                    self.cfg.cuts,
+                    guard=guard,
+                    duration_s=duration_s,
+                    guard_max=guard_max,
+                )
+                summary = removal_summary(
+                    preset_id, parts, duration_s, str(data.get("summary") or "")
                 )
                 doc = cut_document(
                     video_id=video_id,
                     thash=thash,
                     model=model,
                     parts=parts,
-                    summary=str(data.get("summary") or ""),
+                    summary=summary,
                     label=self._label(preset_id, row),
                     duration_s=duration_s,
                     source=source,

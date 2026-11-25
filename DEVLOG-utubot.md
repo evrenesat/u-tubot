@@ -1,5 +1,14 @@
 # u·tubot devlog
 
+## 2026-11-25 (a failed cut retries; no-filler keeps nearly all, issue 99)
+
+- A failed cut request no longer sticks in the picker: the TV starts a fresh request when a failed preset is picked
+  (its state shows the reason and Retry), the web UI keeps its Retry, and the backend never reuses a failed row.
+  A fresh request also rebuilds after a server limit changes.
+- `cut-no-filler` and the other removal presets have no upper keep guard: a 96-99 % keep is a valid cut. Their cut
+  summary says the result plainly ("Removed 1:12 of filler, 2 % of the video"); when nothing is removed the request
+  is ready with "No filler found". Detailed guard messages name what was found and what to try.
+
 ## 2026-11-24 (director's cuts for long videos, issue 95)
 
 - Cuts no longer refuse long videos: a transcript over `[cuts] max_input_tokens` is read in excerpts (chapter boundaries, small overlap),

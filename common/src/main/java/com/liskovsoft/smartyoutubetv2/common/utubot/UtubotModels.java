@@ -336,6 +336,11 @@ public final class UtubotModels {
         public boolean isReady() {
             return CutState.READY.equals(state) && cut != null;
         }
+
+        /** Nothing is being built: picking the preset starts a fresh request (a failure is retried) */
+        public boolean canRequest() {
+            return CutState.NONE.equals(state) || CutState.FAILED.equals(state);
+        }
     }
 
     public static final class CutList {

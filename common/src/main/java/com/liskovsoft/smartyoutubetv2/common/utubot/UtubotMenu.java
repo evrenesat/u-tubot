@@ -272,8 +272,8 @@ public final class UtubotMenu {
             return;
         }
 
-        if (!UtubotModels.CutState.NONE.equals(preset.state)) {
-            return; // the state is the information; nothing to do
+        if (!preset.canRequest()) {
+            return; // waiting or building: the state is the information; nothing to do
         }
 
         RxHelper.disposeActions(sAction);

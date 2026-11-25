@@ -790,7 +790,10 @@ def score_request(
     out.wall_s = time.monotonic() - started
     try:
         guard = target_s is None and not (request.preset_id or "").endswith("highlights-5")
-        kept, _kept_s = finalize_parts(parts, cfg, guard=guard, duration_s=transcript.duration_s)
+        guard_max = guard and request.preset_id is None
+        kept, _kept_s = finalize_parts(
+            parts, cfg, guard=guard, guard_max=guard_max, duration_s=transcript.duration_s
+        )
     except CutRefused as exc:
         out.refused = exc.message
         return out

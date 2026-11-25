@@ -1,5 +1,20 @@
 # DEVLOG
 
+## 2026-11-25 (a failed cut does not stick; no-filler accepts a nearly full keep, issue 99)
+
+- Problem: the TV picker ignored a `failed` preset (no new request), and `cut-no-filler` refused a 96-99 % keep
+  with "Nothing to cut", so a video with little filler could not use the preset.
+- `cuts.py`: `finalize_parts` takes `guard_max` separately from the lower `guard`; a named preset keeps a valid
+  near-full result, a typed prompt without a target keeps the upper guard. Guard messages now name the kept length,
+  the video length, the percentage and what to try. Removal presets (`cut-no-filler`, `cut-answer`, `cut-demo`)
+  put the result in the cut's `summary`: "Removed 1:12 of filler, 2 % of the video"; keeping everything is the
+  normal `ready` state "No filler found" (other removal presets say "Nothing was removed").
+- `create` already ignored failed rows; tests now pin that a failure does not block a fresh request and that the
+  same preset rebuilds after a server limit changes. TV picker: `CutPreset.canRequest()` lets a failed preset start
+  a fresh request, and its state text ends in Retry. Web UI already had Retry on failed cards and the sheet.
+- Tests: `test_cuts_api.py` (failed then retried, changed limit, 98 % keep message, nothing removed), `test_cuts.py`
+  (guard messages, upper guard off while lower stays on).
+
 ## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
 
 - Problem: only built-in presets had a target length, so the owner's saved "half" preset kept 75 % and 82 %.
