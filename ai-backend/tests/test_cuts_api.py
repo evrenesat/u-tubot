@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import sqlite3
 import time
 
+import httpx
 import pytest
 
-from tests.conftest import OTHER_TOKEN
+from tests.conftest import OTHER_TOKEN, TOKEN
+from utubot.app import create_app
+from utubot.captions.asr import make_asr
 from utubot.config import LLMTask
+from utubot.cuts import CutService, transcript_hash
+from utubot.prompts import CUT_PRESET_INSTRUCTIONS
 from utubot.youtube import YoutubeVideoError
 
 VID = "abcdefghijk"
@@ -826,6 +833,187 @@ class TestSavedPresets:
             assert again.status_code == 200
         finally:
             prompts_mod.MAX_CUT_PRESETS = old
+
+
+class TestADatabaseFromBeforeCutModes:
+    async def test_old_rows_read_and_hit_the_cache_exactly_as_before(
+        self, cfg, mock_llm, fetcher, clock
+    ):
+        cfg.llm.cuts = LLMTask(model="cutmodel")
+        cfg.cuts.poll_s = 0.02
+        cfg.cuts.wait_ms_cap = 3000
+        cfg.cuts.default_wait_ms = 0
+
+        segs = set_transcript(fetcher)
+        thash = transcript_hash(segs)
+        instruction = CUT_PRESET_INSTRUCTIONS["demo"]
+        version = CutService._version("cut-demo", instruction, None)
+        old_key = hashlib.sha256(f"{VID}|{version}|cutmodel|{thash}".encode()).hexdigest()
+        old_doc = {
+            "version": 1,
+            "video_id": VID,
+            "transcript_hash": thash,
+            "duration_ms": 60_000,
+            "label": "Only the demo",
+            "summary": "An old cut.",
+            "parts": [{"label": "Old part", "start_ms": 5_000, "end_ms": 15_000}],
+            "skip_ranges_ms": [[0, 5_000], [15_000, 60_000]],
+            "kept_ms": 10_000,
+            "kept_s": 10.0,
+            "target_s": None,
+            "source": "preset",
+            "preset_id": "cut-demo",
+            "model": "cutmodel",
+            "built_at": 1_760_000_000.0,
+        }
+        raw_answer = json.dumps({"summary": "An old cut."})
+        now = time.time()
+
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(cfg.db_path)
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE video_meta(
+                  video_id TEXT PRIMARY KEY, json TEXT NOT NULL, fetched_at REAL NOT NULL);
+                CREATE TABLE transcripts(
+                  video_id TEXT PRIMARY KEY, lang TEXT, source TEXT NOT NULL, text TEXT NOT NULL,
+                  fetched_at REAL NOT NULL, engine TEXT, model TEXT, segments TEXT, job_id TEXT);
+                CREATE TABLE cut_requests(
+                  id TEXT PRIMARY KEY, user TEXT NOT NULL, video_id TEXT NOT NULL,
+                  source TEXT NOT NULL DEFAULT '', preset_id TEXT, prompt TEXT, state TEXT NOT NULL,
+                  error TEXT, cut_key TEXT, job_id TEXT, raw_answer TEXT, created_at REAL NOT NULL,
+                  updated_at REAL NOT NULL, finished_at REAL);
+                CREATE TABLE cuts(
+                  cache_key TEXT PRIMARY KEY, video_id TEXT NOT NULL, version TEXT NOT NULL,
+                  preset_id TEXT, prompt TEXT, model TEXT NOT NULL, transcript_hash TEXT NOT NULL,
+                  json TEXT NOT NULL, duration_s REAL, kept_s REAL, created_at REAL NOT NULL);
+                """
+            )
+            conn.execute(
+                "INSERT INTO video_meta VALUES(?,?,?)",
+                [
+                    VID,
+                    json.dumps(
+                        {
+                            "video_id": VID,
+                            "title": f"Title {VID}",
+                            "channel": "Chan",
+                            "duration_s": 60,
+                        }
+                    ),
+                    now,
+                ],
+            )
+            conn.execute(
+                "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,engine,model,"
+                "segments,job_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                [
+                    VID,
+                    "en",
+                    "youtube_captions",
+                    fetcher.text,
+                    now,
+                    "youtube",
+                    None,
+                    json.dumps(segs),
+                    None,
+                ],
+            )
+            conn.execute(
+                "INSERT INTO cut_requests(id,user,video_id,source,preset_id,prompt,state,error,"
+                "cut_key,job_id,raw_answer,created_at,updated_at,finished_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    "oldcut",
+                    "owner",
+                    VID,
+                    "Living room TV",
+                    "cut-demo",
+                    None,
+                    "ready",
+                    None,
+                    old_key,
+                    None,
+                    raw_answer,
+                    now,
+                    now,
+                    now,
+                ],
+            )
+            conn.execute(
+                "INSERT INTO cuts(cache_key,video_id,version,preset_id,prompt,model,"
+                "transcript_hash,json,duration_s,kept_s,created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    old_key,
+                    VID,
+                    version,
+                    "cut-demo",
+                    None,
+                    "cutmodel",
+                    thash,
+                    json.dumps(old_doc),
+                    60.0,
+                    10.0,
+                    now,
+                ],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        app = create_app(
+            cfg,
+            llm_transport=httpx.ASGITransport(app=mock_llm.app),
+            fetcher=fetcher,
+            clock=clock,
+            asr=make_asr(cfg.captions, transport=httpx.ASGITransport(app=mock_llm.app)),
+            prompt_transport=None,
+        )
+        async with app.router.lifespan_context(app):
+            client = httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://utubot",
+                headers={"Authorization": f"Bearer {TOKEN}"},
+            )
+            try:
+                # The old request and its stored cut read exactly as they were written.
+                old = (await client.get("/v1/cuts/oldcut")).json()
+                assert old["state"] == "ready" and old["mode"] == "quick"
+                assert old["cut"] == old_doc
+                assert old["raw_answer"] == raw_answer
+
+                # The picker finds the old cut through the null-source fallback.
+                state = (await client.get(f"/v1/videos/{VID}/cuts")).json()
+                entry = next(p for p in state["presets"] if p["id"] == "cut-demo")
+                assert entry["state"] == "ready" and entry["cut"] == old_doc
+                assert entry["by_mode"]["quick"]["cut"] == old_doc
+                assert entry["by_mode"]["watched"]["state"] == "unavailable"
+
+                # A new request for the same preset reuses the stored row: same key, no model.
+                r = await client.post(f"/v1/videos/{VID}/cuts", json={"preset": "cut-demo"})
+                assert r.status_code == 200, r.text
+                rid = r.json()["request_id"]
+                new = (await client.get(f"/v1/cuts/{rid}", params={"wait_ms": 3000})).json()
+                assert new["state"] == "ready" and new["cut"] == old_doc
+                assert mock_llm.cut_calls == []
+
+                row = app.state.svc.db.one(
+                    "SELECT cut_key, mode, source_key FROM cut_requests WHERE id=?", [rid]
+                )
+                assert row["cut_key"] == old_key and row["mode"] == "quick"
+                assert row["source_key"] == f"youtube:{VID}"
+                # The old row gained only the defaulted columns; nothing was rewritten.
+                old_row = app.state.svc.db.one(
+                    "SELECT mode, source_kind, source_key FROM cut_requests WHERE id='oldcut'"
+                )
+                assert old_row["mode"] == "quick" and old_row["source_kind"] == "youtube"
+                assert old_row["source_key"] is None
+                stored = app.state.svc.db.one("SELECT json FROM cuts WHERE cache_key=?", [old_key])
+                assert json.loads(stored["json"]) == old_doc
+            finally:
+                await client.aclose()
 
 
 def httpx_client(env, token: str):
