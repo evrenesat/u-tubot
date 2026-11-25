@@ -562,6 +562,18 @@ class TestTargetLength:
         assert [p.label for p in chosen] == ["keep"]
         assert total == 10.5
 
+    def test_the_target_counts_the_merged_cut_not_the_sum_of_parts(self):
+        # 20 parts of 4 s, each 1.9 s from the next: padding and the gap merge into a longer
+        # cut than the individual parts charge. Selecting until the target on the merged cut
+        # keeps it inside the band; charging each part alone would pick too many and overshoot.
+        units = [Unit(i, (i - 1) * 5.9, (i - 1) * 5.9 + 4.0, f"unit {i}") for i in range(1, 21)]
+        parts = ranked(units, [(i, i, i) for i in range(1, 21)])
+        chosen, total = select_for_target(parts, units, CFG, 60, duration_s=200.0)
+        low, high = target_band(60, CFG.length_tolerance)
+        assert low <= total <= high, total
+        kept, kept_s = finalize_parts(chosen, CFG, guard=False, duration_s=200.0)
+        assert len(kept) == 1 and round(total, 1) == kept_s
+
     def test_prompt_names_the_target_and_asks_for_ranks(self):
         units = eleven_minute_units()
         text = serialize_units(units, [], {"duration_s": 660}, "Highlights", 300, 0.2)

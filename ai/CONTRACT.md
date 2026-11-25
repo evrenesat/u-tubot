@@ -529,8 +529,9 @@ preset_target_s`, today `cut-highlights-5` = 300 s) and a tolerance (`length_tol
 give every part a `rank` (1 = most important; optional, an answer without ranks counts in video
 order). The server takes parts by rank until the target is reached, trims the last one at a unit
 boundary so the total stays inside the band, and returns them in video order. The selection charges
-the padded, video-clamped length and never selects a part under `min_part_s` on its model
-boundaries, so the parts it counts are the parts `finalize_parts` keeps. An answer below the
+the merged, padded, video-clamped length (a gap under `merge_gap_s` is part of the cut it
+counts) and never selects a part under `min_part_s` on its model boundaries, so the parts it
+counts survive `finalize_parts` inside the band. An answer below the
 band gets one retry that names the measured length; a second short answer fails the request
 ("The model kept only N s of the T s this cut aims for"). A preset with a target skips the keep
 fraction guard; a video no longer than the band's top is cut without a target. Clients show the real

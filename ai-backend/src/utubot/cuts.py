@@ -629,6 +629,26 @@ def _padded_s(part: Part, cfg, duration_s: float | None = None) -> float:
     return max(0, end - start) / 1000.0
 
 
+def _kept_total_s(parts: list[Part], cfg, duration_s: float | None) -> float:
+    """The length the finished cut will keep: merge, short-drop and padding applied like
+    `finalize_parts`. Selection charges the merged gaps too, so it stops at the target only when
+    the cut it counts is the cut that finalizes (and a merged gap cannot push it past the band)."""
+    merged: list[Part] = []
+    for part in sorted(parts, key=lambda p: p.start_ms):
+        if merged and (part.start_ms - merged[-1].end_ms) < cfg.merge_gap_s * 1000:
+            merged[-1] = Part(merged[-1].label, merged[-1].start_ms, part.end_ms)
+        else:
+            merged.append(Part(part.label, part.start_ms, part.end_ms))
+    duration_ms = _duration_ms(duration_s)
+    total = 0.0
+    for part in merged:
+        if _clamped_s(part, duration_s) < cfg.min_part_s:
+            continue
+        start, end = _final_bounds(part, cfg, duration_ms)
+        total += max(0, end - start) / 1000.0
+    return total
+
+
 def _trim_to(
     part: Part, units: list[Unit], budget_s: float, cfg, duration_s: float | None = None
 ) -> Part | None:
@@ -666,15 +686,16 @@ def select_for_target(
 
     Parts are taken by rank (parts without one count in video order, after the ranked ones).
     A part that would push the total past the band is trimmed at a unit boundary to fit; the
-    selection stops once the target is reached. Parts under `min_part_s` on their clamped
-    boundaries are never selected (padding does not make them keepable), so the same parts
-    survive `finalize_parts`. The charged length is the final padded length, which is what the
-    finished cut keeps. A model answer shorter than the band returns its keepable parts, so the
-    caller can see the shortfall.
+    selection stops once the merged, padded length reaches the target. Parts under `min_part_s`
+    on their clamped boundaries are never selected (padding does not make them keepable), so the
+    same parts survive `finalize_parts`. The charged length applies the same merge, short-drop
+    and padding rules as `finalize_parts`, so gaps under `merge_gap_s` cannot re-add filler and
+    push the cut past the accepted band. A model answer shorter than the band returns its
+    keepable parts, so the caller can see the shortfall.
     """
     low, high = target_band(target_s, cfg.length_tolerance)
     eligible = [i for i, part in enumerate(parts) if _clamped_s(part, duration_s) >= cfg.min_part_s]
-    pool_s = sum(_padded_s(parts[i], cfg, duration_s) for i in eligible)
+    pool_s = _kept_total_s([parts[i] for i in eligible], cfg, duration_s)
     if pool_s < low:
         return [parts[i] for i in eligible], pool_s
     order = sorted(
@@ -694,7 +715,7 @@ def select_for_target(
                 continue
             part, length = trimmed, _padded_s(trimmed, cfg, duration_s)
         chosen.append(part)
-        total += length
+        total = _kept_total_s(chosen, cfg, duration_s)
     chosen.sort(key=lambda p: p.start_ms)
     return chosen, total
 
