@@ -73,6 +73,12 @@ so the other flavors behave as before.
   every step is logged with tag `Utubot`. `SimpleEditDialog` submits on OK and on the keyboard's Go/Done/Next/Send/Search
   action; Back with the keyboard up only hides it.
 - Assess failures, timeouts and pending verdicts leave cards unfiltered. Marks use their own colour (`UtubotPolicy.MARK_COLOR`).
+- A ready verdict or summary survives a restart of the app: `UtubotDiskCache` (`files/utubot_cache`) keeps only ready ones, scoped by the
+  backend address, token and the backend's version (`GET /v1/health`), for 3 days, at most 2000 verdicts and 300 summaries; another
+  backend, user or version starts empty and removes the old scope. Failures, pending jobs and transcript states are never stored. The
+  user's Retry calls `POST /v1/videos/{id}/retry` first (the wait of a `delayed` answer does not), then asks again, even when that call
+  fails; a prompt import, refresh or default change clears the stored summaries of every scope, even one not opened yet, and a
+  request already in flight then is shown but not stored again.
 - Summary panel (`UtubotPanelController`, `UtubotPanelView`, `PanelCoordinator`): a passive preview. One view added to the activity's
   content (no dialog, no window, no dimming); it never takes the focus and never handles a D-pad key. It is the bottom of the right
   strip (35% of the width), below the screen's top bar (`modern_browse_top_bar`, the classic title group), and nothing of the

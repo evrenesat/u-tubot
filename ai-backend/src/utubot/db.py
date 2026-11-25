@@ -128,6 +128,7 @@ TRANSCRIPT_COLUMNS = {
     "caption_kind": "TEXT",
 }
 CAPTION_COLUMNS = {"job_id": "TEXT", "timing_version": "INTEGER", "timing": "TEXT"}
+ARCHIVE_COLUMNS = {"last_used_at": "REAL"}
 METADATA_ONLY = "metadata_only"
 
 
@@ -156,6 +157,7 @@ class Database:
         self._add_missing_columns("policy_overrides", POLICY_COLUMNS)
         self._add_missing_columns("transcripts", TRANSCRIPT_COLUMNS)
         self._add_missing_columns("captions", CAPTION_COLUMNS)
+        self._add_missing_columns("media_archive", ARCHIVE_COLUMNS)
         # Rows written when a transcript could not be fetched: nothing may be built on a title alone.
         self._conn.execute("DELETE FROM transcripts WHERE source=?", [METADATA_ONLY])
         self._conn.execute("DELETE FROM summaries WHERE source=?", [METADATA_ONLY])

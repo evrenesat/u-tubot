@@ -7,6 +7,13 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 ## Unreleased
 
+- AI verdicts and summaries that are ready survive a restart of the app: the TV keeps them on its own storage for 3 days, scoped by the
+  backend address, the user's token and the backend's version, so the rows and the summary panel do not ask the backend again. Only ready
+  answers are kept; failures, pending answers and transcript states are asked again. A prompt import, refresh or a default change clears
+  the kept summaries, and a summary that was still loading then is not kept.
+- Retry really tries again: besides asking the backend again, it now makes the backend forget its short-lived memory of a failed fetch or
+  answer of that video (a busy model is never remembered; other failures for 2 minutes). The backend can also list what it keeps per
+  video and clear chosen artifacts, and the media archive can free its least recently used files at its quota when the owner turns that on.
 - Switching between browse sections is instant: each section first shows the cards it had the last time, from memory or from a
   cache kept on the TV across restarts, and only then refreshes in the background, at most every 5, 10, 20, 30 or 60 minutes
   (Settings, u·tubot, Browse refresh; 10 by default). The refreshed rows update in place and keep the card that had the focus;

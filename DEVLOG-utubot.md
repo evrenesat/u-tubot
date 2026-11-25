@@ -223,6 +223,27 @@
   printed after the next focus). Home focused again at 19:46:07.830: `Show cached section Home`, again no Home load, and the dump
   had the four cards. The fake thumbnail URLs failed in Glide too, so this check covers the rows' replay, not images or a live
   YouTube run.
+## 2026-11-24 (R2: disk cache of verdicts and summaries, Retry clears the backend's failure; issue 7)
+
+- Retry (Summary panel, Summary view, AI answer) calls `POST /v1/videos/{id}/retry` first, then asks again; the call failing does not
+  stop the request. The countdown of a `delayed` answer does not call it (the backend's own wait is respected). Docs: `ai/CONTRACT.md`.
+- `UtubotDiskCache`: ready verdicts and ready summaries survive a restart. Scope = hash of backend address, token and the backend's
+  version (`GET /v1/health`); another scope starts empty and the old scope's directory is removed. Entries expire after 3 days (a
+  change of the backend's settings does not change its version), at most 2000 verdicts and 300 summaries. Failures, pending jobs
+  and transcript states are never stored. Importing or refreshing prompts and setting the default prompt clear the summaries. Known
+  limit: a default prompt changed from another device is only noticed after the 3 days or a new backend version.
+- Review round 1: `clearSummaries` clears every scope's summaries, including a scope that has not been opened yet or is just the
+  previous connection, so a prompt change before any summary request cannot serve a stored text of an earlier run. The backend's
+  artifact inventory counts UTF-8 bytes (`LENGTH(CAST(... AS BLOB))`) instead of characters for text, json and vtt rows.
+- Review round 4: a summary request that was already in flight when a prompt import, refresh or default change cleared the summaries
+  is shown but not stored again; the manager's summary generation moves under the same lock as the clear, so neither the memory nor
+  the disk gets the old prompt's text back. `UtubotSummaryCacheTest` waits a blocked request through a refresh and checks both caches,
+  then a new request on the same backend version.
+- Review r1: a connection switch while the disk cache is being opened no longer publishes the old scope over the new one (the opening
+  captures the connection generation under the disk lock and drops what it loaded when the generation moved); `UtubotDiskScopeRaceTest`
+  blocks the read through a token switch. The extension parity matrix and `ai/CONTRACT.md` ("Clients") record that the 3-day disk cache
+  is TV only, and the archive docs and `store` log match the opt-in LRU eviction (a just stored file is never evicted right after).
+
 ## 2026-11-24 (CI app job: Robolectric no longer downloads at test time)
 
 - Every Robolectric test class failed in CI since 23 Nov at `MavenArtifactFetcher` (an `IOException` while Robolectric fetched its

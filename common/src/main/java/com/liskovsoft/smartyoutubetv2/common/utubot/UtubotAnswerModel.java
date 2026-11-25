@@ -30,6 +30,14 @@ public class UtubotAnswerModel {
 
         /** Where the transcript of a video stands */
         Observable<Transcript> transcriptObserve(String videoId);
+
+        /**
+         * The backend forgets what it remembers about a failure of the video, so the next request really tries again. A failure of this call
+         * does not stop the Retry: the request is asked anyway.
+         */
+        default Observable<Boolean> forgetFailuresObserve(String videoId) {
+            return Observable.just(true);
+        }
     }
 
     private final Source mSource;
@@ -70,7 +78,10 @@ public class UtubotAnswerModel {
 
             @Override
             public void onDone() {
-                retry();
+                // The time the backend gave has passed: a plain request, the backend's own memory of the delay stays
+                if (mVideo != null) {
+                    load();
+                }
             }
         });
     }
@@ -89,10 +100,26 @@ public class UtubotAnswerModel {
         return mVideo;
     }
 
+    /**
+     * The Retry action of the user: the backend forgets the failure first
+     */
     public void retry() {
-        if (mVideo != null) {
-            load();
+        if (mVideo == null) {
+            return;
         }
+
+        cancel();
+        long token = mGeneration.begin();
+
+        publish(Phase.LOADING, null, null, null);
+        mActions.add(mSource.forgetFailuresObserve(mVideo.videoId)
+                .onErrorReturnItem(false)
+                .observeOn(mUiScheduler)
+                .subscribe(done -> {
+                    if (mGeneration.isCurrent(token) && mVideo != null) {
+                        load();
+                    }
+                }));
     }
 
     public void dispose() {

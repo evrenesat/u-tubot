@@ -173,7 +173,7 @@ class Assessor:
         self.cfg, self.db, self.llm, self.transcripts = cfg, db, llm, transcripts
         self._inflight: dict[tuple[str, str], asyncio.Future] = {}
         self._bg = asyncio.Semaphore(cfg.assess.background_concurrency)
-        self.tier2 = TaskRegistry()
+        self.tier2 = TaskRegistry(cfg.summary.failure_cooldown_s)
         self._tasks: set[asyncio.Task] = set()
         self._pending: dict[tuple[str, str | None], list[VideoMeta]] = {}
         self._pending_topics: dict[tuple[str, str | None], list[str]] = {}
