@@ -60,6 +60,15 @@ public class UtubotCutsParserTest {
     }
 
     @Test
+    public void aFailedPresetCanBeAskedAgainButAPendingOneCannot() throws Exception {
+        CutList cuts = UtubotParser.parseCuts(CUTS);
+
+        assertFalse(cuts.presets.get(0).canRequest()); // ready: apply or take off
+        assertFalse(cuts.presets.get(1).canRequest()); // building
+        assertTrue(cuts.presets.get(2).canRequest()); // failed: Retry starts a fresh request
+    }
+
+    @Test
     public void parsesARequestDocument() throws Exception {
         CutRequest request = UtubotParser.parseCutRequest(REQUEST);
 

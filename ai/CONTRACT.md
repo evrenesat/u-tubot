@@ -428,8 +428,9 @@ routes answer `200` with `"configured": false`, and `GET /v1/me` features carrie
   TV's "Describe on phone…").
   The caller's known video facts ride as query params (`title`, `channel`, `duration_s`,
   `is_live`) so the phone queue can show them before the backend learns them itself.
-  Duplicate active requests (same video + preset/prompt/waiting) return the existing row.
-  A per-user cap on concurrent builds answers `429`.
+  Duplicate active requests (same video + preset/prompt/waiting) return the existing row; a
+  `failed` row never blocks a new request, so asking for the same preset again starts a fresh
+  build and keeps the failure in the history. A per-user cap on concurrent builds answers `429`.
 - `GET /v1/cuts/{request_id}?wait_ms=3000` long-polls (default `cuts.default_wait_ms` 3000 ms,
   cap 20000 ms, omit `wait_ms` to take the default) while `waiting`/`building` and returns the
   request document below.
@@ -466,10 +467,14 @@ numbered sentence-like units (new unit on a pause over 0.6 s or sentence punctua
 cap); the model answers JSON with kept unit id ranges (`from`/`to`), a label per part, a
 one-line summary and `kept_s`; ids are validated (must exist, sorted, never overlapping) with
 one repair round; boundaries are padded 0.3 s before and 0.5 s after, gaps under 2 s merged and
-parts under 4 s dropped; a cut keeping under 10 % ("this would remove almost everything") or
-over 95 % ("nothing to cut") of the video is refused instead of applied (the highlights preset
-accepts its real length). A missing timed transcript queues a transcript job
-(`needs_transcript`) and the build waits for it (15 min); live streams are refused. Builds run
+parts under 4 s dropped; a cut keeping under 10 % ("this would remove almost everything") is
+refused. A typed prompt without a target keeping over 95 % ("nothing to cut") is refused too;
+a named preset has no upper guard, because a removal preset that keeps nearly all of the video
+is a valid answer. The removal presets report the result in `summary` ("Removed 1:12 of filler,
+2 % of the video"); when nothing at all is removed that summary is "No filler found" (or
+"Nothing was removed") and the cut is `ready`, not failed. A missing timed transcript queues a
+transcript job (`needs_transcript`) and the build waits for it (15 min); live streams are
+refused. Builds run
 as their own async tasks (never in the caption worker's queue) with a per-user cap, and one
 finished cut is shared per (video, preset or prompt, model, transcript) cache key — two requests
 with the same key that are in flight together share the model call too.

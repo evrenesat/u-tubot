@@ -176,7 +176,8 @@ max_tokens = 2000
 # pad_before_s = 0.3               # every kept part starts this much earlier
 # pad_after_s = 0.5                # ... and ends this much later
 # min_keep_frac = 0.1              # keeping less is refused ("would remove almost everything")
-# max_keep_frac = 0.95             # keeping more is refused ("nothing to cut")
+# max_keep_frac = 0.95             # a typed prompt without a target keeping more is refused
+#                                  # ("nothing to cut"); named presets have no upper guard
 # max_active_per_user = 2          # cuts building at the same time per user
 # transcript_wait_s = 900.0        # how long a cut waits for a transcript to be built
 # length_tolerance = 0.15          # a preset with a target length keeps target +/- this fraction

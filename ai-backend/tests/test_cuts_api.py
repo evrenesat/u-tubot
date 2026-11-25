@@ -362,6 +362,71 @@ class TestCreateAndBuild:
         assert doc["state"] == "failed"
         assert "remove almost everything" in doc["error"]
 
+    async def test_a_failed_request_does_not_block_the_next_one(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        bad = {"parts": [{"from": 40, "to": 99}]}
+        cuts_env.llm.cut_answers = [bad, bad]
+        first = (await post_cut(cuts_env, preset="cut-demo")).json()
+        assert (await wait_ready(cuts_env, first["request_id"]))["state"] == "failed"
+
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 2, "to": 4, "label": "Retry"}],
+            "summary": "s",
+            "kept_s": 15,
+        }
+        second = (await post_cut(cuts_env, preset="cut-demo")).json()
+        assert second["request_id"] != first["request_id"]
+        assert (await wait_ready(cuts_env, second["request_id"]))["state"] == "ready"
+        # The failure stays in the history; it was not reused as the new request.
+        queue = {card["id"]: card for card in (await env_queue(cuts_env)).json()["requests"]}
+        assert queue[first["request_id"]]["state"] == "failed"
+        assert queue[second["request_id"]]["state"] == "ready"
+
+    async def test_the_same_preset_is_rebuilt_after_a_server_limit_changes(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.cfg.cuts.min_keep_frac = 0.9
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Too short"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        first = (await post_cut(cuts_env, preset="cut-no-filler")).json()
+        assert (await wait_ready(cuts_env, first["request_id"]))["state"] == "failed"
+
+        cuts_env.cfg.cuts.min_keep_frac = 0.1
+        second = (await post_cut(cuts_env, preset="cut-no-filler")).json()
+        assert second["request_id"] != first["request_id"]
+        assert (await wait_ready(cuts_env, second["request_id"]))["state"] == "ready"
+
+    async def test_no_filler_keeping_nearly_all_is_ready_with_the_result(self, cuts_env):
+        set_transcript(cuts_env.fetcher, n=50)  # 250 s
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 49, "label": "Substance"}],
+            "summary": "s",
+            "kept_s": 245,
+        }
+        r = await post_cut(cuts_env, preset="cut-no-filler")
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "ready", doc
+        cut = doc["cut"]
+        assert cut["kept_ms"] / cut["duration_ms"] > 0.95
+        assert cut["summary"].startswith("Removed ") and "of filler" in cut["summary"]
+        assert "2 % of the video" in cut["summary"]
+        assert cut["skip_ranges_ms"]
+
+    async def test_no_filler_finding_nothing_is_a_ready_state(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 12, "label": "All of it"}],
+            "summary": "s",
+            "kept_s": 60,
+        }
+        r = await post_cut(cuts_env, preset="cut-no-filler")
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "ready", doc
+        assert doc["cut"]["summary"] == "No filler found"
+        assert doc["cut"]["skip_ranges_ms"] == []
+
     async def test_highlights_skip_the_guard(self, cuts_env):
         set_transcript(cuts_env.fetcher, n=40)
         cuts_env.llm.cut_answer = {
