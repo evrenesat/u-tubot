@@ -243,7 +243,7 @@ function newCutCard(onCreated) {
   });
   return card(
     "New cut",
-    note("Paste a video, then describe the cut you want. The TV offers the finished cut when you open the video there."),
+    note("Paste a video, then describe the cut you want. The TV remembers it as your choice for that video and opens with it when it is ready."),
     field("Mode", modeControl, "Quick reads the transcript; Watched also looks at the picture."),
     field("Video", ref, "A link (share or copy from YouTube) or an 11-character id."),
     button("Describe this cut", start, { kind: "primary", full: true }),

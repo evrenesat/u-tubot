@@ -653,6 +653,31 @@ class TestCutChoice:
         assert state["selection"]["request_id"] == rid
         assert state["selection"]["cut"]["label"].startswith("Only the demo")
 
+    async def test_dismissing_a_chosen_preset_request_clears_the_choice(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Intro"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        await self.ready_preset(cuts_env, VID, "cut-no-filler")
+
+        # A preset request records its choice by preset (request_id is NULL); dismissing it must clear that choice too.
+        cuts_env.llm.delay_s = 5.0
+        rid = (await post_cut(cuts_env, preset="cut-demo")).json()["request_id"]
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+        assert state["selection"]["source"] == "chosen"
+        assert state["selection"]["preset_id"] == "cut-demo"
+        assert state["selection"]["request_id"] == rid
+
+        await cuts_env.client.delete(f"/v1/cut-requests/{rid}")
+
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+        assert state["selection"] is None
+        entry = {p["id"]: p for p in state["presets"]}
+        assert entry["cut-no-filler"]["state"] == "ready"
+        assert entry["cut-demo"]["state"] == "none"
+
     async def test_off_is_an_explicit_choice_without_a_cut(self, cuts_env):
         set_transcript(cuts_env.fetcher)
         cuts_env.llm.cut_answer = {

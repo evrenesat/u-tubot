@@ -1345,9 +1345,12 @@ class CutService:
         if task is not None:
             task.cancel()
         self._set_state(request_id, "dismissed", finished=True)
+        # A preset request records its choice by preset (request_id is NULL), so both forms of the choice are
+        # cleared here; a newer choice of another preset or request does not match and stays.
         self.db.execute(
-            "DELETE FROM cut_choices WHERE user=? AND video_id=? AND request_id=?",
-            [user, row["video_id"], request_id],
+            "DELETE FROM cut_choices WHERE user=? AND video_id=?"
+            " AND (request_id=? OR (request_id IS NULL AND preset_id=?))",
+            [user, row["video_id"], request_id, row["preset_id"]],
         )
         if row["job_id"]:
             now = time.time()

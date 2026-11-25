@@ -587,8 +587,9 @@ read-only view over rows it already has rather than a new history table. Wire de
 On the TV, a tile's second title says what is ready there ("HQ captions: ready • Cut ready: Only
 the demo • Summary ready") or where unfinished work stands. Opening a tile plays the video through
 the usual playback path, selects its HQ captions even when *Select HQ captions automatically* is
-off, and offers a ready director's cut with the same one-press Apply that any video start offers
-(the player's cut controller, as at any video start).
+off, and opens with the cut the viewer chose for that video (or the preset used last when it has a
+ready cut here); with no such cut it offers every ready director's cut with one Apply each (the
+player's cut controller, as at any video start).
 
 ## Voice prompts
 

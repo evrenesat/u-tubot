@@ -51,6 +51,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     @Nullable
     private Cut mPendingCut;
     @Nullable
+    private List<Cut> mReadyCuts;
+    @Nullable
     private Cut mCut;
     @Nullable
     private UtubotCutSkipper mSkipper;
@@ -61,6 +63,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     public void onNewVideo(Video item) {
         // The Apply offer of the video that just ended is stale: its one press would apply the old video's cut
         dismissReadyOffer();
+        mReadyCuts = null;
 
         // A cut that waits to be applied is re-armed too: stopSkipping clears it, and a reload of the same video comes before the length
         // is known sometimes
@@ -121,6 +124,10 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             startPolling();
             tryApplyPending();
         }
+
+        // A ready-cuts answer that arrived before the engine was initialized is offered now, so a video whose cuts are already
+        // built does not start uncut and lose the offer
+        showReadyOffers();
     }
 
     @Override
@@ -145,6 +152,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     @Override
     public void onFinish() {
         stopSkipping();
+        mReadyCuts = null;
         mCut = null; // the playback is gone: a picker of this video from a list starts it again, with its cut carried to the player
         stopFollowing();
     }
@@ -178,20 +186,18 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
     @Override
     public void onCutChosen(String videoId, Cut cut) {
-        Video video = getVideo();
-
-        if (!isLivePlayer() || !Helpers.equals(videoId, video != null ? video.videoId : null) || isApplied(cut) || isQueued(cut)) {
+        if (!Helpers.equals(videoId, currentVideoId()) || isApplied(cut) || isQueued(cut)) {
             return;
         }
 
+        // The chosen cut is queued even before the player's engine is initialized (the cuts answer can land while the view
+        // starts): it applies once the engine is initialized and the length is known, like a cut carried from a list
         applyCutWhenPossible(cut);
     }
 
     @Override
     public void onCutsReady(String videoId, List<Cut> cuts) {
-        Video video = getVideo();
-
-        if (!isLivePlayer() || !Helpers.equals(videoId, video != null ? video.videoId : null)) {
+        if (!Helpers.equals(videoId, currentVideoId())) {
             return;
         }
 
@@ -203,9 +209,20 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             }
         }
 
-        if (!offered.isEmpty()) {
-            offerReadyCuts(offered);
+        if (offered.isEmpty()) {
+            mReadyCuts = null;
+            return;
         }
+
+        if (!isLivePlayer()) {
+            // The cuts answer can land before the engine is initialized (the open runs before startView): the offer waits for
+            // the player instead of being dropped
+            mReadyCuts = offered;
+            return;
+        }
+
+        mReadyCuts = null;
+        offerReadyCuts(offered);
     }
 
     //endregion
@@ -298,6 +315,20 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         PlaybackView player = getPlayer();
 
         return player != null && player.isEngineInitialized();
+    }
+
+    /**
+     * The video the follower is following: the open recorded it before the player existed, so a cuts answer that lands before
+     * startView still matches its video
+     */
+    private String currentVideoId() {
+        if (mVideo != null && mVideo.videoId != null) {
+            return mVideo.videoId;
+        }
+
+        Video video = getVideo();
+
+        return video != null ? video.videoId : null;
     }
 
     private boolean isQueued(Cut cut) {
@@ -536,6 +567,31 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         dialogPresenter.enableExpandable(false);
         dialogPresenter.setId(READY_DIALOG_ID);
         dialogPresenter.showDialog(text);
+    }
+
+    /**
+     * A ready-cuts answer that waited for the engine is offered now: no cut of this video is applied or waiting, so every ready
+     * cut gets its one-press button. A chosen cut that took over clears the offer instead.
+     */
+    private void showReadyOffers() {
+        List<Cut> ready = mReadyCuts;
+        mReadyCuts = null;
+
+        if (ready == null || mCut != null || mPendingCut != null) {
+            return;
+        }
+
+        List<Cut> offered = new ArrayList<>();
+
+        for (Cut cut : ready) {
+            if (!isApplied(cut) && !isQueued(cut)) {
+                offered.add(cut);
+            }
+        }
+
+        if (!offered.isEmpty()) {
+            offerReadyCuts(offered);
+        }
     }
 
     /**

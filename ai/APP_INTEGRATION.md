@@ -158,8 +158,9 @@ so the other flavors behave as before.
   normal playback path (`PlaybackPresenter.openVideo`). The player takes the request in `setVideo` and keeps it for that playback, so
   its stored or newly arrived HQ track is selected even with "auto-select HQ captions" off (`UtubotCaptions.shouldSelect` with the
   requested flag); the request expires if no player takes it, so it never carries to another open of the video. A ready cut is not
-  carried by the tile: the open is the same playback path as #64, where `UtubotCutController` follows the video and offers its ready
-  cut through the one-press Apply dialog (or applies it with "apply ready cuts automatically"). A tile with no cut starts plainly.
+  carried by the tile: the open is the same playback path as #64, where `UtubotCutController` follows the video and applies the cut
+  the viewer chose for it (or the preset used last when it has a ready cut here); with no such cut it offers every ready cut through
+  its one-press Apply and applies none, also with "apply ready cuts automatically" on. A tile with no cut starts plainly.
 - What the app keeps of the backend (`UtubotManager`: verdicts, summaries, captions, the prompt list, the session prompt) is dropped when
   `UtubotSettings.setUrl` or `setToken` changes a value (applySetup, Advanced, pairing all go through them), and the prompt list
   also when a prompt is made default, imported or refreshed. A request in flight during a switch is not stored

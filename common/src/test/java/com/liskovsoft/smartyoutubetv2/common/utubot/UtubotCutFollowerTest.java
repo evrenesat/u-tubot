@@ -357,7 +357,7 @@ public class UtubotCutFollowerTest {
     }
 
     @Test
-    public void aChosenRequestStillBuilding_isFollowed_whileOtherPresetBuildsAreNot() {
+    public void aChosenRequestStillBuilding_isFollowedAndAppliedAsChosen() {
         CutList cuts = cutsWithSelection(
                 new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"},
                 null, UtubotModels.CutState.NONE);
@@ -374,7 +374,8 @@ public class UtubotCutFollowerTest {
         mScheduler.advance(DRAIN_MS);
 
         assertEquals(Collections.singletonList("chosen1"), mFetchedRequests);
-        assertEquals(Collections.singletonList("No filler"), mPlainReady);
+        assertEquals(Collections.singletonList("No filler"), mChosen);
+        assertTrue(mPlainReady.isEmpty());
     }
 
     private static CutList cutsWithSelection(String[] presets, String chosenId, String chosenState) {

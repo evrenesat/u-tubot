@@ -82,6 +82,7 @@ public final class UtubotCutFollower {
     @Nullable
     private Listener mListener;
     private boolean mRequested;
+    private boolean mChosen;
     private long mStartedMs;
     private int mErrors;
     private int mGeneration;
@@ -123,6 +124,7 @@ public final class UtubotCutFollower {
         mGeneration++;
         mRequestId = requestId;
         mRequested = true;
+        mChosen = false;
         mErrors = 0;
         mStartedMs = mClock.nowMs();
 
@@ -157,6 +159,7 @@ public final class UtubotCutFollower {
         mGeneration++;
         mRequestId = null;
         mRequested = false;
+        mChosen = false;
         mErrors = 0;
     }
 
@@ -220,9 +223,11 @@ public final class UtubotCutFollower {
 
         if (cuts.selection != null && cuts.selection.requestId != null && !cuts.selection.off
                 && isPending(cuts.selection.state)) {
-            // The viewer chose a request that is still building: follow that one, not a preset in the list
+            // The viewer chose a request that is still building: follow that one, not a preset in the list, and
+            // apply it as the chosen cut when it becomes ready
             mRequestId = cuts.selection.requestId;
             mRequested = false;
+            mChosen = true;
             scheduleNext();
             return;
         }
@@ -232,6 +237,7 @@ public final class UtubotCutFollower {
                 if (isPending(preset.state) && preset.requestId != null) {
                     mRequestId = preset.requestId;
                     mRequested = false;
+                    mChosen = false;
                     scheduleNext();
                     return;
                 }
@@ -292,10 +298,16 @@ public final class UtubotCutFollower {
             // The video still plays and a next request for it must be followed, so only the poll ends; the listener and the video stay
             Listener listener = mListener;
             boolean requested = mRequested;
+            boolean chosen = mChosen;
             stopPolling();
 
             if (listener != null) {
-                listener.onCutReady(videoId, request.cut, requested);
+                if (chosen) {
+                    // The request was the viewer's choice for the video: it applies, no Apply prompt
+                    listener.onCutChosen(videoId, request.cut);
+                } else {
+                    listener.onCutReady(videoId, request.cut, requested);
+                }
             }
         } else if (request.isDone()) {
             // failed or dismissed: the phone queue says why; the picker shows the state next time it opens
