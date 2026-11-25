@@ -386,15 +386,17 @@ def test_the_asr_cache_key_carries_a_version():
     from utubot.captions.pipeline import ASR_CACHE_VERSION, asr_cache_key
 
     assert asr_cache_key("sha", True, None, "off").startswith(f"v{ASR_CACHE_VERSION}:sha:1:auto")
-    assert ASR_CACHE_VERSION == 3
+    assert ASR_CACHE_VERSION == 4
 
 
 async def test_an_old_cache_row_is_not_served(env):
+    from utubot.captions.pipeline import ASR_CACHE_VERSION
+
     env.fetcher.text = None
     queued = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
     await wait_state(env.client, queued["job_id"])
     rows = env.svc.db.all("SELECT cache_key FROM stage_cache WHERE stage='asr'")
-    assert rows and all(r["cache_key"].startswith("v3:") for r in rows)
+    assert rows and all(r["cache_key"].startswith(f"v{ASR_CACHE_VERSION}:") for r in rows)
     env.svc.db.execute("UPDATE stage_cache SET cache_key=substr(cache_key, 4) WHERE stage='asr'")
     before = len(env.llm.audio_calls)
     again = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
@@ -403,6 +405,7 @@ async def test_an_old_cache_row_is_not_served(env):
 
 
 async def test_interpolated_results_are_cached_per_engine_and_word_mode(env):
+    from utubot.captions.pipeline import ASR_CACHE_VERSION
     from utubot.config import AsrEngineConfig
 
     env.fetcher.text = None
@@ -420,7 +423,11 @@ async def test_interpolated_results_are_cached_per_engine_and_word_mode(env):
         r["cache_key"]
         for r in env.svc.db.all("SELECT cache_key FROM stage_cache WHERE stage='asr'")
     ]
-    assert len(keys) == 1 and keys[0].startswith("v3:") and ":wm-default=none" in keys[0]
+    assert (
+        len(keys) == 1
+        and keys[0].startswith(f"v{ASR_CACHE_VERSION}:")
+        and ":wm-default=none" in keys[0]
+    )
     calls = len(env.llm.audio_calls)
     retry = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
     again = await wait_state(env.client, retry["job_id"])

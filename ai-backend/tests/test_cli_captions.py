@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import wave
 from pathlib import Path
 
 import pytest
 
 from tests.synth_speech import make_timeline, phrases, tone_wav
-from utubot.captions.asr import ASRResult, ffmpeg_available, normalize_language
+from utubot.captions.asr import (
+    ASRResult,
+    audio_start_offset,
+    ffmpeg_available,
+    normalize_language,
+)
 from utubot.captions.engines import ChunkResult, parse_verbose_json
 from utubot.captions.pipeline import (
     ASR_CACHE_STAGE,
@@ -112,19 +118,20 @@ def test_window_starts_are_evenly_spaced_inside_the_audio():
 class WindowEngine:
     """Answers the windows in order from the truth, as a perfect reference engine would."""
 
-    def __init__(self, truth, begins, answers="english"):
+    def __init__(self, truth, begins, answers="english", offset=0.0):
         self.truth, self.begins, self.calls = truth, list(begins), 0
-        self.answers, self.asked = answers, []
+        self.answers, self.asked, self.offset = answers, [], offset
 
     async def transcribe_chunk(self, wav: Path, language, want_words) -> ChunkResult:
         self.asked.append(language)
         begin = self.begins[self.calls]
+        origin = max(begin, self.offset)
         self.calls += 1
         with wave.open(str(wav), "rb") as fh:
             length = fh.getnframes() / fh.getframerate()
-        inside = [w for w in self.truth if w.start >= begin and w.end <= begin + length]
+        inside = [w for w in self.truth if w.start >= origin and w.end <= origin + length]
         words = [
-            {"word": w.text, "start": w.start - begin, "end": w.end - begin, "probability": 0.9}
+            {"word": w.text, "start": w.start - origin, "end": w.end - origin, "probability": 0.9}
             for w in inside
         ]
         body = {
@@ -194,6 +201,51 @@ async def test_captions_score_matches_a_track_to_the_reference_windows(tmp_path)
         await score_track(cfg, db, VID, reference="nope", engine_factory=lambda e: engine)
     with pytest.raises(ScoreError, match="does not run from tests"):
         await score_track(cfg, db, VID, reference="ref")
+
+
+@pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg is not installed")
+async def test_captions_score_keeps_a_positive_audio_start_offset(tmp_path):
+    local_truth = make_timeline(3, TRACK_S)
+    audio = tone_wav(tmp_path / "talk.wav", local_truth, TRACK_S)
+    delayed = tmp_path / "late.webm"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-itsoffset",
+            "1.5",
+            "-i",
+            str(audio),
+            "-c:a",
+            "libopus",
+            str(delayed),
+        ],
+        check=True,
+    )
+    offset = await audio_start_offset(delayed)
+    assert offset > 0.001
+    truth = [Word(w.start + offset, w.end + offset, w.text) for w in local_truth]
+    cfg = Config()
+    cfg.server.data_dir = str(tmp_path / "data")
+    cfg.captions.asr_engines = [
+        AsrEngineConfig(name="ref", url="http://ref.example/v1/audio/transcriptions")
+    ]
+    db = Database(tmp_path / "t.sqlite")
+    db.execute(
+        "INSERT INTO captions(video_id,lang,label,speakers,vtt,created_at) VALUES(?,?,?,?,?,?)",
+        [VID, "en", "l", 0, vtt_of(truth), 1.0],
+    )
+    _cache_words(db, truth)
+    MediaArchive(cfg, db).store(VID, delayed, format_id="1", codec="opus")
+    engine = WindowEngine(truth, [0.0], offset=offset)
+    doc = await score_track(
+        cfg, db, VID, reference="ref", at=[0.0], window_s=WINDOW_S,
+        engine_factory=lambda e: engine,
+    )  # fmt: skip
+    assert doc["overall"]["onsets"] > 3 and doc["overall"]["hit"] >= HIT_FLOOR
+    assert doc["words"]["within_s"] >= 0.95
 
 
 def test_captions_score_refuses_without_archived_audio(cfg_path, capsys, monkeypatch):

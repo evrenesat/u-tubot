@@ -327,12 +327,8 @@ async def test_upstream_errors_not_leaked(env):
     assert "boom" not in again.text and "http" not in again.text
 
 
-def test_example_config_loads_with_prod_defaults():
-    from pathlib import Path
-
-    from utubot.config import load_config
-
-    cfg = load_config(Path(__file__).parent.parent / "config.example.toml")
+def test_example_config_loads_with_prod_defaults(example_config):
+    cfg = example_config
     assert cfg.captions.asr_backend == "faster_whisper" and cfg.captions.whisper_threads == 4
     assert cfg.assess.tier2_daily_cap_per_user == 30
     assert cfg.llm.summary.model == "llama3.1:8b" and cfg.llm.triage.model == "llama3.2:3b"
