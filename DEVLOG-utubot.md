@@ -82,6 +82,15 @@
 - Tests: backend `TestCutChoice` (chosen wins, last used, no ready for the last preset, several ready in any order, typed choice, off),
   TV follower/controller/parser/client cases. Extension parity row 30.
 
+## 2026-11-25 (long-video cuts keep almost everything, issue 125)
+
+- A long video cut by map/reduce no longer keeps nearly all of itself when the preset has no target length: each
+  excerpt applies the task locally, a no-target build is capped at `[cuts] map_max_keep_frac` (default 0.90) and the
+  highest-ranked parts are kept, and the TV picker still shows each cut's own length.
+- Old bad cuts are repaired once on server start (or `utubot cuts repair`): the affected request and cut row are
+  superseded and the same user, video and preset are queued again with the current algorithm version. The map and
+  reduce job events now log what each excerpt kept and removed.
+
 ## 2026-11-25 (a failed cut retries; no-filler keeps nearly all, issue 99)
 
 - A failed cut request no longer sticks in the picker: the TV starts a fresh request when a failed preset is picked

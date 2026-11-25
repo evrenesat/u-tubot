@@ -307,6 +307,44 @@ class HighlightsModel:
         }
 
 
+HUNDRED_MIN_S = 100 * 60
+
+
+class OverInclusiveModel:
+    """A model that lets every excerpt stand for all of itself and the reduce keep every
+    candidate: the old shape of the #125 bug, where a no-target preset kept nearly the video."""
+
+    def __init__(self):
+        self.maps: list[str] = []
+        self.reduces: list[str] = []
+
+    def __call__(self, system: str, user: str):
+        if "You finish director's cuts" in system:
+            return self.reduce(user)
+        return self.map(user)
+
+    def map(self, user: str):
+        self.maps.append(user)
+        ids = [int(m) for m in UNIT_LINE.findall(user)]
+        return {
+            "parts": [{"from": ids[0], "to": ids[-1], "label": "Everything here", "rank": 1}],
+            "summary": "excerpt",
+            "kept_s": 0,
+        }
+
+    def reduce(self, user: str):
+        self.reduces.append(user)
+        ids = sorted(int(a) for a, _, _ in CANDIDATE_LINE.findall(user))
+        return {
+            "parts": [
+                {"from": cid, "to": cid, "label": f"Pick {cid}", "rank": i + 1}
+                for i, cid in enumerate(ids)
+            ],
+            "summary": "keep everything",
+            "kept_s": 0,
+        }
+
+
 class TestHighlightsSpread:
     async def test_highlights_on_a_long_video_keeps_many_short_spread_parts(self, cuts_env):
         cuts = cuts_env.cfg.cuts
@@ -351,3 +389,62 @@ class TestHighlightsSpread:
         assert 255 <= cut["kept_s"] <= 345, cut["kept_s"]
         assert len(cut["parts"]) >= 8
         assert all((p["end_ms"] - p["start_ms"]) < 45_000 for p in cut["parts"])
+
+
+class TestNoTargetLongVideos:
+    async def test_a_hundred_minute_preset_and_prompt_are_not_nearly_uncut(self, cuts_env):
+        set_transcript(cuts_env.fetcher, n=int(HUNDRED_MIN_S / UNIT_S), seconds_each=UNIT_S)
+        cuts = cuts_env.cfg.cuts
+        cuts.max_input_tokens = 6000
+        cuts.map_chunk_tokens = 3000
+        cuts.map_overlap_units = 3
+        cuts.reduce_excerpt_chars = 40
+        cuts.map_max_keep_frac = 0.9
+
+        for body in (
+            {"preset": "cut-demo"},
+            {"prompt": "Only the parts where the thing is demonstrated"},
+        ):
+            model = OverInclusiveModel()
+            cuts_env.llm.cut_answer = model
+            r = await post_cut(cuts_env, **body)
+            doc = await wait_ready(cuts_env, r.json()["request_id"], wait_ms=30000)
+            assert doc["state"] == "ready", doc
+            cut = doc["cut"]
+            assert cut["target_s"] is None
+            share = cut["kept_ms"] / cut["duration_ms"]
+            assert 0 < share <= 0.95, (body, share)
+            # The excerpt prompt asks for a local cut, not "every part that fits".
+            assert model.maps and all(
+                "Apply the task to THIS excerpt" in user for user in model.maps
+            )
+            assert all("propose every part that fits" not in user for user in model.maps)
+            width = len(model.maps)
+            assert width >= 2
+            events = await events_of(cuts_env, doc)
+            decisions = [
+                e["detail"]
+                for e in events
+                if e["stage"] == "map" and e["status"] == "ok" and "excerpt" in e["detail"]
+            ]
+            assert len(decisions) == width
+            assert all({"kept_s", "removed_s", "parts"} <= set(d) for d in decisions)
+            reduce = [
+                e["detail"] for e in events if e["stage"] == "reduce" and "cap_s" in e["detail"]
+            ]
+            assert reduce and reduce[-1]["cap_s"] == int(HUNDRED_MIN_S * 0.9)
+
+    async def test_the_no_target_cap_is_configurable(self, cuts_env):
+        set_transcript(cuts_env.fetcher, n=int(HUNDRED_MIN_S / UNIT_S), seconds_each=UNIT_S)
+        cuts = cuts_env.cfg.cuts
+        cuts.max_input_tokens = 6000
+        cuts.map_chunk_tokens = 3000
+        cuts.map_overlap_units = 3
+        cuts.reduce_excerpt_chars = 40
+        cuts.map_max_keep_frac = 0.5
+        model = OverInclusiveModel()
+        cuts_env.llm.cut_answer = model
+        r = await post_cut(cuts_env, preset="cut-demo")
+        doc = await wait_ready(cuts_env, r.json()["request_id"], wait_ms=30000)
+        assert doc["state"] == "ready", doc
+        assert 0 < doc["cut"]["kept_ms"] / doc["cut"]["duration_ms"] <= 0.55

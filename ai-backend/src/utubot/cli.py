@@ -370,6 +370,29 @@ def cmd_prompts_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cuts_repair(args: argparse.Namespace) -> int:
+    """Rebuild old long-video cuts that kept almost the whole video (also run on server start)."""
+    from .app import build_services
+
+    cfg = load_config(args.config)
+    svc = build_services(cfg)
+    try:
+        items = svc.cuts.repair_near_full(dry_run=args.dry_run, limit=args.limit)
+        for item in items:
+            name = item["preset_id"] or (item["prompt"] or "")[:40]
+            queued = ", ".join(f"{n['user']}:{n['request_id']}" for n in item["new"]) or (
+                "would queue" if args.dry_run else "no requests"
+            )
+            print(
+                f"{item['video_id']}  {name}  old {item['kept_s']:.0f} s of "
+                f"{item['duration_s']:.0f} s ({item['old_share']:.0%})  -> {queued}"
+            )
+        print(f"{len(items)} cut(s)")
+    finally:
+        svc.db.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="utubot")
     parser.add_argument("--config", help="path to config TOML (default: $UTUBOT_CONFIG)")
@@ -432,6 +455,19 @@ def main(argv: list[str] | None = None) -> int:
     validate = prompts.add_parser("validate", help="validate a prompt set JSON file")
     validate.add_argument("file")
     validate.set_defaults(func=cmd_prompts_validate)
+    cuts = sub.add_parser("cuts", help="director's cut tools").add_subparsers(
+        dest="sub", required=True
+    )
+    repair = cuts.add_parser(
+        "repair",
+        help=(
+            "rebuild old long-video cuts that kept almost the whole video (idempotent; the"
+            " server also does this on start)"
+        ),
+    )
+    repair.add_argument("--dry-run", action="store_true", help="list them, queue nothing")
+    repair.add_argument("--limit", type=int, help="inspect at most this many cuts")
+    repair.set_defaults(func=cmd_cuts_repair)
     record = sub.add_parser(
         "youtube-record",
         help=(

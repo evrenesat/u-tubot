@@ -103,6 +103,24 @@ public class UtubotCutsParserTest {
     }
 
     @Test
+    public void everyReadyPresetCarriesItsOwnLength() throws Exception {
+        String longer = CUT.replace("\"kept_ms\":192000", "\"kept_ms\":3723000");
+        String cutsJson = "{\"configured\":true,\"presets\":[" +
+                "{\"id\":\"cut-demo\",\"label\":\"Only the demo\",\"state\":\"ready\",\"cut\":" + CUT + "}," +
+                "{\"id\":\"cut-no-filler\",\"label\":\"No filler\",\"state\":\"ready\",\"cut\":" + longer + "}" +
+                "]}";
+
+        CutList cuts = UtubotParser.parseCuts(cutsJson);
+
+        assertEquals(192_000, cuts.presets.get(0).cut.keptMs);
+        assertEquals(3_723_000, cuts.presets.get(1).cut.keptMs);
+        assertEquals("Only the demo \u00b7 3:12", UtubotCutController.presetTitle(
+                cuts.presets.get(0).label, cuts.presets.get(0).cut.keptMs));
+        assertEquals("No filler \u00b7 1:02:03", UtubotCutController.presetTitle(
+                cuts.presets.get(1).label, cuts.presets.get(1).cut.keptMs));
+    }
+
+    @Test
     public void aFailedPresetCanBeAskedAgainButAPendingOneCannot() throws Exception {
         CutList cuts = UtubotParser.parseCuts(CUTS);
 

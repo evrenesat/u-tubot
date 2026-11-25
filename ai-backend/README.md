@@ -73,6 +73,7 @@ from the `Tailscale-User-Login` header that Tailscale Serve sets (`[auth]`, `doc
 utubot serve | user add|passwd|pair|devices|revoke | app publish APK... --version-name X --version-code N
 utubot app sync-github [--repo OWNER/NAME] [--prerelease] [--dry-run]
 utubot prompts validate FILE
+utubot cuts repair [--dry-run] [--limit N]   # rebuild old near-full long-video cuts (also on start)
 utubot youtube-record VIDEO_ID [--lang LANG] [--out DIR] [--note TEXT]   # owner only: records a replay fixture
                                                                           # (the one command that reaches YouTube)
 ```

@@ -525,8 +525,12 @@ clients show an unknown stage as its name) rides while building; `progress` (`{"
 additive) rides during `map` and counts the excerpts answered; `cut` once ready; `job_id`
 opens the build report in the jobs API; `raw_answer` is the model's answer, trimmed. A video whose
 transcript does not fit one model request (`[cuts] max_input_tokens`) is cut by map/reduce: excerpts
-on chapter boundaries propose ranked candidate parts, one final call picks the cut with the same
-length selection; no video is refused for being long.
+on chapter boundaries apply the task to their own text, one final call picks the cut with the same
+length selection; no video is refused for being long. A cut with no target length (a removal
+preset, a saved preset with no length) is limited on that path to `[cuts] map_max_keep_frac`
+(default 0.90) of the video, keeping the highest-ranked parts; the model still chooses them.
+Each `map` event carries the excerpt's `kept_s`, `removed_s` and `parts`, and the `reduce` event
+carries `kept_s` and `target_s` or `cap_s` (additive; older clients ignore them).
 
 The cut document (`cut`): `{"version","video_id","transcript_hash","duration_ms","label",
 "summary","parts":[{"label","start_ms","end_ms"}],"skip_ranges_ms":[[from,to]...],"kept_ms",
@@ -641,6 +645,13 @@ grids are per preset's description and removed after the build unless `keep_grid
 Admin: `GET /v1/admin/videos/{id}/tdt` returns the newest stored TDT for debugging a watched
 build (`{"cache_key","tdt"}`; `404` when none). `DELETE /v1/admin/archive/{video_id}` also drops
 that video's watched scene, description and label caches.
+
+No-target long videos (repair, 2026-11-25): a map/reduce cut with no target length is capped at
+`map_max_keep_frac` of the video (default 0.90), keeping the highest-ranked parts; a one-pass cut is
+unchanged and a named preset may still keep nearly all of a short video. Cuts built before this
+algorithm (`cuts.algo_version` older than the current build) that kept over `repair_near_full_frac`
+on the map/reduce path are superseded once, on server start or by `utubot cuts repair`, and the same
+user, video and preset or prompt is queued again; the wire documents do not change.
 
 ## Voice prompts (addendum, 2026-11-21)
 
