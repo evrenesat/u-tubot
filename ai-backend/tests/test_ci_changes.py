@@ -48,6 +48,19 @@ def test_pipeline_file_runs_backend_app_and_extension_and_never_releases():
     )
 
 
+def test_every_ffmpeg_step_skips_when_present_and_refreshes_the_index_otherwise():
+    workflow = (REPO / ".github" / "workflows" / "utubot-ci.yml").read_text(encoding="utf-8")
+    installs = [
+        line.strip()
+        for line in workflow.splitlines()
+        if line.lstrip().startswith("run:") and "ffmpeg" in line
+    ]
+    assert len(installs) == 2
+    for line in installs:
+        assert line.startswith("run: command -v ffmpeg ||")
+        assert "sudo apt-get update -qq" in line
+
+
 def test_docs_only_keeps_the_old_backend_answer():
     assert classify_files(["docs/development.md"]) == Classification(
         backend=True, app=False, release=False, extension=False, extension_release=False

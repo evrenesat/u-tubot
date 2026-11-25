@@ -1,5 +1,18 @@
 # u·tubot browser extension devlog
 
+## 2026-11-25 (checkpoints 0-3: third fix round, the red CI)
+
+- Both `Install ffmpeg` steps of `.github/workflows/utubot-ci.yml` (`backend` and `extension`) skip when the runner already has
+  ffmpeg and otherwise refresh the apt index first. The stale runner index asked the mirror for a removed libssh version, which
+  made both jobs red before any test ran; the backend step now carries the owner's `main` fix unchanged, so a sync merges it
+  cleanly, and the extension step has the same guard.
+- `ai-backend/tests/test_ci_changes.py`: a test reads the workflow and requires every ffmpeg step to start with
+  `command -v ffmpeg ||` and to contain `sudo apt-get update -qq`; the test fails on the old lines.
+- Evidence: `ruff check`/`format --check`, `pytest tests/test_ci_changes.py` (30 pass) and `pytest tests/test_emulator_mock.py`;
+  `npm run lint`, `npm test` (55 pass), all five builds, `web-ext lint` on the three Firefox variants (0 errors); the e2e suite
+  (4 pass) on loopback behind the refusing proxy in the pinned Firefox. The full backend run has 1089 pass and 3 failures that
+  only this host's unreadable `/var/lib/utubot/users.toml` causes in the example-config tests; the CI runner has no such path.
+
 ## 2026-11-25 (checkpoints 0-3: second review round, fixes)
 
 - `src/shared/messages.js`: a content script may call the names both sets share (`settings.read`, `prompts.list`); only a
