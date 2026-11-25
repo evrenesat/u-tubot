@@ -116,7 +116,9 @@ jobs:
       - name: Install ffmpeg
         # The caption tests cut audio with it, as the backend does in production.
         working-directory: .
-        run: sudo apt-get install -y --no-install-recommends ffmpeg
+        # Skip when the runner already has it; otherwise refresh the index first, because a stale
+        # index asks the mirror for package versions it no longer serves (404 on 25 Nov).
+        run: command -v ffmpeg || { sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg; }
 
       - name: Install the dependencies
         run: uv sync --frozen
