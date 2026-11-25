@@ -80,6 +80,20 @@
   so the declared users and defaults are exactly the example's and no host file is touched.
 - `tests/test_glance.py`, `tests/test_prompts_summary.py`, `tests/test_security.py`: use the fixture; `test_security` also asserts
   the fixture keeps `data_dir` from the example and reads no host users file.
+## 2026-11-24 (target length review follow-ups, issue 86)
+
+- Problem: `select_for_target` measured padded parts before `finalize_parts`, so merging a gap under
+  `merge_gap_s` could push a targeted cut over the band (the long-video test allowed +5 s); changing
+  `length_tolerance` or `over_ask_frac` served the old targeted cut from cache.
+- `cuts.py`: `select_for_target(..., duration_s=...)` measures the selection with `finalize_parts`
+  (`guard=False`) and binary-searches the last part's unit boundary to stay at or under the band; the
+  returned parts are still un-finalized, so the caller pads them once. `_ask_parts` passes the video
+  duration for one-pass and map/reduce. The cache version now includes `length_tolerance` and
+  `over_ask_frac` when a target is set (non-target keys are unchanged).
+- `cutbench.py`: the one-pass path passes the transcript duration too.
+- Tests: duplicate and out-of-range ranks, adjacent parts finalized into the band, the upper band edge,
+  and a cache rebuild when either band setting changes; the long-video `+5 s` allowance is gone.
+- `ai/CONTRACT.md`: the band is checked after finalization; the cache version carries both settings.
 
 ## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
 

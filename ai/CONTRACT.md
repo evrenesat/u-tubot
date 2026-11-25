@@ -507,8 +507,9 @@ preset_target_s`, today `cut-highlights-5` = 300 s) and a tolerance (`length_tol
 0.15 = +/- 15 %). The model is told the target, asked to keep about `over_ask_frac` (0.2) more and to
 give every part a `rank` (1 = most important; optional, an answer without ranks counts in video
 order). The server takes parts by rank until the target is reached, trims the last one at a unit
-boundary so the total stays inside the band, and returns them in video order. An answer below the
-band gets one retry that names the measured length; a second short answer fails the request
+boundary so the total stays inside the band, and checks the kept length again after padding,
+merging and dropping parts, so finalization cannot leave the band. It returns them in video order.
+An answer below the band gets one retry that names the measured length; a second short answer fails the request
 ("The model kept only N s of the T s this cut aims for"). A preset with a target skips the keep
 fraction guard; a video no longer than the band's top is cut without a target. Clients show the real
 length (`kept_ms`) next to the preset label, for example "Highlights in 5 min · 5:02" (TV picker; the
@@ -520,8 +521,9 @@ a saved preset's explicit `length_min` / `length_frac` (a fraction needs the vid
 length the description asks for, read by a small English parser (`half`, `a third`, `a quarter`,
 `N %`, `N minutes`, `N min`, `under N minutes`, `shorter by half`; "the first half", "skip the first
 5 minutes" or two different lengths give no target). Built-in presets' own wording is never read. The
-cache version includes the target, so a cut built before this rebuilds once; `target_s` in the cut
-document is the effective target (`null` without one).
+cache version includes the target and the band settings (`length_tolerance`, `over_ask_frac`), so a
+cut built before this rebuilds once and changing either setting rebuilds targeted cuts;
+`target_s` in the cut document is the effective target (`null` without one).
 
 ### Cut modes: Quick and Watched (addendum, 2026-11-24)
 
