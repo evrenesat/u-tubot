@@ -1,7 +1,7 @@
 """The offline test set for director's cuts and the scorer behind `scripts/cut_bench.py`.
 
 Five hand-written transcripts (caption-like fragments, invented content, no real video) with
-three requests each, and hand-marked must-keep / must-skip time ranges. The scorer runs the
+three or four requests each (16 requests), and hand-marked must-keep / must-skip time ranges. The scorer runs the
 real cut engine over a fixture (`build_units` -> the model -> `parse_cut_answer` ->
 `finalize_parts`) and measures how much of the must-keep time the finished cut kept and how
 much must-skip time leaked in. No network here: the model is a callable the caller supplies.
@@ -32,6 +32,7 @@ from .cuts import (
     parse_cut_answer,
     select_for_target,
     serialize_units,
+    target_band,
 )
 from .llm import LLMError, extract_json
 from .prompts import BUILTIN_SET, TASK_CUTS
@@ -738,7 +739,8 @@ def _one_pass(
     cfg: CutsConfig,
     out: RequestResult,
 ) -> tuple[Any, list[Part]]:
-    """The whole transcript in one request, with the engine's one repair round."""
+    """The whole transcript in one request, with the engine's one repair round and, with a
+    target length, the same one retry that names the measured shortfall."""
     message = serialize_units(
         units, chapters, meta, request.instruction, target_s, cfg.over_ask_frac
     )
@@ -746,24 +748,51 @@ def _one_pass(
         {"role": "system", "content": CUT_SYSTEM},
         {"role": "user", "content": message},
     ]
-    data = _ask(model_fn, messages, out)
-    try:
-        parts = parse_cut_answer(data, units)
-    except CutFormatError as exc:
-        # The engine's one repair round: the model sees why its answer was rejected.
-        out.repairs += 1
-        repair = [
-            *messages,
-            {
-                "role": "user",
-                "content": f"Your previous answer was rejected: {exc.problem} {CUT_JSON_RULES}",
-            },
-        ]
-        data = _ask(model_fn, repair, out)
-        parts = parse_cut_answer(data, units)
-    if target_s:
-        parts, _total_s = select_for_target(parts, units, cfg, target_s, meta.get("duration_s"))
-    return data, parts
+    problem: str | None = None
+    total_s = 0
+    for attempt in range(2 if target_s else 1):
+        ask = list(messages)
+        if problem:
+            ask.append(
+                {
+                    "role": "user",
+                    "content": f"Your previous answer was rejected: {problem} {CUT_JSON_RULES}",
+                }
+            )
+        data = _ask(model_fn, ask, out)
+        try:
+            parts = parse_cut_answer(data, units)
+        except CutFormatError as exc:
+            # The engine's one repair round: the model sees why its answer was rejected.
+            out.repairs += 1
+            data = _ask(
+                model_fn,
+                [
+                    *ask,
+                    {
+                        "role": "user",
+                        "content": f"Your previous answer was rejected: {exc.problem} "
+                        f"{CUT_JSON_RULES}",
+                    },
+                ],
+                out,
+            )
+            parts = parse_cut_answer(data, units)
+        if not target_s:
+            return data, parts
+        parts, total_s = select_for_target(parts, units, cfg, target_s, meta.get("duration_s"))
+        low, high = target_band(target_s, cfg.length_tolerance)
+        if total_s >= low:
+            return data, parts
+        if attempt == 0:
+            problem = (
+                f"it keeps only {int(total_s)} s in total but the task needs about "
+                f"{target_s} s (between {int(low)} and {int(high)} s); keep more parts."
+            )
+    raise CutRefused(
+        f"The model kept only {int(total_s)} s of the {target_s} s this cut aims for, "
+        "so no cut was built. Try again."
+    )
 
 
 def score_request(

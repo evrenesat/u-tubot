@@ -555,7 +555,7 @@ or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#direct
 
 **Choosing the model**: `[llm.cuts]` has no default on purpose — quality matters and the
 feature stays off until an alias is named. Score the available aliases offline against the
-test set (5 hand-marked transcripts × 3 requests, must-keep/must-skip spans, no network):
+test set (5 hand-marked transcripts and 16 requests, must-keep/must-skip spans, no network):
 
     cd ai-backend && uv run python scripts/cut_bench.py --list --base-url http://gateway:8787/v1
     uv run python scripts/cut_bench.py --model <alias> --base-url ... --api-key-env KEY_ENV

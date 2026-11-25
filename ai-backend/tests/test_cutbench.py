@@ -233,6 +233,21 @@ class TestScorer:
 
 
 class TestLengthAccuracy:
+    def test_a_one_pass_target_retries_once_and_refuses_if_still_short(self):
+        transcript = TRANSCRIPTS[0]
+        request = next(r for r in transcript.requests if r.name == "highlights-1min")
+        calls = []
+
+        def model_fn(messages):
+            calls.append(messages)
+            return answer([(1, 1)]), {}
+
+        result = score_request(transcript, request, model_fn, "fake")
+        assert result.refused is not None
+        assert "kept only" in result.refused and "60 s" in result.refused
+        assert len(calls) == 2
+        assert "keep more parts" in calls[1][-1]["content"]
+
     def test_a_targeted_request_reports_how_far_the_length_is_from_the_target(self):
         transcript = TRANSCRIPTS[0]
         units = build_units(transcript.segments, CFG)
