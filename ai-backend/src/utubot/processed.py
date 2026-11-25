@@ -45,7 +45,7 @@ class ProcessedService:
             [user, KIND_CAPTIONS, *video_ids],
         )
         cut_rows = self.db.all(
-            "SELECT id,video_id,preset_id,prompt,state,error,created_at,updated_at FROM"
+            "SELECT id,video_id,preset_id,prompt,state,error,created_at,updated_at,mode FROM"
             f" cut_requests WHERE user=? AND state!='dismissed' AND video_id IN ({marks})"
             " ORDER BY updated_at DESC, created_at DESC",
             [user, *video_ids],
@@ -79,6 +79,7 @@ class ProcessedService:
                 {
                     "request_id": row["id"],
                     "state": row["state"],
+                    "mode": row["mode"] or "quick",
                     "preset_id": preset_id,
                     "preset_label": (
                         labels.get(preset_id) or PRESET_LABELS.get(preset_id) or preset_id

@@ -1,3 +1,36 @@
+## 2026-11-24 (UTB-25 watched cuts, backend checkpoints 1-4)
+
+1. **Modes.** `[cuts] default_mode` / `UserPolicy.cut_mode` (per-user `cuts.cut_mode`, read-only on the TV, changed in the web
+   UI), optional `mode` on POST/PUT cut routes, mode-aware cache keys and duplicate requests. `GET /v1/videos/{id}/cuts` gains
+   `default_mode` and `modes[{id,label,default,available,reason,eta_s}]`, each preset gains `by_mode`; the top-level preset state
+   stays the caller's default mode. Request rows carry `mode`, `progress`, `eta_s` and a Watched-only `fallback` (the same preset's
+   Quick state); stages add `video`, `grids`, `describing`, `in_line`; cut documents carry `mode` and
+   `watched{grids,model,partial,coarse}`. `GET /v1/me` features adds `cuts_watched`.
+2. **Video/grids.** `media import` (`--kind video|audio`) and an archive video entry. `watch/ffmpeg.py` runs blocking ffmpeg with a
+   cancel event in one worker thread per build; `watch/video.py` downloads a <=360p copy through `YoutubeGate`, stores it and
+   refuses over 90 min/1 GiB and below the free-space floor. `frame_selector.py`/`grids.py` are adapted from r2t4 under MIT:
+   low-resolution luma/motion/dhash analysis, hard cuts, adaptive chunks, the quiet-stretch shared grid (which stops at a real hard cut),
+   four-frame selection, 2x2 grids <=512 px cells, manifest. `max_grids=240` with four length-raising steps and a final budget split. `video_scenes`
+   is keyed by video sha and settings, not the transcript.
+3. **Describing/TDT.** `[llm.cuts_vision]`, same-provider fallback validation, Pillow extra `watched`. One sequential request per
+   grid through a bounded transcript/carry context; one bad-JSON retry, one halved-context retry on upstream HTTP 400; unseen
+   grids stay empty; over 20 % unseen refuses. The slim TDT validator accepts optional `content` labels for #88. Descriptions are
+   cached per video sha + model + transcript; partial rows resume; `scene_labels` are written from a stored TDT. Admin
+   `GET /v1/admin/videos/{id}/tdt`; archive removal drops watched rows.
+4. **Join/editor.** Silent stretches become `(no speech)` units, S lines keep picture evidence, only `#` ids are keepable, scene
+   lines collapse same-kind repeats, kept boundaries snap outward <=1 s to a real cut but never across speech. The editor reuses
+   the Quick validator/repair/pad/merge/keep-guard rules; the Watched prompt addition forbids keeping S lines. Watched builds run
+   once per server (`in_line` for the second), write progress/ETA by the configured weights, and offer Quick on failure. The
+   Quick fallback state is resolved without starting a build.
+5. Tests: `tests/synth_video.py` (ffmpeg lavfi, 60 s, four hard cuts and a 30 s still stretch), `test_watch_grids.py`, `test_watch_tdt.py`,
+   `test_watch_memory.py`, `test_watch_join.py`, `test_cuts_watched.py` (end-to-end mock vision, cache reuse, in-line queue, failure/Quick,
+   over-limit before download, unavailable, user default, admin/remove paths), `test_cli_media.py` (offline
+   `media import` for video and audio); `mock_openai.py` now accepts image parts and answers the describe format
+   incl. bad JSON/400. No test reaches YouTube or a real model; CI installs `--extra watched`.
+6. Deviations: the model alias/timings come from the owner's command, not a bake-off; there is no `scripts/grid_bench.py`,
+   labelled-set or cutbench watched gate here yet (owner-only, never CI/repo). The client mode switch (TV/web UI/extension) and
+   mock backend are not in this backend change. `temp/plan.md` remains the source; `THIRD_PARTY.md` lists the r2t4 copy.
+
 # DEVLOG
 
 ## 2026-11-25 (a failed cut does not stick; no-filler accepts a nearly full keep, issue 99)

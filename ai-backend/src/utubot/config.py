@@ -74,6 +74,24 @@ class LLMConfig(BaseModel):
     captions: LLMTask = LLMTask(model="worker", max_tokens=2000)
     smart: LLMTask = LLMTask(model="smart", max_tokens=1500)
     cuts: LLMTask | None = None
+    cuts_vision: LLMTask | None = None
+
+    @model_validator(mode="after")
+    def _vision_fallback_same_provider(self) -> LLMConfig:
+        """Watched frames go only to the one provider configured for the vision task."""
+        task = self.cuts_vision
+        if task is None:
+            return self
+        provider = task.provider or self.default_provider
+        for name in task.fallback:
+            prefix, sep, _rest = name.partition(":")
+            fallback_provider = prefix if sep and prefix in self.providers else provider
+            if fallback_provider != provider:
+                raise ValueError(
+                    "llm.cuts_vision fallbacks must use the same provider as cuts_vision; "
+                    "pictures never go to another provider"
+                )
+        return self
 
     def glance_task(self) -> LLMTask:
         """`[llm.glance]` when configured, else `[llm.summary]` with reasoning off."""
@@ -177,6 +195,73 @@ class SummaryConfig(BaseModel):
     auto_long_max_concurrent: int = 2
 
 
+WATCHED_MODES = ("quick", "watched")
+VIDEO_KIND = "video"
+GRID_PLAN_VERSION = 1
+
+
+class WatchedCutsConfig(BaseModel):
+    """The picture-aware cut: grids sampled from a small stored video copy, described by a
+    vision model, then joined with the transcript for the same editor model Quick uses.
+
+    Every tunable here belongs to `[cuts.watched]`; the defaults are the balanced
+    scene-analyser preset the owner's repository measured, adapted for YouTube.
+    """
+
+    enabled: bool = True
+    max_video_minutes: int = Field(90, ge=1)
+    video_max_bytes: int = Field(1073741824, ge=1)
+    video_format: str = (
+        "bestvideo[height<=360][ext=mp4]/bestvideo[height<=360]/best[height<=360]/worst"
+    )
+    keep_video: bool = True
+    keep_grids: bool = False
+    min_free_bytes: int = Field(2147483648, ge=0)
+    scene_threshold: float = 0.4
+    analysis_fps: float = Field(2.0, gt=0)
+    analysis_width: int = Field(128, ge=16)
+    min_chunk_s: float = Field(4.0, gt=0)
+    max_chunk_s: float = Field(15.0, gt=0)
+    quiet_max_chunk_s: float = Field(45.0, gt=0)
+    cut_merge_s: float = Field(1.5, ge=0)
+    min_frame_distance: int = Field(6, ge=0)
+    black_frame_luma: float = Field(18.0, ge=0)
+    grid_cell_max_px: int = Field(512, ge=16)
+    max_grids: int = Field(240, ge=1)
+    cap_growth: float = Field(1.25, gt=1.0)
+    cap_steps: int = Field(4, ge=0)
+    ffmpeg_threads: int = Field(2, ge=1)
+    describe_concurrency: int = Field(1, ge=1)
+    recent_window_count: int = Field(3, ge=1)
+    carry_forward_scenes: int = Field(2, ge=0)
+    describe_context_chars: int = Field(4000, ge=1)
+    max_unseen_frac: float = Field(0.2, ge=0.0, le=1.0)
+    max_input_tokens: int = Field(48000, ge=1)
+    snap_s: float = Field(1.0, ge=0)
+    silent_unit_min_s: float = Field(4.0, ge=0)
+    max_concurrent: int = Field(1, ge=1)
+    describe_timeout_s: float = Field(60.0, gt=0)
+    describe_s_per_grid_max: float = Field(20.0, gt=0)
+    build_timeout_s: float = Field(3600.0, gt=0)
+    eta_grids_per_minute: float = Field(3.5, gt=0)
+    eta_grid_stage_s_per_minute: float = Field(3.0, ge=0)
+    eta_s_per_grid: float = Field(14.0, gt=0)
+    eta_fixed_s: float = Field(20.0, ge=0)
+    eta_window: int = Field(20, ge=1)
+    progress_weight_video: float = 0.05
+    progress_weight_grids: float = 0.10
+    progress_weight_describing: float = 0.75
+    progress_weight_model: float = 0.10
+
+    @model_validator(mode="after")
+    def _chunk_order(self) -> WatchedCutsConfig:
+        if self.max_chunk_s < self.min_chunk_s:
+            raise ValueError("cuts.watched max_chunk_s must be at least min_chunk_s")
+        if self.quiet_max_chunk_s < self.max_chunk_s:
+            raise ValueError("cuts.watched quiet_max_chunk_s must be at least max_chunk_s")
+        return self
+
+
 class CutsConfig(BaseModel):
     """Director's cuts: model-picked skip timelines built from the transcript.
 
@@ -186,6 +271,7 @@ class CutsConfig(BaseModel):
     cached per (video, preset or prompt, model, transcript).
     """
 
+    default_mode: Literal["quick", "watched"] = "quick"
     # Tokens (chars / chars_per_token) one request may carry. Set it to about 80% of the context
     # of the `[llm.cuts]` alias; a transcript over it is cut by map/reduce instead of one pass.
     max_input_tokens: int = 80000
@@ -218,6 +304,8 @@ class CutsConfig(BaseModel):
     preset_target_s: dict[str, int] = Field(default_factory=lambda: {"cut-highlights-5": 300})
     length_tolerance: float = 0.15  # accepted kept length: target +/- this fraction
     over_ask_frac: float = 0.2  # the model is asked for this much more than the target
+    release_duration_tolerance_ms: int = 2000
+    watched: WatchedCutsConfig = Field(default_factory=WatchedCutsConfig)
 
 
 class SpeechConfig(BaseModel):
@@ -531,6 +619,7 @@ class UserPolicy(BaseModel):
     auto_captions: bool | None = None
     captions_translate_to: str | None = Field(None, max_length=MAX_LANGUAGE_CHARS)
     update_checks: bool = True
+    cut_mode: Literal["quick", "watched"] | None = None
 
     @field_validator("captions_translate_to")
     @classmethod

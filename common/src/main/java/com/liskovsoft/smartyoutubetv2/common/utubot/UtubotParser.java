@@ -9,7 +9,9 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Inflation;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Answer;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutMode;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutWatched;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPreset;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
@@ -31,7 +33,10 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * JSON of the contract to the model objects. Unknown fields are ignored, missing ones keep their defaults.
@@ -258,6 +263,34 @@ public final class UtubotParser {
         JSONObject json = new JSONObject(body);
         CutList list = new CutList();
         list.configured = json.optBoolean("configured");
+        list.defaultMode = json.optString("default_mode", CutMode.QUICK);
+        JSONArray modes = json.optJSONArray("modes");
+
+        if (modes != null) {
+            List<CutMode> parsedModes = new ArrayList<>();
+
+            for (int i = 0; i < modes.length(); i++) {
+                JSONObject modeJson = modes.optJSONObject(i);
+
+                if (modeJson == null) {
+                    continue;
+                }
+
+                CutMode mode = new CutMode();
+                mode.id = modeJson.optString("id", null);
+                mode.label = modeJson.optString("label", mode.id);
+                mode.defaultMode = modeJson.optBoolean("default");
+                mode.available = modeJson.optBoolean("available", true);
+                mode.reason = optString(modeJson, "reason");
+                mode.etaSec = optSeconds(modeJson, "eta_s");
+                if (mode.id != null) {
+                    parsedModes.add(mode);
+                }
+            }
+
+            list.modes = parsedModes;
+        }
+
         JSONArray presets = json.optJSONArray("presets");
 
         if (presets != null) {
@@ -270,13 +303,23 @@ public final class UtubotParser {
                     continue;
                 }
 
-                CutPreset preset = new CutPreset();
-                preset.id = presetJson.optString("id", null);
-                preset.label = presetJson.optString("label", preset.id);
-                preset.state = presetJson.optString("state", UtubotModels.CutState.NONE);
-                preset.requestId = optString(presetJson, "request_id");
-                preset.error = optString(presetJson, "error");
-                preset.cut = parseCut(presetJson.optJSONObject("cut"));
+                String id = presetJson.optString("id", null);
+                String label = presetJson.optString("label", id);
+                CutPreset preset = parsePresetState(presetJson, id, label);
+                JSONObject byMode = presetJson.optJSONObject("by_mode");
+
+                if (byMode != null) {
+                    Map<String, CutPreset> parsedByMode = new HashMap<>();
+                    Iterator<String> modeIds = byMode.keys();
+                    while (modeIds.hasNext()) {
+                        String modeId = modeIds.next();
+                        JSONObject modeJson = byMode.optJSONObject(modeId);
+                        if (modeJson != null) {
+                            parsedByMode.put(modeId, parsePresetState(modeJson, id, label));
+                        }
+                    }
+                    preset.byMode = parsedByMode;
+                }
 
                 if (preset.id != null) {
                     parsed.add(preset);
@@ -287,6 +330,17 @@ public final class UtubotParser {
         }
 
         return list;
+    }
+
+    private static CutPreset parsePresetState(JSONObject json, @Nullable String id, @Nullable String label) {
+        CutPreset preset = new CutPreset();
+        preset.id = id;
+        preset.label = label != null ? label : id;
+        preset.state = json.optString("state", UtubotModels.CutState.NONE);
+        preset.requestId = optString(json, "request_id");
+        preset.error = optString(json, "error");
+        preset.cut = parseCut(json.optJSONObject("cut"));
+        return preset;
     }
 
     public static CutRequest parseCutRequest(String body) throws JSONException {
@@ -304,6 +358,8 @@ public final class UtubotParser {
         request.title = optString(json, "title");
         request.channel = optString(json, "channel");
         request.durationSec = optSeconds(json, "duration_s") == UtubotModels.UNKNOWN ? UtubotModels.UNKNOWN : json.optLong("duration_s", UtubotModels.UNKNOWN);
+        request.mode = json.optString("mode", CutMode.QUICK);
+        request.etaSec = optSeconds(json, "eta_s");
         request.stage = optString(json, "stage");
         request.cut = parseCut(json.optJSONObject("cut"));
         return request;
@@ -324,6 +380,16 @@ public final class UtubotParser {
         cut.transcriptHash = optString(json, "transcript_hash");
         cut.presetId = optString(json, "preset_id");
         cut.model = optString(json, "model");
+        cut.mode = json.optString("mode", CutMode.QUICK);
+        JSONObject watchedJson = json.optJSONObject("watched");
+        if (watchedJson != null) {
+            CutWatched watched = new CutWatched();
+            watched.grids = watchedJson.optInt("grids", UtubotModels.UNKNOWN);
+            watched.model = optString(watchedJson, "model");
+            watched.partial = watchedJson.optBoolean("partial");
+            watched.coarse = watchedJson.optBoolean("coarse");
+            cut.watched = watched;
+        }
         cut.builtAt = optString(json, "built_at");
         cut.parts = parseParts(json.optJSONArray("parts"));
         cut.skipRangesMs = parseSkipRanges(json.optJSONArray("skip_ranges_ms"));
@@ -475,6 +541,7 @@ public final class UtubotParser {
             ProcessedCut cut = new ProcessedCut();
             cut.requestId = requestId;
             cut.state = json.optString("state", cut.state);
+            cut.mode = json.optString("mode", CutMode.QUICK);
             cut.presetId = optString(json, "preset_id");
             cut.presetLabel = optString(json, "preset_label");
             cut.prompt = optString(json, "prompt");

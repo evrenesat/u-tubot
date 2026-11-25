@@ -160,8 +160,20 @@ max_tokens = 2000
 # reasoning_effort = "none"
 # max_tokens = 2500
 
+# Watched (picture-aware) cuts describe one 2x2 frame grid per scene. This task is required for
+# mode = "watched"; without it Watched reports "not configured" and Quick still works. Pictures
+# never go to another provider, so any fallback here must use the same provider.
+# [llm.cuts_vision]
+# model = "vision-worker"          # a vision-capable alias on the provider below
+# provider = "local"               # optional; defaults to llm.default_provider
+# fallback = ["vision-small"]      # optional; same provider only
+# reasoning_effort = "none"
+# max_tokens = 900
+
 # How the cut engine works. All defaults shown.
+# `cut_mode` (the viewer's default) is in [default_policy]; the app still lets a request choose.
 # [cuts]
+# default_mode = "quick"           # quick | watched; watched needs [llm.cuts_vision]
 # max_input_tokens = 80000         # one request's size (chars/4); keep it at ~80% of the [llm.cuts] alias's context.
 #                                  # A longer transcript is cut by map/reduce (excerpts, then one final choice)
 # map_chunk_tokens = 30000         # size of one excerpt in map/reduce (never above max_input_tokens)
@@ -179,10 +191,63 @@ max_tokens = 2000
 # max_keep_frac = 0.95             # a typed prompt without a target keeping more is refused
 #                                  # ("nothing to cut"); named presets have no upper guard
 # max_active_per_user = 2          # cuts building at the same time per user
+# default_wait_ms = 3000           # a cuts GET waits this long for a build before answering
+# wait_ms_cap = 20000              # ... and never longer than this, whatever `wait_ms` asks
 # transcript_wait_s = 900.0        # how long a cut waits for a transcript to be built
 # length_tolerance = 0.15          # a preset with a target length keeps target +/- this fraction
 # over_ask_frac = 0.2              # the model is asked for this much more than the target
 # preset_target_s = { "cut-highlights-5" = 300 }   # target kept seconds per preset id
+# poll_s = 2.0                     # queue and state polling interval
+# max_report_chars = 4000          # cut report text shown in the app
+# release_duration_tolerance_ms = 2000  # cached cut's duration may differ from the video by this
+
+# The watched build. All defaults shown. It stores a small video copy (`<media>/watched`), samples
+# frames with ffmpeg, describes grids in one dedicated vision request at a time, then joins the
+# descriptions to the transcript units for the same editor model Quick uses. On a failure it offers
+# Quick, not a dead job.
+# [cuts.watched]
+# enabled = true
+# max_video_minutes = 90           # longer videos refuse Watched (Quick may still fit)
+# video_max_bytes = 1073741824     # stored video copy cap; ffmpeg picks a <=360p format
+# video_format = "bestvideo[height<=360][ext=mp4]/bestvideo[height<=360]/best[height<=360]/worst"
+# keep_video = true                # keep the stored copy for later presets of the same video
+# keep_grids = false               # remove per-preset grids after a build; shared grids stay cached
+# min_free_bytes = 2147483648      # refuse a watched build below this free space on both dirs
+# scene_threshold = 0.4            # ffmpeg scene score that marks a hard cut
+# analysis_fps = 2.0               # low-resolution analysis frames per second
+# analysis_width = 128             # downscaled analysis width; height follows the aspect ratio
+# min_chunk_s = 4.0                # shortest scene chunk (unless a hard cut splits it)
+# max_chunk_s = 15.0               # longest normal scene chunk
+# quiet_max_chunk_s = 45.0         # longest chunk of still, low-motion frames
+# cut_merge_s = 1.5                # hard cuts closer than this merge
+# min_frame_distance = 6           # minimum hash distance between the four selected frames
+# black_frame_luma = 18.0          # frames at or below this luma are black
+# grid_cell_max_px = 512           # each of the four cells is at most this square
+# max_grids = 240                  # one vision request per grid, so cap the whole video here
+# cap_growth = 1.25                # each cap step grows chunk length by this factor
+# cap_steps = 4                    # cap steps before a single budget split over max_grids
+# ffmpeg_threads = 2
+# describe_concurrency = 1         # vision requests in flight for one build (one provider slot)
+# recent_window_count = 3          # previous chunk windows whose exact transcript lines are sent
+# carry_forward_scenes = 2         # previous visual summaries carried into the next request
+# describe_context_chars = 4000    # hard character limit for the recent transcript block
+# max_unseen_frac = 0.2            # above this share of unseen scenes the build refuses
+# max_input_tokens = 48000         # watched editor prompt budget
+# snap_s = 1.0                     # kept boundaries may move outward this far to a real cut
+# silent_unit_min_s = 4.0          # a silent stretch at least this long becomes an id unit
+# max_concurrent = 1               # watched builds at once on this server; others show "in line"
+# describe_timeout_s = 60.0
+# describe_s_per_grid_max = 20.0   # a build whose ETA predicts more than this per grid is refused
+# build_timeout_s = 3600.0         # watched job deadline (90 min video + model work)
+# eta_grids_per_minute = 3.5
+# eta_grid_stage_s_per_minute = 3.0
+# eta_s_per_grid = 14.0
+# eta_fixed_s = 20.0
+# eta_window = 20                 # moving average window for the displayed ETA
+# progress_weight_video = 0.05
+# progress_weight_grids = 0.10
+# progress_weight_describing = 0.75
+# progress_weight_model = 0.10
 
 # Voice prompts: the phone's recording goes to modelgate only. The alias is modelgate's
 # transcription alias (the route from EVR-464); there is no default, and without it the sheet
@@ -501,6 +566,7 @@ answer_in_label = false
 auto_transcribe = "on_open"       # off | on_dwell | on_open: transcribe videos without captions by itself
 auto_transcribe_max_minutes = 30  # ... but only videos up to this long
 # captions_translate_to = "en"    # unset: follows [captions] translate_to; "off" keeps the spoken language
+# cut_mode = "quick"              # "quick" | "watched": the viewer's default director's cut
 summary_delay_ms = 700            # TV: how long a card stays focused before its summary is requested
 # summary_panel = false           # unset: follows [setup.defaults] summary_panel
 # auto_captions = true            # unset: follows [setup.defaults] auto_captions

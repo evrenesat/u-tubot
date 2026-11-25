@@ -285,7 +285,7 @@ class LLMClient:
     async def complete(
         self,
         task: LLMTask,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         model: str | None = None,
         max_tokens: int | None = None,
@@ -366,7 +366,7 @@ class LLMClient:
     async def chat_result(
         self,
         task: LLMTask,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         model: str | None = None,
         max_tokens: int | None = None,
@@ -410,7 +410,7 @@ class LLMClient:
     async def chat(
         self,
         task: LLMTask,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         model: str | None = None,
         max_tokens: int | None = None,
@@ -430,7 +430,7 @@ class LLMClient:
     async def chat_json(
         self,
         task: LLMTask,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         model: str | None = None,
         priority: int = BACKGROUND,

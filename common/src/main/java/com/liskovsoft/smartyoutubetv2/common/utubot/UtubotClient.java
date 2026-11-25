@@ -318,6 +318,14 @@ public class UtubotClient {
      */
     public CutRequest requestCut(String videoId, @Nullable String presetId, @Nullable String prompt, boolean awaitPrompt,
                                  @Nullable VideoMeta meta) throws IOException {
+        return requestCut(videoId, presetId, prompt, awaitPrompt, meta, null);
+    }
+
+    /**
+     * The same request with an explicit cut mode (`quick` or `watched`); null follows the caller's default.
+     */
+    public CutRequest requestCut(String videoId, @Nullable String presetId, @Nullable String prompt, boolean awaitPrompt,
+                                 @Nullable VideoMeta meta, @Nullable String mode) throws IOException {
         return parse(() -> {
             JSONObject body = new JSONObject();
 
@@ -329,6 +337,10 @@ public class UtubotClient {
                 body.put("prompt", prompt);
             } else {
                 throw new IOException("A cut needs a preset, a prompt or a waiting request");
+            }
+
+            if (mode != null) {
+                body.put("mode", mode);
             }
 
             return UtubotParser.parseCutRequest(send(authorized(cutUrl(videoId, meta)).post(json(body)), 0));

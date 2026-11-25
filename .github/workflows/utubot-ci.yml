@@ -121,7 +121,8 @@ jobs:
         run: command -v ffmpeg || { sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg; }
 
       - name: Install the dependencies
-        run: uv sync --frozen
+        # The watched tests skip only when ffmpeg or Pillow is missing; CI carries both.
+        run: uv sync --frozen --extra watched
 
       - name: Lint
         run: uv run ruff check

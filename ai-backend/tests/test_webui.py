@@ -126,6 +126,16 @@ async def test_ui_paths_cannot_escape_the_ui_folder(env):
         assert "FastAPI" not in res.text and "import " not in res.text.split("\n")[0]
 
 
+def test_the_web_ui_carries_the_cut_mode_control():
+    cuts = (WEB / "ui" / "js" / "pages" / "cuts.js").read_text()
+    devices = (WEB / "ui" / "js" / "pages" / "devices.js").read_text()
+
+    assert "modeControl" in cuts and "sheetMode" in cuts and "selectedMode" in cuts
+    assert "Use Quick" in cuts and '"watched"' in cuts
+    assert "video" in cuts and "grids" in cuts and "describing" in cuts and "in_line" in cuts
+    assert "cut_mode" in devices and "segmented" in devices
+
+
 def test_ui_code_never_builds_markup_from_strings():
     forbidden = re.compile(
         r"innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|setAttribute\(\s*[\"']on|srcdoc"

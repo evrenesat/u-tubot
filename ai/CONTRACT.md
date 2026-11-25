@@ -477,6 +477,13 @@ built for (`duration_ms`); a client does not apply a cut whose video length diff
 2 s. `transcript_hash` identifies the transcript the cut was built from; clients carry it and do not
 compare it (they hold no transcript). `skip_ranges_ms` is the sorted,
 non-overlapping complement of `parts`.
+`source` is the transcript's origin (`youtube_captions` or `asr`) on YouTube cuts. A cut of another
+source (a film or episode, not built yet) may carry it as `{"kind","key","release_key"?,
+"release_duration_ms"?}` instead; a client that ignores it reads the YouTube `video_id` as today.
+A cut may also carry optional `transitions` (`[{"after_part","type","duration_ms","asset":{"ref",
+"sha256"?},"engine","engine_version","status"}]`, status `none|pending|ready|failed`) from the later
+feature that generates them. Both fields are additive: `parts` and `skip_ranges_ms` never depend on
+them, old cuts lack them, and a client that cannot show transitions skips as today.
 
 Build rules (mirrored from the backend config, `[cuts]`): caption fragments are merged into
 numbered sentence-like units (new unit on a pause over 0.6 s or sentence punctuation, 15 s
@@ -515,6 +522,57 @@ length the description asks for, read by a small English parser (`half`, `a thir
 5 minutes" or two different lengths give no target). Built-in presets' own wording is never read. The
 cache version includes the target, so a cut built before this rebuilds once; `target_s` in the cut
 document is the effective target (`null` without one).
+
+### Cut modes: Quick and Watched (addendum, 2026-11-24)
+
+Every cuts route keeps its Quick behaviour, and the new fields are additive: a client that
+ignores them sees the caller's default mode exactly as before. Quick is the transcript-only
+engine above. Watched is opt-in picture analysis: it stores a small video copy, describes 2x2
+frame grids with `[llm.cuts_vision]`, joins those descriptions to the same transcript units,
+and asks `[llm.cuts]` for the timeline. It is available only when `[llm.cuts_vision]` is set,
+the `watched` Python extra (Pillow) is installed, `[cuts.watched] enabled` is true, and the
+video is not live or longer than `[cuts.watched] max_video_minutes` (90 by default).
+
+- `GET /v1/me` features gains `"cuts_watched": bool` (whether Watched could run on this server;
+  watched availability per video also answers `409` with its plain reason).
+- `GET /v1/videos/{id}/cuts` adds `"default_mode":"quick"|"watched"` and
+  `"modes":[{"id","label","default":bool,"available":bool,"reason"?,"eta_s"?}]`. A preset keeps
+  its existing top-level state fields for the caller's default mode and adds
+  `"by_mode":{"quick":{...},"watched":{...}}` with the same state fields as the top level.
+- `POST /v1/videos/{id}/cuts` and `PUT /v1/cut-requests/{id}` accept optional `"mode"`; without
+  it the request takes the user's `cut_mode` (below). Unavailable Watched answers
+  `409 {"error":"<the modes reason>"}` before a request is queued.
+- The request document gains `"mode"` (always present, `quick` for old rows), and while
+  `building` also `"progress"` (0 to 1) and `"eta_s"` (remaining estimate, integer seconds).
+  A failed Watched request gains `"fallback"`: the Quick state (`none`/`ready`/...) of the same
+  preset or description, which the client offers with one press. Quick requests never carry it.
+- Request/build stages gain `"video"`, `"grids"`, `"describing"` and the queue stage `"in_line"`.
+  The visible sequence for Watched is `transcript` -> `video` -> `grids` -> `describing` ->
+  `model` -> `checking`; cached stages report `skipped`.
+- The cut document gains `"mode":"quick"|"watched"`. Watched also adds
+  `"watched":{"grids":int,"model":"<vision alias>","partial":bool,"coarse":bool}`. `version`
+  stays 1; Quick documents keep every existing field.
+- `GET /v1/processed`: each cut entry gains `"mode"` (`quick` for old rows), so a tile can
+  label a Watched cut.
+
+The per-user setting `cut_mode` (`"quick"` default or `"watched"`) is the viewer's default, in the
+`cuts` section of `GET/PUT /v1/me/settings` and `GET /v1/me`. Its choices are
+`["quick","watched"]`; the server-wide default is `[cuts] default_mode`. Changing it does not
+start a build. Watched is still chosen per request on the TV and phone, and the choice holds for
+that picker session.
+
+Build rules for Watched: a failure never turns into a dead Quick job. If more than 20 % of
+scenes stay unseen (`max_unseen_frac`), the vision model stays busy/unavailable, the stored
+video exceeds 90 minutes or 1 GiB, free disk falls below the configured floor, a describe
+estimate exceeds `describe_s_per_grid_max` per grid, or the 1-hour build deadline passes, the
+request goes `failed` with a plain reason and the Quick `fallback`. One Watched build runs at a
+time per server (`[cuts.watched] max_concurrent`, default 1): a second request emits `in_line`
+and waits its turn. The video copy and scene/grid caches are per video and video description;
+grids are per preset's description and removed after the build unless `keep_grids`.
+
+Admin: `GET /v1/admin/videos/{id}/tdt` returns the newest stored TDT for debugging a watched
+build (`{"cache_key","tdt"}`; `404` when none). `DELETE /v1/admin/archive/{video_id}` also drops
+that video's watched scene, description and label caches.
 
 ## Voice prompts (addendum, 2026-11-21)
 

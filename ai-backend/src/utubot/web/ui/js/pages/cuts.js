@@ -11,6 +11,8 @@ import {
   fmtDuration,
   note,
   pill,
+  progressBar,
+  segmented,
   textInput,
   toast,
 } from "../components.js";
@@ -36,15 +38,26 @@ const STATE_LABEL = {
 };
 const STAGE_LABEL = {
   transcript: "finding the transcript",
+  video: "getting the video copy",
+  grids: "taking picture grids",
+  describing: "describing the scenes",
   model: "the model is choosing the parts",
   checking: "checking the result",
   map: "reading the long video in parts",
   reduce: "choosing the final parts",
+  in_line: "waiting for the other watched cut",
 };
 function stageText(req) {
   const label = STAGE_LABEL[req.stage] || req.stage;
   const p = req.progress;
+  if (typeof p === "number") return `${label} (${Math.round(p * 100)}%)`;
   return p && req.stage === "map" ? `${label} (${p.done} of ${p.of})` : label;
+}
+function modeName(cut) {
+  return cut && cut.mode === "watched" ? "Watched" : "Quick";
+}
+function etaText(req) {
+  return req.eta_s ? `about ${fmtDuration(req.eta_s)} left` : "";
 }
 const GROUP = { waiting: 0, building: 1, needs_transcript: 1, ready: 2, failed: 3 };
 const DEFAULT_SPEECH_S = 50;
@@ -137,13 +150,14 @@ function partsList(cut) {
 function cardActions(req, reload) {
   const kids = [h("a", { class: "btn sec", href: "#/cuts/" + req.id }, h("span", { text: "Open" }), icon("chevron"))];
   if (req.state === "failed") {
+    const mode = req.mode === "watched" ? "quick" : req.mode;
     kids.push(
       button(
-        "Retry",
+        req.mode === "watched" ? "Use Quick" : "Retry",
         async () => {
-          const body = req.preset_id ? { preset: req.preset_id } : { prompt: req.prompt };
+          const body = { ...(req.preset_id ? { preset: req.preset_id } : { prompt: req.prompt }), mode };
           const r = await api("/v1/videos/" + req.video_id + "/cuts", { method: "POST", body });
-          toast("Building again");
+          toast(req.mode === "watched" ? "Building Quick" : "Building again");
           location.hash = "#/cuts/" + r.request_id;
           await reload();
         },
@@ -179,8 +193,11 @@ function cutCard(req, reload) {
       "div",
       { class: "row between nowrap" },
       pill(STATE_LABEL[req.state] || req.state, STATE_KIND[req.state] || ""),
+      req.state === "ready" && req.cut ? pill(modeName(req.cut), "") : null,
       h("small", { class: "muted", text: fmtAgo(req.created_at) + doing }),
     ),
+    req.state === "building" && req.mode === "watched" ? progressBar(req.progress) : null,
+    req.state === "building" && req.mode === "watched" ? h("small", { class: "muted", text: etaText(req) }) : null,
     req.prompt ? h("small", { class: "muted", text: "“" + req.prompt + "”" }) : null,
     req.state === "ready" && req.cut ? h("div", { class: "stack inset" }, keptLine(req.cut), partsList(req.cut)) : null,
     req.error ? h("small", { class: "bad", text: req.error }) : null,
@@ -191,6 +208,15 @@ function cutCard(req, reload) {
 function newCutCard(onCreated) {
   const ref = textInput("", { placeholder: "YouTube link or video id", maxlength: 500 });
   const msg = h("p", { class: "muted", text: "" });
+  let mode = "quick";
+  const modeControl = segmented(
+    [
+      ["quick", "Quick"],
+      ["watched", "Watched"],
+    ],
+    mode,
+    (value) => (mode = value),
+  );
   async function start() {
     msg.className = "muted";
     msg.textContent = "";
@@ -201,7 +227,7 @@ function newCutCard(onCreated) {
       return;
     }
     try {
-      const r = await api("/v1/videos/" + id + "/cuts", { method: "POST", body: { await_prompt: true } });
+      const r = await api("/v1/videos/" + id + "/cuts", { method: "POST", body: { await_prompt: true, mode } });
       ref.value = "";
       onCreated(r.request_id);
     } catch (err) {
@@ -218,6 +244,7 @@ function newCutCard(onCreated) {
   return card(
     "New cut",
     note("Paste a video, then describe the cut you want. The TV offers the finished cut when you open the video there."),
+    field("Mode", modeControl, "Quick reads the transcript; Watched also looks at the picture."),
     field("Video", ref, "A link (share or copy from YouTube) or an 11-character id."),
     button("Describe this cut", start, { kind: "primary", full: true }),
     msg,
@@ -536,6 +563,8 @@ async function sheet(view, requestId) {
   // survives the poll.
   let nameBox = null;
   let lengthBox = null;
+  // The mode picked on this sheet; null follows the request's own mode.
+  let sheetMode = null;
 
   function stopMic() {
     if (mic) {
@@ -559,10 +588,27 @@ async function sheet(view, requestId) {
     }
   }
 
+  function selectedMode(req) {
+    return sheetMode || req.mode || "quick";
+  }
+
+  function modeControl(req) {
+    const list = (presets && presets.modes) || [
+      { id: "quick", label: "Quick", available: true, default: true },
+      { id: "watched", label: "Watched", available: true },
+    ];
+    const choices = list
+      .filter((m) => m.available !== false)
+      .map((m) => [m.id, m.label + (m.default ? " (default)" : "")]);
+    const chosen = selectedMode(req);
+    return segmented(choices, choices.some((c) => c[0] === chosen) ? chosen : choices[0][0], (v) => (sheetMode = v));
+  }
+
   async function buildWithPreset(req, presetId) {
     // Start the preset build first; the waiting request is dismissed only once that worked,
     // so a failed POST (a full per-user cap, say) cannot leave the QR code pointing at nothing.
-    const r = await api("/v1/videos/" + req.video_id + "/cuts", { method: "POST", body: { preset: presetId } });
+    const body = { preset: presetId, mode: selectedMode(req) };
+    const r = await api("/v1/videos/" + req.video_id + "/cuts", { method: "POST", body });
     await api("/v1/cut-requests/" + req.id, { method: "DELETE" }).catch(() => {});
     location.hash = "#/cuts/" + r.request_id;
   }
@@ -570,7 +616,7 @@ async function sheet(view, requestId) {
   async function fill(req, box) {
     cancelMic();
     try {
-      await api("/v1/cut-requests/" + req.id, { method: "PUT", body: { prompt: box.value } });
+      await api("/v1/cut-requests/" + req.id, { method: "PUT", body: { prompt: box.value, mode: selectedMode(req) } });
       toast("Building the cut");
       await draw();
     } catch (err) {
@@ -684,6 +730,14 @@ async function sheet(view, requestId) {
           null,
           head,
           note("Describe the cut, or pick a preset."),
+          field(
+            "Mode",
+            modeControl(req),
+            ((presets && presets.modes) || []).some((m) => m.id === "watched" && m.available === false)
+              ? "Watched is not available: " +
+                (((presets && presets.modes) || []).find((m) => m.id === "watched") || {}).reason
+              : "Quick reads the transcript; Watched also looks at the picture.",
+          ),
           chips,
           field(
             "Your description",
@@ -729,6 +783,8 @@ async function sheet(view, requestId) {
           null,
           head,
           h("div", { class: "row" }, pill("building", ""), h("span", { class: "muted", text: stage })),
+          req.mode === "watched" ? progressBar(req.progress) : null,
+          req.mode === "watched" && req.eta_s ? note(etaText(req)) : null,
           note("This can take a few minutes. You can leave the page; the cut lands in the queue."),
           req.prompt ? h("small", { class: "muted", text: "“" + req.prompt + "”" }) : null,
           sheetActions(req),
@@ -740,7 +796,7 @@ async function sheet(view, requestId) {
         card(
           null,
           head,
-          h("div", { class: "row between nowrap" }, h("strong", { text: cut.label || "Cut" }), pill("ready", "ok")),
+          h("div", { class: "row between nowrap" }, h("strong", { text: cut.label || "Cut" }), pill("ready", "ok"), pill(modeName(cut), "")),
           cut.summary ? note(cut.summary) : null,
           keptLine(cut),
           partsList(cut),
@@ -759,15 +815,25 @@ async function sheet(view, requestId) {
           req.prompt ? h("small", { class: "muted", text: "“" + req.prompt + "”" }) : null,
           sheetActions(
             req,
-            button(
-              "Try again",
-              async () => {
-                const body = req.preset_id ? { preset: req.preset_id } : { prompt: req.prompt };
-                const r = await api("/v1/videos/" + req.video_id + "/cuts", { method: "POST", body });
-                location.hash = "#/cuts/" + r.request_id;
-              },
-              { kind: "primary" },
-            ),
+            req.mode === "watched"
+              ? button(
+                  "Use Quick",
+                  async () => {
+                    const body = { ...(req.preset_id ? { preset: req.preset_id } : { prompt: req.prompt }), mode: "quick" };
+                    const r = await api("/v1/videos/" + req.video_id + "/cuts", { method: "POST", body });
+                    location.hash = "#/cuts/" + r.request_id;
+                  },
+                  { kind: "primary" },
+                )
+              : button(
+                  "Try again",
+                  async () => {
+                    const body = req.preset_id ? { preset: req.preset_id } : { prompt: req.prompt };
+                    const r = await api("/v1/videos/" + req.video_id + "/cuts", { method: "POST", body });
+                    location.hash = "#/cuts/" + r.request_id;
+                  },
+                  { kind: "primary" },
+                ),
           ),
         ),
       );
