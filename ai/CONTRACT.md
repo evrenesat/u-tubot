@@ -448,6 +448,9 @@ routes answer `200` with `"configured": false`, and `GET /v1/me` features carrie
   TV's "Describe on phone…").
   The caller's known video facts ride as query params (`title`, `channel`, `duration_s`,
   `is_live`) so the phone queue can show them before the backend learns them itself.
+  Optional `"force":true` builds the transcript from the audio even when YouTube captions exist,
+  as `force` does for transcribe and captions; it is not echoed in the request document, and a
+  forced request never joins an unforced active one.
   Duplicate active requests (same video + preset/prompt/waiting) return the existing row; a
   `failed` row never blocks a new request, so asking for the same preset again starts a fresh
   build and keeps the failure in the history. A per-user cap on concurrent builds answers `429`.
