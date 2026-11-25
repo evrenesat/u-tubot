@@ -29,6 +29,16 @@
   within `evict_protect_s` or the file just stored. New nullable column `media_archive.last_used_at`, stamped by `lookup`.
 - Summary cache key is unchanged (video, prompt key, content hash, language); the model is already part of the content hash.
 
+## 2026-11-25 (example-config tests off the host data dir, backend CI red)
+
+- Problem: the three tests that load `config.example.toml` read its `data_dir` (`/var/lib/utubot`) and therefore the host's
+  `users.toml`; where that file belongs to the service the tests fail with a permission error (backend CI failure on the
+  u-tubot#80 update-notification pull request).
+- `tests/conftest.py`: an `example_config` fixture loads the example file with `Config.users_path` pointed at `tmp_path/users.toml`,
+  so the declared users and defaults are exactly the example's and no host file is touched.
+- `tests/test_glance.py`, `tests/test_prompts_summary.py`, `tests/test_security.py`: use the fixture; `test_security` also asserts
+  the fixture keeps `data_dir` from the example and reads no host users file.
+
 ## 2026-11-24 (cut length for saved presets and typed prompts, issue 100)
 
 - Problem: only built-in presets had a target length, so the owner's saved "half" preset kept 75 % and 82 %.
