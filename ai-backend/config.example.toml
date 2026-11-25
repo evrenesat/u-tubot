@@ -54,6 +54,14 @@ login_user_lockout_failures = 10  # failed sign-ins against one account (from an
 login_global_failures = 200       # failed sign-ins from all IPs per window before sign-in locks globally
 login_global_window_s = 3600
 
+# Sign in from a Tailscale Serve identity header instead of the password. Off by default; enable it
+# only on a tailnet-only listener. Tailscale Serve connects from loopback and sets
+# Tailscale-User-Login, which is trusted only from a loopback peer; map each tailnet login to a local
+# user name. The public site keeps password sign-in (docs/server.md, Sign-in).
+[auth]
+tailscale_identity = false
+tailscale_users = {}              # example: { "person@example.com" = "owner" }
+
 # The model list the web UI offers (GET /v1/models: each provider's /models, cached).
 [models]
 cache_ttl_s = 300                 # 5 minutes

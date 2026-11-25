@@ -65,6 +65,10 @@ published in `/setup.json` and in APK download links), `users_file` (default `da
 `login_attempts_per_ip_per_min`, `login_lockout_failures` (5), `login_lockout_s` (15 min), `login_user_lockout_failures` (10),
 `login_global_failures`, `login_global_window_s` (see [Web UI](#web-ui)).
 
+**`[auth]`**: `tailscale_identity` (off by default; sign in from the `Tailscale-User-Login` header of a loopback peer, see
+[Tailnet only](#tailnet-only-no-public-exposure)) and `tailscale_users` (tailnet login to local user name; matching ignores
+case).
+
 **`[models]`**: the live model list behind the web UI: `cache_ttl_s` (300), `error_ttl_s` (30), `refresh_min_interval_s` (10),
 `timeout_s`, `new_for_s` (3 days), `max_models_per_provider`.
 
@@ -379,6 +383,10 @@ Failure text is the scrubbed exception, never a raw yt-dlp message. Jobs from be
   current cost at the user's next successful sign-in. At least `password_min_chars` (10) characters.
 - **Token.** The old way still works: paste the user token on the sign-in form. It is exchanged for a session; the page never keeps
   the token. Device tokens (TVs) and `Authorization: Bearer` keep working for every endpoint, unchanged.
+- **Tailscale identity.** With `[auth] tailscale_identity = true`, a safe request (`GET`, `HEAD`, `OPTIONS`) from a loopback peer
+  that carries `Tailscale-User-Login` signs in as the local user that login maps to in `tailscale_users`, and the page gets a normal
+  session cookie. The header is ignored from any other peer, unmapped logins and unknown local users are refused, and writes still
+  need the session's CSRF token. Enable it only on a tailnet-only listener; the public page keeps password and token sign-in.
 - **Session cookie.** `utubot_session`, `HttpOnly`, `SameSite=Lax`, `Secure` whenever the browser reached the service over HTTPS: the
   request itself is HTTPS, or the peer is in `[security] trusted_proxies` and sent `X-Forwarded-Proto: https`. The server stores only the
   SHA-256 of the session id. A session lasts 30 days from the last use (the cookie is re-issued at most hourly) and at most
@@ -680,6 +688,20 @@ trusted_proxies = ["127.0.0.1", "::1", "10.0.0.2"]   # example proxy address
 With Tailscale, `tailscale serve --bg --https=443 http://127.0.0.1:8790` gives `https://HOST.TAILNET.ts.net` inside your
 tailnet; set `public_base_url` to it. Tailscale Serve connects from loopback. TVs must be on the tailnet; the app accepts `http`
 only for private addresses and `https` otherwise.
+
+Tailscale Serve also names the signed-in tailnet user in `Tailscale-User-Login`. Map logins to local users to sign in to the web UI
+without a password:
+
+```toml
+[auth]
+tailscale_identity = true
+tailscale_users = { "person@example.com" = "owner" }
+```
+
+The app trusts that header only when the peer is loopback (Tailscale Serve's own connection), so enable this only on a listener
+that is not publicly exposed. `X-Forwarded-For` does not affect this check. Each tailnet login maps to one local user; remove the
+mapping or turn the option off to go back to password sign-in. The first page load creates a session like any other sign-in, and
+signing out at *Account* clears it until the next load.
 
 ### Same LAN, no TLS
 

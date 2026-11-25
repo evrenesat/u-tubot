@@ -720,6 +720,8 @@ The phone web UI (`GET /`, static files under `/ui/`) uses the same API as the a
   `429` with `Retry-After` once the address, the account or the server is locked out after repeated failures, `403` for a
   cross-origin `Origin`.
 - `GET /v1/auth/session` -> `{"user","admin","via":"cookie|token","csrf":"..."|null,"has_password":true}`.
+  With `[auth] tailscale_identity` on, a safe request (`GET`, `HEAD`, `OPTIONS`) from a loopback peer carrying a mapped
+  `Tailscale-User-Login` (Tailscale Serve) creates the session here; `via` is `cookie` and `csrf` is set, as for any other sign-in.
 - `POST /v1/auth/logout` -> `{"ok":true}`, ends the session and clears the cookie.
 - `PUT /v1/me/password` `{"current_password":"...","new_password":"..."}` -> `{"ok":true,"csrf":"..."|null}`. `current_password` is
   required when a password exists. At least 10 characters. Ends the user's other sessions.
