@@ -402,3 +402,32 @@ def test_a_big_file_evicts_older_ones_but_never_itself(tmp_path, cfg):
     assert arc.path_of(big).is_file()
     assert arc.lookup(VID) is None and arc.lookup(OTHER) is None
     assert arc.usage() == 90
+
+
+def test_the_full_message_mentions_eviction_when_it_is_on(tmp_path, cfg):
+    arc = lru_archive(tmp_path, cfg, quota=len(MEDIA), protect_s=3600)
+    arc.store(VID, write_media(tmp_path, "a", MEDIA))
+    with pytest.raises(MediaArchiveFull) as exc:
+        arc.require_room()
+    assert "least recently used" in exc.value.message
+    assert "nothing is deleted" not in exc.value.message
+
+
+def test_an_entry_used_after_the_snapshot_is_not_evicted(tmp_path, cfg, monkeypatch):
+    arc = lru_archive(tmp_path, cfg, quota=2 * len(MEDIA) + 1, protect_s=3600)
+    kept = arc.store(VID, write_media(tmp_path, "a", MEDIA))
+    age(arc, VID, 5000)
+    snapshot = arc.db.all
+
+    def all_then_lookup(sql, params=None):
+        rows = snapshot(sql, params)
+        if "ORDER BY IFNULL(last_used_at" in sql:
+            # A job's lookup lands between the snapshot and the drop loop
+            arc.db.execute(
+                "UPDATE media_archive SET last_used_at=? WHERE video_id=?", [time.time(), VID]
+            )
+        return rows
+
+    monkeypatch.setattr(arc.db, "all", all_then_lookup)
+    assert arc.evict_to_fit(0) == (0, 0)
+    assert arc.lookup(VID) is not None and arc.path_of(kept).is_file()

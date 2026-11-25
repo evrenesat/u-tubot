@@ -143,3 +143,14 @@ async def test_the_artifact_routes_are_admin_only(env):
     assert (await other.get(f"/v1/admin/videos/{VID}/artifacts")).status_code == 403
     assert (await other.delete(f"/v1/admin/videos/{VID}/artifacts")).status_code == 403
     await other.aclose()
+
+
+async def test_analysis_failures_use_the_summary_cooldown(env):
+    registry = env.svc.assessor.tier2
+    cooldown = env.cfg.summary.failure_cooldown_s
+    assert cooldown == 120
+    assert registry._cooldown == cooldown
+    registry._failures[VID] = (time.time() - cooldown / 2, "boom")
+    assert registry.recent_failure(VID) == "boom"
+    registry._failures[VID] = (time.time() - cooldown - 1, "boom")
+    assert registry.recent_failure(VID) is None

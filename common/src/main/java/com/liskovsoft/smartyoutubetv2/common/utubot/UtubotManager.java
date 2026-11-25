@@ -78,6 +78,12 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     private final Object mConnectionLock = new Object();
     /** The scope of the disk cache for the connection of the settings, null until the backend told its version */
     private volatile String mDiskScope;
+    /**
+     * How often an open disk cache asks the backend version again: an update in place keeps the address but not the answers.
+     * Package-private so tests can force the check; only read on io threads.
+     */
+    volatile long mVersionRecheckMs = 60_000;
+    private volatile long mVersionCheckedAt;
     private String mSessionPrompt;
     private PromptList mPrompts;
     private UtubotCaptionsFollower mCaptionsFollower;
@@ -240,7 +246,11 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     boolean useDiskCache(UtubotClient client) {
         if (mDiskScope != null) {
-            return isCurrent(client);
+            if (!isCurrent(client)) {
+                return false;
+            }
+
+            return versionStillCurrent(client);
         }
 
         try {
@@ -279,6 +289,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
                 }
 
                 mDiskScope = scope;
+                mVersionCheckedAt = System.currentTimeMillis();
             }
 
             return true;
@@ -286,6 +297,58 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             Log.d(TAG, "The disk cache stays closed: %s", error.getMessage());
             return false;
         }
+    }
+
+    /**
+     * The backend may have restarted in place (a new version at the same address): its answers are not the old ones. Checked at
+     * most once per {@link #mVersionRecheckMs}, so a request does not pay an extra health call every time.
+     */
+    private boolean versionStillCurrent(UtubotClient client) {
+        long now = System.currentTimeMillis();
+        long generation;
+        String scope;
+
+        synchronized (mConnectionLock) {
+            if (mDiskScope == null || !isCurrent(client)) {
+                return mDiskScope != null;
+            }
+
+            if (now - mVersionCheckedAt < mVersionRecheckMs) {
+                return true;
+            }
+
+            // Before the network call: the other io threads do not ask as well while this one waits
+            mVersionCheckedAt = now;
+            generation = mConnectionGeneration;
+            scope = mDiskScope;
+        }
+
+        String version;
+
+        try {
+            version = client.serverVersion();
+        } catch (IOException | RuntimeException error) {
+            // The request itself will report an unreachable backend; keep what is on disk for when it is back
+            Log.d(TAG, "Can't check the backend version: %s", error.getMessage());
+            return true;
+        }
+
+        synchronized (mConnectionLock) {
+            // A switch of backend, token or disk scope while the health call ran: this answer is not that connection's
+            if (generation != mConnectionGeneration || !isCurrent(client) || !scope.equals(mDiskScope)) {
+                return false;
+            }
+        }
+
+        if (UtubotDiskCache.scopeOf(mSettings.getUrl(), mSettings.getToken(), version).equals(scope)) {
+            return true;
+        }
+
+        Log.d(TAG, "The backend reports version %s: the caches of the old one start over", version);
+        onConnectionChanged();
+        useDiskCache(client);
+
+        return mDiskScope != null && isCurrent(client);
     }
 
     /**

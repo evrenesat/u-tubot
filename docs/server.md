@@ -95,7 +95,8 @@ default; without the table every cuts route reports "not configured". Pick it wi
 an old entry is ignored.)
 
 **`[summary]`**: `token_budget`, `chunk_tokens`, `chars_per_token`, `strategy` (`map_reduce` or `truncate`),
-`default_wait_ms`, `wait_ms_cap`, `adhoc_ttl_s`, `max_summary_chars`, `max_import_bytes`, `import_timeout_s`,
+`default_wait_ms`, `wait_ms_cap`, `adhoc_ttl_s`, `max_summary_chars`, `failure_cooldown_s` (`120`: how long a non-busy model
+failure of a summary, insight, answer or background analysis is remembered before asking again), `max_import_bytes`, `import_timeout_s`,
 `import_allow_hosts`, `import_max_redirects`, `panel_prompt` (prompt for the side panel's automatic summaries, default
 `"builtin/glance"`; each user can choose their own), `auto_long` (default `false`: also generate the user's default long summary in
 the background after a panel summary; a user's `auto_long` policy field overrides it), `auto_long_max_concurrent` (default `2`,

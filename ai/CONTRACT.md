@@ -755,9 +755,21 @@ Every media file a pipeline downloads from YouTube is kept once, content-address
 read from the archive first and download only when the media is missing, so a video is never fetched twice.
 
 - `GET /v1/admin/archive?video_id=&limit=` -> `{"files","usage_bytes","quota_bytes","state":"ok|warn|full","entries":[...rows...]}`.
-- `DELETE /v1/admin/archive/{video_id}` -> `{"ok":true,"removed","bytes_freed","stage_cache_rows_removed"}`; `404` when nothing is stored for it. This is the
-  only cleanup: nothing in the archive is ever deleted automatically. At `quota_bytes` (0: no limit) new downloads are refused
-  (the job fails with "The media archive is full...") until an admin removes entries; at `warn_frac` (0.9) a warning is logged.
+- `DELETE /v1/admin/archive/{video_id}` -> `{"ok":true,"removed","bytes_freed","stage_cache_rows_removed"}`; `404` when nothing is stored for it.
+  Without eviction this is the only cleanup: nothing in the archive is deleted automatically. At `quota_bytes` (0: no limit) new
+  downloads are refused (the job fails with "The media archive is full...") until an admin removes entries; at `warn_frac` (0.9) a
+  warning is logged.
+- `[archive] eviction` (`never`, the default, or `lru`) and `evict_protect_s` (default `3600`): with `lru` a download that would start
+  at or past `quota_bytes` first frees the least recently used entries (a lookup hit stamps the row's use; an entry never read counts
+  from its `fetched_at`) until the usage fits; a stored file that leaves the archive over the quota frees what it can, never itself.
+  Entries used within `evict_protect_s` and the file just stored are never evicted; when that is not enough the download is refused as
+  without eviction.
+- `GET /v1/admin/videos/{video_id}/artifacts` -> `{"video_id","artifacts":[{"kind","rows","bytes","newest_at"}],"total_bytes"}`
+  (per kind: `metadata`, `transcript`, `captions`, `triage`, `analysis`, `summary`, `condensed`, `insight`, `pipeline`, `verdict`,
+  `archive`).
+- `DELETE /v1/admin/videos/{video_id}/artifacts?kind=summary&kind=...` -> `{"ok":true,"removed":{kind:rows}}` (`400` for an unknown
+  kind). With no `kind` it removes every kind but the media archive; `kind=archive` removes the archived media, as the archive delete
+  above.
 - `GET /v1/admin/status` also carries `"archive":{"files","usage_bytes","quota_bytes","state"}`.
 
 Every response carries `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and

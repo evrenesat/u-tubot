@@ -52,13 +52,19 @@ EVICT_LRU = "lru"
 class MediaArchiveFull(RuntimeError):
     """The archive is at its quota: a new download is refused, nothing was downloaded."""
 
-    def __init__(self, usage: int, quota: int):
+    def __init__(self, usage: int, quota: int, eviction: bool = False):
         super().__init__(f"media archive full: {usage} of {quota} bytes used")
         self.usage = usage
         self.quota = quota
+        self.eviction = eviction
 
     @property
     def message(self) -> str:
+        if self.eviction:
+            return (
+                "The media archive is full; the least recently used entries are protected or "
+                "still in use, so an admin must free space in it."
+            )
         return (
             "The media archive is full; an admin must free space in it "
             "(nothing is deleted automatically)."
@@ -183,7 +189,7 @@ class MediaArchive:
             usage = self.usage()
         if usage >= quota:
             log.warning("media archive full: %d of %d bytes; refusing new downloads", usage, quota)
-            raise MediaArchiveFull(usage, quota)
+            raise MediaArchiveFull(usage, quota, self.cfg.archive.eviction == EVICT_LRU)
 
     def _warn_level(self) -> bool:
         """True when the usage stands at or above `warn_frac` of a set quota."""
@@ -350,15 +356,34 @@ class MediaArchive:
         for row in rows:
             if self.usage() <= target:
                 break
-            if keep and (row["video_id"], row["sha256"]) == keep:
+            # The snapshot was taken before the loop: a lookup may have stamped this row since,
+            # so read the current row again and never drop one a job has just started using.
+            current = self.db.one(
+                "SELECT * FROM media_archive WHERE video_id=? AND sha256=?",
+                [row["video_id"], row["sha256"]],
+            )
+            if current is None:
                 continue
-            entries, freed = self._drop([row])
+            if keep and (current["video_id"], current["sha256"]) == keep:
+                continue
+            used = (
+                current["last_used_at"]
+                if current["last_used_at"] is not None
+                else current["fetched_at"]
+            )
+            if used >= cutoff:
+                log.info(
+                    "media archive: %s was used while eviction ran; kept",
+                    current["video_id"],
+                )
+                continue
+            entries, freed = self._drop([current])
             total_entries += entries
             total_freed += freed
             log.info(
                 "media archive: evicted the least recently used file of %s (%d bytes)",
-                row["video_id"],
-                int(row["size"]),
+                current["video_id"],
+                int(current["size"]),
             )
         return total_entries, total_freed
 

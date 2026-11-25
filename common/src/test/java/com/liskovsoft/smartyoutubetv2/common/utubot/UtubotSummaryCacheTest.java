@@ -35,6 +35,7 @@ public class UtubotSummaryCacheTest {
     private static final String DELAYED_ID = "delayedBBBB";
     private static final String BUSY_ID = "busyCCCCCCC";
     private static final String READY_ID = "readyDDDDDD";
+    private static final String SECOND_READY_ID = "readyFFFFFF";
     private static final String PENDING_ID = "pendingEEEE";
     private static final String SLOW_ID = "slowFFFFFFFF";
     private static final int WAIT_MS = 5000;
@@ -52,6 +53,7 @@ public class UtubotSummaryCacheTest {
                 "\"retry_after_s\":30}");
         answer(BUSY_ID, "{\"video_id\":\"" + BUSY_ID + "\",\"status\":\"pending\",\"transcript_status\":\"transcribing\",\"progress\":0.4}");
         answer(READY_ID, "{\"video_id\":\"" + READY_ID + "\",\"status\":\"ready\",\"text\":\"- one\",\"source\":\"asr\"}");
+        answer(SECOND_READY_ID, "{\"video_id\":\"" + SECOND_READY_ID + "\",\"status\":\"ready\",\"text\":\"- two\",\"source\":\"asr\"}");
         answer(PENDING_ID, "{\"video_id\":\"" + PENDING_ID + "\",\"status\":\"pending\"}");
 
         mActivity = Robolectric.buildActivity(Activity.class).setup().get();
@@ -165,6 +167,38 @@ public class UtubotSummaryCacheTest {
 
         answerHealth("1.1");
         mManager.onConnectionChanged();
+        ask(READY_ID);
+
+        assertEquals(2, mRequests.get());
+    }
+
+    @Test
+    public void aBackendUpdatedInPlaceAsksAgain() {
+        answerHealth("1.0");
+        ask(READY_ID);
+        assertEquals(1, mRequests.get());
+
+        // The same address now reports another version: the summaries of the old one are not its answers
+        answerHealth("1.1");
+        mManager.mVersionRecheckMs = 0;
+        ask(SECOND_READY_ID);
+
+        assertEquals(2, mRequests.get());
+        Summary again = ask(READY_ID);
+
+        assertEquals(3, mRequests.get());
+        assertEquals("- one", again.text);
+        assertEquals("asr", again.source);
+    }
+
+    @Test
+    public void aVersionCheckOnTheSameBackendKeepsTheSummary() {
+        answerHealth("1.0");
+        ask(READY_ID);
+        assertEquals(1, mRequests.get());
+
+        mManager.mVersionRecheckMs = 0;
+        ask(SECOND_READY_ID);
         ask(READY_ID);
 
         assertEquals(2, mRequests.get());
