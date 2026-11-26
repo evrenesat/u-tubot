@@ -390,6 +390,10 @@ public class BrowsePresenterProcessedTest {
         }
 
         @Override
+        public void showRefreshing(boolean show) {
+        }
+
+        @Override
         public void focusOnContent() {
         }
 

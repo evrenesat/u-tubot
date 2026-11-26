@@ -414,7 +414,7 @@ public class ModernBrowseFragment extends Fragment implements BrowseView, Modern
 
         if (show) {
             refresh.setText(getString(R.string.refreshing));
-            refresh.setCompoundDrawable(null);
+            TextViewCompat.setCompoundDrawablesRelative(refresh, null, null, null, null);
             refresh.setContentDescription(getString(R.string.refreshing));
         } else {
             refresh.setText(null);
@@ -422,8 +422,8 @@ public class ModernBrowseFragment extends Fragment implements BrowseView, Modern
             if (icon != null) {
                 icon.setTint(ContextCompat.getColor(getContext(), R.color.modern_search_text));
             }
-            refresh.setCompoundDrawable(icon);
-            refresh.setContentDescription(getString(R.string/browse_refresh));
+            TextViewCompat.setCompoundDrawablesRelative(refresh, icon, null, null, null);
+            refresh.setContentDescription(getString(R.string.browse_refresh));
         }
     }
 
