@@ -208,6 +208,7 @@ max_tokens = 2000
 # default_wait_ms = 3000           # a cuts GET waits this long for a build before answering
 # wait_ms_cap = 20000              # ... and never longer than this, whatever `wait_ms` asks
 # transcript_wait_s = 900.0        # how long a cut waits for a transcript to be built
+# client_captions_wait_s = 120.0   # after a 403, how long a cut waits for the TV to upload its own captions before failing
 # length_tolerance = 0.15          # a preset with a target length keeps target +/- this fraction
 # over_ask_frac = 0.2              # the model is asked for this much more than the target
 # preset_target_s = { "cut-highlights-5" = 300 }   # target kept seconds per preset id
@@ -328,6 +329,11 @@ captions_cooldown_max_s = 1800.0   # tighter ceiling for the caption API (timedt
 captions_probe_retry_s = 10.0      # retry hint to clients while the one background probe of a caption class that just cooled down is out
 network_retry_s = 60.0             # retry hint to clients after a network error (does not open the breaker)
 max_background_queue = 5           # tier-2 is not scheduled while this many background fetches wait
+# A download refused by YouTube (HTTP 403) is retried with the next player client in this list, in
+# order, before it fails. Each is an yt-dlp innertube client (web, android, tv, ios, mweb): the first
+# answers the common case, the rest resolve a 403 that is specific to one player.
+# player_clients = ["web", "android"]   # default; the rest are tried only on a 403
+# forbidden_backoff_s = 1.0             # wait this long (seconds) between player-client retries of a refused download
 # yt-dlp needs a JavaScript runtime to unscramble some YouTube stream URLs (the "n challenge"). A service started
 # by systemd often has no `deno` on its PATH, so name it. The solver script is not part of yt-dlp itself:
 # allow its download once (it is cached) or install the `yt-dlp-ejs` package that matches your yt-dlp.

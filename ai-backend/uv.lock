@@ -2013,6 +2013,7 @@ watched = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pillow" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -2035,6 +2036,7 @@ provides-extras = ["asr", "diarization", "watched"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "pillow", specifier = ">=12.1.1" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "ruff", specifier = ">=0.7" },

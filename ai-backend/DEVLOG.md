@@ -1,3 +1,12 @@
+## 2026-11-26 (a refused download retries, then asks the TV for captions, issue #205)
+
+- A 403 from yt-dlp (audio download and metadata extract) is retried with the next `[youtube] player_clients` entry (default `web`, `android`)
+  after `forbidden_backoff_s`; only after the last one is the failure classified (breaker opened once).
+- A cut whose transcript job failed with a refused download waits up to `[cuts] client_captions_wait_s` (120 s) for the TV's captions
+  (`/captions/client`) with the request in `needs_transcript` and error "YouTube refused the server; using the TV's captions…", then builds
+  or fails. The TV's cut picker shows that message. The `youtube_forbidden` usage metric counts refusals per day.
+- Migration: none (the metric is a row in the existing `usage_daily`). Tests: `test_youtube_retry.py`, three in `test_cuts_api.py`.
+
 ## 2026-11-26 (voice control checkpoint 1: consent, history, contract; issues #188, #181)
 
 - `[voice] enabled` (default `false`, `VoiceConfig`): with it off the voice routes answer 404, `/v1/me` only gains `features.voice = false`,

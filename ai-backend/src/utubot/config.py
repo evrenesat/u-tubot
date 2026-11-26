@@ -181,6 +181,12 @@ class YoutubeConfig(BaseModel):
     js_runtime: Literal["deno", "node", "bun", "quickjs"] = "deno"
     js_runtime_path: str = ""
     remote_components: list[str] = Field(default_factory=list)
+    # Player clients a refused download is retried with, in order, before giving up. Each is an
+    # yt-dlp innertube client (`web`, `android`, `tv`, `ios`, `mweb`); the first answers the common
+    # case, the rest resolve a 403 that is specific to one player. See `forbidden_backoff_s`.
+    player_clients: list[str] = Field(default_factory=lambda: ["web", "android"])
+    # How long to wait between player-client retries of a refused (HTTP 403) download.
+    forbidden_backoff_s: float = 1.0
 
 
 class ArchiveConfig(BaseModel):
@@ -357,6 +363,10 @@ class CutsConfig(BaseModel):
     wait_ms_cap: int = 20000
     transcript_wait_s: float = 900.0
     poll_s: float = 2.0
+    # After a YouTube download is refused (HTTP 403), how long to wait for the TV to upload its own
+    # captions (the client proxy path) before the cut fails. The TV only uploads while it plays the
+    # video, so this is the window a viewer has to have it open.
+    client_captions_wait_s: float = 120.0
     max_report_chars: int = 4000
     # Repair of old near-full map/reduce cuts: a kept share over this, on a preset without a
     # target, is rebuilt once (`utubot cuts repair`, and on server start). A cut with no stored

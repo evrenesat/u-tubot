@@ -378,7 +378,10 @@ public final class UtubotMenu {
             case UtubotModels.CutState.BUILDING:
                 return context.getString(R.string.utubot_cut_state_building);
             case UtubotModels.CutState.NEEDS_TRANSCRIPT:
-                return context.getString(R.string.utubot_cut_state_needs_transcript);
+                // The server says what happens next (it waits for this TV's captions after YouTube refused it)
+                return preset.error != null && !preset.error.isEmpty()
+                        ? preset.error
+                        : context.getString(R.string.utubot_cut_state_needs_transcript);
             case UtubotModels.CutState.FAILED:
                 return preset.error != null
                         ? context.getString(R.string.utubot_cut_state_failed, preset.error)
