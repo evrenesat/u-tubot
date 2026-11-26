@@ -415,7 +415,9 @@ contract is built for both. Exceptions, each with its reason:
 
 - The QR sheet of "Describe on phone…": TV only. The extension has a keyboard, takes the description itself
   (`POST /v1/videos/{id}/cuts {"prompt"}`) and opens the cut sheet (`/cuts/{request_id}`) in a tab.
-- The sponsor-segment merge of a cut jump: TV only. The browser has no built-in sponsor skip.
+- The sponsor-segment merge of a cut jump and turning SponsorBlock fully off while a cut is applied: TV only. The browser has
+  no built-in sponsor skip, so neither the merge of the cut's jump past the sponsor segments nor the suppression of the sponsor
+  skip over the cut's ranges applies; it comes back when the cut is off or the video has no active cut.
 - The browse cache: TV only. YouTube's site owns its own loading.
 - The 3-day disk cache of ready verdicts and summaries: TV only. It is scoped to the backend version; the extension
   keeps its caches in `storage.session`, which ends with the browser session, and does not keep failures either.

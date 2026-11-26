@@ -538,6 +538,15 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     }
 
     /**
+     * A director's cut is applied to the video that plays: while this is true, the sponsor block stays fully off (no skip, no prompt)
+     * so the two do not fight over the same section (u·tubot#145). It goes off again when the cut is taken off or the video has no
+     * active cut.
+     */
+    public boolean isCutActive() {
+        return mCut != null;
+    }
+
+    /**
      * The video that plays: a destroyed view returned by the presenter, or one whose engine is released, carries the last video but is
      * no playback (a list picker for that video must start it again through {@link #applyOnOpen(Cut)}, not toggle a cut here)
      */

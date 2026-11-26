@@ -1,3 +1,7 @@
+## 2026-11-26 (SponsorBlock off while a cut is applied, issue #145)
+
+- `SponsorBlockController.skipSegment` returns early while `UtubotCutController.isCutActive()` (a cut is applied to the video that plays), so the sponsor skip and prompt are off and cannot clash with the cut's own jump (`seekToKeptPart`, the cut's skips, the skip toggle). The cut's jump still goes past sponsor segments (one jump). Back on when the cut is taken off or the video has none. Tests: `SponsorBlockControllerTest` (inside, at the start of, straddling a cut-out part).
+
 ## 2026-11-26 (parity matrix row ids, issue #132)
 
 - `ai/BROWSER_EXTENSION_PLAN.md` section 3: the matrix's first column is a stable `id` (`cut-picker`, `whats-new`) instead of a running
