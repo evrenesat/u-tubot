@@ -695,6 +695,9 @@ class ServerConfig(BaseModel):
     users_file: str | None = None
     app_dir: str = "./app"
     public_base_url: str = DEFAULT_PUBLIC_BASE_URL
+    # Longer than the TV client's own idle limit, so a client never reuses a connection
+    # the server already closed ("unexpected end of stream").
+    keep_alive_s: int = 75
 
     def download_url(self, filename: str) -> str:
         base = self.public_base_url.strip().rstrip("/")

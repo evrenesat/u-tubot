@@ -24,6 +24,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         factory=True,
         host=args.host or cfg.server.host,
         port=args.port or cfg.server.port,
+        timeout_keep_alive=cfg.server.keep_alive_s,
     )
     return 0
 
