@@ -200,12 +200,16 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         List<String> changes = changelog != null ? changelog : Collections.emptyList();
         int versionCode = offeredVersionCode();
         mIsInstalling = false;
-        mSettingsPresenter.appendSingleButton(
-                UiOptionItem.from(getContext().getString(R.string.install_update), optionItem -> {
-                    mIsInstalling = true;
-                    GeneralData.instance(getContext()).setChangelog(changes);
-                    mUpdateChecker.installUpdate();
-                }, false));
+        OptionItem installItem = UiOptionItem.from(getContext().getString(R.string.install_update), optionItem -> {
+            mIsInstalling = true;
+            GeneralData.instance(getContext()).setChangelog(changes);
+            mUpdateChecker.installUpdate();
+        }, false);
+        mSettingsPresenter.appendSingleButton(installItem);
+
+        if (isDevelopmentMode()) {
+            mSettingsPresenter.setFocusedItem(installItem);
+        }
 
         if (UtubotSettings.isBuiltIn()) {
             mSettingsPresenter.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.update_not_now), optionItem -> {
@@ -240,6 +244,10 @@ public class AppUpdatePresenter extends BasePresenter<Void> implements AppUpdate
         if (UtubotSettings.isBuiltIn()) {
             UtubotSettings.instance(getContext()).setDismissedUpdate(versionName, versionCode);
         }
+    }
+
+    boolean isDevelopmentMode() {
+        return UtubotSettings.isBuiltIn() && UtubotSettings.instance(getContext()).isDevelopmentMode();
     }
 
     boolean canShowUpdateDialog() {

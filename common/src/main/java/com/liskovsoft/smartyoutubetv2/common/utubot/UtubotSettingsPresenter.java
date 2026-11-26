@@ -81,6 +81,10 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
                 formatDelay(context, mSettings.getPanelDelayMs()), option -> showPanelDelays())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_browse_refresh),
                 formatBrowseRefresh(context, mSettings.getBrowseRefreshMinutes()), option -> showBrowseRefresh())));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_update_interval),
+                formatBrowseRefresh(context, mSettings.getUpdateIntervalMinutes()), option -> showUpdateInterval())));
+        categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_development_mode), context.getString(R.string.utubot_development_mode_desc),
+                option -> mSettings.setDevelopmentMode(option.isSelected()), mSettings.isDevelopmentMode())));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_captions), context.getString(R.string.utubot_auto_captions_desc),
                 option -> mSettings.setAutoCaptionsEnabled(option.isSelected()), mSettings.isAutoCaptionsEnabled())));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_cuts), context.getString(R.string.utubot_auto_cuts_desc),
@@ -119,6 +123,20 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
 
         dialog.appendRadioCategory(context.getString(R.string.utubot_browse_refresh), options);
         dialog.showDialog(context.getString(R.string.utubot_browse_refresh));
+    }
+
+    private void showUpdateInterval() {
+        Context context = getContext();
+        AppDialogPresenter dialog = AppDialogPresenter.instance(context);
+        List<OptionItem> options = new ArrayList<>();
+
+        for (int minutes : UtubotSettings.UPDATE_INTERVAL_CHOICES_MINUTES) {
+            options.add(UiOptionItem.from(formatBrowseRefresh(context, minutes), option -> mSettings.setUpdateIntervalMinutes(minutes),
+                    minutes == mSettings.getUpdateIntervalMinutes()));
+        }
+
+        dialog.appendRadioCategory(context.getString(R.string.utubot_update_interval), options);
+        dialog.showDialog(context.getString(R.string.utubot_update_interval));
     }
 
     /**

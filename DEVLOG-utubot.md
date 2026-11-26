@@ -25,6 +25,15 @@
 
 # u·tubot devlog
 
+## 2026-11-26 (frequent update checks, issue #200)
+
+- The update schedule now reads its interval from the settings after every check: "Update check interval" (5, 15, 60 or 360 min;
+  default 5 min, was a fixed 6 hours). Settings, u·tubot: new "Development mode" switch, on by default in the built-in flavor: an
+  update found while no video plays opens the dialog at once with Install selected (the APK is already downloaded by then). A playing
+  video is never interrupted; the existing deferral offers the update when the player closes.
+- Tests: schedule re-reads the interval, settings defaults, development-mode flag. Gradle ran only the update/settings tests and the
+  app compile.
+
 ## 2026-11-26 (director's cuts quality, port of #106)
 
 - Units: caption fragments close a unit after a quote or bracket that ends the sentence; rolling auto-caption repeats (the tail of

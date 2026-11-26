@@ -68,7 +68,7 @@ Importing a setup from a different server replaces the stored address and drops 
 ## 4. Updates
 
 The app checks the update address from the imported setup (`<server>/app/update.json`) with Electric Eel's update checker:
-shortly after it starts and then at most every 6 hours (*Settings, Updates, Notify about updates* switches this off), or on demand
+shortly after it starts and then every 5 minutes by default (*Settings, u·tubot, Update check interval*; *Settings, Updates, Notify about updates* switches this off), or on demand
 with *Settings, Updates, Check for updates*. It picks the file for the device's architecture and opens the update dialog with the
 changelog. A backend typed by hand in *Advanced* (also on 0.2.0) uses `<server>/app/update.json` too. There is no built-in
 update source: without a server the app never checks for updates. Updates must be signed with the same key as the

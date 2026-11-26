@@ -40,6 +40,8 @@ public class UtubotSettings {
     private static final String KEY_UPDATE_URL = "update_url";
     private static final String KEY_DISMISSED_UPDATE = "dismissed_update";
     private static final String KEY_DISMISSED_UPDATE_CODE = "dismissed_update_code";
+    private static final String KEY_UPDATE_INTERVAL_MINUTES = "update_interval_minutes";
+    private static final String KEY_DEVELOPMENT_MODE = "development_mode";
     private static final String KEY_PENDING_PROMPT_SETS = "pending_prompt_sets";
     private static final String LIST_SEPARATOR = "\n";
     @SuppressLint("StaticFieldLeak")
@@ -409,6 +411,44 @@ public class UtubotSettings {
         if (isPanelDelayChoice(delayMs)) {
             mPrefs.edit().putInt(KEY_PANEL_DELAY_MS, delayMs).apply();
         }
+    }
+
+    /**
+     * Minutes between two automatic update checks while the app is open
+     */
+    public static final int[] UPDATE_INTERVAL_CHOICES_MINUTES = {5, 15, 60, 360};
+    public static final int DEFAULT_UPDATE_INTERVAL_MINUTES = 5;
+
+    public int getUpdateIntervalMinutes() {
+        int stored = mPrefs.getInt(KEY_UPDATE_INTERVAL_MINUTES, DEFAULT_UPDATE_INTERVAL_MINUTES);
+
+        for (int choice : UPDATE_INTERVAL_CHOICES_MINUTES) {
+            if (choice == stored) {
+                return stored;
+            }
+        }
+
+        return DEFAULT_UPDATE_INTERVAL_MINUTES;
+    }
+
+    public void setUpdateIntervalMinutes(int minutes) {
+        for (int choice : UPDATE_INTERVAL_CHOICES_MINUTES) {
+            if (choice == minutes) {
+                mPrefs.edit().putInt(KEY_UPDATE_INTERVAL_MINUTES, minutes).apply();
+                return;
+            }
+        }
+    }
+
+    /**
+     * Development mode: an update found while no video plays is offered at once, with Install focused. On for the built-in flavor.
+     */
+    public boolean isDevelopmentMode() {
+        return mPrefs.getBoolean(KEY_DEVELOPMENT_MODE, isBuiltIn());
+    }
+
+    public void setDevelopmentMode(boolean enabled) {
+        mPrefs.edit().putBoolean(KEY_DEVELOPMENT_MODE, enabled).apply();
     }
 
     public int getBrowseRefreshMinutes() {
