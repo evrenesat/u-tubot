@@ -74,6 +74,9 @@ so the other flavors behave as before.
 | `common/.../utubot/UtubotFilmsDeveloperPresenter.java`, `UtubotSettings.java`, `UpdatesSettingsPresenter.java`, `smarttubetv/src/stutubot/.../films/RealDebridFilmsActivity.java` | new: Settings, Updates, switch "Films developer entry" (off by default, built-in flavor only; its address, token, IMDb id and skip list live in the private `UtubotSettings` prefs, never logged) shows "Films (developer)": address, token, IMDb id, skip list, "List streams" which opens the film screen (stutubot flavor, not exported, closes itself when the switch is off) | the hidden developer entry of the spike; the codec checklist is `docs/films-codec-checklist.md` |
 | `tv/presenter/VideoCardPresenter.java` | mark with own colour, `addMark` overload, card tag | mark rendering, panel reads the focused card |
 | `tv/ui/modern/widgets/ModernVideoCard.java` | card tag | panel reads the focused card |
+| `smarttubetv/src/main/res/layout/modern_video_card.xml` | `modern_card_utubot_summary` in the thumb frame, top-end, gone by default, own focus background and the `settings_utubot` symbol, clickable but not focusable | the card's visible touch entry to the Summary view on a tablet |
+| `tv/ui/modern/widgets/ModernVideoCard.java` | `setupUtubotSummaryControl(Video)`: show the card's touch entry only while the screen is touch (`Helpers.isTouchSupported`), hide it otherwise; called at the end of `bind` | the entry is visible on a tablet, hidden on a D-pad screen |
+| `tv/presenter/VideoCardPresenter.java` | `setupUtubotSummaryControl(ComplexImageCardView, Video, Context)`: show the classic card's touch entry only on a touch screen, programmatic, removed on unbind | the entry is visible on a tablet, hidden on a D-pad screen |
 | `tv/ui/common/LeanbackActivity.java` | `UtubotPanelController` (key dispatch, resume, pause) | passive Summary panel and the Summary view (not in the player activity) |
 
 ## Behaviour
@@ -127,8 +130,13 @@ so the other flavors behave as before.
    a few seconds to read. Any D-pad or keyboard key pauses it, and it resumes on its own a few seconds after the key; Up and Down still
    scroll one page at a time, and waiting long enough shows the whole text. The view turns it on when the state is Ready and off while
    it is opening or waiting (`UtubotSummaryOverlay`), which is the one view that renders both the Summary and the AI answer (`isAnswer`),
-   so the answer scrolls the same way. A long press of the Back key closes the view and cancels the scroll (`UtubotPageScrollView`,
-   `UtubotAutoScroll`).
+    so the answer scrolls the same way. A long press of the Back key closes the view and cancels the scroll (`UtubotPageScrollView`,
+    `UtubotAutoScroll`).
+- The cards' Summary entry on a touch screen (tablet): a tablet has no Info key, no Menu key and no D-pad, so the Summary view and the
+  menu need a visible entry. Each card shows a small u·tubot symbol at the top-end of its thumb (`modern_card_utubot_summary`, the classic
+  card gets the same control programmatic), visible only while the screen is touch (`Helpers.isTouchSupported`), hidden on a D-pad screen;
+  it is clickable but not focusable, so it does not steal the D-pad. A tap on it opens the Summary view with `UtubotUiHost.request(UtubotOpenRequests.Kind.SUMMARY, video)` — the same call the Info key and the menu's "u·tubot summary" item make — the prompts on the left, the text
+  on the right, Back closing it with the focus back on the card. The long press of a card still opens the u·tubot menu (`LongClickPresenter`), so the cut picker and the AI answer stay reachable by touch. `UtubotPanelControllerTest`.
 - Transcript states (`UtubotPanelModel`, "Transcript status" of `ai/CONTRACT.md`): the words are the server's, the app's own strings are
   the fallback for an answer that has none (`UtubotStateText`, one place for the panel, the Summary view and the AI answer).
   - `needs_transcript`: the panel and the view show the server's `message` (the plain "No captions..." question, or "Captions are

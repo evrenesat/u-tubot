@@ -7,6 +7,9 @@ import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Build.VERSION;
+import android.view.Gravity;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.TextUtils;
@@ -52,7 +55,9 @@ import com.liskovsoft.smartyoutubetv2.tv.presenter.base.LongClickPresenter;
 import com.liskovsoft.smartyoutubetv2.tv.ui.browse.video.GridFragmentHelper;
 import com.liskovsoft.smartyoutubetv2.tv.ui.widgets.complexcardview.ComplexImageCardView;
 import com.liskovsoft.smartyoutubetv2.tv.util.ViewUtil;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotOpenRequests;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPolicy;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUiHost;
 
 /*
  * A CardPresenter is used to generate Views and bind Objects to them on demand.
@@ -171,6 +176,10 @@ public class VideoCardPresenter extends LongClickPresenter {
         Context context = cardView.getContext();
         cardView.setTag(R.id.utubot_card_video, video); // read by the Summary panel (see UtubotPanelController)
 
+        // A touch device has no Info or Menu key: the u·tubot symbol on the card opens the Summary view (a long press opens the menu),
+        // the same code path as the key
+        setupUtubotSummaryControl(cardView, video, context);
+
         cardView.setTitleText(video.getTitle());
         cardView.setContentText(getContentText(context, video, cardView.isSelected()));
         // Count progress that very close to zero. E.g. when user closed video immediately.
@@ -246,6 +255,11 @@ public class VideoCardPresenter extends LongClickPresenter {
 
         ComplexImageCardView cardView = (ComplexImageCardView) viewHolder.view;
 
+        View control = cardView.findViewWithTag(UTUBOT_SUMMARY_TAG);
+        if (control != null) {
+            cardView.removeView(control);
+        }
+
         if (mHold != null) {
             mHold.drop(cardView);
         }
@@ -258,6 +272,46 @@ public class VideoCardPresenter extends LongClickPresenter {
 
         // Cleanup Glide resources. https://chatgpt.com/share/682120c5-e428-8010-b848-371b2dec0cd5
         Glide.with(cardView.getContext().getApplicationContext()).clear(cardView.getMainImageView());
+    }
+
+    private static final String UTUBOT_SUMMARY_TAG = "utubot_card_summary_control";
+
+    /**
+     * The touch entry point for the Summary view on a tablet: the u·tubot symbol in the corner of the card opens it, reusing the menu's
+     * request so the view behaves exactly as when the Info key or the menu opens it. Hidden on a D-pad screen, where the key is the entry.
+     */
+    private void setupUtubotSummaryControl(ComplexImageCardView card, Video video, Context context) {
+        if (!Helpers.isTouchSupported(context)) {
+            View existing = card.findViewWithTag(UTUBOT_SUMMARY_TAG);
+            if (existing != null) {
+                card.removeView(existing);
+            }
+            return;
+        }
+
+        if (card.findViewWithTag(UTUBOT_SUMMARY_TAG) != null) {
+            return; // already added, e.g. a rebound card
+        }
+
+        ImageView control = new ImageView(context);
+        control.setImageDrawable(ContextCompat.getDrawable(context, R.drawable.settings_utubot));
+        control.setContentDescription(context.getString(R.string.utubot_summary_item));
+        control.setClickable(true);
+        control.setBackground(ContextCompat.getDrawable(context, R.drawable.utubot_button_background));
+        control.setTag(UTUBOT_SUMMARY_TAG);
+
+        int size = context.getResources().getDimensionPixelSize(R.dimen.utubot_card_control_size);
+        int margin = context.getResources().getDimensionPixelSize(R.dimen.utubot_card_control_margin);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size);
+        params.gravity = Gravity.TOP | Gravity.END;
+        params.setMargins(margin, margin, margin, margin);
+        control.setLayoutParams(params);
+        control.setOnClickListener(v -> {
+            if (UtubotUiHost.canOpen()) {
+                UtubotUiHost.request(UtubotOpenRequests.Kind.SUMMARY, video);
+            }
+        });
+        card.addView(control);
     }
 
     /**

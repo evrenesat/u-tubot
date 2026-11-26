@@ -83,6 +83,15 @@
   in `UtubotSettings`. Stray `temp/pr-body-*.md` files removed. The on-TV codec matrix is the owner's: `docs/films-codec-checklist.md`.
 - Tests: `UtubotRealDebridClientTest` (fake addon, no real network), `UtubotRealDebridSkipsTest`, `UtubotFilmsDeveloperPresenterTest`.
 
+## 2026-11-26 (Tablet touch entry points for the Summary view and menu, UTB-243)
+
+- A tablet has no Info key, no Menu key and no D-pad, so the Summary view and the u·tubot menu needed a visible entry on the card. Each
+  card now shows a small u·tubot symbol at the top-end of its thumb (`modern_card_utubot_summary`, the classic card gets the same control
+  programmatic in `VideoCardPresenter.setupUtubotSummaryControl`), visible only while the screen is touch (`Helpers.isTouchSupported`),
+  hidden on a D-pad screen. The control is clickable but not focusable, so it does not steal the D-pad. A tap opens the Summary view with
+  `UtubotUiHost.request(SUMMARY, video)` — the same call the Info key and the menu's "u·tubot summary" item make — prompts on the left, the
+  text on the right, Back closing it with the focus back on the card. The long press of a card still opens the u·tubot menu (`LongClickPresenter`), so the cut picker and the AI answer stay reachable by touch. `UtubotPanelControllerTest`.
+
 ## 2026-11-26 (voice plan checkpoint 0: gates, issue #180)
 
 - `ai/VOICE_CONTROL_PLAN.md`: owner decisions recorded (all as recommended; R2T4 is MIT, evrenesat/r2t4#22). Measured on the owner's server, from the backend's container with its own gateway key, no config changed: speech-to-text `stt` 50th 0.34 s / 90th 0.43 s; intent `fast` 12.2 / 25.4 s and `coder` 3.0 / 5.4 s (both aliases think despite `reasoning_effort: none`, 3 of 20 calls hit the 120-token cap); no speech-out route on the gateway; backend loop on `/v1/health` 1.9 / 2.2 ms, worst 57 to 111 ms; WebSocket through the proxy chain not provable without a config change. Sections 2.5 and 5.2 carry the numbers and who must act; the infra task is evrenesat/evreniops#250.

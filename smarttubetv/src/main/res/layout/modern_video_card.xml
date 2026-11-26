@@ -21,6 +21,18 @@
             android:importantForAccessibility="no"
             android:scaleType="centerCrop" />
 
+        <ImageView
+            android:id="@+id/modern_card_utubot_summary"
+            android:layout_width="@dimen/utubot_card_control_size"
+            android:layout_height="@dimen/utubot_card_control_size"
+            android:layout_gravity="top|end"
+            android:layout_margin="@dimen/utubot_card_control_margin"
+            android:background="@drawable/utubot_button_background"
+            android:clickable="true"
+            android:importantForAccessibility="no"
+            android:src="@drawable/settings_utubot"
+            android:visibility="gone" />
+
         <LinearLayout
             android:id="@+id/modern_card_duration_box"
             android:layout_width="wrap_content"

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="utubot_card_video" type="id" />
+    <item name="utubot_card_utubot_summary" type="id" />
     <item name="utubot_overlay_list" type="id" />
     <item name="utubot_overlay_text" type="id" />
     <item name="utubot_overlay_retry" type="id" />
@@ -59,4 +60,7 @@
     <dimen name="utubot_badge_margin">20dp</dimen>
     <dimen name="utubot_badge_padding">8dp</dimen>
     <dimen name="utubot_badge_count_size">12sp</dimen>
+
+    <dimen name="utubot_card_control_size">32dp</dimen>
+    <dimen name="utubot_card_control_margin">6dp</dimen>
 </resources>
