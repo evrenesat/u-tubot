@@ -23,7 +23,10 @@ PANEL_ALIAS = "panel"
 TASK_SUMMARY = "summary"
 TASK_GLANCE = "glance"
 TASK_CUTS = "cuts"
-TASKS = (TASK_SUMMARY, TASK_GLANCE, TASK_CUTS)
+TASK_RESEARCH = "research"
+TASKS = (TASK_SUMMARY, TASK_GLANCE, TASK_CUTS, TASK_RESEARCH)
+# The research kinds a request builds; a typed question always uses "open".
+RESEARCH_KINDS = ("fact-check", "worth-it", "viewpoints", "open")
 # The user's own director's-cut presets live in this prompt set; only the phone's Cuts tab
 # manages them (plan v2: saved presets are phone-only in v1).
 CUT_SET_ID = "cut-presets"
@@ -42,6 +45,9 @@ TEMPLATE_VARS = (
     "transcript",
     "language",
     "question",
+    # Research phases: the checked claims (plan) and the gathered evidence (write) are spliced in.
+    "items",
+    "evidence",
 )
 VAR_RE = re.compile(r"\{(" + "|".join(TEMPLATE_VARS) + r")\}")
 MAX_PROMPTS_PER_SET = 50
@@ -121,6 +127,22 @@ def cut_preset_prompt(name: str) -> Prompt:
     )
 
 
+def research_prompt(
+    id: str, label: str, kind: str, plan: str, template: str, max_items: int = 6
+) -> Prompt:
+    """A built-in research prompt: the kind of document, the plan instruction, and the write
+    template (which may use ``{items}`` and ``{evidence}`` but never ``{transcript}``)."""
+    return Prompt(
+        id=id,
+        label=label,
+        system=RESEARCH_SYSTEM,
+        template=template,
+        max_tokens=2000,
+        task=TASK_RESEARCH,
+        research=ResearchPrompt(kind=kind, plan=plan, max_items=max_items),
+    )
+
+
 GLANCE_TEMPLATE = (
     "Title: {title}\nChannel: {channel}\nDuration: {duration}\n"
     "Question the title poses (detected earlier, may be empty): {question}\n\n"
@@ -150,9 +172,49 @@ ANSWER_TITLE_TEMPLATE = (
     "instead."
 )
 
+RESEARCH_SYSTEM = (
+    "You research a YouTube video for a viewer on a TV remote. Use only sources you can actually "
+    "cite; never invent details, sources or quotes. Be concrete and faithful, and when you have not "
+    "found authoritative evidence say so plainly. Plain text, no preamble. Reply in {language}."
+)
+
 
 class PromptError(ValueError):
     pass
+
+
+class ResearchPrompt(BaseModel):
+    """The research-specific fields of a research prompt (task ``research``).
+
+    ``kind`` is the document kind (see ``RESEARCH_KINDS``), ``plan`` is the instruction the model
+    is given to plan the research, and ``max_items`` caps how many claims or positions a result
+    may carry (it may lower the server limit, never raise it).
+    """
+
+    kind: str
+    plan: str
+    max_items: int = 6
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        if v not in RESEARCH_KINDS:
+            raise ValueError(f"research kind must be one of {', '.join(RESEARCH_KINDS)}")
+        return v
+
+    @field_validator("plan")
+    @classmethod
+    def _plan(cls, v: str) -> str:
+        if not v.strip() or len(v) > MAX_TEXT_CHARS:
+            raise ValueError("research plan empty or too long")
+        return v
+
+    @field_validator("max_items")
+    @classmethod
+    def _max_items(cls, v: int) -> int:
+        if not 1 <= v <= 50:
+            raise ValueError("research max_items must be 1..50")
+        return v
 
 
 class Prompt(BaseModel):
@@ -167,6 +229,8 @@ class Prompt(BaseModel):
     # A saved cut preset's explicit length: minutes kept, or the fraction of the video kept.
     length_min: float | None = None
     length_frac: float | None = None
+    # Research prompts only: the kind, plan instructions and item cap (see ResearchPrompt).
+    research: ResearchPrompt | None = None
 
     @field_validator("length_min")
     @classmethod
@@ -186,6 +250,21 @@ class Prompt(BaseModel):
     def _one_length(self) -> Prompt:
         if self.length_min and self.length_frac:
             raise ValueError("give the length in minutes or as a fraction, not both")
+        return self
+
+    @model_validator(mode="after")
+    def _research(self) -> Prompt:
+        """Research prompts carry their kind and plan, and never use the transcript template."""
+        if self.task != TASK_RESEARCH:
+            if self.research is not None:
+                raise ValueError("research fields are only for the research task")
+            return self
+        if self.research is None:
+            raise ValueError("a research prompt needs its kind, plan and item cap")
+        if "{transcript}" in self.template:
+            raise ValueError(
+                "a research template may not use {transcript}; the pipeline supplies the transcript"
+            )
         return self
 
     @field_validator("id")
@@ -229,6 +308,8 @@ class Prompt(BaseModel):
             parts.append(self.task)
         if self.length_min or self.length_frac:
             parts.append([self.length_min, self.length_frac])
+        if self.research is not None:
+            parts.append(self.research.model_dump())
         blob = json.dumps(parts, ensure_ascii=False)
         return hashlib.sha256(blob.encode()).hexdigest()
 
@@ -353,6 +434,78 @@ BUILTIN_SET = PromptSet(
                 "on why it matters. Max 1000 characters."
             ),
             max_tokens=700,
+        ),
+        research_prompt(
+            "research-fact-check",
+            "Fact-check this video",
+            "fact-check",
+            plan=(
+                "Plan a fact-check of this video. Choose up to 5 specific, checkable claims the "
+                "video makes — numbers, dates, people, events, causes or recommendations. For each, "
+                "write the claim exactly as stated and note which kind of source would settle it "
+                "(primary document, official source, reputable outlet, or no reliable source)."
+            ),
+            template=(
+                "Claims to check (each is a specific claim from the video):\n{items}\n\n"
+                "Evidence gathered per claim:\n{evidence}\n\n"
+                "For each claim, give a rating of supported, disputed, false, unverified or mixed, "
+                "then one or two sentences of reasoning with the sources that settle it. If you did "
+                "not find authoritative evidence, say unverified. Cite sources with [n] markers."
+            ),
+            max_items=5,
+        ),
+        research_prompt(
+            "research-worth-it",
+            "Is it worth watching?",
+            "worth-it",
+            plan=(
+                "Decide whether this video is worth the viewer's time. Read the transcript for the "
+                "real substance versus filler, note the parts that are worth watching, and decide "
+                "between watch, skim and skip. Decide which sources would back up the key points."
+            ),
+            template=(
+                "Video: {title} by {channel}, {duration}. Question the title poses (may be empty): "
+                "{question}\n\n"
+                "Evidence gathered:\n{evidence}\n\n"
+                "Start with 'Verdict: Watch', 'Verdict: Skim' or 'Verdict: Skip'. Then name the "
+                "parts worth watching with their timestamps, say how much of the runtime is real "
+                "substance versus filler, and cite sources with [n] markers."
+            ),
+            max_items=6,
+        ),
+        research_prompt(
+            "research-viewpoints",
+            "Viewpoints",
+            "viewpoints",
+            plan=(
+                "Find the main points of view or positions this video takes. For each position, note "
+                "who holds it, what they argue, and what evidence the video gives. Decide which "
+                "independent sources would strengthen or challenge each position."
+            ),
+            template=(
+                "Video: {title} by {channel}. Question the title poses (may be empty): {question}\n\n"
+                "Evidence gathered:\n{evidence}\n\n"
+                "For each position, give one section: who holds it, what they argue, and the "
+                "evidence for and against. Cite sources with [n] markers."
+            ),
+            max_items=6,
+        ),
+        # Hidden: a typed question always uses this "open" kind, so it is not a selectable preset.
+        research_prompt(
+            "research-open",
+            "Research a question",
+            "open",
+            plan=(
+                "Research the question the viewer asked about this video. Decide which facts, claims "
+                "or sources matter, and which sources would settle the question."
+            ),
+            template=(
+                "Video: {title} by {channel}. Question: {question}\n\n"
+                "Evidence gathered:\n{evidence}\n\n"
+                "Answer the question directly, with the evidence and the sources that settle it. "
+                "Lead with the answer. Cite sources with [n] markers."
+            ),
+            max_items=6,
         ),
         cut_preset_prompt("no-filler"),
         cut_preset_prompt("answer"),
@@ -547,10 +700,10 @@ class PromptStore:
                     "panel_default": f"{pset.id}/{p.id}" == panel,
                 }
                 for p in pset.prompts
-                if p.task != TASK_CUTS
+                if p.task not in (TASK_CUTS, TASK_RESEARCH)
             ]
-            # A set that only holds cut presets belongs to the Cuts tab (phone-only), never to
-            # the summary prompt pickers.
+            # A set that only holds cut presets or research prompts belongs to their own tabs,
+            # never to the summary prompt pickers.
             if not shown:
                 continue
             sets.append(
@@ -575,6 +728,21 @@ class PromptStore:
                 continue
             for p in pset.prompts:
                 if p.task == TASK_CUTS:
+                    out[p.id] = p
+        return list(out.values())
+
+    def research_prompts(self, user: str) -> list[Prompt]:
+        """Every research preset: the built-ins plus any research prompts the user imported.
+
+        A user set wins over the built-in of the same id, so an owner can tune a preset. The
+        "open" kind is always the typed-question prompt and is not a selectable preset.
+        """
+        out: dict[str, Prompt] = {p.id: p for p in BUILTIN_SET.prompts if p.task == TASK_RESEARCH}
+        for pset, _url in reversed(self.list_sets(user)):
+            if pset.id == BUILTIN_SET_ID:
+                continue
+            for p in pset.prompts:
+                if p.task == TASK_RESEARCH:
                     out[p.id] = p
         return list(out.values())
 

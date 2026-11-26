@@ -99,6 +99,18 @@ class CutPresetSave(BaseModel):
     length_frac: float | None = None
 
 
+class ResearchCreateRequest(BaseModel):
+    """A research request: a prompt (`set/prompt`) or a typed question, exactly one of the two.
+
+    `refresh` forces a new build even when a stored result exists. The metadata fields mirror the
+    insight endpoint's query fields; the server resolves the authoritative metadata from the video.
+    """
+
+    prompt: str | None = Field(None, max_length=2000)
+    question: str | None = Field(None, max_length=300)
+    refresh: bool = False
+
+
 class PairRequest(BaseModel):
     code: str = Field(max_length=16)
     device: str = Field(default="device", max_length=200)

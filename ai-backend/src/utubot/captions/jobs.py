@@ -39,6 +39,7 @@ ACTIVE = ("queued", "running")
 KIND_CAPTIONS = "captions"
 KIND_TRANSCRIPT = "transcript"
 KIND_CUTS = "cuts"
+KIND_RESEARCH = "research"
 LANG_AUTO = "auto"
 JOB_STATES = {
     "queued": "waiting",
@@ -581,19 +582,20 @@ class JobQueue:
     def _claim(self) -> dict[str, Any] | None:
         """Next queued job, interactive first; none while the media breaker is open (work waits).
 
-        A `cuts` job is its own async task (the cut runner owns its row): the caption worker never
-        claims one, and a running cuts row does not hold its video's transcript job back either.
+        A `cuts` or `research` job is its own async task (the cut or research runner owns its
+        row): the caption worker never claims one, and a running cuts or research row does not
+        hold its video's transcript job back either.
         """
         if not self.pipeline.gate.healthy(CLASS_MEDIA):
             return None
         prime = self.class_gate.prime_active()
         row = self.db.one(
-            "SELECT * FROM jobs WHERE status='queued' AND kind!='cuts'"
+            "SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('cuts','research')"
             " AND (not_before IS NULL OR not_before<=?)"
             " AND (? IS NULL OR klass=?)"
             " AND NOT EXISTS"
             " (SELECT 1 FROM jobs r WHERE r.video_id=jobs.video_id AND r.status='running'"
-            "  AND r.kind!='cuts'"
+            "  AND r.kind NOT IN ('cuts','research')"
             "  AND (jobs.klass!='prime' OR r.klass='prime'))"
             " ORDER BY CASE klass WHEN 'prime' THEN 0 ELSE 1 END, priority, created_at LIMIT 1",
             [self.pipeline.gate.now(), "prime" if prime else None, "prime" if prime else None],

@@ -340,8 +340,16 @@ class ResearchConfig(BaseModel):
     enabled: bool = False
     # The stub pipeline's answer delay (seconds); the real pipeline ignores it.
     stub_delay_s: float = 2.0
+    # Only one request builds at once server-wide (`max_concurrent`); the rest wait in line.
+    max_concurrent: int = 1
+    # Per-user caps: at most `max_active_per_user` requests building or waiting at once, at most
+    # `max_per_user_per_day` in a day.
     max_active_per_user: int = 2
-    max_queued_per_user: int = 100
+    max_per_user_per_day: int = 20
+    # A typed question is capped at `question_max_chars`; a live video or one over `max_video_minutes`
+    # is refused at creation.
+    question_max_chars: int = 300
+    max_video_minutes: int = 240
     max_prompt_chars: int = 2000
     default_wait_ms: int = 3000
     wait_ms_cap: int = 20000

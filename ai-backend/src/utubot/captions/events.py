@@ -61,6 +61,16 @@ RETRY = "retry"
 FINISHED = "finished"
 FAILED_STAGE = "failed"
 DELIVERED = "delivered"
+# Research job stages, after the shared `in_line`: the transcript, the plan, the search, the
+# fetches, the reading, the writing and the checking. Their values are the names rendered by
+# `jobtext.js` (see the plan, Job report).
+RESEARCH_TRANSCRIPT = "transcript"
+RESEARCH_PLAN = "plan"
+RESEARCH_SEARCH = "search"
+RESEARCH_FETCH = "fetch"
+RESEARCH_READING = "reading"
+RESEARCH_WRITING = "writing"
+RESEARCH_CHECKING = "checking"
 
 # Statuses of an event.
 RUNNING = "running"
