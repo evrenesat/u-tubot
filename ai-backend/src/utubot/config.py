@@ -432,6 +432,24 @@ class SpeechConfig(BaseModel):
     language: str | None = None
 
 
+class VoiceConfig(BaseModel):
+    """Voice control (ai/VOICE_CONTROL_PLAN.md): consent, history and the live server's address.
+
+    Off by default: with `enabled = false` the voice routes answer 404, `GET /v1/me` says
+    `features.voice = false` and `/setup.json` has no `realtime_url`.
+    """
+
+    enabled: bool = False
+    # where the proxy sends the live server; `realtime_url` of /setup.json is public_base_url + this
+    realtime_path: str = "/rt"
+    # how long the command text and outcome are kept unless the user chose another number (0 keeps nothing)
+    retention_days: int = Field(30, ge=0, le=365)
+    max_text_chars: int = Field(500, ge=1)
+    max_args_bytes: int = Field(4096, ge=2)
+    history_page_max: int = Field(200, ge=1)
+    commands_per_min: int = Field(120, ge=1)
+
+
 WORDS_REAL_MIN_SHARE = 0.9
 ASR_KIND_OPENAI = "openai"
 ASR_KIND_FASTER_WHISPER = "faster_whisper"
@@ -962,6 +980,7 @@ class Config(BaseModel):
     cuts: CutsConfig = Field(default_factory=CutsConfig)
     classes: ClassesConfig = Field(default_factory=ClassesConfig)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
     captions: CaptionsConfig = Field(default_factory=CaptionsConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)

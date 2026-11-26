@@ -2,6 +2,7 @@ import { h, icon, mount } from "../dom.js";
 
 const DESCRIPTIONS = {
   tvs: "Link a TV, revoke devices, TV settings",
+  history: "What you said to the TV and what it did, delete it",
   updates: "App version on this server and on GitHub",
   account: "Password, theme, sign out",
   admin: "Users, settings and the media archive",

@@ -284,6 +284,17 @@ max_tokens = 2000
 # timeout_s = 60.0
 # language = "en"                # optional hint for the transcriber
 
+# Voice control (ai/VOICE_CONTROL_PLAN.md, checkpoint 1: consent, history, setup address). Off: the voice
+# routes answer 404 and clients see nothing new. Switching it on also needs the live server behind the proxy.
+# [voice]
+# enabled = false
+# realtime_path = "/rt"          # /setup.json gets realtime_url = server.public_base_url + this
+# retention_days = 30            # command text and outcome are kept this long (a user may choose 0 = nothing)
+# max_text_chars = 500
+# max_args_bytes = 4096
+# history_page_max = 200
+# commands_per_min = 120         # filed records per user
+
 [assess]
 batch_size = 25                    # titles per triage call
 max_videos_per_request = 50

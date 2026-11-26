@@ -136,6 +136,17 @@ def test_the_web_ui_carries_the_cut_mode_control():
     assert "cut_mode" in devices and "segmented" in devices
 
 
+def test_the_web_ui_carries_the_voice_pages_only_behind_the_feature():
+    main = (WEB / "ui" / "js" / "main.js").read_text()
+    devices = (WEB / "ui" / "js" / "pages" / "devices.js").read_text()
+    history = (WEB / "ui" / "js" / "pages" / "history.js").read_text()
+
+    assert "voiceOnly: true" in main and "session.voice" in main and "loadFeatures" in main
+    assert "/v1/me/voice" in devices and "consent_version" in devices and "all_off" in devices
+    assert "session.voice ? voiceForm()" in devices
+    assert "/v1/voice/commands" in history
+
+
 def test_ui_code_never_builds_markup_from_strings():
     forbidden = re.compile(
         r"innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|setAttribute\(\s*[\"']on|srcdoc"

@@ -450,6 +450,9 @@ contract is built for both. Exceptions, each with its reason:
   transcript's run instead of recognising again; the `asr` stage of a job reports `cached`/`reused_from_job`/`saved_s`): TV + backend
   only. The extension does no extraction and has no jobs UI, so it shows no job-stage details; these fields are backend metadata the web
   UI job detail page renders. Its row is in the plan's parity matrix.
+- Voice control (consent, history, the live socket, the Talk page): TV app, phone page and phone app first; the extension's intended
+  role (the playing tab as a screen, a Talk button in the panel) waits for the background-socket check of the plan's checkpoint 12,
+  and until then its row `voice-control` in the parity matrix is the exception. The live server is the plan's `realtime/`.
 - `GET /app/update.json`: TV only. Firefox updates extensions itself.
 - Update interval and development mode (offering the install at once when idle): TV only, the extension is updated by Firefox.
 - "What's new" after an app update: TV only (the extension's own version history is the add-on's). The two lists of `GET /v1/changelog`
@@ -821,6 +824,42 @@ leaving the video.
 (`{"ok":true}`) hides them (a read-only flag — the item can be created again later). All three
 affect only the caller's items; another user's rows are untouched.
 
+## Voice control (addendum, 2026-11-26)
+
+Backend half of `ai/VOICE_CONTROL_PLAN.md` (checkpoint 1: consent, history, retention). Everything here is additive and
+exists only when the server has `[voice] enabled = true` (default `false`). With it off every route below answers
+`404 {"error":"voice is not enabled on this server"}` (after authentication), `GET /v1/me` has `"features":{"voice":false}` and no
+other new key, and `/setup.json` is unchanged: a client that predates voice sees nothing different, and one that knows voice
+reads `features.voice`.
+
+- `GET /v1/me` (voice on): `features.voice` is `true`, plus `"device":{"id","name"}|null` (the paired device behind the token;
+  `null` for a config token or a browser session) and `"voice":{"enabled","listen_mode":"push"|"wake","speak","retention_days"}`.
+  `voice.enabled` is that device's own consent (off until switched on). The live server calls it with the device's token and
+  may cache it for 60 s, so a switch-off reaches it within a minute.
+- `GET /setup.json` (voice on) gains `realtime_url`: `server.public_base_url` + `[voice] realtime_path` (default `/rt`),
+  with the scheme of the base address. Clients open the WebSocket on it (`wss`/`ws` equivalents of `https`/`http`).
+- `GET /v1/me/voice` -> `{"enabled":true,"retention_days","default_retention_days","consent":{"version":1,"text":[...]},
+  "devices":[{"id","device","enabled","listen_mode","speak","consented_at"}]}` (every paired device of the caller, off ones
+  included). The consent text is the server's, so every client shows the same words.
+- `PUT /v1/me/devices/{id}/voice` `{"enabled"?,"listen_mode"?:"push"|"wake","speak"?,"consent_version"?}` -> the device's
+  `{"enabled","listen_mode","speak","consented_at"}`. Switching a device on needs `consent_version` equal to the
+  current `consent.version` (`400` otherwise: show the text first). `404` for a device the caller does not own.
+- `PUT /v1/me/voice` `{"retention_days"?:0..365,"all_off"?:true}` -> the overview. `all_off` switches every device of the
+  caller off (switching one on again asks for consent again). A shorter retention deletes older records at once; `0` keeps nothing.
+- `POST /v1/voice/commands` `{"text","tool","args":{},"outcome":"ok|failed|cancelled|refused|clarify|none","marks":{"stt_ms":410}}`
+  -> `{"stored":true,"id"}` (`{"stored":false,"id":null}` when retention is 0). The live server files one record when a
+  command ends, with the token of the device that spoke; a paired device that has not switched voice on gets `403`. `text` is
+  at most `[voice] max_text_chars` (`413`), `args` at most `max_args_bytes`, `marks` at most 16 names of milliseconds. Rate limited
+  per user (`commands_per_min`, `429`). No audio is ever part of a record.
+- `GET /v1/voice/commands?limit=50` (1..`history_page_max`, `400` outside) -> `{"retention_days","commands":[{"id","at","device_id",
+  "device","text","tool","args","outcome","marks"}]}`, newest first, expired records already gone. `DELETE /v1/voice/commands/{id}`
+  -> `{"ok":true}` (`404` for an unknown or foreign id); `DELETE /v1/voice/commands` -> `{"deleted":N}`. All of them touch the caller's
+  records only.
+- Web UI: TVs page, "Voice control" card (a switch per device with the consent text, spoken replies, hands-free, retention, all-off)
+  and a "Voice" page (the history, delete one or all). Both appear only when `features.voice` is true.
+- Clients: the TV app is the screen and, later, a controller; this checkpoint adds no TV code (it ignores the new keys). The
+  extension's row is `voice-control` in the plan's parity matrix.
+
 ## Setup file (`GET /setup.json`)
 
 Public, rate limited like `/v1/health`. The app's "Import setup" fetches it so nothing is typed
@@ -948,6 +987,7 @@ when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-adm
 
 ### Devices, prompts, videos
 
+- Voice control additions to the web UI: see [Voice control](#voice-control-addendum-2026-11-26).
 - `GET /v1/me/devices` -> `{"devices":[{"id","user","device","created_at","last_used"}]}`, `DELETE /v1/me/devices/{id}` (own devices
   only), `POST /v1/me/pair` -> `{"user","code","expires_in_s"}` (a one-time pairing code for the caller).
 - `POST /v1/prompts/validate` with a prompt set -> `{"ok":true,"id","name","prompts":2}` or `400` with the validator's messages.

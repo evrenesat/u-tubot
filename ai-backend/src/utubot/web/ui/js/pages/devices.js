@@ -1,4 +1,4 @@
-import { api } from "../api.js";
+import { api, session } from "../api.js";
 import { h, mount } from "../dom.js";
 import { bigCode, button, card, empty, every, errorText, fmtAgo, fmtDuration, note, numberInput, field, segmented, switchRow, toast } from "../components.js";
 
@@ -72,6 +72,115 @@ export function cutModeForm(settingsPath, doc, onUpdate) {
   );
 }
 
+const RETENTION_CHOICES = [
+  [0, "Keep nothing"],
+  [7, "7 days"],
+  [30, "30 days"],
+  [90, "90 days"],
+];
+
+// Voice control: one switch per linked device (off until the user has read what it means), the
+// all-off switch and how long the command history is kept. The server serves the consent text.
+export function voiceForm(onChange) {
+  const host = h("div", {});
+  let consentFor = null;
+
+  async function load() {
+    draw(await api("/v1/me/voice"));
+  }
+
+  async function put(path, body) {
+    try {
+      draw(await api(path, { method: "PUT", body }));
+    } catch (err) {
+      toast(errorText(err), "bad");
+      await load();
+    }
+  }
+
+  function consentPanel(overview, dev) {
+    return h(
+      "div",
+      { class: "placeholder" },
+      h("strong", { text: "Voice on " + dev.device }),
+      h("ul", { class: "consent" }, overview.consent.text.map((line) => h("li", { text: line }))),
+      h(
+        "div",
+        { class: "row" },
+        button(
+          "Allow voice",
+          async () => {
+            consentFor = null;
+            await put("/v1/me/devices/" + encodeURIComponent(dev.id) + "/voice", { enabled: true, consent_version: overview.consent.version });
+          },
+          { kind: "primary" },
+        ),
+        button("Cancel", async () => {
+          consentFor = null;
+          await load();
+        }),
+      ),
+    );
+  }
+
+  function deviceRow(overview, dev) {
+    const path = "/v1/me/devices/" + encodeURIComponent(dev.id) + "/voice";
+    const toggle = switchRow(dev.device, dev.enabled ? "Voice is on" : consentFor === dev.id ? "Read what it means, then allow or cancel" : "Voice is off", dev.enabled || consentFor === dev.id, async (on) => {
+      if (on) {
+        consentFor = dev.id;
+        draw(overview);
+        return;
+      }
+      consentFor = null;
+      await put(path, { enabled: false });
+    });
+    const extra = [];
+    if (dev.enabled) {
+      extra.push(
+        switchRow("Spoken replies", "The device may read its answers aloud.", dev.speak, (v) => put(path, { speak: v })),
+        switchRow("Hands-free", "Listen for the wake word instead of waiting for Talk (robot mode only).", dev.listen_mode === "wake", (v) =>
+          put(path, { listen_mode: v ? "wake" : "push" }),
+        ),
+      );
+    }
+    return h("div", { class: "job" }, toggle, extra, consentFor === dev.id && !dev.enabled ? consentPanel(overview, dev) : null);
+  }
+
+  function draw(overview) {
+    const keep = h("select", {});
+    for (const [days, label] of RETENTION_CHOICES) {
+      const opt = h("option", { value: String(days), text: label });
+      if (days === overview.retention_days) opt.selected = true;
+      keep.appendChild(opt);
+    }
+    if (!RETENTION_CHOICES.some(([d]) => d === overview.retention_days)) {
+      const opt = h("option", { value: String(overview.retention_days), text: overview.retention_days + " days" });
+      opt.selected = true;
+      keep.appendChild(opt);
+    }
+    keep.addEventListener("change", () => put("/v1/me/voice", { retention_days: Number(keep.value) }).then(() => toast("Retention saved")));
+    mount(
+      host,
+      card(
+        "Voice control",
+        note("Off for every device until you switch it on. No audio is stored; only the text of what you said and what it did is kept."),
+        overview.devices.length ? overview.devices.map((d) => deviceRow(overview, d)) : empty("Link a device first."),
+        field("Keep the history for", keep, "Older entries are deleted. See Voice for the list."),
+        overview.devices.some((d) => d.enabled)
+          ? button("Switch voice off on every device", async () => {
+              await put("/v1/me/voice", { all_off: true });
+              toast("Voice is off everywhere");
+              if (onChange) onChange();
+            }, { kind: "danger", full: true })
+          : null,
+      ),
+    );
+  }
+
+  load().catch((err) => mount(host, note(errorText(err), "bad")));
+  return host;
+}
+
 export async function render(view) {
   let doc = await api("/v1/me/settings");
   const host = h("div", { class: "stack" });
@@ -138,6 +247,7 @@ export async function render(view) {
         h("div", { class: "placeholder" }, h("strong", { text: "Scan to link" }), h("small", { class: "muted", text: "A QR code and a one-step enrollment link are planned for a later release." })),
       ),
       card("Linked TVs", devicesHost),
+      session.voice ? voiceForm() : null,
       tvSettingsForm("/v1/me/settings", doc, (next) => {
         doc = next;
         draw();

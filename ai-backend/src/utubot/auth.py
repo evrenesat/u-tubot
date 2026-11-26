@@ -358,6 +358,13 @@ class Auth:
         )
         return token, row["user"]
 
+    def device_id_of(self, principal: Principal | None) -> str | None:
+        """The paired device behind a request, or None for a config token or a browser session."""
+        if principal is None or principal.token_id == CONFIG_TOKEN_ID:
+            return None
+        row = self.db.one("SELECT id FROM device_tokens WHERE id=?", [principal.token_id])
+        return row["id"] if row else None
+
     def list_devices(self, user: str | None = None) -> list[dict]:
         sql = "SELECT id,user,device,created_at,last_used FROM device_tokens"
         rows = self.db.all(
@@ -366,10 +373,16 @@ class Auth:
         return [dict(r) for r in rows]
 
     def revoke(self, device_id: str, user: str | None = None) -> bool:
-        """Delete a device token; with `user`, only one that user owns."""
+        """Delete a device token (and its voice consent); with `user`, only one that user owns."""
         if user is None:
-            return self.db.execute_rc("DELETE FROM device_tokens WHERE id=?", [device_id]) > 0
-        rc = self.db.execute_rc(
-            "DELETE FROM device_tokens WHERE id=? AND user=?", [device_id, user]
-        )
-        return rc > 0
+            gone = self.db.execute_rc("DELETE FROM device_tokens WHERE id=?", [device_id]) > 0
+        else:
+            gone = (
+                self.db.execute_rc(
+                    "DELETE FROM device_tokens WHERE id=? AND user=?", [device_id, user]
+                )
+                > 0
+            )
+        if gone:
+            self.db.execute("DELETE FROM device_voice WHERE device_id=?", [device_id])
+        return gone

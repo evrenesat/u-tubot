@@ -31,6 +31,12 @@ seconds (default 20). A ready answer lists the track `tr` ("Turkish (u·tubot)",
 `GET /v1/videos/ID/captions/tr.vtt` serves the file of `--vtt` (default `temp/captions.vtt` in the working directory). `--media DIR` serves
 the files of DIR under `/media/` with byte ranges: the local stream the debug build's captions harness plays (docs/development.md).
 
+Voice control (ai/CONTRACT.md "Voice control") is off, like a default server, until switched on:
+
+    GET /__mock/voice?enabled=1|0          features.voice, `device` and `voice` of /v1/me, `realtime_url` of /setup.json
+    GET|PUT /v1/me/voice, PUT /v1/me/devices/emulator/voice, POST|GET|DELETE /v1/voice/commands[/ID]
+                                           consent (needs consent_version 1 to switch on), retention and the command history
+
 Director's cuts work like the real ones (ai/CONTRACT.md "Director's cuts"): four presets, two modes, requests that build
 (Quick ready after `--cuts-delay` seconds, default 8; Watched after `--cuts-watched-delay`, default 20) or wait for the phone, a cut
 document whose skips sit at 25-45% and 70-85% of the video:
@@ -88,6 +94,13 @@ ASSESS_CONFIG = {"verdicts": {}, "delay": 0.0, "fail": 0}
 DEFAULT_PROMPT_KEY = "builtin/tldr"
 IMPORTED_SETS = {}
 PROCESSED_CONFIG = {"state": "items"}
+VOICE_CONSENT_VERSION = 1
+VOICE_CONSENT_TEXT = ["Voice control listens only while you hold Talk.", "No audio is stored.",
+                      "The text of each command is kept for the retention you choose."]
+VOICE = {"enabled": False, "retention_days": 30, "device": {"enabled": False, "listen_mode": "push", "speak": False,
+                                                            "consented_at": None}, "commands": [], "next_id": 1}
+VOICE_DEVICE = {"id": "emulator", "name": "Emulator TV"}
+VOICE_LOCK = threading.Lock()
 PORT = None
 SETUP_CONFIG = {"backend": None}
 PROMPTS = [
@@ -416,6 +429,83 @@ def preset_state(video_id, preset_id, mode="quick"):
     return "none"
 
 
+def voice_me():
+    if not VOICE["enabled"]:
+        return {}
+    d = VOICE["device"]
+    return {"device": dict(VOICE_DEVICE), "voice": {"enabled": d["enabled"], "listen_mode": d["listen_mode"],
+                                                    "speak": d["speak"], "retention_days": VOICE["retention_days"]}}
+
+
+def voice_overview():
+    return {"enabled": True, "retention_days": VOICE["retention_days"], "default_retention_days": 30,
+            "consent": {"version": VOICE_CONSENT_VERSION, "text": VOICE_CONSENT_TEXT},
+            "devices": [{"id": VOICE_DEVICE["id"], "device": VOICE_DEVICE["name"], **VOICE["device"]}]}
+
+
+def voice_route(handler, method, path, body, q):
+    """Answer a voice route and return True; False when the path is not one of them. 404 while voice is off."""
+    if not (path in ("/v1/me/voice", "/v1/voice/commands") or path.startswith("/v1/voice/commands/") or
+            re.match(r"/v1/me/devices/[^/]+/voice$", path)):
+        return False
+    if not VOICE["enabled"]:
+        handler.send_json({"error": "voice is not enabled on this server"}, 404)
+        return True
+    with VOICE_LOCK:
+        d = VOICE["device"]
+        if path == "/v1/me/voice" and method == "GET":
+            handler.send_json(voice_overview())
+        elif path == "/v1/me/voice" and method == "PUT":
+            if "retention_days" in body:
+                VOICE["retention_days"] = int(body["retention_days"])
+                if VOICE["retention_days"] == 0:
+                    VOICE["commands"].clear()
+            if body.get("all_off"):
+                d["enabled"] = False
+            handler.send_json(voice_overview())
+        elif method == "PUT":
+            if body.get("enabled") and not d["enabled"]:
+                if body.get("consent_version") != VOICE_CONSENT_VERSION:
+                    handler.send_json({"error": "consent_version must be 1: show the consent text first"}, 400)
+                    return True
+                d["consented_at"] = time.time()
+            for key in ("enabled", "listen_mode", "speak"):
+                if key in body:
+                    d[key] = body[key]
+            handler.send_json(dict(d))
+        elif path == "/v1/voice/commands" and method == "POST":
+            if not d["enabled"]:
+                handler.send_json({"error": "voice is not switched on for this device"}, 403)
+            elif VOICE["retention_days"] == 0:
+                handler.send_json({"stored": False, "id": None})
+            else:
+                row = {"id": VOICE["next_id"], "at": time.time(), "device_id": VOICE_DEVICE["id"],
+                       "device": VOICE_DEVICE["name"], "text": body.get("text", ""), "tool": body.get("tool", ""),
+                       "args": body.get("args", {}), "outcome": body.get("outcome", "ok"), "marks": body.get("marks", {})}
+                VOICE["next_id"] += 1
+                VOICE["commands"].insert(0, row)
+                handler.send_json({"stored": True, "id": row["id"]})
+        elif path == "/v1/voice/commands" and method == "GET":
+            limit = int(q.get("limit", ["50"])[0] or 50)
+            handler.send_json({"retention_days": VOICE["retention_days"], "commands": VOICE["commands"][:limit]})
+        elif path == "/v1/voice/commands" and method == "DELETE":
+            n = len(VOICE["commands"])
+            VOICE["commands"].clear()
+            handler.send_json({"deleted": n})
+        elif method == "DELETE":
+            tail = path.rsplit("/", 1)[1]
+            cid = int(tail) if tail.isdigit() else -1
+            keep = [c for c in VOICE["commands"] if c["id"] != cid]
+            if len(keep) == len(VOICE["commands"]):
+                handler.send_json({"error": "unknown command"}, 404)
+            else:
+                VOICE["commands"][:] = keep
+                handler.send_json({"ok": True})
+        else:
+            handler.send_json({"error": "method not allowed"}, 405)
+    return True
+
+
 def record_request(handler):
     url = urlparse(handler.path)
     if url.path.startswith("/__mock/"):
@@ -495,6 +585,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "the assess request failed"}, ASSESS_CONFIG["fail"])
             vids = json.loads(body or b"{}").get("videos", [])
             return self.send_json({"results": [verdict(v) for v in vids]})
+        if voice_route(self, "POST", url.path, json.loads(body or b"{}"), parse_qs(url.query)):
+            return
         if url.path == "/v1/prompts/import":
             return self.send_json(import_prompt_set(json.loads(body or b"{}").get("url", "")))
         if url.path == "/v1/prompts/refresh":
@@ -590,6 +682,8 @@ class Handler(BaseHTTPRequestHandler):
         hold_request(url.path)
         length = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
+        if voice_route(self, "PUT", url.path, body, parse_qs(url.query)):
+            return
         if url.path == "/v1/prompts/default":
             key = (body.get("key") or "").strip()
             if key not in all_prompt_keys():
@@ -640,6 +734,8 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         record_request(self)
         hold_request(url.path)
+        if voice_route(self, "DELETE", url.path, {}, parse_qs(url.query)):
+            return
         m = re.match(r"/v1/cut-requests/([a-z0-9]+)$", url.path)
         if m:
             with CUT_LOCK:
@@ -753,15 +849,23 @@ class Handler(BaseHTTPRequestHandler):
                 elif state == "failed":
                     CUT_READY[vid] = {"preset_id": (q.get("preset") or [None])[0], "mode": mode, "failed": True}
             return self.send_json({"video": vid, "state": state, "mode": mode})
+        if path == "/__mock/voice":
+            VOICE["enabled"] = q.get("enabled", ["1"])[0] not in ("0", "false")
+            return self.send_json({"ok": True, "enabled": VOICE["enabled"]})
+        if voice_route(self, "GET", path, {}, q):
+            return
         if path == "/v1/health":
             return self.send_json({"ok": True, "version": "mock"})
         if path.startswith("/media/") and self.media_dir:
             return self.send_media(Path(self.media_dir) / Path(path[len("/media/"):]).name)
         if path == "/setup.json":
-            return self.send_json({"utubot_setup": 1, "name": "Emulator mock",
-                                   "backend_url": SETUP_CONFIG["backend"] or self.base_url,
-                                   "update_url": self.base_url + "/app/update.json", "pairing": True,
-                                   "defaults": {"assess": True, "summary_panel": True}})
+            setup = {"utubot_setup": 1, "name": "Emulator mock",
+                     "backend_url": SETUP_CONFIG["backend"] or self.base_url,
+                     "update_url": self.base_url + "/app/update.json", "pairing": True,
+                     "defaults": {"assess": True, "summary_panel": True}}
+            if VOICE["enabled"]:
+                setup["realtime_url"] = (SETUP_CONFIG["backend"] or self.base_url) + "/rt"
+            return self.send_json(setup)
         if path == "/app/update.json":
             f = Path(self.static_dir or "/nonexistent") / "update.json"
             if self.static_dir and f.exists():
@@ -788,9 +892,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": "not found"}, 404)
         if path == "/v1/me":
             klass = self.user_class()
-            return self.send_json({"user": self.user_name, "policy": {}, "features": {"assess": True, "insight": True, "captions": True,
-                                                                            "cuts": True},
-                                   "admin": False, "prime": klass == "prime", "class": klass})
+            features = {"assess": True, "insight": True, "captions": True, "cuts": True}
+            if VOICE["enabled"]:
+                features["voice"] = True
+            return self.send_json({"user": self.user_name, "policy": {}, "features": features,
+                                   "admin": False, "prime": klass == "prime", "class": klass, **voice_me()})
         if path == "/v1/prompts":
             return self.send_json(prompt_list())
         if path == "/v1/processed":

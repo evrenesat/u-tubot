@@ -1,3 +1,22 @@
+## 2026-11-26 (voice control checkpoint 1: consent, history, contract; issues #188, #181)
+
+- `[voice] enabled` (default `false`, `VoiceConfig`): with it off the voice routes answer 404, `/v1/me` only gains `features.voice = false`,
+  `/setup.json` and the device list are unchanged and the web UI shows no voice page. Replayed in `test_voice_api.py`
+  (`test_old_clients_see_nothing_new_while_voice_is_off`).
+- `voice.py` (`VoiceService`, `install_voice_routes`): `GET|PUT /v1/me/voice` (retention, all-off, overview with the server's consent text),
+  `PUT /v1/me/devices/{id}/voice` (a switch-on needs `consent_version`), `POST|GET|DELETE /v1/voice/commands[/{id}]` (text, tool, args,
+  outcome, marks; never audio; rate limited; `403` for a paired device that has not switched voice on). `/v1/me` gains `device` and `voice`
+  and `/setup.json` gains `realtime_url` only when voice is on. Revoking a device deletes its consent row.
+- Retention: `retention_days` per user (default 30, 0 keeps nothing); expired rows are pruned on write, on read and when the number
+  shrinks. The scheduled sweep and the end-to-end all-off audit are checkpoint 11.
+- Migration: three `CREATE IF NOT EXISTS` tables (`device_voice`, `user_voice`, `voice_commands`), no column added to an existing table, so
+  the live database opens with all data intact and a rollback needs no database step; `test_a_database_from_before_voice_opens_...` builds
+  the previous schema with data, opens it and checks the data and the previous INSERTs.
+- Web UI: TVs page "Voice control" card (switch per device with consent text, spoken replies, hands-free, retention, all-off) and a "Voice"
+  page (history, delete one or all), both only when `features.voice`. Demo seeds voice data; screenshots at 1440 and 390 px checked.
+- Mock backend (`scripts/emulator_mock_backend.py`): `/__mock/voice?enabled=1` and the same routes (test in `test_emulator_mock.py`).
+- Contract section "Voice control", parity row `voice-control`, the "Clients" exception, `docs/server.md`. No TV code.
+
 ## 2026-11-26 (UTB-160 one cache, every artifact reused incl. ASR)
 
 - Issue 147: the ASR cache now serves every feature from one run instead of recognising again for the next need. A `transcript` job

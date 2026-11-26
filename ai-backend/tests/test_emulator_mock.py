@@ -345,3 +345,24 @@ def test_a_mock_preset_state_is_per_mode():
 
     assert mock.preset_state("abcdefghijk", "cut-no-filler", "watched") == "ready"
     assert mock.preset_state("abcdefghijk", "cut-no-filler", "quick") == "none"
+
+
+def test_voice_routes_are_off_until_switched_on_and_follow_the_contract(mock):
+    assert "voice" not in mock.get("/v1/me").json()["features"]
+    assert "realtime_url" not in mock.get("/setup.json").json()
+    assert mock.get("/v1/me/voice").status_code == 404
+    mock.get("/__mock/voice?enabled=1")
+    me = mock.get("/v1/me").json()
+    assert me["features"]["voice"] is True and me["device"]["id"] == "emulator"
+    assert me["voice"]["enabled"] is False
+    assert mock.get("/setup.json").json()["realtime_url"].endswith("/rt")
+    path = "/v1/me/devices/emulator/voice"
+    assert mock.put(path, json={"enabled": True}).status_code == 400
+    assert mock.put(path, json={"enabled": True, "consent_version": 1}).json()["enabled"] is True
+    filed = mock.post("/v1/voice/commands", json={"text": "pause", "tool": "pause"}).json()
+    listing = mock.get("/v1/voice/commands").json()
+    assert filed["stored"] is True and listing["commands"][0]["tool"] == "pause"
+    assert mock.delete(f"/v1/voice/commands/{filed['id']}").status_code == 200
+    assert mock.delete(f"/v1/voice/commands/{filed['id']}").status_code == 404
+    mock.put("/v1/me/voice", json={"all_off": True})
+    assert mock.get("/v1/me").json()["voice"]["enabled"] is False
