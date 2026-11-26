@@ -10,7 +10,7 @@ from utubot import appsync, buildinfo, changelog
 from utubot.db import Database
 
 
-def git(root: Path, *args: str) -> str:
+def git(root: Path, *args: str, date: str | None = None) -> str:
     env = {
         "GIT_AUTHOR_NAME": "t",
         "GIT_AUTHOR_EMAIL": "t@example.com",
@@ -18,10 +18,16 @@ def git(root: Path, *args: str) -> str:
         "GIT_COMMITTER_EMAIL": "t@example.com",
         "PATH": "/usr/bin:/bin:/usr/local/bin",
     }
+    if date:
+        env.update(GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
     done = subprocess.run(
         ["git", "-C", str(root), *args], capture_output=True, text=True, check=True, env=env
     )
     return done.stdout.strip()
+
+
+FIRST_DATE = "2026-11-26T14:30:00Z"
+LATER_DATE = "2026-11-27T09:05:00Z"
 
 
 @pytest.fixture
@@ -30,24 +36,47 @@ def repo(tmp_path) -> Path:
     root.mkdir()
     git(root, "init", "-q", "-b", "main")
     (root / "utubot.version").write_text("0.3\n")
-    commit(root, "feat/cuts: add director's cuts (#10)")
+    commit(root, "feat/cuts: add director's cuts (#10)", date=FIRST_DATE)
     return root
 
 
-def commit(root: Path, subject: str) -> str:
+def commit(root: Path, subject: str, date: str | None = None) -> str:
     (root / "f.txt").write_text(subject)
     git(root, "add", "-A")
-    git(root, "commit", "-q", "-m", subject)
+    git(root, "commit", "-q", "-m", subject, date=date)
     return git(root, "rev-parse", "HEAD")
 
 
-def test_version_is_series_count_and_sha(repo):
+def test_version_is_series_commit_time_and_sha(repo):
     build = buildinfo.derive_version(repo)
     head = git(repo, "rev-parse", "HEAD")
-    assert build.version == f"0.3.1+{head[:7]}"
+    assert build.version == f"0.3.202611261430+{head[:7]}"
     assert build.commit == head
-    commit(repo, "fix/tv: stop the crash (#11)")
-    assert buildinfo.derive_version(repo).version.startswith("0.3.2+")
+    commit(repo, "fix/tv: stop the crash (#11)", date=LATER_DATE)
+    later = buildinfo.derive_version(repo).version
+    assert later.startswith("0.3.202611270905+")
+    assert later > build.version
+
+
+def test_version_uses_utc_for_the_commit_time(repo):
+    commit(repo, "fix/tv: offset (#12)", date="2026-11-27T00:30:00+02:00")
+    assert buildinfo.derive_version(repo).version.startswith("0.3.202611262230+")
+
+
+def test_shallow_clone_reports_the_same_version_as_the_full_clone(repo, tmp_path):
+    for day in range(2, 6):
+        commit(repo, f"fix/tv: step {day} (#{day})", date=f"2026-11-{day:02d}T12:00:00Z")
+    shallow = tmp_path / "shallow"
+    subprocess.run(
+        ["git", "clone", "-q", "--depth", "1", f"file://{repo}", str(shallow)],
+        check=True,
+        capture_output=True,
+    )
+    assert git(shallow, "rev-list", "--count", "HEAD") == "1"
+    head = git(repo, "rev-parse", "HEAD")
+    cut = buildinfo.derive_version(shallow)
+    assert cut.version == f"0.3.202611051200+{head[:7]}"
+    assert cut.version == buildinfo.derive_version(repo).version
 
 
 def test_version_falls_back_without_git(tmp_path):

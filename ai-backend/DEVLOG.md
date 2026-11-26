@@ -1,3 +1,8 @@
+## 2026-11-26 (backend version monotonic on shallow clones, issue #191)
+
+- Backend version is `0.<series>.<HEAD commit time UTC YYYYMMDDHHMM>+<sha>` instead of the commit count, which a shallow clone
+  undercounted (could go backwards between deploys). Same value for shallow and full clones; package-version fallback unchanged.
+
 ## 2026-11-26 (version histories, issue #175)
 
 - Real backend version `0.<series>.<commit count>+<sha>` from the checkout's git (`buildinfo.py`), in `/v1/health` and `/v1/me`.

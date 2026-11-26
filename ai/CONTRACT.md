@@ -94,12 +94,12 @@ priority (claimed first, interactive engine use); a side-panel job is background
 ## Endpoints
 
 ### `GET /v1/health` (no auth)
-`{"ok":true,"version":"0.3.412+a1b2c3d","commit":"a1b2c3d"}`. `version` is the real backend version, `0.<series>.<commit count>+<short sha>` from the
-checkout the server runs (the series is the minor of `utubot.version`); an install without git reports the package version and no commit.
+`{"ok":true,"version":"0.3.202611261430+a1b2c3d","commit":"a1b2c3d"}`. `version` is the real backend version, `0.<series>.<commit time>+<short sha>` from the
+checkout the server runs (the series is the minor of `utubot.version`, the commit time the HEAD commit date in UTC as `YYYYMMDDHHMM`); an install without git reports the package version and no commit.
 It changes with every deploy, so the TV's disk cache keyed on it starts fresh after a deploy.
 
 ### `GET /v1/me`
-`{"user":"owner","policy":{...},"admin":false,"backend_version":"0.3.412+a1b2c3d","prime":false,"class":"normal","settings_version":3,"features":{"assess":true,"insight":true,"captions":true}}`
+`{"user":"owner","policy":{...},"admin":false,"backend_version":"0.3.202611261430+a1b2c3d","prime":false,"class":"normal","settings_version":3,"features":{"assess":true,"insight":true,"captions":true}}`
 `settings_version` is the version of the [settings document](#per-user-settings), a cheap way to notice a change. `prime` and `class`
 say whether the caller's work is prime (`normal` otherwise).
 

@@ -1,6 +1,8 @@
 """The running backend's real version and what changed since the previous deploy, read from the checkout's git.
 
-Version: `0.<series>.<commit count>+<short sha>`, where the series is the minor of `utubot.version` at the checkout's root.
+Version: `0.<series>.<commit time>+<short sha>`, where the series is the minor of `utubot.version` at the checkout's root and
+the commit time is the HEAD commit's date in UTC as `YYYYMMDDHHMM`. It does not use the commit count, which a shallow clone
+undercounts (a deploy from one could then report an older version than the previous one).
 Outside a git checkout (an installed package) the version is the package version and nothing else is known.
 """
 
@@ -9,12 +11,14 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__
 
 GIT_TIMEOUT_S = 10
 SHORT_SHA_CHARS = 7
+STAMP_FORMAT = "%Y%m%d%H%M"
 SERIES_FILE = "utubot.version"
 FIRST_DEPLOY_COMMITS = 15
 MAX_CHANGES = 60
@@ -64,15 +68,23 @@ def series(root: Path) -> str:
     return parts[1] if len(parts) > 1 and parts[1].isdigit() else "0"
 
 
+def commit_stamp(root: Path) -> str | None:
+    """The HEAD commit's date as UTC `YYYYMMDDHHMM`; None when git cannot say."""
+    seconds = _git(root, "log", "-1", "--format=%ct", "HEAD")
+    if not seconds or not seconds.isdigit():
+        return None
+    return datetime.fromtimestamp(int(seconds), tz=UTC).strftime(STAMP_FORMAT)
+
+
 def derive_version(root: Path | None, fallback: str = __version__) -> Build:
     """The build of a checkout, or the package version when git cannot say."""
     if root is None:
         return Build(fallback)
     commit = _git(root, "rev-parse", "HEAD")
-    count = _git(root, "rev-list", "--count", "HEAD")
-    if not commit or not COMMIT_RE.match(commit) or not count or not count.isdigit():
+    stamp = commit_stamp(root)
+    if not commit or not COMMIT_RE.match(commit) or not stamp:
         return Build(fallback)
-    return Build(f"0.{series(root)}.{count}+{commit[:SHORT_SHA_CHARS]}", commit, root)
+    return Build(f"0.{series(root)}.{stamp}+{commit[:SHORT_SHA_CHARS]}", commit, root)
 
 
 def detect() -> Build:

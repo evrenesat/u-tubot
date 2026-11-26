@@ -764,8 +764,9 @@ undo even that, copy `data_dir` first (`sqlite3 utubot.sqlite ".backup utubot.be
 
 ## Updates
 
-The backend version (`/v1/health`, `/v1/me`, the web UI) is `0.<series>.<commit count>+<short sha>` read from the git checkout the
-server runs from; the series is the minor of `utubot.version`. Without git (an installed package) it is the package version. At every
+The backend version (`/v1/health`, `/v1/me`, the web UI) is `0.<series>.<commit time>+<short sha>` read from the git checkout the
+server runs from; the series is the minor of `utubot.version`, the commit time the HEAD commit's date in UTC as `YYYYMMDDHHMM`
+(not the commit count, which a shallow clone undercounts). Without git (an installed package) it is the package version. At every
 start the server compares the running commit with the last recorded deploy and, when they differ, stores a deploy entry (time, version,
 commit, the merged changes since the previous one) in the database, so a restart never adds one. `utubot app sync-github` stores the
 notes and release time of the app releases it sees in the same table. `GET /v1/changelog?kind=app|backend` serves both (`ai/CONTRACT.md`).
