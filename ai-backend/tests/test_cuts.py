@@ -233,6 +233,34 @@ class TestDocument:
         b = transcript_hash([(0.0, 1.0, "y")])
         assert a != b and a == transcript_hash([(0.0, 1.0, "x")])
 
+    def test_transitions_are_an_optional_additive_field(self):
+        transitions = [{"after_part": 0, "type": "fade", "duration_ms": 500, "status": "ready"}]
+        doc = cut_document(
+            video_id="v",
+            thash="h",
+            model="m",
+            parts=[Part("a", 0, 1000)],
+            summary="",
+            label="l",
+            duration_s=10.0,
+            source="preset",
+            preset_id=None,
+            transitions=transitions,
+        )
+        assert doc["transitions"] == transitions
+        plain = cut_document(
+            video_id="v",
+            thash="h",
+            model="m",
+            parts=[Part("a", 0, 1000)],
+            summary="",
+            label="l",
+            duration_s=10.0,
+            source="preset",
+            preset_id=None,
+        )
+        assert "transitions" not in plain
+
 
 class TestPromptFiltering:
     def test_builtin_set_carries_cut_presets(self):

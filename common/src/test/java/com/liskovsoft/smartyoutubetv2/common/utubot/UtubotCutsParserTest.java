@@ -26,6 +26,16 @@ public class UtubotCutsParserTest {
             "\"skip_ranges_ms\":[[60000,108000]],\"kept_ms\":192000,\"source\":\"youtube_captions\"," +
             "\"preset_id\":\"cut-no-filler\",\"model\":\"fast\",\"built_at\":\"2026-11-20T10:00:00Z\"}";
 
+    private static final String NEW_CUT = "{\"version\":1,\"video_id\":\"abcdefghijk\",\"transcript_hash\":\"t1\"," +
+            "\"duration_ms\":240000,\"label\":\"No filler\",\"summary\":\"The demo and the result.\"," +
+            "\"parts\":[{\"label\":\"Start\",\"start_ms\":0,\"end_ms\":60000},{\"label\":\"End\",\"start_ms\":108000,\"end_ms\":240000}]," +
+            "\"skip_ranges_ms\":[[60000,108000]],\"kept_ms\":192000," +
+            "\"source\":{\"kind\":\"youtube\",\"key\":\"youtube:abcdefghijk\"}," +
+            "\"transitions\":[{\"after_part\":0,\"type\":\"dip\",\"duration_ms\":300," +
+            "\"asset\":{\"ref\":\"cut-assets/1\",\"sha256\":\"abc\"},\"engine\":\"ffmpeg\"," +
+            "\"engine_version\":\"7\",\"status\":\"ready\"}],\"mode\":\"quick\"," +
+            "\"preset_id\":\"cut-no-filler\",\"model\":\"fast\",\"built_at\":\"2026-11-20T10:00:00Z\"}";
+
     private static final String CUTS = "{\"configured\":true,\"presets\":[" +
             "{\"id\":\"cut-no-filler\",\"label\":\"No filler\",\"state\":\"ready\",\"request_id\":\"cut1\",\"cut\":" + CUT + "}," +
             "{\"id\":\"cut-answer\",\"label\":\"Just the answer\",\"state\":\"building\"}," +
@@ -105,6 +115,27 @@ public class UtubotCutsParserTest {
         assertEquals(2, request.cut.parts.size());
         assertEquals("End", request.cut.parts.get(1).label);
         assertEquals(108_000, request.cut.parts.get(1).startMs);
+    }
+
+    @Test
+    public void parsesACutDocumentWithASourceObjectTransitionsAndMode() throws Exception {
+        CutList cuts = UtubotParser.parseCuts(CUTS.replace(CUT, NEW_CUT));
+
+        Cut cut = cuts.presets.get(0).cut;
+        assertEquals(240_000, cut.durationMs);
+        assertEquals(1, cut.skipRangesMs.size());
+        assertEquals(60_000, cut.skipRangesMs.get(0)[0]);
+        assertEquals(108_000, cut.skipRangesMs.get(0)[1]);
+        assertEquals(192_000, cut.keptMs);
+        assertEquals("fast", cut.model);
+        assertEquals(2, cut.parts.size());
+        assertEquals("End", cut.parts.get(1).label);
+        assertEquals(108_000, cut.parts.get(1).startMs);
+
+        CutRequest request = UtubotParser.parseCutRequest(REQUEST.replace(CUT, NEW_CUT));
+        assertTrue(request.isReady());
+        assertEquals("No filler", request.cut.label);
+        assertEquals(1, request.cut.skipRangesMs.size());
     }
 
     @Test
