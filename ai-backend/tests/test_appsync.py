@@ -253,6 +253,21 @@ def test_rate_limit_reset_is_remembered_and_later_runs_skip_github(tmp_path, git
     assert any("rate limit cleared" in line for line in result.lines)
 
 
+def test_a_token_ignores_the_anonymous_backoff(tmp_path, github, monkeypatch):
+    now = 1_700_000_000
+    monkeypatch.setattr(appsync.time, "time", lambda: now)
+    github.status = 403
+    github.headers = {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(now + 300)}
+    cfg = make_cfg(tmp_path)
+    with pytest.raises(appsync.TransientError):
+        sync(cfg, github)
+    github.status = None
+    github.headers = {}
+    github.add_release("0.3.1", 3001)
+    monkeypatch.setenv(cfg.app.github_token_env, "token-value")
+    assert sync(cfg, github).status == "published"
+
+
 def test_exhausted_quota_on_a_successful_response_is_remembered(tmp_path, github, monkeypatch):
     now = 1_700_000_000
     monkeypatch.setattr(appsync.time, "time", lambda: now)
