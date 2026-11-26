@@ -111,11 +111,11 @@ jobs:
             u-tubot/smarttubetv/build/robolectric-deps
           key: robolectric-deps-${{ hashFiles('u-tubot/gradle/robolectric-offline.gradle') }}
 
-       - name: Unit tests
-         working-directory: u-tubot
-         run: |
-           chmod +x gradlew
-           ./gradlew :common:testStutubotDebugUnitTest :smarttubetv:testStutubotDebugUnitTest
+      - name: Unit tests and TV module compile
+        working-directory: u-tubot
+        run: |
+          chmod +x gradlew
+          ./gradlew :common:testStutubotDebugUnitTest :smarttubetv:compileStutubotDebugJavaWithJavac :smarttubetv:testStutubotDebugUnitTest --tests '*UtubotPageScrollViewTest'
 
   extension:
     needs: changes
