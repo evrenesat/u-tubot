@@ -115,7 +115,7 @@ jobs:
         working-directory: u-tubot
         run: |
           chmod +x gradlew
-          ./gradlew :common:testStutubotDebugUnitTest :smarttubetv:compileStutubotDebugJavaWithJavac
+          ./gradlew :common:testStutubotDebugUnitTest :smarttubetv:compileStutubotDebugJavaWithJavac :smarttubetv:testStutubotDebugUnitTest --tests '*UtubotPageScrollViewTest'
 
   extension:
     needs: changes

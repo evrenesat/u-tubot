@@ -201,6 +201,7 @@ public class UtubotSummaryOverlay extends FrameLayout {
         mHint.setText(isAnswer ? R.string.utubot_view_answer_hint : R.string.utubot_view_hint);
         mText.setText("");
         mScroll.scrollTo(0, 0);
+        mScroll.setAutoScroll(false);
         mRetry.setVisibility(GONE);
         mAction = Action.NONE;
         mIsFirstAnswerPending = true;
@@ -264,6 +265,9 @@ public class UtubotSummaryOverlay extends FrameLayout {
                 mStatus.setText("");
                 mText.setText("");
         }
+
+        // The summary/answer text crawls by itself only when it is long enough: a key pauses it, Up and Down still scroll by hand.
+        mScroll.setAutoScroll(state.phase == Phase.READY);
 
         // Nothing to read: the only thing to do is the button (ask again, or transcribe). On the first answer of a view that asks for a
         // transcription it takes the focus from the list, which the user hasn't used yet.

@@ -97,7 +97,12 @@ public class UtubotPanelSettingsTest {
 
     @Test
     public void theSettingsListShowsBrowseRefreshAfterTheSummaryDelay() {
-        OptionCategory refresh = UtubotSettingsPresenter.instance(mActivity).buildCategories().get(7);
+        // Summary delay, then the reading pace of the self-scrolling answer, then Browse refresh
+        OptionCategory reading = UtubotSettingsPresenter.instance(mActivity).buildCategories().get(7);
+        OptionCategory refresh = UtubotSettingsPresenter.instance(mActivity).buildCategories().get(8);
+
+        assertEquals(mActivity.getString(R.string.utubot_auto_scroll), reading.options.get(0).getTitle().toString());
+        assertEquals("45 px/s", reading.options.get(0).getDescription().toString());
 
         assertEquals(mActivity.getString(R.string.utubot_browse_refresh), refresh.options.get(0).getTitle().toString());
         assertEquals("10 min", refresh.options.get(0).getDescription().toString());

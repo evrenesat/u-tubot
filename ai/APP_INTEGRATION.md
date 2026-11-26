@@ -71,7 +71,8 @@ so the other flavors behave as before.
 ## Behaviour
 
 - Settings, always in this order: Import setup, Pair with code (6 digits, `POST /v1/pair`, token stored, connection tested,
-  then "Paired as <user>"), assess switch, mark only, answer in menu, Summary panel, Summary delay, auto-select HQ captions, apply ready cuts
+  then "Paired as <user>"), assess switch, mark only, answer in menu, Summary panel, Summary delay, Reading pace (the self-scroll of
+  the long answer and Summary text, 30, 45 or 60 px/s), auto-select HQ captions, apply ready cuts
   automatically, Prompts (list, choose default, Import from URL, Refresh all), Test connection, Advanced (backend URL and token by hand; a typed backend
   also sets `<backend>/app/update.json` when no update URL is stored). `UtubotSettingsPresenter.buildCategories` is the list.
 - Import setup (`UtubotSetup`, `UtubotSetupFlow`): the user types a bare host or a URL, the app fetches `/setup.json`
@@ -104,7 +105,14 @@ so the other flavors behave as before.
   screen, in the same window: prompts on the left (Up and Down reload after 400 ms, OK keeps the prompt for the session), the text
   on the right (Right enters, Up and Down page, Left goes back), the title, the source line, the indicator and Retry (or
   "Transcribe in background") on top. It uses the `default` prompt (or the kept one). Back closes it; the focus returns to the card.
-  Menu keeps the video menu (Electric Eel's `KeyHelpers.isMenuKey`), so Info is the key.
+   Menu keeps the video menu (Electric Eel's `KeyHelpers.isMenuKey`), so Info is the key.
+   The long answer and Summary text (and the research results of the answer) crawl slowly and smoothly by themselves at the reading
+   pace of the options page (30, 45 or 60 px/s, default 45) when they are taller than the view, and stop at the bottom: a page takes
+   a few seconds to read. Any D-pad or keyboard key pauses it, and it resumes on its own a few seconds after the key; Up and Down still
+   scroll one page at a time, and waiting long enough shows the whole text. The view turns it on when the state is Ready and off while
+   it is opening or waiting (`UtubotSummaryOverlay`), which is the one view that renders both the Summary and the AI answer (`isAnswer`),
+   so the answer scrolls the same way. A long press of the Back key closes the view and cancels the scroll (`UtubotPageScrollView`,
+   `UtubotAutoScroll`).
 - Transcript states (`UtubotPanelModel`, "Transcript status" of `ai/CONTRACT.md`): the words are the server's, the app's own strings are
   the fallback for an answer that has none (`UtubotStateText`, one place for the panel, the Summary view and the AI answer).
   - `needs_transcript`: the panel and the view show the server's `message` (the plain "No captions..." question, or "Captions are

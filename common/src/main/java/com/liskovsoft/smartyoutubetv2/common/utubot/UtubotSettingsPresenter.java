@@ -79,6 +79,8 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
                 option -> mSettings.setSummaryPanelEnabled(option.isSelected()), mSettings.isSummaryPanelEnabled())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_panel_delay),
                 formatDelay(context, mSettings.getPanelDelayMs()), option -> showPanelDelays())));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_auto_scroll),
+                formatAutoScroll(context, mSettings.getAutoScrollSpeedPxPerSec()), option -> showAutoScrollSpeeds())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_browse_refresh),
                 formatBrowseRefresh(context, mSettings.getBrowseRefreshMinutes()), option -> showBrowseRefresh())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_update_interval),
@@ -168,6 +170,30 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
 
         dialog.appendRadioCategory(context.getString(R.string.utubot_update_interval), options);
         dialog.showDialog(context.getString(R.string.utubot_update_interval));
+    }
+
+    /**
+     * The reading pace of the self-scrolling summary/answer text: one of {@link UtubotSettings#AUTO_SCROLL_SPEEDS_PX_PER_SEC}
+     */
+    private void showAutoScrollSpeeds() {
+        Context context = getContext();
+        AppDialogPresenter dialog = AppDialogPresenter.instance(context);
+        List<OptionItem> options = new ArrayList<>();
+
+        for (int pxPerSec : UtubotSettings.AUTO_SCROLL_SPEEDS_PX_PER_SEC) {
+            options.add(UiOptionItem.from(formatAutoScroll(context, pxPerSec), option -> mSettings.setAutoScrollSpeedPxPerSec(pxPerSec),
+                    pxPerSec == mSettings.getAutoScrollSpeedPxPerSec()));
+        }
+
+        dialog.appendRadioCategory(context.getString(R.string.utubot_auto_scroll), options);
+        dialog.showDialog(context.getString(R.string.utubot_auto_scroll));
+    }
+
+    /**
+     * "30 px/s", "45 px/s"
+     */
+    static String formatAutoScroll(Context context, int pxPerSec) {
+        return context.getString(R.string.utubot_auto_scroll_value, String.valueOf(pxPerSec));
     }
 
     /**
