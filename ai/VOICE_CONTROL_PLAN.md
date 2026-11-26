@@ -1,6 +1,6 @@
 # Voice control: talk to the TV, and a phone app with a robot mode (plan, epic #189)
 
-Status: draft, revision 1. Waits for the owner's decisions (Part 1). Nothing is implemented and no service is changed.
+Status: revision 2. The owner's decisions are taken (Part 1, 26 November 2026) and checkpoint 0 is measured (sections 2.5 and 5.2). Nothing is implemented and no service is changed.
 Scope: the owner speaks, from a phone or to the TV itself, and the TV does it for the content in focus: describe a cut,
 play it, next part, HQ subtitles, a summary, research, play, pause, seek, or a question about what is on screen. Three
 pieces are added: a **live server** (Go, grown from R2T4's server) that carries audio, the TV control channel and the
@@ -58,6 +58,10 @@ waiting on a blank screen. The cut itself, a summary or research take as long as
 
 Decision 2 blocks checkpoint 2 and checkpoint 6. Decision 3 shapes everything and is taken as you stated it on
 26 November. The others can be taken as recommended and changed later.
+
+**Recorded 26 November 2026:** the owner took all twelve decisions as recommended. Decision 2 is answered "yes, MIT":
+`evrenesat/r2t4` now carries an MIT licence ([evrenesat/r2t4#22](https://github.com/evrenesat/r2t4/pull/22)), so its
+`android/` and `server/` may be copied into this repository. Decisions 4 to 12 stay open to change later, as written.
 
 1. **One phone app with two modes, in this repository** (recommended). R2T4's Android app is copied into `phone/`,
    renamed to u·tubot (`dev.utubot.phone`), and gets pairing, the Talk button and the classic screens; its capture
@@ -354,7 +358,28 @@ Marks, all stamped by the live server unless noted; client marks are converted w
 | t3→t7 speech out | 500 ms | 1,000 ms | gateway engine, Go | replies are one or two sentences |
 | live server's own time, summed over hops | 10 ms | 20 ms | Go | t1→t4 minus engine time |
 
-Every engine number above is a guess until checkpoint 0 (engines alone) and checkpoint 5 (whole path).
+Measured at checkpoint 0 (26 November 2026, from the backend's own container on the owner's server, with the backend's own
+gateway key; ten calls each, 50th and 90th percentile by nearest rank; whole-request time, so it includes the network hop):
+
+| Engine | Alias | n | 50th | 90th | Worst | Budget (50th / 90th) | Verdict |
+|---|---|---|---|---|---|---|---|
+| Speech to text, 3.2 s clips of public-domain English sentences (Open Speech Repository, 16 kHz mono WAV) | `stt` | 10 | 0.34 s | 0.43 s | 1.27 s (the first call) | 0.4 / 0.9 s | within budget; the text was right on all ten |
+| Intent, 295 tokens in (plan target: 700), at most 120 out | `fast` (`bonsai-2.5-27b`) | 10 | 12.2 s | 25.4 s | 31.0 s | 0.6 / 1.2 s | **20 to 40 times over**; 8 of 10 answered, 2 ran out of the 120 tokens |
+| Intent, same prompts | `coder` (`Ornith-1.5-35B-A3B`) | 10 | 3.0 s | 5.4 s | 6.5 s | 0.6 / 1.2 s | **5 times over**; 9 of 10 answered (1 ran out of tokens), tool and arguments right on all 9 |
+| Speech out | none | 0 | | | | 0.5 / 1.0 s | **no route on the gateway** (section 5.2) |
+| Live server's own time | | | not measured | | | 10 / 20 ms | nothing to measure before checkpoint 2 |
+
+What the numbers say: the speech engine is as fast as hoped. The intent models are not, and the cause is not the
+engine speed (`coder` first token 0.4 s, about 32 tokens a second) but that both aliases **think before answering even
+with `reasoning_effort: none`**: `fast` and `coder` spent most of their tokens on reasoning text, which is why 3 of 20
+calls hit the 120-token cap with an empty or cut answer. `fast` was also slow on a cold or busy engine (the first call
+took 31 s). So the open-command budget of 1.5 s cannot be met by these two aliases as they are called today. Checkpoint 5
+must therefore start by testing (a) `fast-instruct`, which the gateway lists and which was not probed here, (b) a larger
+`max_tokens` and a way to switch thinking off, and (c) measuring the player-family phrases without a model at all, which
+stage 1 already covers. Until then the planning figure for an open command is about 4 s at the median on `coder`, and the
+1.5 s and 2.5 s targets of the table stand as targets, not as expectations. The probe's correct answers (`pause`,
+`seek` with a signed or absolute second count, `next_part`, `show_more`, `cut_preset` with an id from the list,
+`ask_video`) show the prompt shape of 2.8 works when the answer is not cut short.
 
 Measurement: each command's marks are part of its history record and of a `GET /rt/v1/stats` answer (admin token:
 count, and the 50th, 90th and 99th percentile per hop over the last 1,000 commands, per tool family). CI runs a
@@ -613,14 +638,43 @@ the median and about 150 h with two or three long ones. 2, 3 and 6 are the likel
 
 ### 5.2 Could not be verified from here
 
-- Every engine time in 2.5: nothing was sent to a model. Whether the gateway has a speech-out route and which alias
-  names this client may use (checkpoint 0).
-- Whether `fast` holds a one-object JSON answer over the focus prompt (checkpoint 4 with scripted answers, 5 for real).
-- The backend's event-loop lag under normal use (checkpoint 0); the argument of 2.2 rests on the design, not on a number.
-- WebSocket upgrade through the owner's proxy and tailnet relay (checkpoint 0).
+- Speech-out time, and the whole path of 2.5 with the TV and the live server (checkpoint 5). The engine rows of 2.5 were
+  measured at checkpoint 0; the sentences used for speech in were not spoken commands, so the recognition quality on
+  real commands is still open (checkpoint 5 sound set).
+- The gateway has **no speech-out route** (`POST /v1/audio/speech` answers 404 on the live gateway, and no speech alias
+  is in `GET /v1/models`; the speech-in route is there and takes the model name `stt`, which is not in that list either).
+  A private KittenTTS exists on the XTX at its own address and key (`infra/services/kitten-tts` in the operations
+  repository), but the u·tubot backend has no access to it. Who acts: the owner decides between adding a speech-out route
+  to modelgate and giving the backend the XTX address and
+  a key; either way the gateway or the ACL change is the owner's pipeline, not this repository's. Without it, replies are
+  text only; checkpoint 7 waits for it.
+- The live backend's configuration has no `[speech]` section, so `POST /v1/speech` answers "not configured" today.
+  Speech-to-text with the backend's own key works (checked), so voice needs `[speech] alias = "stt"` in
+  `/etc/utubot/config.toml`: the owner's pipeline.
+- Whether the aliases `fast` and `coder` can be made to answer without thinking (see 2.5); `fast-instruct` untested.
+- The backend's event-loop lag: measured at checkpoint 0 without a restart or any config change, from inside the
+  backend's container against `GET /v1/health` on loopback. One request at a time, every 0.1 s, 300 requests: 50th 1.9
+  ms, 90th 2.2 ms, 99th 3.0 ms, worst 57 ms. Eight parallel clients: 50th 6.8 ms, 90th 7.3 ms, 99th 111 ms, worst
+  111 ms (the per-IP rate limit answered part of the 480 requests; only answered ones are counted). Reading: under light
+  load the loop adds a few milliseconds, with rare stalls of 50 to 110 ms, probably the housekeeping or a request from
+  another client; heavy cut or caption work was not running. A 100 ms stall is inside the 250 ms budget of the capture
+  tail but not inside the live server's 20 ms, which is why 2.2 keeps audio out of this loop. This is a health route, not
+  a loaded one; the number to trust is the one checkpoint 5 takes during a real cut request.
+- WebSocket upgrade through the owner's proxy. Not provable without a config change. The path is: phone or TV, then
+  either the public name (nginx on the VPS, whose vhost this repository and the operations repository do not hold and
+  which the agent host cannot read) and on to Tailscale Serve, or the machine's tailnet name straight to Tailscale Serve on
+  the backend's machine (a VM). Tailscale Serve there maps `/` to `127.0.0.1:8790` and nothing else on port 443, so
+  `/rt/` would reach the Python backend, not a second service: a path handler for `/rt` to the live server is needed.
+  Tailscale Serve proxies WebSocket upgrades by itself (stated in its documentation; not exercised here). The VPS nginx
+  needs, in the `/rt/` location: `proxy_http_version 1.1`, `proxy_set_header Upgrade $http_upgrade`, `proxy_set_header
+  Connection "upgrade"`, and `proxy_read_timeout` and `proxy_send_timeout` of at least 3600 s (the default of 60 s cuts an
+  idle socket), plus no response buffering. An upgrade request sent through both names to an existing route returned the
+  same plain answer as without the header, which only shows that the backend has no WebSocket support, not what the
+  proxies do. The first real proof is the checkpoint 2 deployment test: a WebSocket echo through `/rt/` from outside the
+  tailnet. Task for it, with the exact steps: [evrenesat/evreniops#250](https://github.com/evrenesat/evreniops/issues/250).
 - Raw microphone capture on the owner's TV (#176's probe) and which OkHttp version the TV build forces (WebSocket
   needs 3.5 or newer; checked first in checkpoint 3).
 - Picovoice's free-plan limits, keyword file expiry and prices; the licences of sherpa-onnx's keyword models
   (checkpoint 10, before any model file is committed).
 - Whether an MV3 background can hold the socket under the extension's rules on both browsers (checkpoint 12).
-- kitten-tts's speed and whether its voice is good enough to leave on (checkpoint 0 and the owner's ear).
+- kitten-tts's speed and whether its voice is good enough to leave on: not measured, no route to it (above); the owner's ear after checkpoint 7.
