@@ -242,3 +242,112 @@ class TestLongVideos:
         doc = await wait_ready(cuts_env, second.json()["request_id"])
         assert doc["state"] == "ready"
         assert len(model.maps) + len(model.reduces) == calls
+
+
+HIGHLIGHT_LINE = re.compile(r"^#(\d+) \[[^\]]+\].*HIGHLIGHT", re.MULTILINE)
+
+
+def _group_consecutive(ids: list[int]) -> list[tuple[int, int]]:
+    """Consecutive unit ids grouped into ranges, so one highlight burst is one part."""
+    groups: list[list[int]] = []
+    for n in sorted(ids):
+        if groups and n == groups[-1][-1] + 1:
+            groups[-1].append(n)
+        else:
+            groups.append([n])
+    return [(g[0], g[-1]) for g in groups]
+
+
+def set_highlights_transcript(
+    fetcher, *, n_bursts: int = 16, burst_lines: int = 6, spacing: int = 225
+):
+    """A long video: `n_bursts` short highlight bursts spread evenly, each its own moment,
+    filler between them. The pause after each burst keeps it out of the filler units."""
+    segs: list[tuple[float, float, str]] = []
+    at = 0.0
+    for i in range(n_bursts):
+        for j in range(burst_lines):
+            segs.append((at, at + 3.0, f"HIGHLIGHT moment {i} beat {j} is right here."))
+            at += 3.2
+        at += 0.9
+        kept = spacing - (burst_lines * 3.2 + 0.9)
+        for _ in range(max(1, int(kept // 4.3))):
+            segs.append((at, at + 4.0, "some filler line that just continues the video along."))
+            at += 4.3
+    fetcher.segments = segs
+    fetcher.meta_extra = {"duration_s": int(at)}
+    return segs
+
+
+class HighlightsModel:
+    """A well-behaved highlights model, as the prompt now asks: per excerpt each highlight
+    burst becomes one short part; the reduce keeps every candidate in video order."""
+
+    def __init__(self) -> None:
+        self.units_by_call: list[tuple[str, str]] = []
+
+    def __call__(self, system: str, user: str):
+        self.units_by_call.append((system, user))
+        if "You finish director's cuts" in system:
+            ids = [int(n) for n in HIGHLIGHT_LINE.findall(user)]
+            if not ids:
+                return {"parts": [], "summary": "s", "kept_s": 0}
+            return {
+                "parts": [{"from": i, "to": i, "rank": k + 1} for k, i in enumerate(ids)],
+                "summary": "Spread highlights.",
+                "kept_s": 300,
+            }
+        hits = [int(n) for n in HIGHLIGHT_LINE.findall(user)]
+        if not hits:
+            return {"parts": [], "summary": "s", "kept_s": 0}
+        return {
+            "parts": [{"from": a, "to": b, "rank": 1} for a, b in _group_consecutive(hits)],
+            "summary": "s",
+            "kept_s": 0,
+        }
+
+
+class TestHighlightsSpread:
+    async def test_highlights_on_a_long_video_keeps_many_short_spread_parts(self, cuts_env):
+        cuts = cuts_env.cfg.cuts
+        cuts.max_input_tokens = 4000  # the map/reduce path, like a long video on a small model
+        cuts.map_chunk_tokens = 2000
+        cuts.map_overlap_units = 3
+        cuts.reduce_excerpt_chars = 40
+        set_highlights_transcript(cuts_env.fetcher)
+        model = HighlightsModel()
+        cuts_env.llm.cut_answer = model
+        r = await post_cut(cuts_env, preset="cut-highlights-5")
+        doc = await wait_ready(cuts_env, r.json()["request_id"], wait_ms=20000)
+        assert doc["state"] == "ready", doc.get("error") or doc
+        cut = doc["cut"]
+        assert cut["target_s"] == 300
+        starts = sorted(p["start_ms"] for p in cut["parts"])
+        assert starts == sorted(starts)
+        # Many short parts spread across the video, not a few long blocks.
+        assert len(cut["parts"]) >= 8
+        assert all((p["end_ms"] - p["start_ms"]) < 45_000 for p in cut["parts"])
+        third_ms = cut["duration_ms"] / 3
+        assert any(p < third_ms for p in starts)
+        assert any(third_ms <= p < 2 * third_ms for p in starts)
+        assert any(2 * third_ms <= p for p in starts)
+        # It really went through the map/reduce path: several excerpts, then one reduce.
+        assert any("You finish director's cuts" in s for s, _ in model.units_by_call)
+        assert len(model.units_by_call) > 4
+
+    async def test_highlights_keeps_the_target_length_when_the_highlights_exceed_it(self, cuts_env):
+        cuts = cuts_env.cfg.cuts
+        cuts.max_input_tokens = 4000
+        cuts.map_chunk_tokens = 2000
+        cuts.map_overlap_units = 3
+        cuts.reduce_excerpt_chars = 40
+        # More highlight content than the target: the server still trims to the band.
+        set_highlights_transcript(cuts_env.fetcher, n_bursts=32, burst_lines=6, spacing=112)
+        cuts_env.llm.cut_answer = HighlightsModel()
+        r = await post_cut(cuts_env, preset="cut-highlights-5")
+        doc = await wait_ready(cuts_env, r.json()["request_id"], wait_ms=20000)
+        assert doc["state"] == "ready", doc
+        cut = doc["cut"]
+        assert 255 <= cut["kept_s"] <= 345, cut["kept_s"]
+        assert len(cut["parts"]) >= 8
+        assert all((p["end_ms"] - p["start_ms"]) < 45_000 for p in cut["parts"])

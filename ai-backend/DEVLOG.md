@@ -43,6 +43,24 @@
 
 # DEVLOG
 
+## 2026-11-26 (highlights cut of a long video kept only two parts, issue 139)
+
+- Problem: a 5-minute `cut-highlights-5` of a 68-minute video came back as two long blocks instead of the strongest short
+  moments spread across the whole video. On a long transcript the cut runs the map/reduce path (#95): each excerpt proposed
+  its best stretch and the reduce kept the biggest, and the prompt only asked for "the most interesting minutes", so the model
+  proposed a few long blocks rather than many short moments.
+- `prompts.py`: the `cut-highlights-5` instruction now asks for many short, distinct moments - the best scene or beat in each
+  part of the video, jumped across the start, middle and end, as several separate parts, not a few long blocks. The instruction
+  rides into the one-pass, map and reduce calls, so the map proposes granular candidates the reduce can mix and match.
+- Tests: `tests/test_cuts_longvideo.py::TestHighlightsSpread` builds a long video of many short highlight bursts spread through
+  it (through the map/reduce path) and asserts the cut keeps many short parts (>= 8, each under 45 s) in the first, middle and
+  last third; a second case keeps the band when the highlight content exceeds the target.
+- The recorded cutbench scores (`fixtures/cuts-scores-2026-11-20.json`, `fixtures/cuts/CHOICE-2026-11-20.md`) cover the short
+  set only and carry no highlights request, so they are unchanged; a real 68-minute video's cut is regenerated on the owner's
+  server by re-running the preset, never from an agent.
+- Verified: `uv run ruff check`, `uv run ruff format --check`, `uv run pytest -q` (1287 passed, the two `test_watch_*`
+  collection errors are a pre-existing missing `Pillow` optional extra, unrelated to this change).
+
 ## 2026-11-25 (Tailscale Serve sign-in, UTB-105)
 
 - New optional `[auth]` section: `tailscale_identity` (default off) and `tailscale_users` (tailnet login to local user;
