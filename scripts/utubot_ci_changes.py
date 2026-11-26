@@ -25,7 +25,7 @@ NON_APP = re.compile(
     r"^(ai-backend/|ai/|docs/|updates/|fastlane/|images/|assets/|scripts/|\.github/|extension/|[^/]+\.md$|LICENSE$|crowdin\.yml$)"
 )
 BACKEND = re.compile(
-    r"^(ai-backend/|ai/|docs/|scripts/utubot_release\.py$|scripts/emulator_mock_backend\.py$|scripts/utubot_ci_changes\.py$)"
+    r"^(ai-backend/|ai/|docs/|scripts/utubot_release\.py$|scripts/emulator_mock_backend\.py$|scripts/utubot_ci_changes\.py$|scripts/dev_install\.py$)"
 )
 PIPELINE = re.compile(
     r"^\.github/(workflows/utubot-ci\.yml$|workflows/utubot-parity\.yml$|workflows/utubot-extension-release\.yml$|actions/)"
