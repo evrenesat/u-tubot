@@ -625,6 +625,17 @@ fraction guard; a video no longer than the band's top is cut without a target. C
 length (`kept_ms`) next to the preset label, for example "Highlights in 5 min · 5:02" (TV picker; the
 browser extension's cut checkpoints show the same, plan section 3).
 
+A built-in preset can also target a fraction of the video instead of a fixed length (`[cuts]
+preset_target_frac`, a `0 < f < 1` fraction; `cut-skim-film` defaults to `0.5`). Its target is
+`duration_s * f`, applied after `preset_target_s` and only when the video is long enough to fall
+outside the band, so `target_s` in the cut document is the effective fraction target. `cut-skim-film`
+("Skim the film") keeps the story beat by beat — the scene's best moments, in order, no cut mid-shot
+or mid-sentence — to about half the film's length; it has no description (the preset infers the story
+from the scenes). It runs in either mode: `quick` from the timed transcript, or `watched` when the
+viewer picks it for the vision pass. It is offered like the other built-in presets (`GET
+/v1/videos/{id}/cuts`), and it is a film-length cut: for a film too long for one request the map/reduce
+path limits it to `[cuts] map_max_keep_frac` of the video (the model still picks).
+
 Length of saved presets and typed prompts (addendum, 2026-11-24): the same band and rank selection
 apply to any cut that has a target. The target is, in order: a built-in preset's `preset_target_s`;
 a saved preset's explicit `length_min` / `length_frac` (a fraction needs the video's duration); the

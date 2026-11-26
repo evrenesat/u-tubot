@@ -376,6 +376,10 @@ class CutsConfig(BaseModel):
     repair_on_start: bool = True
     # Presets with a target kept length (s); typed prompts and saved presets have none.
     preset_target_s: dict[str, int] = Field(default_factory=lambda: {"cut-highlights-5": 300})
+    # Presets whose target is a fraction of the video's length (kept seconds = duration * frac),
+    # for a film-length cut such as "skim the film" that keeps about half a film. A fixed
+    # preset_target_s for the same preset id wins over this fraction.
+    preset_target_frac: dict[str, float] = Field(default_factory=lambda: {"cut-skim-film": 0.5})
     length_tolerance: float = 0.15  # accepted kept length: target +/- this fraction
     over_ask_frac: float = 0.2  # the model is asked for this much more than the target
     release_duration_tolerance_ms: int = 2000
@@ -384,6 +388,15 @@ class CutsConfig(BaseModel):
     # which the list answers 304 for when nothing changed (offline-first, issue 146).
     cache_max_age_s: int = 900
     watched: WatchedCutsConfig = Field(default_factory=WatchedCutsConfig)
+
+    @model_validator(mode="after")
+    def _frac_range(self) -> CutsConfig:
+        for preset_id, frac in self.preset_target_frac.items():
+            if not 0.0 < frac < 1.0:
+                raise ValueError(
+                    f"preset_target_frac[{preset_id!r}] must be between 0 and 1 (exclusive)"
+                )
+        return self
 
 
 class ClassConfig(BaseModel):

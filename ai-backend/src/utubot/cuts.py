@@ -93,7 +93,12 @@ PRESET_LABELS = {
     "cut-answer": "Just the answer",
     "cut-demo": "Only the demo",
     "cut-highlights-5": "Highlights in 5 min",
+    "cut-skim-film": "Skim the film",
 }
+# A film-length cut: keeps the story beats and best scenes to a fraction of the runtime
+# (`cuts.preset_target_frac`), scene-aware. Its target scales with the video, so it is meant
+# for long films; a short video that already fits the band is cut without a target.
+CUT_SKIM_FILM_PRESET_ID = "cut-skim-film"
 # Removal presets keep whatever the video has left worth keeping; keeping nearly all of it is a
 # valid result ("little or no filler"), so a named preset has no upper keep guard. Only the broad
 # no-filler preset has the lower guard; a targeted answer or demo may legitimately be short.
@@ -641,6 +646,10 @@ def effective_target_s(
     explicit length, or the one read from the description); None when there is none or the video
     is already short enough to fit the band."""
     target_s = cfg.preset_target_s.get(preset_id or "")
+    if target_s is None and duration_s:
+        frac = cfg.preset_target_frac.get(preset_id or "")
+        if frac:
+            target_s = int(round(duration_s * frac))
     if target_s is None:
         target_s = length_target_s(length, duration_s)
     if target_s is None:

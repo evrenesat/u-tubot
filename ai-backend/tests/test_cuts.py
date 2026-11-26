@@ -367,6 +367,7 @@ class TestPromptFiltering:
             "cut-answer",
             "cut-demo",
             "cut-highlights-5",
+            "cut-skim-film",
         }
 
     def test_highlights_preset_names_the_payoffs_and_the_filler(self):
@@ -390,7 +391,13 @@ class TestPromptFiltering:
 
         store = PromptStore(Config(), Database(tmp_path / "db.sqlite"))
         ids = [p.id for p in store.cut_prompts("owner")]
-        assert ids == ["cut-no-filler", "cut-answer", "cut-demo", "cut-highlights-5"]
+        assert ids == [
+            "cut-no-filler",
+            "cut-answer",
+            "cut-demo",
+            "cut-highlights-5",
+            "cut-skim-film",
+        ]
 
     def test_user_set_can_override_a_preset_and_add_one(self, tmp_path):
         from utubot.config import Config

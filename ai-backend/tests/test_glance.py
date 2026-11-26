@@ -104,6 +104,7 @@ async def test_glance_prompt_text_and_budget():
         "cut-answer",
         "cut-demo",
         "cut-highlights-5",
+        "cut-skim-film",
     }
 
 
