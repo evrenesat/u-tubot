@@ -677,6 +677,9 @@ public class UtubotCutControllerTest {
         assertFalse(mController.isApplied(cut));
         assertEquals(mContext.getString(R.string.utubot_cut_menu), mController.getButtonLabel());
         mController.onFinish();
+    }
+
+    /**
      * The last drop of a cut that ends before the video end is the end of the cut: the player says so and offers the rest, instead of
      * reporting it as another middle skip
      */

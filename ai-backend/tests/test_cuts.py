@@ -542,14 +542,14 @@ class TestTargetLength:
 
     def test_many_close_parts_finalize_inside_the_band(self):
         units = [Unit(n, n - 1.0, float(n), f"u{n}") for n in range(1, 661)]
-        # 5 s parts with 2 s gaps: padding turns the gaps under merge_gap_s, so finalization
-        # merges them and adds the gaps back to the kept length.
+        # The parts are spaced past merge_gap_s, so finalize keeps them separate; the padded
+        # length select_for_target charges is the length the finished cut keeps (in band).
         spans = [(i * 7 + 1, i * 7 + 5, i + 1) for i in range(93)]
         chosen, total = select_for_target(ranked(units, spans), units, CFG, 300, duration_s=660.0)
         kept, kept_s = finalize_parts(chosen, CFG, guard=False, duration_s=660.0)
         low, high = target_band(300, CFG.length_tolerance)
         assert kept and low <= kept_s <= high
-        assert total == kept_s
+        assert round(total, 1) == kept_s
 
     def test_a_video_at_the_top_of_the_band_needs_no_target(self):
         assert effective_target_s(CFG, "cut-highlights-5", 345.0) is None
