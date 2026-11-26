@@ -20,6 +20,16 @@
   summary says the result plainly ("Removed 1:12 of filler, 2 % of the video"); when nothing is removed the request
   is ready with "No filler found". Detailed guard messages name what was found and what to try.
 
+## 2026-11-24 (frozen engine claim contract, issue 93)
+
+- `ai/ENGINE_CLAIM_CONTRACT.md`: phase 2 checkpoint P0, the frozen wire contract of P.3.3. Requests (ask, renew, `DELETE`,
+  lookup by `client_ref`, read by id), the claim object and states, every `409`/failed reason with its sentence, the times
+  and renewal rules, release and retry life cycle, and the D-P11 semantics.
+- `ai/CUT_MODES_PLAN.md`: P.3.3 and the P0 checkpoint link to the contract; P.1, P.6, P.7 (H3, N1) and P.9 now state the
+  owner's take-it-at-once decision instead of the earlier wait-for-runs text.
+- `ai-backend/tests/test_engine_claim_contract.py`: the contract keeps every config key, endpoint, state and reason, a
+  sentence per reason, the plan's reason set and the D-P11 wording; it fails on drift.
+
 ## 2026-11-24 (director's cuts for long videos, issue 95)
 
 - Cuts no longer refuse long videos: a transcript over `[cuts] max_input_tokens` is read in excerpts (chapter boundaries, small overlap),
