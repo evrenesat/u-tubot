@@ -120,6 +120,8 @@
     <string name="utubot_cut_ready">Director\'s cut ready: %1$s%2$s</string>
     <string name="utubot_cut_ready_choice">Director\'s cuts ready</string>
     <string name="utubot_cut_player_label">Cut: %1$s \u00b7 %2$s</string>
+    <string name="utubot_cut_player_time">%1$s / %2$s of %3$s</string>
+    <string name="utubot_cut_player_part">part %1$d of %2$d</string>
     <string name="utubot_cut_apply">Apply</string>
     <string name="utubot_cut_ready_length">, %s</string>
     <string name="utubot_cut_skipped">Skipped %s</string>

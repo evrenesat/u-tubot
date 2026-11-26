@@ -69,6 +69,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     private UtubotCutSkipper mSkipper;
     @Nullable
     private Disposable mPoll;
+    /** The last cut-time label written to the player button, so a tick that computes the same string does not rewrite it */
+    private String mLastCutLabel;
 
     @Override
     public void onNewVideo(Video item) {
@@ -109,7 +111,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         }
 
         mVideo = item;
-        setCutLabel(null);
+        showMenuCutLabel();
 
         if (item != null && item.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
             UtubotManager.instance(getContext()).followCuts(item.videoId, this);
@@ -441,7 +443,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         UtubotCutSeekBar.setCut(mVideo != null ? mVideo.videoId : null, null);
         UtubotCutSeekBar.paint(getPlayer());
         mCut = null;
-        setCutLabel(null);
+        showMenuCutLabel();
 
         if (mVideo != null && mVideo.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
             noteLocalOff(mVideo.videoId);
@@ -460,7 +462,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         mSkipper = new UtubotCutSkipper(cut, activeSponsorSegments(), this::isSponsorSegmentSkipped);
         UtubotCutSeekBar.setCut(cut.videoId, toSeekBarSegments(cut, getPlayer().getDurationMs()));
         UtubotCutSeekBar.paint(getPlayer());
-        setCutLabel(cut);
+        mLastCutLabel = null;
+        refreshCutLabel();
         startPolling();
 
         // Applying a cut is an explicit act, not a seek: when the playback is already inside a dropped range (an intro drop the video
@@ -541,6 +544,10 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         if (mPendingCut != null) {
             tryApplyPending();
+        }
+
+        if (mCut != null) {
+            refreshCutLabel();
         }
 
         if (mSkipper == null || mCut == null || !getPlayer().isPlaying()) {
@@ -742,19 +749,55 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     }
 
     /**
-     * The player's cut button says which cut is on: "Cut: Half · 41:20", or the plain menu label when none is.
+     * The player's cut button says which cut is on while one is applied: the cut's name, the position and length in cut time
+     * ("3:10 / 5:00 of Highlights") and, when the playback is in a part, the current part (" · part 2 of 7"). The full-video time stays
+     * on the player's own clock. It updates every tick as the playback moves, and shows the same snapshot when the video is paused.
      */
-    private void setCutLabel(@Nullable Cut cut) {
+    private void refreshCutLabel() {
+        Cut cut = mCut;
+        PlaybackView player = getPlayer();
+
+        if (player == null || cut == null) {
+            return;
+        }
+
+        UtubotCutTime.CutPosition position = UtubotCutTime.of(cut, player.getPositionMs());
+        String label = cutTimeLabel(cut, position);
+
+        if (!label.equals(mLastCutLabel)) {
+            mLastCutLabel = label;
+            player.setButtonLabel(R.id.action_utubot_cut, label);
+        }
+    }
+
+    /**
+     * "3:10 / 5:00 of Highlights", plus " · part 2 of 7" when the playback is inside a kept part and there is more than one. The kept
+     * length is the cut's own (`kept_ms`), the sum of the parts only when the cut reports none.
+     */
+    private String cutTimeLabel(Cut cut, UtubotCutTime.CutPosition position) {
+        String name = cut.label != null ? cut.label : getContext().getString(R.string.utubot_cut);
+        long total = cut.keptMs > 0 ? cut.keptMs : position.totalKeptMs;
+        String label = getContext().getString(R.string.utubot_cut_player_time, formatLength(position.cutPositionMs), formatLength(total), name);
+
+        if (position.partIndex > 0 && position.partCount > 1) {
+            label += " \u00b7 " + getContext().getString(R.string.utubot_cut_player_part, position.partIndex, position.partCount);
+        }
+
+        return label;
+    }
+
+    /**
+     * The player's cut button with no cut on: the plain "Director's cut…" menu label.
+     */
+    private void showMenuCutLabel() {
         PlaybackView player = getPlayer();
 
         if (player == null) {
             return;
         }
 
-        String label = cut != null && cut.label != null
-                ? getContext().getString(R.string.utubot_cut_player_label, cut.label, formatLength(cut.keptMs))
-                : getContext().getString(R.string.utubot_cut_menu);
-        player.setButtonLabel(R.id.action_utubot_cut, label);
+        mLastCutLabel = null;
+        player.setButtonLabel(R.id.action_utubot_cut, getContext().getString(R.string.utubot_cut_menu));
     }
 
     /**

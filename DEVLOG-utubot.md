@@ -11,6 +11,20 @@
 
 # u·tubot devlog
 
+## 2026-11-26 (cuts: the player shows cut time and part number, flow-80)
+
+- While a director's cut is applied, the player's cut button shows the cut's name and the position and length in cut time
+  ("3:10 / 5:00 of Highlights"), plus the current part when the playback is in one (" · part 2 of 7"). The full-video time
+  stays on the player's own clock. The label updates every playback tick as the playback moves and shows the same snapshot
+  while paused; the menu still switches the cut or turns it off.
+- `UtubotCutTime.of` maps a video position to the cut time and the kept part it is in: the cut time is the kept parts before
+  the position plus how far into the current part it is, and the part number is 1-based, 0 in a drop or before the first / past
+  the last part. The kept length is the cut's own (`kept_ms`), the sum of the parts only when the cut reports none. The label
+  is rewritten only when it changes, so a tick that computes the same string leaves the button alone.
+- Tests: `UtubotCutTimeTest` (inside a part, first and last part, past the last, between parts, before the first, no parts,
+  null cut) and `UtubotCutControllerTest` (the button shows the cut time and part number, the label follows the playback, a
+  same position does not rewrite it). Harness `CutsHarnessActivity` shows the cut time and part number.
+
 ## 2026-11-26 (TV uploads its caption tracks to the backend, issue 149)
 
 - `VideoLoaderController` calls `UtubotClientCaptions.onFormatInfo`: in the background, once per video per app session, the TV

@@ -26,6 +26,7 @@ import org.robolectric.shadows.ShadowToast;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -671,11 +672,83 @@ public class UtubotCutControllerTest {
 
         mController.onCutChosen(VIDEO, cut);
         assertTrue(mController.isApplied(cut));
-        assertEquals(mContext.getString(R.string.utubot_cut_player_label, "Half", "41:20"), mController.getButtonLabel());
+        // at the start of the cut, no part yet: position / length of the cut name
+        assertEquals("0:00 / 41:20 of Half", mController.getButtonLabel());
 
         assertTrue(mController.toggle(cut));
         assertFalse(mController.isApplied(cut));
         assertEquals(mContext.getString(R.string.utubot_cut_menu), mController.getButtonLabel());
+        mController.onFinish();
+    }
+
+    /**
+     * While a cut is applied and the playback is inside a kept part, the button shows the cut time and the current part number.
+     */
+    @Test
+    public void thePlayerButtonShowsTheCutTimeAndPartNumber() {
+        mController.open(video(VIDEO), 600_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-highlights", "Highlights", 600_000);
+        cut.keptMs = 300_000;
+        cut.parts = parts(
+                part("intro", 0, 60_000),
+                part("main", 100_000, 220_000),
+                part("outro", 300_000, 420_000));
+        cut.skipRangesMs = skipRanges();
+
+        mController.onCutChosen(VIDEO, cut);
+        assertTrue(mController.isApplied(cut));
+        mController.setPosition(160_000); // 60 000 of the first part, then 60 000 into the second: 2:00 in the cut, part 2 of 3
+        mController.tick();
+
+        assertEquals("2:00 / 5:00 of Highlights \u00b7 part 2 of 3", mController.getButtonLabel());
+        mController.onFinish();
+    }
+
+    /**
+     * The cut-time label updates as the playback moves: a tick after a position change rewrites the button without a new apply.
+     */
+    @Test
+    public void theCutTimeLabelFollowsThePlayback() {
+        mController.open(video(VIDEO), 600_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-highlights", "Highlights", 600_000);
+        cut.keptMs = 180_000; // the two kept parts: 60 000 + 120 000
+        cut.parts = parts(
+                part("intro", 0, 60_000),
+                part("main", 100_000, 220_000));
+        cut.skipRangesMs = skipRanges();
+
+        mController.onCutChosen(VIDEO, cut);
+        assertTrue(mController.isApplied(cut));
+        assertEquals("0:00 / 3:00 of Highlights \u00b7 part 1 of 2", mController.getButtonLabel()); // inside the first part
+
+        mController.setPosition(160_000);
+        mController.tick();
+        assertEquals("2:00 / 3:00 of Highlights \u00b7 part 2 of 2", mController.getButtonLabel());
+
+        mController.setPosition(450_000); // past the last kept part, in the drop to the end
+        mController.tick();
+        assertEquals("3:00 / 3:00 of Highlights", mController.getButtonLabel()); // no part line when not inside a part
+        mController.onFinish();
+    }
+
+    /**
+     * A tick that computes the same cut-time string does not rewrite the button: the debounce keeps the label writes to real changes.
+     */
+    @Test
+    public void aTickWithTheSamePosition_doesNotRewriteTheLabel() {
+        mController.open(video(VIDEO), 600_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-highlights", "Highlights", 600_000);
+        cut.keptMs = 120_000; // the single kept part
+        cut.parts = parts(part("main", 100_000, 220_000));
+        cut.skipRangesMs = skipRanges();
+
+        mController.onCutChosen(VIDEO, cut);
+        mController.setPosition(160_000);
+        mController.tick();
+        String first = mController.getButtonLabel();
+
+        mController.tick(); // same position: the label is unchanged and not rewritten
+        assertEquals(first, mController.getButtonLabel());
         mController.onFinish();
     }
 
@@ -711,6 +784,8 @@ public class UtubotCutControllerTest {
         private PlaybackView mPlayer;
         private long mDurationMs;
         private String mButtonLabel;
+        /** The proxy reads the current position from here, so a tick can move the playback into a kept part */
+        private final long[] mPosition = {0};
 
         void attach(Context context) {
             setAltContext(context);
@@ -718,8 +793,41 @@ public class UtubotCutControllerTest {
 
         void open(Video video, long durationMs) {
             mVideo = video;
-            mPlayer = player(durationMs, true, label -> mButtonLabel = label);
+            setBaseControllerVideo(video);
+            mPlayer = player(durationMs, true, mPosition, label -> mButtonLabel = label);
             mDurationMs = durationMs;
+        }
+
+        /**
+         * The base controller keeps its own, private {@code mVideo} (used by its {@code tick}/{@code apply}); {@code getVideo()} is
+         * inherited and reads the real main controller instead. Set both so the playback tick and the video the picker answers to agree.
+         */
+        private void setBaseControllerVideo(Video video) {
+            try {
+                Field field = UtubotCutController.class.getDeclaredField("mVideo");
+                field.setAccessible(true);
+                field.set(this, video);
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError(e);
+            }
+        }
+
+        void setPosition(long ms) {
+            mPosition[0] = ms;
+        }
+
+        /**
+         * Drive the controller's private playback tick through reflection, the way the field access above does, so the cut-time label
+         * follows a position change the same way it does while the video plays.
+         */
+        void tick() {
+            try {
+                Method tick = UtubotCutController.class.getDeclaredMethod("tick");
+                tick.setAccessible(true);
+                tick.invoke(this);
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError(e);
+            }
         }
 
         String getButtonLabel() {
@@ -729,11 +837,12 @@ public class UtubotCutControllerTest {
         void releasePlayer() {
             // Like PlaybackFragment.releasePlayer: the view stays as the presenter's weak reference, its engine is gone (and the stale
             // length it reports must not count either)
-            mPlayer = player(mDurationMs, false);
+            mPlayer = player(mDurationMs, false, mPosition);
         }
 
         void close() {
             mVideo = null;
+            setBaseControllerVideo(null);
             mPlayer = null;
         }
 
@@ -752,18 +861,26 @@ public class UtubotCutControllerTest {
      * A player of a known length whose engine stands initialized: the defaults answer every other call
      */
     private static PlaybackView player(long durationMs) {
-        return player(durationMs, true);
+        return player(durationMs, true, new long[]{0});
     }
 
     private static PlaybackView player(long durationMs, boolean engineInitialized) {
-        return player(durationMs, engineInitialized, label -> { });
+        return player(durationMs, engineInitialized, new long[]{0}, label -> { });
     }
 
-    private static PlaybackView player(long durationMs, boolean engineInitialized, Consumer<String> onButtonLabel) {
+    private static PlaybackView player(long durationMs, boolean engineInitialized, long[] position) {
+        return player(durationMs, engineInitialized, position, label -> { });
+    }
+
+    private static PlaybackView player(long durationMs, boolean engineInitialized, long[] position, Consumer<String> onButtonLabel) {
         return (PlaybackView) Proxy.newProxyInstance(PlaybackView.class.getClassLoader(), new Class<?>[]{PlaybackView.class},
                 (proxy, method, args) -> {
                     if ("getDurationMs".equals(method.getName())) {
                         return durationMs;
+                    }
+
+                    if ("getPositionMs".equals(method.getName())) {
+                        return position[0];
                     }
 
                     if ("isEngineInitialized".equals(method.getName())) {
@@ -890,6 +1007,22 @@ public class UtubotCutControllerTest {
         Cut cut = new Cut();
         cut.videoId = videoId;
         return cut;
+    }
+
+    private static CutPart part(String label, long startMs, long endMs) {
+        CutPart part = new CutPart();
+        part.label = label;
+        part.startMs = startMs;
+        part.endMs = endMs;
+        return part;
+    }
+
+    private static List<CutPart> parts(CutPart... parts) {
+        return new ArrayList<>(Arrays.asList(parts));
+    }
+
+    private static List<long[]> skipRanges() {
+        return Arrays.asList(new long[]{60_000, 100_000}, new long[]{220_000, 300_000});
     }
 
     private CutList cutsEmpty() {
