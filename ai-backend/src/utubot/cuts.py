@@ -49,6 +49,7 @@ from .transcripts import (
     TranscriptService,
     fmt_ts,
 )
+from .usage import METRIC_YOUTUBE_FORBIDDEN
 from .youtube import YoutubeGate
 
 log = logging.getLogger("utubot.cuts")
@@ -59,6 +60,10 @@ STAGE_MODEL = "model"
 STAGE_CHECKING = "checking"
 STAGE_MAP = "map"  # long videos: excerpt i of n (detail `done`, `of`)
 STAGE_REDUCE = "reduce"  # long videos: the final choice over the candidates (detail `round`)
+
+# Shown on the TV when a cut cannot fetch the transcript because YouTube refused the download: the
+# server waits for the TV's own captions (the client proxy path) instead of failing the cut.
+FORBIDDEN_CAPTIONS_MESSAGE = "YouTube refused the server; using the TV's captions…"
 
 REQUEST_STATES = ("waiting", "building", "needs_transcript", "ready", "failed", "dismissed")
 BUILDING_STATES = ("building", "needs_transcript")
@@ -2778,6 +2783,10 @@ class CutService:
                 return cached
             job_row = self.jobs.get(job["id"])
             if job_row and job_row["status"] in ("failed", "cancelled"):
+                # A download refused by YouTube (HTTP 403) is not a block: while the TV plays the
+                # video it can upload its own captions, so wait for those instead of failing.
+                if job_row["status"] == "failed" and self.transcripts.forbidden_refusal(video_id):
+                    return await self._wait_for_client_captions(request_id, row, job)
                 raise CutRefused(
                     "No transcript could be built for this video ("
                     + (job_row.get("error") or "transcription failed")
@@ -2794,6 +2803,40 @@ class CutService:
                 )
         raise CutRefused(
             f"No transcript after {int(self.cfg.cuts.transcript_wait_s / 60)} min; try again later."
+        )
+
+    async def _wait_for_client_captions(
+        self, request_id: str, row: dict[str, Any], job: dict[str, Any]
+    ) -> Transcript:
+        """A YouTube download was refused (HTTP 403): wait for the TV's own captions before failing.
+
+        The TV uploads them through the client proxy path only while it plays the video, so this is
+        a bounded wait. On success the cut builds from them; on timeout the cut fails as usual. The
+        request stays `needs_transcript` with a message, so the TV shows what happens next.
+        """
+        video_id = row["video_id"]
+        self._set_state(request_id, "needs_transcript", error=FORBIDDEN_CAPTIONS_MESSAGE)
+        self.jobs.events.record(
+            job["id"],
+            STAGE_TRANSCRIPT,
+            events.WARN,
+            {"message": FORBIDDEN_CAPTIONS_MESSAGE},
+        )
+        usage = getattr(self.llm, "usage", None)
+        if usage is not None:
+            usage.add(METRIC_YOUTUBE_FORBIDDEN)
+        deadline = time.monotonic() + self.cfg.cuts.client_captions_wait_s
+        while time.monotonic() < deadline:
+            if self._dismissed(request_id):
+                raise CutRefused("The cut request was dismissed.")
+            await asyncio.sleep(self.cfg.cuts.poll_s)
+            cached = self.transcripts.cached(video_id)
+            if cached is not None and cached.segments:
+                self._set_state(request_id, "building", error=None)
+                return cached
+        raise CutRefused(
+            f"YouTube refused the server and the TV sent no captions within "
+            f"{int(self.cfg.cuts.client_captions_wait_s)} s."
         )
 
 

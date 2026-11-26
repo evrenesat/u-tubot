@@ -33,6 +33,7 @@ from ..youtube import (
     YoutubeGate,
     YoutubeVideoError,
     classify_failure,
+    retry_forbidden,
     ytdlp_runtime_options,
 )
 from . import events, gate, reference
@@ -302,6 +303,8 @@ async def download_audio(
     max_bytes: int,
     network_retry_s: float = 60.0,
     extra_opts: dict[str, Any] | None = None,
+    player_clients: list[str] | None = None,
+    forbidden_backoff_s: float = 1.0,
 ) -> Path:
     """The original-language audio at the lowest bitrate through yt-dlp (see `formats.py`).
 
@@ -327,8 +330,10 @@ async def download_audio(
             "progress_hooks": [_hook],
             **(extra_opts or {}),
         }
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
+
+        def run(player: str) -> Path:
+            player_opts = {**opts, "extractor_args": {"youtube": {"player_client": [player]}}}
+            with yt_dlp.YoutubeDL(player_opts) as ydl:
                 build = getattr(ydl, "build_format_selector", None)
                 if build is not None:
                     fallback.append(build(fmt))
@@ -340,6 +345,15 @@ async def download_audio(
                     raise YoutubeVideoError(REASON_TOO_LONG)
                 events.note(**chosen_format(info))
                 return path
+
+        # A 403 on the media download is retried with the next player client before the failure is
+        # classified once (a download refused for this video).
+        try:
+            return retry_forbidden(
+                run,
+                player_clients or ["web", "android"],
+                forbidden_backoff_s,
+            )
         except yt_dlp.utils.YoutubeDLError as exc:
             raise classify_failure(exc, network_retry_s, media=True, klass=CLASS_MEDIA) from None
 
@@ -446,6 +460,8 @@ class CaptionPipeline:
                 max_bytes=cfg.captions.max_download_bytes,
                 network_retry_s=cfg.youtube.network_retry_s,
                 extra_opts=ytdlp_runtime_options(cfg.youtube),
+                player_clients=cfg.youtube.player_clients,
+                forbidden_backoff_s=cfg.youtube.forbidden_backoff_s,
             )
         )
 

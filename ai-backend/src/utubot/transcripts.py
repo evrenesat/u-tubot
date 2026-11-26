@@ -23,6 +23,7 @@ from .youtube import (
     FETCH_CLASSES,
     REASON_EMPTY,
     REASON_EMPTY_TRACK,
+    REASON_FORBIDDEN_MEDIA,
     REASON_INCOMPLETE,
     REASON_NETWORK,
     REASON_OFFLINE,
@@ -34,6 +35,7 @@ from .youtube import (
     YoutubeVideoError,
     classify_failure,
     classify_status,
+    retry_forbidden,
     ytdlp_runtime_options,
 )
 
@@ -337,7 +339,7 @@ class YoutubeFetcher:
         self._transport = transport
 
     def _extract(self, video_id: str) -> dict[str, Any]:
-        opts: dict[str, Any] = {
+        base_opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -346,9 +348,23 @@ class YoutubeFetcher:
             **ytdlp_runtime_options(self.cfg.youtube),
         }
         if self.cfg.transcripts.cookies_file:
-            opts["cookiefile"] = self.cfg.transcripts.cookies_file
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            return ydl.extract_info(VIDEO_URL.format(video_id), download=False)
+            base_opts["cookiefile"] = self.cfg.transcripts.cookies_file
+
+        def run(player: str) -> dict[str, Any]:
+            opts = {
+                **base_opts,
+                "extractor_args": {"youtube": {"player_client": [player]}},
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(VIDEO_URL.format(video_id), download=False)
+
+        # A 403 here is a block of the metadata request; try the next player client before letting
+        # the gate classify it once.
+        return retry_forbidden(
+            run,
+            self.cfg.youtube.player_clients,
+            self.cfg.youtube.forbidden_backoff_s,
+        )
 
     def _extract_classified(self, video_id: str) -> dict[str, Any]:
         try:
@@ -527,6 +543,18 @@ class TranscriptService:
         dropped = self.db.execute_rc("DELETE FROM video_holds WHERE video_id=?", [video_id])
         dropped += self.db.execute_rc("DELETE FROM no_captions WHERE video_id=?", [video_id])
         return dropped
+
+    def forbidden_refusal(self, video_id: str) -> bool:
+        """True while this video's download was refused (HTTP 403), remembered as a failure.
+
+        A refused download is not a block: the audio can still stand in, and a cut can wait for the
+        TV's own captions instead of failing. Expires with the hold (`video_failure_ttl_s`)."""
+        held = self.hold(video_id)
+        return (
+            held is not None
+            and held["kind"] == HOLD_FAILED
+            and held["reason"] == REASON_FORBIDDEN_MEDIA
+        )
 
     @staticmethod
     def _audio_can_help(held: dict[str, Any]) -> bool:

@@ -24,6 +24,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
+import yt_dlp
+
 from .classes import NORMAL, class_rank, current_class, normalize_class
 from .config import YoutubeConfig
 from .db import Database
@@ -279,6 +281,38 @@ def classify_status(
     if status >= STATUS_SERVER_ERROR_FLOOR:
         return YoutubeDelayed(REASON_NETWORK, network_retry_s)
     return None
+
+
+def is_forbidden_error(exc: Exception) -> bool:
+    """True when `exc` is a yt-dlp HTTP 403: the one failure a different player client may resolve.
+
+    A 403 is either a block (a metadata/classification request) or a refused download (media);
+    retry both, because either can be specific to the player client that answered."""
+    return bool(FORBIDDEN_RE.search(str(exc)))
+
+
+def retry_forbidden(
+    func: Callable[[str], Any],
+    players: Iterable[str],
+    backoff_s: float,
+) -> Any:
+    """Run `func(player)` for each configured player client in turn, on an HTTP 403.
+
+    `func` is the yt-dlp call for one player client. On a 403 with more players left, wait
+    `backoff_s` and try the next; on the last player or a non-403 failure, re-raise the raw yt-dlp
+    error so the caller classifies it once (opening the breaker a single time)."""
+    clients = list(players)
+    last_exc: yt_dlp.utils.YoutubeDLError | None = None
+    for index, player in enumerate(clients):
+        try:
+            return func(player)
+        except yt_dlp.utils.YoutubeDLError as exc:
+            last_exc = exc
+            if not is_forbidden_error(exc) or index == len(clients) - 1:
+                raise
+            time.sleep(backoff_s)
+    assert last_exc is not None
+    raise last_exc
 
 
 class RedactUrls(logging.Filter):

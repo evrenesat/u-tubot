@@ -10,6 +10,8 @@ METRIC_LLM_CALLS = "llm_calls"
 METRIC_LLM_ERRORS = "llm_errors"
 METRIC_LLM_PROMPT_TOKENS = "llm_prompt_tokens"
 METRIC_LLM_COMPLETION_TOKENS = "llm_completion_tokens"
+# A YouTube download refused with HTTP 403 while a cut waited for the TV's own captions.
+METRIC_YOUTUBE_FORBIDDEN = "youtube_forbidden"
 DAY_FORMAT = "%Y-%m-%d"
 
 
