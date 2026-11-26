@@ -80,15 +80,20 @@ _CURRENT_PROVIDER: ContextVar[UserProvider | None] = ContextVar(
 )
 
 
-def bind_call(user: str | None, provider: UserProvider | None) -> Token:
-    """Bind the caller of the model calls that follow (a user name and, optionally, their upstream)."""
-    _CURRENT_USER.set(user)
-    return _CURRENT_PROVIDER.set(provider)
+def bind_call(user: str | None, provider: UserProvider | None) -> tuple[Token, Token]:
+    """Bind the caller of the model calls that follow (a user name and, optionally, their upstream).
+
+    Returns the two tokens needed to undo the bind; both context variables are set together so a
+    request or background job sees one consistent (user, upstream) pair.
+    """
+    user_token = _CURRENT_USER.set(user)
+    provider_token = _CURRENT_PROVIDER.set(provider)
+    return (user_token, provider_token)
 
 
-def unbind_call(token: Token) -> None:
-    _CURRENT_USER.reset(token)
-    _CURRENT_PROVIDER.reset(token)
+def unbind_call(tokens: tuple[Token, Token]) -> None:
+    _CURRENT_USER.reset(tokens[0])
+    _CURRENT_PROVIDER.reset(tokens[1])
 
 
 def current_user() -> str | None:

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 
-import httpx
+import pytest
 
-from tests.conftest import OTHER_TOKEN, TOKEN, anon_client
+from tests.conftest import anon_client
 from utubot.db import Database
+from utubot.llm import INTERACTIVE
 from utubot.userproviders import (
     KEY_HASH_PREFIX,
     USER_PROVIDER,
@@ -34,7 +35,7 @@ def test_set_describe_and_remove_roundtrip():
     ups = UserProviders(db)
     # nothing stored yet
     assert ups.describe("owner") is None and ups.get_live("owner") is None
-    doc = ups.set("owner", "https://models.example.com/v1/", "pk-secret")
+    doc = ups.set("owner", "https://models.example.com", "pk-secret")
     # describe shows the host and a short key fingerprint, never the key
     assert doc == {
         "host": "https://models.example.com",
@@ -52,11 +53,8 @@ def test_set_rejects_a_base_url_without_a_scheme():
     db = Database(":memory:")
     ups = UserProviders(db)
     for bad in ("", "   ", "no-scheme", "ftp", "just-a-token"):
-        try:
+        with pytest.raises(ValueError):
             ups.set("owner", bad, "pk-secret")
-            assert False, f"expected ValueError for {bad!r}"
-        except ValueError:
-            pass
     assert ups.describe("owner") is None  # nothing was stored
 
 
@@ -85,10 +83,10 @@ def test_list_reports_which_users_have_an_upstream():
 
 def test_bind_call_scopes_the_user_and_provider():
     assert current_user() is None and current_user_provider() is None
-    token = bind_call("owner", UserProvider("https://h.example.com", "pk"))
+    tokens = bind_call("owner", UserProvider("https://h.example.com", "pk"))
     assert current_user() == "owner"
     assert current_user_provider() == UserProvider("https://h.example.com", "pk")
-    unbind_call(token)
+    unbind_call(tokens)
     assert current_user() is None and current_user_provider() is None
 
 
@@ -147,8 +145,11 @@ def test_a_database_from_before_the_user_tables_opens(tmp_path):
 
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
-    conn.execute("CREATE TABLE transcripts(video_id TEXT PRIMARY KEY, lang TEXT)")
-    conn.execute("INSERT INTO transcripts VALUES('vid','en')")
+    conn.execute(
+        "CREATE TABLE transcripts(video_id TEXT PRIMARY KEY, lang TEXT, source TEXT NOT NULL,"
+        " text TEXT NOT NULL, fetched_at REAL NOT NULL)"
+    )
+    conn.execute("INSERT INTO transcripts VALUES('vid','en','asr','words',1.0)")
     conn.commit()
     conn.close()
     db = Database(path)
@@ -178,7 +179,7 @@ async def test_a_user_can_store_their_own_upstream(env):
 async def test_their_upstream_routes_the_next_call(env):
     await env.client.put(
         "/v1/me/provider",
-        json={"base_url": "https://user-models.example.com", "api_key": "pk-owner"},
+        json={"base_url": "https://user-models.example.com/v1", "api_key": "pk-owner"},
     )
     await env.client.get(f"/v1/videos/{VID}/insight", params={"wait_ms": 5000})
     # the analysis call authenticated with the user's own key, not the server default
@@ -231,27 +232,27 @@ async def test_the_budget_is_enforced_before_a_send(env):
     assert r.headers["retry-after"].isdigit() and int(r.headers["retry-after"]) > 0
 
 
-async def test_a_user_over_budget_leaves_another_user_spending(env):
+async def test_complete_enforces_the_budget_per_user(env):
     env.cfg.usage.user_budget_usd = 0.001
     env.svc.db.execute(
         "INSERT INTO user_usage(user,day,cost,calls) VALUES('owner',?,1.0,1)",
         [PerUserUsage.today()],
     )
-    # the owner is blocked...
-    assert (
-        await env.client.get(f"/v1/videos/{VID}/insight", params={"wait_ms": 5000})
-    ).status_code == 429
-    # ...but a second user, on their own fresh budget, still runs to completion.
-    other = httpx.AsyncClient(
-        transport=env.client._transport,
-        base_url="http://utubot",
-        headers={"Authorization": f"Bearer {OTHER_TOKEN}"},
-    )
+    messages = [{"role": "user", "content": "hello"}]
+    # owner is past their ceiling: the call is refused before it is sent
+    bound = bind_call("owner", UserProvider("https://models.example.com/v1", "pk-owner"))
     try:
-        r = await other.get(f"/v1/videos/{VID}/insight", params={"wait_ms": 5000})
-        assert r.status_code == 200
+        with pytest.raises(UserBudgetError):
+            await env.svc.llm.complete(env.cfg.llm.analysis, messages, priority=INTERACTIVE)
     finally:
-        await other.aclose()
+        unbind_call(bound)
+    # partner, on a fresh budget, runs the same call on their own upstream
+    bound2 = bind_call("partner", UserProvider("https://models.example.com/v1", "pk-partner"))
+    try:
+        done = await env.svc.llm.complete(env.cfg.llm.analysis, messages, priority=INTERACTIVE)
+        assert done is not None
+    finally:
+        unbind_call(bound2)
 
 
 async def test_admin_users_report_per_user_usage_and_provider(env):
@@ -271,3 +272,14 @@ async def test_admin_users_report_per_user_usage_and_provider(env):
     }
     # the key itself is never in the admin listing
     assert "pk-owner" not in str(users)
+
+
+async def test_the_per_user_request_cap_is_enforced(env):
+    env.cfg.usage.user_requests_per_min = 2
+    # the first requests under the cap are served
+    assert (await env.client.get("/v1/me")).status_code == 200
+    assert (await env.client.get("/v1/me")).status_code == 200
+    # the next request over the cap is refused, with a retry hint so the client backs off
+    r = await env.client.get("/v1/me")
+    assert r.status_code == 429
+    assert r.headers["retry-after"].isdigit() and int(r.headers["retry-after"]) > 0

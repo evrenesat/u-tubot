@@ -76,7 +76,8 @@ case).
 **`[usage]`**: per-feature cost/time telemetry behind the admin *Features* page: `price_usd_per_million` (a map from alias to
 dollars per 1M prompt+completion tokens; cost is estimated since this server has no modelgate, and is unknown for an alias with no
 price), `window_days` (7: the look-back for calls, tokens, cost and median/p90 time), `keep_days` (30: how long per-call rows are
-kept).
+kept). The same section also carries the per-user limits: `user_budget_usd` (a daily UTC cost ceiling for each user's own upstream;
+`0` = unlimited) and `user_requests_per_min` (a per-user request cap; `0` = follow the global limit).
 
 **`[llm]`**: `default_provider`, `timeout_s`, `retries_on_bad_json`, `json_retry_max_tokens`, `reasoning_headroom_tokens`, `retry_max_attempts`, `retry_base_s`, `retry_max_s`,
 `deadline_interactive_s`, `deadline_background_s`; `[llm.providers.NAME]` with `base_url`, `api_key_env`, `max_concurrent`,
@@ -471,6 +472,26 @@ Batches of the title triage are shared only between users with the same topics a
 `auto_transcribe_max_minutes` itself (a request that finds no captions starts the transcription, see
 [captions.md](captions.md#transcripts-for-videos-without-captions)); the TV reads the other settings (and `settings_version` from
 `GET /v1/me`) in a later app release.
+
+## Per-user upstream
+
+A user can bring their own OpenAI-compatible upstream for their cuts and answers, so those calls run on
+their key and budget instead of this server's. They store it with `PUT /v1/me/provider`
+(`{"base_url": "https://host/v1", "api_key": "..."}`), read what is stored with `GET /v1/me/provider`
+(host and a short key fingerprint, never the key, or `{"configured": false}`), and clear it with
+`DELETE /v1/me/provider` (back to the server default). The key is needed to make the call, so it is
+stored on the server, never returned in a response or a log line, exactly like the `[llm.providers]`
+env-var keys. A base url without a scheme or an empty key is refused with `400`.
+
+Their calls still run under their own limits: `user_budget_usd` (`[usage]`, a daily UTC cost ceiling,
+`0` = unlimited) is checked before each send and a `UserBudgetError` surfaces as `429` with a
+`Retry-After`; `user_requests_per_min` (`[usage]`) caps their requests and also returns `429`. The
+router sends their calls to their upstream (the model is requested as before, any `provider:` prefix
+dropped since the endpoint is fixed) and falls back on the server default when they have none.
+
+The admin page shows each user's own upstream and their cost/calls for the day; both `GET /v1/users`
+and `GET /v1/admin/users` include a `provider` (host + key fingerprint, or `{"configured": false}`) and
+a `usage` (`{cost, calls, day}`) per user.
 
 ## Director's cuts
 
