@@ -39,6 +39,14 @@ async def cuts_env(env):
         ("under 12 minutes", (LENGTH_SECONDS, 720.0)),
         ("a 5-minute version", (LENGTH_SECONDS, 300.0)),
         ("half an hour", (LENGTH_SECONDS, 1800.0)),
+        (
+            "Create a cut of this video with the half of the original size, preserving most "
+            "meaningful parts of the video, best moments etc.",
+            ("frac", 0.5),
+        ),
+        ("half the length", ("frac", 0.5)),
+        ("a third of the original duration", ("frac", 0.3333)),
+        ("25% of its length", ("frac", 0.25)),
     ],
 )
 def test_parse_length_intent(text, want):
