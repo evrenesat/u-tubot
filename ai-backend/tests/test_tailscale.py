@@ -79,3 +79,20 @@ async def test_tailscale_identity_leaves_public_sign_in_alone(env):
     assert response.status_code == 200 and response.json()["user"] == "owner"
     assert (await public.get("/v1/me")).status_code == 200
     assert (await public.get(SESSION)).json()["via"] == "cookie"
+
+
+async def test_tailscale_identity_ignores_requests_relayed_by_the_public_proxy(env):
+    enable(env)
+    client = anon_client(env, peer="127.0.0.1")
+    response = await client.get(
+        SESSION, headers={HEADER: "owner@example.com", "X-Utubot-Proxy-Secret": "anything"}
+    )
+    assert response.status_code == 401 and "set-cookie" not in response.headers
+
+
+def test_uvicorn_keeps_the_real_peer():
+    import inspect
+
+    from utubot import cli
+
+    assert "proxy_headers=False" in inspect.getsource(cli.cmd_serve)

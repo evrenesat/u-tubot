@@ -25,6 +25,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
         host=args.host or cfg.server.host,
         port=args.port or cfg.server.port,
         timeout_keep_alive=cfg.server.keep_alive_s,
+        # The app resolves client addresses itself ([security] trusted_proxies); uvicorn must not
+        # replace the real peer, or the loopback check of the Tailscale sign-in never passes.
+        proxy_headers=False,
     )
     return 0
 
