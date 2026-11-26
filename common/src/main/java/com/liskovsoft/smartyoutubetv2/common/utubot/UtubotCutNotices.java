@@ -135,7 +135,35 @@ public final class UtubotCutNotices {
             return;
         }
 
+        // A cut ordered from the thumbnail screen while its picker is still open refreshes that picker (issue 197): the building row
+        // stops saying "Building…" and shows the ready state. It is not started here, so the open menu is not taken over.
+        if (UtubotMenu.isCutsMenuOpen(entry.videoId)) {
+            UtubotMenu.refresh(screenContext(), entry.videoId);
+            return;
+        }
+
+        // Still browsing the thumbnails with no video playing: the owner is waiting for it, so it opens by itself. A playing video is
+        // never interrupted (the player handles its own cut, or this is asked instead); focus moved to other content falls through.
+        if (viewerStillWaiting()) {
+            openWithCut(new UtubotCutPromptQueue.Item(entry, cut));
+            return;
+        }
+
         mPrompts.add(new UtubotCutPromptQueue.Item(entry, cut));
+    }
+
+    /**
+     * The owner ordered the cut from the thumbnail screen and is still there: no video is playing (nothing to interrupt) and a card of
+     * the browse screen has the focus (the cut's video, or another one they are scrolling past). Focus moved off the screen cleared it.
+     */
+    private boolean viewerStillWaiting() {
+        UtubotCutController controller = cutController(screenContext());
+
+        if (controller != null && controller.hasLivePlayer()) {
+            return false;
+        }
+
+        return UtubotCutFocus.currentVideoId() != null;
     }
 
     /**

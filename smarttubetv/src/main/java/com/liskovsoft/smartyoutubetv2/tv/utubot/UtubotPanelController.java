@@ -18,6 +18,7 @@ import com.liskovsoft.smartyoutubetv2.common.misc.MotherActivity;
 import com.liskovsoft.smartyoutubetv2.common.utubot.PanelCoordinator;
 import com.liskovsoft.smartyoutubetv2.common.utubot.FocusDebouncer;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotAnswerModel;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutFocus;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotKeys;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotMenu;
@@ -147,6 +148,8 @@ public class UtubotPanelController implements UtubotUiHost.Host {
         mSwallowedKey = KeyEvent.KEYCODE_UNKNOWN;
         mCoordinator.onPause();
         unwatchCard();
+        // No card is focused off the browse screen: a cut that becomes ready must not be started over content the owner moved to
+        UtubotCutFocus.set(null);
         mPromptDebouncer.cancel();
         closeOverlay(false);
         hidePanel();
@@ -485,11 +488,13 @@ public class UtubotPanelController implements UtubotUiHost.Host {
 
         if (video == null || video.videoId == null) {
             mFocusedVideo = null;
+            UtubotCutFocus.set(null);
             mCoordinator.onNothingFocused();
             return;
         }
 
         mFocusedVideo = video;
+        UtubotCutFocus.set(video.videoId);
         watchCard(newFocus);
         mCoordinator.onCardFocused(video.videoId);
     }

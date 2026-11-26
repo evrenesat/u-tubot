@@ -39,7 +39,10 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * The app-wide ready cut (issue 96): it is not asked when the player owns the cut, it is asked on whatever screen comes next when this
- * TV ordered it elsewhere, Yes opens it, No or Back leaves the viewer where they are, and a failure waits for the next screen.
+ * TV ordered it elsewhere, Yes opens it, No or Back leaves the viewer where they are, and a failure waits for the next screen. While the
+ * picker is still open for the video it refreshes that picker instead of starting the video (issue 197); and a cut ordered from the
+ * thumbnail screen opens by itself when ready, but only while the owner is still browsing (a card focused, no video playing) — focus
+ * moved to other content, or a video playing, is asked instead, never interrupting the playing video.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
@@ -68,6 +71,8 @@ public class UtubotCutNoticesTest {
         mActivity = Robolectric.buildActivity(Activity.class).setup().get();
         ShadowToast.reset();
         UtubotCutWaitlist.prefs(mContext).clear();
+        UtubotCutFocus.set(null);
+        setStatic(UtubotMenu.class, "sOpenVideoId", null);
 
         setStatic(UtubotCutNotices.class, "sInstance", null);
         mNotices = UtubotCutNotices.instance(mContext);
@@ -193,6 +198,72 @@ public class UtubotCutNoticesTest {
 
         assertNull(mDialog.text);
     }
+
+    //region A cut ordered from the thumbnail screen, issue 197
+
+    @Test
+    public void aCutReadyWhileFocusedOnItsVideo_opensByItself() {
+        foreground();
+        UtubotCutFocus.set(VIDEO); // a card of the browse screen is focused, no video playing: the owner is waiting for it
+        Cut cut = cut();
+
+        mNotices.onCutReady(entry(), cut);
+
+        assertNull(mDialog.text); // no "Play?" question
+        assertSame(cut, mController.appliedOnOpen()); // carried to the player
+        assertEquals(VIDEO, mPresenter.getVideo().videoId); // the cut's video opens by itself
+    }
+
+    @Test
+    public void aCutReadyWhileBrowsing_opensByItself() {
+        foreground();
+        UtubotCutFocus.set(OTHER_VIDEO); // still browsing thumbnails: a different card is focused, but no video is playing
+        Cut cut = cut();
+
+        mNotices.onCutReady(entry(), cut);
+
+        assertNull(mDialog.text);
+        assertSame(cut, mController.appliedOnOpen());
+        assertEquals(VIDEO, mPresenter.getVideo().videoId);
+    }
+
+    @Test
+    public void aCutReadyAfterTheFocusMovedAway_isAsked() {
+        foreground();
+        UtubotCutFocus.set(null); // the focus is no longer on a card of the browse screen: the owner moved to other content
+
+        mNotices.onCutReady(entry(), cut());
+
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.text);
+        assertNull(mController.appliedOnOpen());
+    }
+
+    @Test
+    public void aCutReadyWhileAnotherVideoPlays_isNotForcedOnThePlayingVideo() {
+        foreground();
+        mController.open(video(OTHER_VIDEO), 240_000); // a different video is playing
+        UtubotCutFocus.set(VIDEO); // a stale card focus must not start a cut over the video that plays
+
+        mNotices.onCutReady(entry(), cut());
+
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.text);
+        assertNull(mController.appliedOnOpen());
+    }
+
+    @Test
+    public void theOpenCutMenuReopensInsteadOfStartingTheVideo() {
+        foreground();
+        UtubotCutFocus.set(VIDEO);
+        setStatic(UtubotMenu.class, "sOpenVideoId", VIDEO); // the cut picker is open for this video
+
+        mNotices.onCutReady(entry(), cut());
+
+        assertNull(mDialog.text); // not asked
+        assertNull(mController.appliedOnOpen()); // not started
+        assertTrue(UtubotMenu.isCutsMenuOpen(VIDEO)); // the picker is still up, refreshed with the ready state
+    }
+
+    //endregion
 
     @Test
     public void theQuestionSaysTheTitleAndTheRealLength() {
