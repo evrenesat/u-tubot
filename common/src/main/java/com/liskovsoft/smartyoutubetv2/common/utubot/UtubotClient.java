@@ -565,6 +565,26 @@ public class UtubotClient {
         return mBaseUrl + "/cuts/" + requestId;
     }
 
+    /**
+     * Fills the description of a waiting request and starts the build (`PUT /v1/cut-requests/{id}`)
+     *
+     * @param requestId the waiting request
+     * @param prompt what to keep
+     * @param mode the cut mode, or null to follow the request's mode
+     */
+    public CutRequest fillCutRequest(String requestId, String prompt, @Nullable String mode) throws IOException {
+        return parse(() -> {
+            JSONObject body = new JSONObject();
+            body.put("prompt", prompt);
+
+            if (mode != null) {
+                body.put("mode", mode);
+            }
+
+            return UtubotParser.parseCutRequest(send(builder("/cut-requests/" + requestId, true).put(json(body)), 0));
+        });
+    }
+
     private HttpUrl.Builder cutUrl(String videoId, @Nullable VideoMeta meta) throws IOException {
         HttpUrl.Builder url = urlBuilder("/videos/" + videoId + "/cuts");
 

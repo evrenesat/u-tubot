@@ -516,8 +516,7 @@ public final class UtubotMenu {
      */
     private static void showPhoneSheet(Context context, CutRequest request) {
         AppDialogPresenter.instance(context).closeDialog();
-        UtubotCutQrView.show(context, UtubotManager.instance(context).cutRequestUrl(request.id),
-                context.getString(R.string.utubot_cut_describe_hint));
+        UtubotCutQrView.show(context, request);
     }
 
     private static String describeError(Context context, Throwable error) {
