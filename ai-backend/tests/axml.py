@@ -62,6 +62,11 @@ def manifest_xml(
     return struct.pack("<HHI", 3, 8, total) + pool + element + end
 
 
+# A fixed mtime so the generated APKs are byte-for-byte reproducible (no wall clock in the ZIP).
+# 1980-01-01 is the earliest date the ZIP format can represent.
+_ZIP_DATE = (1980, 1, 1, 0, 0, 0)
+
+
 def apk(
     package: str,
     version_code: int | None,
@@ -73,8 +78,9 @@ def apk(
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w") as zf:
         zf.writestr(
-            "AndroidManifest.xml", manifest_xml(package, version_code, version_name, utf8=utf8)
+            zipfile.ZipInfo("AndroidManifest.xml", date_time=_ZIP_DATE),
+            manifest_xml(package, version_code, version_name, utf8=utf8),
         )
         if extra:
-            zf.writestr("payload.bin", extra)
+            zf.writestr(zipfile.ZipInfo("payload.bin", date_time=_ZIP_DATE), extra)
     return out.getvalue()
