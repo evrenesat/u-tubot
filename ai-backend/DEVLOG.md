@@ -63,7 +63,37 @@
   answers 409. `channel_id` rides as a query param on the cut read, create and fill routes.
 - TV: the cut sheet sends the channel id and offers "Always use <mode> for this channel" / "Follow your default". Web UI: a
   "Channel defaults" card on the Cuts tab. Ported from the closed #118 onto main's mode plumbing; the request-time snapshot columns
-  (`channel_mode`, `user_mode`, `server_mode`) of that PR were not ported.
+   (`channel_mode`, `user_mode`, `server_mode`) of that PR were not ported.
+
+## 2026-11-26 (per-feature model aliases, issue 148)
+
+- Admin chooses the modelgate alias each feature runs on. `GET /v1/admin/features` returns every feature row plus the alias list
+  the switch is validated against; `PUT /v1/admin/features/{feature} {"alias"}` points one feature at an alias (refused with `400`
+  for an unknown feature, an empty alias, or an alias not in the list, nothing applied); `DELETE /v1/admin/features/{feature}`
+  drops the override back to the `config.toml` default (`404` when there is none). The choice is server-wide, stored in a
+  `feature_models` row, effective on the next call (no restart), and logged in `feature_audit`.
+- Model resolution is explicit model (per-user `models` or a prompt `model`) first, else the admin override, else the
+  `[llm.<task>]` default: the override only replaces the default, so a call that names a model routes as before. `feature.py`
+  carries the `FeatureStore` (override/current/fallback, audit, the known-alias list) and `FeatureUsage` (per-call telemetry,
+  last-7-days calls/tokens/cost and median/p90 time).
+- Cost is estimated, not billed: `(prompt+completion tokens) * price_usd_per_million[alias] / 1e6`, null when the alias has no
+  price (`[usage] price_usd_per_million`, `window_days` default 7, `keep_days` retention). Every model call records its feature,
+  alias, wall time and tokens in `feature_calls`.
+- Per-feature runs expose their cost and wall time on the result: insight, summary, ask and cut answers gain `cost_usd` and
+  `elapsed_s` via the `feature_run()` context manager around each call.
+- Schema is additive: `feature_models(feature PK, alias, changed_at, changed_by)`, `feature_calls(id PK AUTOINCREMENT, feature,
+  alias, ts, elapsed_ms, prompt_tokens, completion_tokens, cost)` + `feature_calls_feature` index, `feature_audit(id PK
+  AUTOINCREMENT, feature, from_alias, to_alias, changed_by, at)` (both alias columns nullable: a fresh override has no `from`, a
+  reset has no `to`).
+- Tests: `tests/test_feature.py` (page lists features and the mock aliases; setting an alias routes the next call to it; unknown
+  and empty aliases are refused and leave the default; reset returns to default and a second reset is `404`; responses carry
+  `cost_usd`/`elapsed_s`; cost is recorded and unknown without a price; `cost_for`, `median_p90`, `FeatureUsage`, `feature_run`,
+  override/current-alias). No test reaches YouTube or a real model. `ai/CONTRACT.md` documents the routes and schema.
+- Web UI: `web/ui/js/pages/admin.js` gains a Features page (`#/admin/features`, linked from the users page) — one card per
+  feature showing the alias in force, an "overridden" pill, the select validated against the returned alias list, a Reset to
+  default button, the audit history and the cost/time tiles. The demo (`tests/webui_demo.py`) seeds an `analysis` override on
+  `smart` plus a week of `feature_calls` so the page renders populated. `tests/test_webui.py` also covers the three routes as
+   admin-only.
 
 ## 2026-11-26 (client caption upload, issue 149)
 

@@ -150,6 +150,16 @@ CREATE TABLE IF NOT EXISTS changelog(
 CREATE INDEX IF NOT EXISTS changelog_at ON changelog(kind, at);
 CREATE TABLE IF NOT EXISTS cut_last_presets(
   user TEXT PRIMARY KEY, preset_id TEXT NOT NULL, updated_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS feature_models(
+  feature TEXT PRIMARY KEY, alias TEXT NOT NULL, changed_at REAL NOT NULL, changed_by TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS feature_calls(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, feature TEXT NOT NULL, alias TEXT NOT NULL, ts REAL NOT NULL,
+  elapsed_ms INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0, cost REAL);
+CREATE INDEX IF NOT EXISTS feature_calls_feature ON feature_calls(feature, ts);
+CREATE TABLE IF NOT EXISTS feature_audit(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, feature TEXT NOT NULL, from_alias TEXT, to_alias TEXT,
+  changed_by TEXT NOT NULL, at REAL NOT NULL);
 """
 
 JOB_COLUMNS = {

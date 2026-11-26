@@ -1079,6 +1079,37 @@ def seed(cfg: Config, app, mock: MockOpenAI) -> None:
             [f"seedvideo{i:02d}", "en", "asr" if i == 0 else "youtube_captions", "x", now - i],
         )
     db.execute("INSERT OR REPLACE INTO tier2_usage(user,day,count) VALUES('owner',date('now'),7)")
+    # Feature-model overrides for the admin Features page: analysis on the "smart" alias, a recent
+    # call history so the cost/time tiles are populated.
+    db.execute(
+        "INSERT INTO feature_models(feature,alias,changed_at,changed_by) VALUES(?,?,?,?)",
+        ["analysis", "smart", now, "owner"],
+    )
+    db.execute(
+        "INSERT INTO feature_models(feature,alias,changed_at,changed_by) VALUES(?,?,?,?)",
+        ["cuts", "worker", now, "owner"],
+    )
+    db.execute(
+        "INSERT INTO feature_audit(feature,from_alias,to_alias,changed_by,at) VALUES(?,?,?,?,?)",
+        ["analysis", "llama3.1:8b", "smart", "owner", now - 3600],
+    )
+    for i, (feature, alias, toks) in enumerate(
+        (
+            ("summary", "worker", (1200, 180)),
+            ("answer", "smart", (900, 220)),
+            ("analysis", "smart", (3400, 510)),
+            ("cuts", "worker", (2100, 300)),
+        )
+    ):
+        for day in range(6):
+            t0 = now - 86400 * day - i * 3600
+            prompt, completion = toks
+            cost = (prompt + completion) * (0.002 if alias == "worker" else 0.006) / 1e6
+            db.execute(
+                "INSERT INTO feature_calls(feature,alias,ts,elapsed_ms,prompt_tokens,"
+                "completion_tokens,cost) VALUES(?,?,?,?,?,?,?)",
+                [feature, alias, t0, 18000 + i * 1200, prompt, completion, round(cost, 6)],
+            )
     app_dir = Path(cfg.server.app_dir)
     app_dir.mkdir(parents=True, exist_ok=True)
     (app_dir / "latest.json").write_text(

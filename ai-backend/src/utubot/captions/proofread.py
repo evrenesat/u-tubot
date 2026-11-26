@@ -165,6 +165,7 @@ class Proofreader:
                     "content": json.dumps({"video": context, "cues": texts}, ensure_ascii=False),
                 },
             ],
+            feature=self.task.feature,
         )
         if not isinstance(data, list) or len(data) != len(texts):
             return None

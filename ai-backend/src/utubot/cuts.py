@@ -36,6 +36,7 @@ from .db import (
     MODE_RULE_USER,
     Database,
 )
+from .feature import feature_run
 from .llm import INTERACTIVE, LLMClient, LLMError
 from .media_archive import MediaArchive
 from .prompts import CUT_PRESET_INSTRUCTIONS, Prompt, PromptStore
@@ -1139,6 +1140,8 @@ class CutService:
         # A shared build's class only rises: a prime request joining it makes the build prime,
         # a normal request never lowers or raises a build.
         self._build_class: dict[str, str] = {}
+        # Cost and wall time of the last build per request id, for the cut document's cost line.
+        self._run_cost: dict[str, tuple[float, float]] = {}
 
     def stored_tdt(self, video_id: str) -> dict[str, Any] | None:
         """The newest stored watched TDT for the admin job page; None when no description exists."""
@@ -1817,6 +1820,10 @@ class CutService:
             cut = self.db.one("SELECT json FROM cuts WHERE cache_key=?", [row["cut_key"]])
             if cut:
                 out["cut"] = json.loads(cut["json"])
+        cost = self._run_cost.get(row["id"])
+        if cost is not None:
+            out["cost_usd"] = round(cost[0], 5)
+            out["elapsed_s"] = cost[1]
         return out
 
     def _eta(self, row: dict[str, Any]) -> int | None:
@@ -2390,29 +2397,32 @@ class CutService:
         trace = events.JobTrace(row["job_id"], self.jobs.events)
         token = events.bind(trace)
         class_token = bind_class(row.get("klass"))
-        try:
-            trace.emit(
-                events.STARTED,
-                events.OK,
-                kind="cuts",
-                video_id=row["video_id"],
-                **{"class": normalize_class(row.get("klass"))},
-            )
-            await self._run_build(row, trace)
-        except asyncio.CancelledError:
-            raise
-        except CutRefused as exc:
-            self._fail(request_id, row["job_id"], exc.message)
-        except LLMError:
-            log.warning("cut %s: the model service failed", request_id, exc_info=True)
-            self._fail(request_id, row["job_id"], "The model service is busy; try again.")
-        except Exception:
-            log.warning("cut %s failed", request_id, exc_info=True)
-            self._fail(request_id, row["job_id"], "The cut could not be built; try again.")
-        finally:
-            unbind_class(class_token)
-            events.unbind(token)
-            self._release_watched(request_id)
+        with feature_run() as run:
+            try:
+                trace.emit(
+                    events.STARTED,
+                    events.OK,
+                    kind="cuts",
+                    video_id=row["video_id"],
+                    **{"class": normalize_class(row.get("klass"))},
+                )
+                await self._run_build(row, trace)
+            except asyncio.CancelledError:
+                raise
+            except CutRefused as exc:
+                self._fail(request_id, row["job_id"], exc.message)
+            except LLMError:
+                log.warning("cut %s: the model service failed", request_id, exc_info=True)
+                self._fail(request_id, row["job_id"], "The model service is busy; try again.")
+            except Exception:
+                log.warning("cut %s failed", request_id, exc_info=True)
+                self._fail(request_id, row["job_id"], "The cut could not be built; try again.")
+            finally:
+                unbind_class(class_token)
+                events.unbind(token)
+                self._release_watched(request_id)
+        # The build finished or was refused; remember its cost and time for the cut document.
+        self._run_cost[request_id] = (run.get("cost", 0.0), run.get("elapsed_s") or 0.0)
 
     def _fail(self, request_id: str, job_id: str, message: str) -> None:
         row = self._row(request_id)
@@ -3304,4 +3314,6 @@ class CutEngine:
                     "content": f"Your previous answer was rejected: {problem} {CUT_JSON_RULES}",
                 }
             )
-        return await self.llm.chat_json(task, messages, priority=INTERACTIVE, klass=klass)
+        return await self.llm.chat_json(
+            task, messages, priority=INTERACTIVE, klass=klass, feature=task.feature
+        )

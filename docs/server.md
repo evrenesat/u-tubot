@@ -73,6 +73,11 @@ case).
 **`[models]`**: the live model list behind the web UI: `cache_ttl_s` (300), `error_ttl_s` (30), `refresh_min_interval_s` (10),
 `timeout_s`, `new_for_s` (3 days), `max_models_per_provider`.
 
+**`[usage]`**: per-feature cost/time telemetry behind the admin *Features* page: `price_usd_per_million` (a map from alias to
+dollars per 1M prompt+completion tokens; cost is estimated since this server has no modelgate, and is unknown for an alias with no
+price), `window_days` (7: the look-back for calls, tokens, cost and median/p90 time), `keep_days` (30: how long per-call rows are
+kept).
+
 **`[llm]`**: `default_provider`, `timeout_s`, `retries_on_bad_json`, `json_retry_max_tokens`, `reasoning_headroom_tokens`, `retry_max_attempts`, `retry_base_s`, `retry_max_s`,
 `deadline_interactive_s`, `deadline_background_s`; `[llm.providers.NAME]` with `base_url`, `api_key_env`, `max_concurrent`,
 `reserved_interactive`, `json_mode`; per-task tables `[llm.triage]`, `[llm.summary]`, `[llm.glance]` (optional), `[llm.answer]`, `[llm.analysis]`, `[llm.captions]`, each with
@@ -326,7 +331,7 @@ no external requests). Everything it shows comes from authenticated JSON endpoin
 | Captions | the automatic-transcription policy, "transcribe this video" from a link, the job list with cancel and retry; every job links to its [detail report](#job-details) |
 | TVs | *Link a TV* (a big one-time code and the steps), linked devices with revoke, the TV settings kept on the server |
 | Updates | the app version this server publishes, the newest GitHub release, the last `sync-github` run, and two histories: app versions (release time, notes) and backend deploys (time, real version, changes since the previous deploy) |
-| Admin | users (add, set a password, admin flag, pairing code), each user's settings and TVs, the [media archive](#media-archive) (usage, per-video entries, manual cleanup) |
+| Admin | users (add, set a password, admin flag, pairing code), each user's settings and TVs, the [media archive](#media-archive) (usage, per-video entries, manual cleanup), the alias each feature runs on (last 7 days calls, tokens, estimated cost and median/p90 time, switched from the live model list; the choice overrides the config default for everyone and applies on the next call) |
 
 Screenshots (390 x 844 at 2x): [home](screenshots/webui/02-home.png), [models](screenshots/webui/04-models.png),
 [prompts](screenshots/webui/06-prompts.png), [try a prompt](screenshots/webui/09-prompts-try.png),

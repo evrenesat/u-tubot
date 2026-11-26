@@ -166,6 +166,16 @@ class ModelCatalog:
             "providers": providers,
         }
 
+    def known_values(self) -> list[str]:
+        """Every model value the catalog currently holds, across providers (the alias list)."""
+        out: list[str] = []
+        for name in self.provider_names():
+            entry = self._entries.get(name)
+            if entry is None:
+                continue
+            out.extend(self.value_for(name, mid) for mid in entry.models)
+        return out
+
     async def check(self, value: str) -> None:
         """Raise ModelNotListed unless `value` is a model some provider lists right now."""
         provider, model = self.split(value)
