@@ -370,6 +370,13 @@ class TestCreateAndBuild:
         assert doc["state"] == "failed"
         assert "remove almost everything" in doc["error"]
 
+    async def test_a_short_by_design_preset_may_keep_very_little(self, cuts_env):
+        set_transcript(cuts_env.fetcher, n=40)
+        cuts_env.llm.cut_answer = {"parts": [{"from": 1, "to": 2}], "summary": "s", "kept_s": 10}
+        r = await post_cut(cuts_env, preset="cut-answer")
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "ready", doc.get("error")
+
     async def test_a_failed_request_does_not_block_the_next_one(self, cuts_env):
         set_transcript(cuts_env.fetcher)
         bad = {"parts": [{"from": 40, "to": 99}]}

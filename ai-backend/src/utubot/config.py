@@ -300,6 +300,10 @@ class CutsConfig(BaseModel):
     pad_before_s: float = 0.3
     pad_after_s: float = 0.5
     min_keep_frac: float = 0.10
+    # Presets whose answer is short by design; the min_keep_frac refusal never applies to them.
+    short_presets: list[str] = Field(
+        default_factory=lambda: ["cut-answer", "cut-demo", "cut-highlights-5"]
+    )
     max_keep_frac: float = 0.95
     max_active_per_user: int = 2
     max_queued_per_user: int = 100

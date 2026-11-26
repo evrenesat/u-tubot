@@ -1919,7 +1919,13 @@ class CutService:
         try:
             data, parts = await self.engine.pick_parts(units, chapters, meta, instruction, target_s)
             with events.stage(STAGE_CHECKING):
-                guard = target_s is None and not (preset_id or "").endswith("highlights-5")
+                # Presets that keep a small part by design (just the answer, the demo, the
+                # highlights) are never refused as "removes almost everything".
+                guard = (
+                    target_s is None
+                    and not (preset_id or "").endswith("highlights-5")
+                    and (preset_id or "") not in self.cfg.cuts.short_presets
+                )
                 # A named preset is a deliberate removal instruction, so keeping nearly all of the
                 # video is a result, not "nothing to cut"; a typed prompt without a target keeps
                 # the upper guard.
