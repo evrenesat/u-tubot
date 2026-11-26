@@ -13,6 +13,7 @@ import {
   pill,
   progressBar,
   segmented,
+  select,
   textInput,
   toast,
 } from "../components.js";
@@ -304,6 +305,45 @@ async function queue(view) {
   const host = h("div", { class: "stack" });
   const listHost = h("div", { class: "stack" });
   const presetHost = h("div", { class: "stack" });
+  const channelHost = h("div", { class: "stack" });
+
+  function channelRow(row, reload) {
+    const watched = !!(speech && speech.cuts_watched);
+    const options = [
+      { value: "", label: "Follow the user default" },
+      { value: "quick", label: "Quick (transcript only)" },
+      {
+        value: "watched",
+        label: watched ? "Watched (the model sees the video)" : "Watched (not configured)",
+        disabled: !watched,
+      },
+    ];
+    const picker = select(options, row.mode || "", async (value) => {
+      const mode = value || null;
+      try {
+        await api("/v1/cut-channels/" + encodeURIComponent(row.channel_id), {
+          method: "PUT",
+          body: { mode, channel_name: row.channel_name },
+        });
+        toast(mode ? "Channel default saved" : "Channel follows your default");
+        await reload();
+      } catch (err) {
+        toast(errorText(err), "bad");
+        await reload();
+      }
+    });
+    return h(
+      "div",
+      { class: "row between nowrap" },
+      h(
+        "div",
+        { class: "cut-text" },
+        h("span", { text: row.channel_name || row.channel_id }),
+        row.channel_name ? h("small", { class: "muted", text: row.channel_id }) : null,
+      ),
+      picker,
+    );
+  }
 
   function presetRow(p, reload) {
     return h(
@@ -323,11 +363,22 @@ async function queue(view) {
     );
   }
 
+  let channelKey = null;
+
   async function load() {
-    const [queueDoc, ownDoc] = await Promise.all([api("/v1/cut-requests"), api("/v1/cut-presets")]);
+    await loadSpeech();
+    const [queueDoc, ownDoc, channelDoc] = await Promise.all([
+      api("/v1/cut-requests"),
+      api("/v1/cut-presets"),
+      api("/v1/cut-channels"),
+    ]);
     const sorted = [...queueDoc.requests].sort((a, b) => (GROUP[a.state] ?? 9) - (GROUP[b.state] ?? 9));
     mount(listHost, sorted.length ? sorted.map((r) => cutCard(r, load)) : empty("No cuts yet. Paste a video above, or start one from the TV."));
     mount(presetHost, ownDoc.presets.length ? ownDoc.presets.map((p) => presetRow(p, load)) : empty("No saved presets yet. Save a description as one from a cut sheet."));
+    const nextKey = (speech && speech.cuts_watched ? "watched:" : "quick:") + JSON.stringify(channelDoc.channels);
+    if (nextKey === channelKey) return;
+    channelKey = nextKey;
+    mount(channelHost, channelDoc.channels.length ? channelDoc.channels.map((row) => channelRow(row, load)) : empty("No channels yet. A video's channel appears here after its first cut."));
   }
 
   function draw() {
@@ -337,6 +388,11 @@ async function queue(view) {
       newCutCard((id) => {
         location.hash = "#/cuts/" + id;
       }),
+      card(
+        "Channel defaults",
+        note("The mode a new cut uses on this channel, unless the request names one. It wins over your user default; watched needs a server that has it configured."),
+        channelHost,
+      ),
       card("Saved presets", presetHost),
       card("Your cuts", listHost),
     );

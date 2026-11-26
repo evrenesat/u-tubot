@@ -458,6 +458,24 @@ it the build routes (`POST /v1/videos/{id}/cuts`, `PUT /v1/cut-requests/{id}`) a
 `409 {"error":"Cuts are not configured on this server (no [llm.cuts] model)."}`, the read
 routes answer `200` with `"configured": false`, and `GET /v1/me` features carries `"cuts": false`.
 
+Channel defaults (addendum, 2026-11-26): the owner can store a cut mode per channel, from the
+TV's cut sheet or the web UI. A channel is the YouTube `channel_id` the client sends with the video
+facts (at most 64 characters). An omitted mode resolves in order: the owner's default for the
+video's channel, else the user's `cuts.cut_mode`, else `[cuts] default_mode`; the rule that
+decided is `mode_rule` (`request`, `channel`, `user` or `server`). A default `watched` while it is
+unavailable still reports its rule but runs `quick`.
+
+- `GET /v1/cut-channels` -> `{"channels":[{"channel_id","channel_name"?,"mode":"quick"|"watched"|
+  null,"updated_at"?}]}`, by channel name then id. A channel the owner has cut but not given a
+  default appears with `"mode": null`.
+- `PUT /v1/cut-channels/{channel_id}` body `{"mode":"quick"|"watched"|null,"channel_name"?}` ->
+  the stored row. `mode: null` clears the default. Storing `watched` while it is unavailable
+  answers `409`. `DELETE /v1/cut-channels/{channel_id}` -> `{"ok":true}`, idempotent.
+- Channel defaults belong to their owner. The optional `channel_id` query param rides next to the
+  other video facts on `GET /v1/videos/{id}/cuts`, `POST /v1/videos/{id}/cuts` and
+  `PUT /v1/cut-requests/{id}`; the picker answer adds `default_mode`, `mode_rule`, `channel_id`,
+  `channel_name` and `channel_mode` (the owner's stored override, or `null`).
+
 - `GET /v1/videos/{id}/cuts` -> `{"configured":bool,"presets":[{"id","label","state",
   "request_id"?,"error"?,"cut"?}],"selection":{...}|null}`. State is `none` | `waiting` | `building` |
   `needs_transcript` | `ready` | `failed` for this video; `ready` carries the cut document.
@@ -495,8 +513,8 @@ routes answer `200` with `"configured": false`, and `GET /v1/me` features carrie
   the request's cut sheet in the web UI.
 
 Request document (both the queue cards and the single request):
-`{"id","video_id","state","source","preset_id","prompt","error","created_at","updated_at",
-"title"?,"channel"?,"duration_s"?,"stage"?,"progress"?,"cut"?,"job_id"?,"instruction"?,"raw_answer"?}`.
+`{"id","video_id","state","source","mode_rule","preset_id","prompt","error","created_at","updated_at",
+"title"?,"channel"?,"channel_id"?,"duration_s"?,"stage"?,"progress"?,"cut"?,"job_id"?,"instruction"?,"raw_answer"?}`.
 `stage` (`transcript`|`model`|`checking`, `in_line` while a normal build waits for prime work, and for a video too long for one request `map`|`reduce`;
 clients show an unknown stage as its name) rides while building; `progress` (`{"done","of"}`,
 additive) rides during `map` and counts the excerpts answered; `cut` once ready; `job_id`

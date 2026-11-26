@@ -16,6 +16,16 @@
   ends inside a drop plays, and the trailing drop says "End of cut" with "Watch the rest".
 - Not ported from the closed PR: its `keep_guards`/`keep_guards_for` rework (lower guard for the no-filler preset only, none for a
   typed prompt) contradicts main's `short_presets` rule, and its `min_guard` parameter of `finalize_parts`.
+## 2026-11-26 (per-channel cut mode, port of #118)
+
+- A new cut resolves its mode as request, owner's channel default, owner's `cuts.cut_mode`, then `[cuts] default_mode`
+  (`CutService.resolve_mode_rule`); cut requests keep `mode_rule` and `channel_id`, the picker answer adds `mode_rule`,
+  `channel_id`, `channel_name`, `channel_mode`. Defaults live in `cut_channel_modes(user, channel_id)`; `GET|PUT|DELETE
+  /v1/cut-channels[/{id}]`. A default `watched` while unavailable runs quick and still reports its rule; storing `watched` then
+  answers 409. `channel_id` rides as a query param on the cut read, create and fill routes.
+- TV: the cut sheet sends the channel id and offers "Always use <mode> for this channel" / "Follow your default". Web UI: a
+  "Channel defaults" card on the Cuts tab. Ported from the closed #118 onto main's mode plumbing; the request-time snapshot columns
+  (`channel_mode`, `user_mode`, `server_mode`) of that PR were not ported.
 
 ## 2026-11-26 (client caption upload, issue 149)
 

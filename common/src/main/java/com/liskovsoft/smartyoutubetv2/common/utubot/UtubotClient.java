@@ -337,7 +337,37 @@ public class UtubotClient {
      * The presets of a video and where their cuts stand (`GET /v1/videos/{id}/cuts`): cheap, it starts nothing
      */
     public CutList cuts(String videoId) throws IOException {
-        return parse(() -> UtubotParser.parseCuts(send(builder("/videos/" + videoId + "/cuts", true), 0)));
+        return cuts(videoId, null);
+    }
+
+    /**
+     * The presets of a video, with the mode its channel resolves to (`GET /v1/videos/{id}/cuts?channel_id=...`)
+     */
+    public CutList cuts(String videoId, @Nullable VideoMeta meta) throws IOException {
+        return parse(() -> UtubotParser.parseCuts(send(authorized(cutUrl(videoId, meta)), 0)));
+    }
+
+    /**
+     * Stores a mode for one channel (`PUT /v1/cut-channels/{channel_id}`); null clears it and follows the user default
+     */
+    public void setChannelMode(String channelId, @Nullable String mode, @Nullable String channelName) throws IOException {
+        parse(() -> {
+            JSONObject body = new JSONObject();
+            body.put("mode", mode == null ? JSONObject.NULL : mode);
+
+            if (channelName != null) {
+                body.put("channel_name", channelName);
+            }
+
+            return send(authorized(urlBuilder("/cut-channels/" + channelId)).put(json(body)), 0);
+        });
+    }
+
+    /**
+     * Clears a channel's own mode (`DELETE /v1/cut-channels/{channel_id}`), so it follows the user default again
+     */
+    public void clearChannelMode(String channelId) throws IOException {
+        send(authorized(urlBuilder("/cut-channels/" + channelId)).delete(), 0);
     }
 
     /**
@@ -454,6 +484,10 @@ public class UtubotClient {
 
             if (meta.channel != null) {
                 url.addQueryParameter("channel", meta.channel);
+            }
+
+            if (meta.channelId != null) {
+                url.addQueryParameter("channel_id", meta.channelId);
             }
 
             if (meta.durationSec > 0) {

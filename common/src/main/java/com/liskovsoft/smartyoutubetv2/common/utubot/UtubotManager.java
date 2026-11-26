@@ -887,8 +887,22 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     /**
      * The presets of a video and where their cuts stand, for the picker. Cancelled with the dialog.
      */
-    public Observable<CutList> cutsObserve(String videoId) {
-        return cancellable(client -> client.cuts(videoId));
+    public Observable<CutList> cutsObserve(String videoId, @Nullable VideoMeta meta) {
+        return cancellable(client -> client.cuts(videoId, meta));
+    }
+
+    /**
+     * Stores a channel's cut mode, or clears it with a null mode so it follows the user default
+     */
+    public Observable<Boolean> channelCutModeObserve(String channelId, @Nullable String mode, @Nullable String channelName) {
+        return cancellable(client -> {
+            if (mode == null) {
+                client.clearChannelMode(channelId);
+            } else {
+                client.setChannelMode(channelId, mode, channelName);
+            }
+            return true;
+        });
     }
 
     /**

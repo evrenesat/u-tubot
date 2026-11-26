@@ -176,7 +176,7 @@ public final class UtubotMenu {
     public static void showCuts(Context context, Video video) {
         sCutMode = null;
         RxHelper.disposeActions(sAction);
-        sAction = UtubotManager.instance(context).cutsObserve(video.videoId)
+        sAction = UtubotManager.instance(context).cutsObserve(video.videoId, UtubotMeta.from(video))
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(cuts -> showCutsDialog(context, video, cuts, false),
                         error -> MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_failed, error.getMessage())));
@@ -216,12 +216,50 @@ public final class UtubotMenu {
             }
         }
 
+        appendChannelDefault(context, dialog, video, cuts);
         dialog.appendSingleButton(UiOptionItem.from(context.getString(
                 force ? R.string.utubot_cut_force_on : R.string.utubot_cut_force_off),
                 option -> showCutsDialog(context, video, cuts, !force)));
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_describe_on_phone),
                 option -> describeOnPhone(context, video, mode)));
         dialog.showDialog(context.getString(R.string.utubot_cut));
+    }
+
+    /**
+     * "Always use quick cuts for this channel" for the mode on screen (so a talking-head channel is set once, and the mode
+     * stays switchable per video), and "Follow your default" while that mode is already the channel's own. The channel's
+     * mode wins over the user's choice and the server default (request > channel > user > server).
+     */
+    private static void appendChannelDefault(Context context, AppDialogPresenter dialog, Video video, CutList cuts) {
+        String channelId = cuts.channelId != null ? cuts.channelId : video.channelId;
+
+        if (channelId == null) {
+            return;
+        }
+
+        String channelName = cuts.channelName != null ? cuts.channelName : video.getAuthor();
+        String mode = selectedMode(cuts);
+        boolean follows = mode.equals(cuts.channelMode);
+        String label = follows
+                ? context.getString(R.string.utubot_cut_channel_follow)
+                : context.getString(R.string.utubot_cut_channel_always, modeLabel(context, mode));
+
+        dialog.appendSingleButton(UiOptionItem.from(label, option -> saveChannelDefault(context, channelId, channelName,
+                follows ? null : mode)));
+    }
+
+    private static void saveChannelDefault(Context context, String channelId, @Nullable String channelName, @Nullable String mode) {
+        RxHelper.disposeActions(sAction);
+        sAction = UtubotManager.instance(context).channelCutModeObserve(channelId, mode, channelName)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(saved -> MessageHelpers.showMessage(context, context.getString(R.string.utubot_cut_channel_saved)),
+                        error -> MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_failed,
+                                describeError(context, error))));
+    }
+
+    private static String modeLabel(Context context, String mode) {
+        return context.getString(UtubotModels.CutMode.WATCHED.equals(mode)
+                ? R.string.utubot_cut_mode_watched : R.string.utubot_cut_mode_quick);
     }
 
     private static String selectedMode(CutList cuts) {

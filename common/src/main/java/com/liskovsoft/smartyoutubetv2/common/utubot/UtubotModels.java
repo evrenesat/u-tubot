@@ -408,6 +408,12 @@ public final class UtubotModels {
         public boolean configured;
         public String defaultMode = CutMode.QUICK;
         public List<CutMode> modes = Collections.emptyList();
+        /** request, channel, user or server: which of those decided {@link #defaultMode} */
+        public String modeRule;
+        @Nullable public String channelId;
+        @Nullable public String channelName;
+        /** The channel's own mode, null when it follows the user default; it wins over the user's choice */
+        @Nullable public String channelMode;
         public List<CutPreset> presets = Collections.emptyList();
         /**
          * What the video opens with: the viewer's choice for it, else the preset used last. Null when there is none, so
@@ -451,6 +457,9 @@ public final class UtubotModels {
         public String error;
         public String title;
         public String channel;
+        @Nullable public String channelId;
+        /** The rule that chose the mode: request, channel, user or server */
+        @Nullable public String modeRule;
         public long durationSec = UNKNOWN;
         public String mode = CutMode.QUICK;
         /** The remaining estimate of a Watched build, in seconds */
