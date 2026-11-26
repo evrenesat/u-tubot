@@ -80,4 +80,18 @@ public final class UtubotCutTime {
         // Past the last part: the cut time is the full kept length and the playback is in the drop to the end.
         return new CutPosition(running, 0, partCount, totalKept);
     }
+
+    /**
+     * The kept time still to play after a position: the rest of the kept part the position is in plus every later part. A position in a
+     * dropped range leaves every later part (the drop itself is skipped), before the first part leaves the whole cut, and past the last
+     * part or without a cut leaves nothing.
+     *
+     * @param videoPositionMs the current position in the video, milliseconds
+     * @return the remaining kept time, milliseconds, never negative
+     */
+    public static long remainingKeptMs(@Nullable Cut cut, long videoPositionMs) {
+        CutPosition position = of(cut, videoPositionMs);
+
+        return Math.max(0, position.totalKeptMs - position.cutPositionMs);
+    }
 }

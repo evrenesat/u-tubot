@@ -115,6 +115,44 @@ public class UtubotCutTimeTest {
         assertEquals(0, position.partCount);
     }
 
+    @Test
+    public void theRemainingKeptTime_isTheRestOfTheCurrentPartAndEveryLaterPart() {
+        Cut cut = cut(300_000, parts(
+                part("a", 0, 60_000),
+                part("b", 100_000, 220_000),
+                part("c", 300_000, 420_000)));
+
+        // 160 000 is 60 000 into part b: 60 000 left of b and all 120 000 of c
+        assertEquals(180_000, UtubotCutTime.remainingKeptMs(cut, 160_000));
+    }
+
+    @Test
+    public void aPositionInADrop_keepsOnlyTheLaterParts() {
+        Cut cut = cut(160_000, parts(part("a", 0, 60_000), part("b", 200_000, 300_000)));
+
+        assertEquals(100_000, UtubotCutTime.remainingKeptMs(cut, 150_000));
+    }
+
+    @Test
+    public void aPositionBeforeTheFirstPart_keepsTheWholeCut() {
+        Cut cut = cut(200_000, parts(part("a", 100_000, 200_000), part("b", 300_000, 400_000)));
+
+        assertEquals(200_000, UtubotCutTime.remainingKeptMs(cut, 50_000));
+    }
+
+    @Test
+    public void aPositionPastTheLastPart_hasNoKeptTimeLeft() {
+        Cut cut = cut(180_000, parts(part("a", 0, 60_000), part("b", 100_000, 220_000)));
+
+        assertEquals(0, UtubotCutTime.remainingKeptMs(cut, 300_000));
+    }
+
+    @Test
+    public void aCutWithoutParts_orNoCut_hasNoKeptTimeLeft() {
+        assertEquals(0, UtubotCutTime.remainingKeptMs(cut(0, List.of()), 120_000));
+        assertEquals(0, UtubotCutTime.remainingKeptMs(null, 120_000));
+    }
+
     private static Cut cut(long keptMs, List<CutPart> parts) {
         Cut cut = new Cut();
         cut.keptMs = keptMs;

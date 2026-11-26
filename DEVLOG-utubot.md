@@ -1,3 +1,13 @@
+## 2026-11-26 (the player's hourglass follows the director's cut, issue #209)
+
+- `UtubotCutTime.remainingKeptMs`: the kept time after a position, the rest of the kept part it is in plus every later part. A position in a
+  cut-out leaves the later parts, before the first part leaves the whole cut, and past the last part or with no cut leaves nothing.
+- `EndingTimeView`: while a cut plays, the hourglass adds that kept time to the wall clock and appends `✂`; with no cut, its skipping off, or
+  after the last kept part it falls back to the full video as before. `UtubotCutController.getPlayingCut()` is the signal, and seeks, part
+  jumps, the skip toggle, applying or taking off the cut and every tick ask the player to refresh it after the position changed.
+- Tests: `UtubotCutTimeTest` (inside a part, in a cut-out, before the first part, past the last, no parts or no cut) and
+  `UtubotCutControllerTest` (no cut, cut on, skipping off). Parity row `cut-end-time`.
+
 ## 2026-11-26 (voice plan checkpoint 0: gates, issue #180)
 
 - `ai/VOICE_CONTROL_PLAN.md`: owner decisions recorded (all as recommended; R2T4 is MIT, evrenesat/r2t4#22). Measured on the owner's server, from the backend's container with its own gateway key, no config changed: speech-to-text `stt` 50th 0.34 s / 90th 0.43 s; intent `fast` 12.2 / 25.4 s and `coder` 3.0 / 5.4 s (both aliases think despite `reasoning_effort: none`, 3 of 20 calls hit the 120-token cap); no speech-out route on the gateway; backend loop on `/v1/health` 1.9 / 2.2 ms, worst 57 to 111 ms; WebSocket through the proxy chain not provable without a config change. Sections 2.5 and 5.2 carry the numbers and who must act; the infra task is evrenesat/evreniops#250.
