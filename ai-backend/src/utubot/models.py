@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, RootModel
 
+from .db import MAX_CHANNEL_ID_CHARS, MAX_CHANNEL_NAME_CHARS
+
 
 class VideoMeta(BaseModel):
     video_id: str
@@ -90,6 +92,13 @@ class CutChoiceRequest(BaseModel):
     off: bool = False
 
 
+class CutChannelMode(BaseModel):
+    """The owner's default cut mode for one channel; `mode: null` clears it."""
+
+    mode: Literal["quick", "watched"] | None = None
+    channel_name: str | None = Field(None, max_length=MAX_CHANNEL_NAME_CHARS)
+
+
 class CutPresetSave(BaseModel):
     """A description the owner saves as his own cut preset (phone only in v1)."""
 
@@ -130,6 +139,7 @@ class DefaultRequest(BaseModel):
 class QueryMeta(BaseModel):
     title: str | None = None
     channel: str | None = None
+    channel_id: str | None = Field(None, max_length=MAX_CHANNEL_ID_CHARS)
     duration_s: int | None = None
     is_live: bool | None = None
 

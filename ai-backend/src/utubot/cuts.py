@@ -27,7 +27,15 @@ from .captions import events
 from .captions.jobs import JobQueue
 from .classes import NORMAL, PRIME, bind_class, highest, normalize_class, unbind_class
 from .config import WATCHED_MODES, Config, CutsConfig, LLMTask
-from .db import Database
+from .db import (
+    MAX_CHANNEL_ID_CHARS,
+    MAX_CHANNEL_NAME_CHARS,
+    MODE_RULE_CHANNEL,
+    MODE_RULE_REQUEST,
+    MODE_RULE_SERVER,
+    MODE_RULE_USER,
+    Database,
+)
 from .llm import INTERACTIVE, LLMClient, LLMError
 from .media_archive import MediaArchive
 from .prompts import CUT_PRESET_INSTRUCTIONS, Prompt, PromptStore
@@ -1290,31 +1298,167 @@ class CutService:
 
     # ---- the queue ------------------------------------------------------------------------------
 
-    def resolve_mode(self, user: str, mode: str | None) -> str:
-        """The request's mode: explicit, else the user's default, else the server's default.
+    def resolve_mode(self, user: str, mode: str | None, channel_id: str | None = None) -> str:
+        """The request's mode: explicit, else the channel's, the user's, then the server's default."""
+        return self.resolve_mode_rule(user, mode, channel_id)[0]
 
-        A user default of watched on a server without it resolves to quick; an explicit
-        watched request is refused with the server's plain reason.
+    def resolve_mode_rule(
+        self, user: str, mode: str | None, channel_id: str | None = None
+    ) -> tuple[str, str]:
+        """The mode a request runs in and the rule that decided it.
+
+        A channel, user or server default of watched on a server without it resolves to quick
+        but still reports the rule that chose; an explicit watched request is refused with the
+        server's plain reason.
         """
         if mode is not None and mode not in WATCHED_MODES:
             raise CutRefused(
                 f"Unknown cut mode {mode}; use {', '.join(WATCHED_MODES)}.", status=400
             )
+        from .watch import watched_not_configured
+
+        reason = watched_not_configured(self.cfg)
+        if mode is not None:
+            if mode == "watched" and reason is not None:
+                raise CutRefused(reason, status=409)
+            return mode, MODE_RULE_REQUEST
         policy = None
         if self.auth is not None:
             user_cfg = self.auth.user_config(user)
             policy = user_cfg.policy.cut_mode if user_cfg is not None else None
-        chosen = mode or policy or self.cfg.cuts.default_mode
-        from .watch import watched_not_configured
+        channel_mode = self._channel_mode_value(user, channel_id)
+        for chosen, rule in (
+            (channel_mode, MODE_RULE_CHANNEL),
+            (policy, MODE_RULE_USER),
+            (self.cfg.cuts.default_mode, MODE_RULE_SERVER),
+        ):
+            if not chosen:
+                continue
+            if chosen == "watched" and reason is not None:
+                return "quick", rule
+            return chosen, rule
+        return "quick", MODE_RULE_SERVER
 
-        if chosen == "watched":
+    # ---- channel defaults -----------------------------------------------------------------------
+
+    @staticmethod
+    def _clean_channel_id(channel_id: str | None) -> str | None:
+        channel_id = (channel_id or "").strip()
+        if len(channel_id) > MAX_CHANNEL_ID_CHARS:
+            raise CutRefused(
+                f"A channel id is at most {MAX_CHANNEL_ID_CHARS} characters.", status=400
+            )
+        return channel_id or None
+
+    @staticmethod
+    def _clean_channel_name(channel_name: str | None) -> str | None:
+        channel_name = " ".join((channel_name or "").split())
+        return channel_name[:MAX_CHANNEL_NAME_CHARS] or None
+
+    def _video_channel(
+        self, video_id: str, channel_id: str | None
+    ) -> tuple[str | None, str | None]:
+        """The video's channel id and name, from the request or the cached video facts."""
+        meta = self._meta(video_id)
+        found = self._clean_channel_id(channel_id) or self._clean_channel_id(meta.get("channel_id"))
+        return found, self._clean_channel_name(meta.get("channel"))
+
+    def _channel_mode_value(self, user: str, channel_id: str | None) -> str | None:
+        channel_id = self._clean_channel_id(channel_id)
+        if not channel_id:
+            return None
+        row = self.db.one(
+            "SELECT mode FROM cut_channel_modes WHERE user=? AND channel_id=?", [user, channel_id]
+        )
+        return row["mode"] if row else None
+
+    def channel_modes(self, user: str) -> list[dict[str, Any]]:
+        """Every channel the owner has a default for or has cut, by name then id.
+
+        A channel with no stored default has `mode: null`; the phone lists it so the owner can
+        set one there without waiting for the TV.
+        """
+        rows = self.db.all(
+            "SELECT channel_id, channel_name, mode, updated_at FROM cut_channel_modes WHERE user=?",
+            [user],
+        )
+        channels = {row["channel_id"]: dict(row) for row in rows}
+        seen = self.db.all(
+            "SELECT DISTINCT video_id, channel_id FROM cut_requests WHERE user=?", [user]
+        )
+        for row in seen:
+            meta = self._meta(row["video_id"])
+            try:
+                channel_id = self._clean_channel_id(row["channel_id"] or meta.get("channel_id"))
+            except CutRefused:
+                continue
+            if not channel_id:
+                continue
+            channel_name = self._clean_channel_name(meta.get("channel"))
+            if channel_id not in channels:
+                channels[channel_id] = {
+                    "channel_id": channel_id,
+                    "channel_name": channel_name,
+                    "mode": None,
+                    "updated_at": None,
+                }
+            elif not channels[channel_id]["channel_name"]:
+                channels[channel_id]["channel_name"] = channel_name
+        return sorted(
+            channels.values(),
+            key=lambda row: ((row["channel_name"] or "").lower(), row["channel_id"]),
+        )
+
+    def set_channel_mode(
+        self, user: str, channel_id: str, mode: str, channel_name: str | None = None
+    ) -> dict[str, Any]:
+        """Store the owner's default mode for a channel; `watched` must be configured."""
+        channel_id = self._clean_channel_id(channel_id)
+        if not channel_id:
+            raise CutRefused("A channel id is required.", status=400)
+        if mode not in WATCHED_MODES:
+            raise CutRefused(
+                f"Unknown cut mode {mode}; use {', '.join(WATCHED_MODES)}.", status=400
+            )
+        if mode == "watched":
+            from .watch import watched_not_configured
+
             reason = watched_not_configured(self.cfg)
-            if reason is None:
-                return chosen
-            if mode is not None:
+            if reason is not None:
                 raise CutRefused(reason, status=409)
-            return "quick"
-        return chosen
+        channel_name = self._clean_channel_name(channel_name)
+        if channel_name is None:
+            row = self.db.one(
+                "SELECT channel_name FROM cut_channel_modes WHERE user=? AND channel_id=?",
+                [user, channel_id],
+            )
+            channel_name = row["channel_name"] if row else None
+        now = time.time()
+        self.db.execute(
+            "INSERT INTO cut_channel_modes(user,channel_id,channel_name,mode,updated_at)"
+            " VALUES(?,?,?,?,?) ON CONFLICT(user,channel_id) DO UPDATE SET"
+            " channel_name=excluded.channel_name, mode=excluded.mode,"
+            " updated_at=excluded.updated_at",
+            [user, channel_id, channel_name, mode, now],
+        )
+        return {
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "mode": mode,
+            "updated_at": now,
+        }
+
+    def clear_channel_mode(self, user: str, channel_id: str) -> bool:
+        """Forget the owner's default for a channel, so the next rule decides again."""
+        channel_id = self._clean_channel_id(channel_id)
+        if not channel_id:
+            raise CutRefused("A channel id is required.", status=400)
+        return (
+            self.db.execute_rc(
+                "DELETE FROM cut_channel_modes WHERE user=? AND channel_id=?", [user, channel_id]
+            )
+            > 0
+        )
 
     def create(
         self,
@@ -1327,12 +1471,14 @@ class CutService:
         await_prompt: bool = False,
         mode: str | None = None,
         force: bool = False,
+        channel_id: str | None = None,
     ) -> dict[str, Any]:
         """Queue a cut. Exactly one of `preset` / `prompt`; `await_prompt` creates an empty
         request the phone fills later. An identical active request is returned as-is."""
         if not self.configured:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
-        chosen_mode = self.resolve_mode(user, mode)
+        channel_id, _ = self._video_channel(video_id, channel_id)
+        chosen_mode, mode_rule = self.resolve_mode_rule(user, mode, channel_id)
         prompt = self._validate_prompt(prompt)
         if prompt is not None and preset is not None:
             raise CutRefused("A cut takes a preset or a description, not both.", status=400)
@@ -1365,8 +1511,8 @@ class CutService:
         )
         self.db.execute(
             "INSERT INTO cut_requests(id,user,video_id,source,preset_id,prompt,state,job_id,"
-            "created_at,updated_at,mode,source_kind,source_key,force,klass)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "created_at,updated_at,mode,source_kind,source_key,force,klass,mode_rule,channel_id)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 request_id,
                 user,
@@ -1383,6 +1529,8 @@ class CutService:
                 f"youtube:{video_id}",
                 1 if force else 0,
                 klass,
+                mode_rule,
+                channel_id,
             ],
         )
         origin = events.current_origin()
@@ -1447,7 +1595,12 @@ class CutService:
         return dict(row) if row else None
 
     def fill(
-        self, request_id: str, user: str, prompt: str, mode: str | None = None
+        self,
+        request_id: str,
+        user: str,
+        prompt: str,
+        mode: str | None = None,
+        channel_id: str | None = None,
     ) -> dict[str, Any]:
         """A waiting request gets its description from the phone; the build starts."""
         if not self.configured:
@@ -1458,15 +1611,19 @@ class CutService:
         if row["state"] != "waiting":
             raise CutRefused("This cut request is not waiting for a description any more.")
         chosen_mode = row["mode"] or "quick"
+        mode_rule = row["mode_rule"] or MODE_RULE_REQUEST
+        stored_channel = row["channel_id"]
         if mode is not None:
-            chosen_mode = self.resolve_mode(user, mode)
+            stored_channel, _ = self._video_channel(row["video_id"], channel_id or stored_channel)
+            chosen_mode, mode_rule = self.resolve_mode_rule(user, mode, stored_channel)
         prompt = self._validate_prompt(prompt)
         if prompt is None:
             raise CutRefused("The description of the cut is empty.")
         self._check_cap(user)
         self.db.execute(
-            "UPDATE cut_requests SET prompt=?, mode=?, state='building', updated_at=? WHERE id=?",
-            [prompt, chosen_mode, time.time(), request_id],
+            "UPDATE cut_requests SET prompt=?, mode=?, mode_rule=?, channel_id=?,"
+            " state='building', updated_at=? WHERE id=?",
+            [prompt, chosen_mode, mode_rule, stored_channel, time.time(), request_id],
         )
         self.jobs.events.record(
             row["job_id"],
@@ -1531,12 +1688,15 @@ class CutService:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "mode": row["mode"] or "quick",
+            "mode_rule": row["mode_rule"] or MODE_RULE_REQUEST,
             **{
                 k: v
                 for k, v in self._meta(row["video_id"]).items()
                 if k in ("title", "channel", "duration_s")
             },
         }
+        if row["channel_id"]:
+            out["channel_id"] = row["channel_id"]
         if row["state"] in BUILDING_STATES and row["job_id"]:
             stage = self._last_stage(row["job_id"])
             out["stage"] = stage
@@ -1684,9 +1844,16 @@ class CutService:
 
     # ---- the picker -----------------------------------------------------------------------------
 
-    def presets_state(self, user: str, video_id: str) -> dict[str, Any]:
-        """Every preset with its state for this video and each mode; what the pickers show."""
-        default = self.resolve_mode(user, None)
+    def presets_state(
+        self, user: str, video_id: str, channel_id: str | None = None
+    ) -> dict[str, Any]:
+        """Every preset with its state for this video and each mode; what the pickers show.
+
+        The default follows request > channel > owner > server; `mode_rule` says which one
+        chose. `channel_mode` is the owner's stored default for the video's channel, or null.
+        """
+        channel_id, channel_name = self._video_channel(video_id, channel_id)
+        default, mode_rule = self.resolve_mode_rule(user, None, channel_id)
         from .watch import watched_available
 
         ok, reason = watched_available(self.cfg)
@@ -1729,6 +1896,10 @@ class CutService:
         return {
             "configured": self.configured,
             "default_mode": default,
+            "mode_rule": mode_rule,
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "channel_mode": self._channel_mode_value(user, channel_id),
             "modes": modes,
             "presets": out,
             "selection": self._selection(user, video_id, by_id),

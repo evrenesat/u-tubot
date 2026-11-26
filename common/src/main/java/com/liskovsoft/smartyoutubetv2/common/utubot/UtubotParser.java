@@ -292,6 +292,10 @@ public final class UtubotParser {
             list.modes = parsedModes;
         }
 
+        list.modeRule = optString(json, "mode_rule");
+        list.channelId = optString(json, "channel_id");
+        list.channelName = optString(json, "channel_name");
+        list.channelMode = optString(json, "channel_mode");
         JSONArray presets = json.optJSONArray("presets");
 
         if (presets != null) {
@@ -371,6 +375,8 @@ public final class UtubotParser {
         request.error = optString(json, "error");
         request.title = optString(json, "title");
         request.channel = optString(json, "channel");
+        request.channelId = optString(json, "channel_id");
+        request.modeRule = optString(json, "mode_rule");
         request.durationSec = optSeconds(json, "duration_s") == UtubotModels.UNKNOWN ? UtubotModels.UNKNOWN : json.optLong("duration_s", UtubotModels.UNKNOWN);
         request.mode = json.optString("mode", CutMode.QUICK);
         request.etaSec = optSeconds(json, "eta_s");

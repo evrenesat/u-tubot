@@ -1234,3 +1234,138 @@ def httpx_client(env, token: str):
 
 def env_queue(env):
     return env.client.get("/v1/cut-requests")
+
+
+class TestChannelModes:
+    """Per-channel defaults: request > channel > owner > server, and the rule is reported."""
+
+    CHANNEL = "UC" + "a" * 22
+
+    async def state(self, env, **params):
+        return (await env.client.get(f"/v1/videos/{VID}/cuts", params=params)).json()
+
+    async def test_the_list_finds_channels_from_the_queue_and_stores_a_default(self, cuts_env):
+        made = await cuts_env.client.post(
+            f"/v1/videos/{VID}/cuts",
+            params={"channel_id": self.CHANNEL, "channel": "Chan"},
+            json={"await_prompt": True},
+        )
+        rid = made.json()["request_id"]
+        listing = (await cuts_env.client.get("/v1/cut-channels")).json()["channels"]
+        assert listing == [
+            {"channel_id": self.CHANNEL, "channel_name": "Chan", "mode": None, "updated_at": None}
+        ]
+        saved = (
+            await cuts_env.client.put(f"/v1/cut-channels/{self.CHANNEL}", json={"mode": "quick"})
+        ).json()
+        assert saved["channel_id"] == self.CHANNEL and saved["mode"] == "quick"
+        state = await self.state(cuts_env, channel_id=self.CHANNEL)
+        assert state["default_mode"] == "quick" and state["mode_rule"] == "channel"
+        assert state["channel_id"] == self.CHANNEL and state["channel_name"] == "Chan"
+        assert state["channel_mode"] == "quick"
+        card = (await cuts_env.client.get(f"/v1/cuts/{rid}")).json()
+        assert card["channel_id"] == self.CHANNEL
+        await cuts_env.client.delete(f"/v1/cut-requests/{rid}")
+
+    async def test_the_list_finds_a_channel_only_the_request_knew_about(self, cuts_env):
+        made = cuts_env.svc.cuts.create("owner", VID, await_prompt=True, channel_id=self.CHANNEL)
+        listing = (await cuts_env.client.get("/v1/cut-channels")).json()["channels"]
+        assert listing == [
+            {"channel_id": self.CHANNEL, "channel_name": None, "mode": None, "updated_at": None}
+        ]
+        await cuts_env.client.delete(f"/v1/cut-requests/{made['id']}")
+
+    async def test_clearing_falls_back_to_the_owner_then_the_server(self, cuts_env):
+        await cuts_env.client.put(f"/v1/cut-channels/{self.CHANNEL}", json={"mode": "quick"})
+        await cuts_env.client.put(
+            "/v1/me/settings", json={"settings": {"cuts": {"cut_mode": "quick"}}}
+        )
+        state = await self.state(cuts_env, channel_id=self.CHANNEL)
+        assert state["mode_rule"] == "channel" and state["default_mode"] == "quick"
+        cleared = await cuts_env.client.put(f"/v1/cut-channels/{self.CHANNEL}", json={"mode": None})
+        assert cleared.status_code == 200
+        state = await self.state(cuts_env, channel_id=self.CHANNEL)
+        assert state["mode_rule"] == "user" and state["channel_mode"] is None
+        await cuts_env.client.put(
+            "/v1/me/settings", json={"settings": {"cuts": {"cut_mode": None}}}
+        )
+        state = await self.state(cuts_env, channel_id=self.CHANNEL)
+        assert state["mode_rule"] == "server" and state["default_mode"] == "quick"
+
+    async def test_delete_forgets_the_default(self, cuts_env):
+        await cuts_env.client.put(f"/v1/cut-channels/{self.CHANNEL}", json={"mode": "quick"})
+        assert (await cuts_env.client.delete(f"/v1/cut-channels/{self.CHANNEL}")).status_code == 200
+        state = await self.state(cuts_env, channel_id=self.CHANNEL)
+        assert state["channel_mode"] is None
+
+    async def test_an_explicit_request_wins_over_the_channel(self, cuts_env):
+        await cuts_env.client.put(f"/v1/cut-channels/{self.CHANNEL}", json={"mode": "quick"})
+        made = await cuts_env.client.post(
+            f"/v1/videos/{VID}/cuts",
+            params={"channel_id": self.CHANNEL},
+            json={"await_prompt": True, "mode": "quick"},
+        )
+        rid = made.json()["request_id"]
+        card = (await cuts_env.client.get(f"/v1/cuts/{rid}")).json()
+        assert card["mode"] == "quick" and card["mode_rule"] == "request"
+        await cuts_env.client.delete(f"/v1/cut-requests/{rid}")
+
+    async def test_a_channel_watched_default_downgrades_when_unavailable(
+        self, cuts_env, monkeypatch
+    ):
+        monkeypatch.setattr("utubot.watch.watched_not_configured", lambda cfg: None)
+        await cuts_env.client.put(
+            f"/v1/cut-channels/{self.CHANNEL}", json={"mode": "watched", "channel_name": "Chan"}
+        )
+        await cuts_env.client.put(
+            "/v1/me/settings", json={"settings": {"cuts": {"cut_mode": "quick"}}}
+        )
+        state = await self.state(cuts_env, channel_id=self.CHANNEL)
+        assert state["default_mode"] == "watched" and state["mode_rule"] == "channel"
+        monkeypatch.setattr("utubot.watch.watched_not_configured", lambda cfg: "off")
+        state = await self.state(cuts_env, channel_id=self.CHANNEL)
+        assert state["default_mode"] == "quick"
+        assert state["mode_rule"] == "channel" and state["channel_mode"] == "watched"
+
+    async def test_watched_cannot_be_stored_while_it_is_not_configured(self, cuts_env):
+        r = await cuts_env.client.put(f"/v1/cut-channels/{self.CHANNEL}", json={"mode": "watched"})
+        assert r.status_code == 409 and "not configured" in r.json()["error"]
+
+    async def test_channel_defaults_belong_to_their_owner(self, cuts_env):
+        await cuts_env.client.put(f"/v1/cut-channels/{self.CHANNEL}", json={"mode": "quick"})
+        partner = httpx_client(cuts_env, OTHER_TOKEN)
+        assert (await partner.get("/v1/cut-channels")).json()["channels"] == []
+        state = (
+            await partner.get(f"/v1/videos/{VID}/cuts", params={"channel_id": self.CHANNEL})
+        ).json()
+        assert state["channel_mode"] is None and state["mode_rule"] == "server"
+
+    async def test_fill_without_a_mode_keeps_the_rule_that_started_the_request(self, cuts_env):
+        made = await cuts_env.client.post(
+            f"/v1/videos/{VID}/cuts",
+            params={"channel_id": self.CHANNEL},
+            json={"await_prompt": True},
+        )
+        rid = made.json()["request_id"]
+        await cuts_env.client.put(f"/v1/cut-channels/{self.CHANNEL}", json={"mode": "quick"})
+        filled = await cuts_env.client.put(
+            f"/v1/cut-requests/{rid}",
+            params={"channel_id": self.CHANNEL},
+            json={"prompt": "Keep the demo."},
+        )
+        assert filled.status_code == 200, filled.text
+        card = (await cuts_env.client.get(f"/v1/cuts/{rid}")).json()
+        assert card["mode"] == "quick" and card["mode_rule"] == "server"
+        await cuts_env.client.delete(f"/v1/cut-requests/{rid}")
+
+    async def test_a_too_long_channel_id_is_refused(self, cuts_env):
+        r = await cuts_env.client.put(f"/v1/cut-channels/{'U' * 65}", json={"mode": "quick"})
+        assert r.status_code == 400 and "at most" in r.json()["error"]
+
+    async def test_a_too_long_query_channel_id_is_refused(self, cuts_env):
+        r = await cuts_env.client.post(
+            f"/v1/videos/{VID}/cuts",
+            params={"channel_id": "U" * 65},
+            json={"await_prompt": True},
+        )
+        assert r.status_code in (400, 422)
