@@ -441,6 +441,11 @@ from the timed transcript, or `watched` when picked for the vision pass. The fra
 document still carries the effective `target_s` and the real `kept_ms`, which the extension reads for the label length. No
 `extension/` file and no matrix row change were needed; this note is the extension's side of the parity box for that pull request.
 
+The one-time web sign-in link (issue 203: `POST /v1/web-login`, `GET /web-login/<token>`) is a TV-and-tablet feature: the TV's
+"u·tubot web admin" entry opens the web admin in the device's browser, signed in. The extension already runs inside a browser, and its
+options page links the same web admin the user signs into normally, so it has no equivalent entry; no `extension/` file and no matrix row
+change were needed. This note is the extension's side of the parity box for that pull request.
+
 ## 4. Architecture
 
 ```
