@@ -7,6 +7,7 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 ## Unreleased
 
+- Fixed: the Updates list and release notes are short plain lines instead of long commit text.
 - AI verdicts and summaries that are ready survive a restart of the app: the TV keeps them on its own storage for 3 days, scoped by the
   backend address, the user's token and the backend's version, so the rows and the summary panel do not ask the backend again. Only ready
   answers are kept; failures, pending answers and transcript states are asked again. A prompt import, refresh or a default change clears

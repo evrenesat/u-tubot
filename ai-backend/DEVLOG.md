@@ -1,3 +1,12 @@
+## 2026-11-26 (readable changelog)
+
+- `releasenotes.py`: one allow/deny table turns PR titles into at most 6 short lines per version ("New:", "Fixed:", "Changed:", then
+  "+ N smaller fixes"), skipping docs/tests/CI/refactors/plans/devlog/parity/contract/dependency changes; backend deploys with
+  nothing visible say "Maintenance only". `scripts/utubot_release.py` loads the same module for app release notes and has an optional
+  `rewrite-notes --repo R [--apply]` for existing release bodies.
+- `utubot changelog rebuild` (also run at start) rewrites stored entries in the short form; idempotent. `[llm.changelog]` (optional
+  task, e.g. the `fast` alias) may reword a new deploy entry within a 2 s budget; any error keeps the deterministic lines.
+
 ## 2026-11-26 (backend version monotonic on shallow clones, issue #191)
 
 - Backend version is `0.<series>.<HEAD commit time UTC YYYYMMDDHHMM>+<sha>` instead of the commit count, which a shallow clone

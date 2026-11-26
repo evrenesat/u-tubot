@@ -14,23 +14,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__
+from . import __version__, releasenotes
 
 GIT_TIMEOUT_S = 10
 SHORT_SHA_CHARS = 7
 STAMP_FORMAT = "%Y%m%d%H%M"
 SERIES_FILE = "utubot.version"
 FIRST_DEPLOY_COMMITS = 15
-MAX_CHANGES = 60
-MAX_TEXT_CHARS = 200
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
-PR_SUFFIX_RE = re.compile(r"\s*\(#(\d+)\)\s*$")
-SUBJECT_RE = re.compile(r"^(?P<type>[a-z]+)(?:/(?P<scope>[^:]+))?:\s*(?P<text>.+)$")
-GROUPS = {"feat": "features", "fix": "fixes"}
-# Commits that are not something a user notices.
-HIDDEN_TYPES = frozenset(
-    {"docs", "test", "tests", "chore", "ci", "refactor", "style", "build", "perf"}
-)
+COMMIT_MARK = "\x01"
 
 
 @dataclass(frozen=True)
@@ -91,30 +83,9 @@ def detect() -> Build:
     return derive_version(_checkout_root())
 
 
-def describe(subject: str) -> dict | None:
-    """One commit subject as a user-facing change: {"group", "text", "pr"}; None for what a user would not notice."""
-    subject = subject.strip()
-    pr = PR_SUFFIX_RE.search(subject)
-    subject = PR_SUFFIX_RE.sub("", subject)
-    match = SUBJECT_RE.match(subject)
-    if match:
-        kind = match["type"]
-        if kind in HIDDEN_TYPES:
-            return None
-        group = GROUPS.get(kind, "other")
-        scope = (match["scope"] or "").replace("-", " ").replace("/", " ").strip()
-        text = match["text"].strip()
-        text = f"{scope}: {text}" if scope and scope.lower() not in text.lower() else text
-    else:
-        group, text = "other", subject
-    if not text:
-        return None
-    text = text[:1].upper() + text[1:]
-    return {"group": group, "text": text[:MAX_TEXT_CHARS], "pr": int(pr[1]) if pr else None}
-
-
 def changes_between(root: Path | None, previous: str, current: str) -> list[dict]:
-    """The merged changes in `current` that `previous` lacks, newest first; the last few when `previous` is unknown."""
+    """Short user-facing notes for the merged changes in `current` that `previous` lacks, newest first; the last few
+    commits when `previous` is unknown. [] when git cannot say; "Maintenance only" when nothing there is user-visible."""
     if root is None or not current:
         return []
     known = (
@@ -122,8 +93,15 @@ def changes_between(root: Path | None, previous: str, current: str) -> list[dict
         and COMMIT_RE.match(previous)
         and _git(root, "cat-file", "-e", previous) is not None
     )
-    args = ["log", "--first-parent", "--pretty=%s"]
+    args = ["log", "--first-parent", "--name-only", f"--pretty=format:{COMMIT_MARK}%s"]
     args += [f"{previous}..{current}"] if known else ["-n", str(FIRST_DEPLOY_COMMITS), current]
     out = _git(root, *args)
-    changes = [c for line in (out or "").splitlines() if (c := describe(line))]
-    return changes[:MAX_CHANGES]
+    if out is None:
+        return []
+    commits = []
+    for block in out.split(COMMIT_MARK)[1:]:
+        subject, _, files = block.partition("\n")
+        commits.append((subject, [name for name in files.splitlines() if name.strip()]))
+    return releasenotes.as_changes(
+        releasenotes.summarize(commits), empty_means_maintenance=bool(commits)
+    )
