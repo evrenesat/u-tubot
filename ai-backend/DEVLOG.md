@@ -1,3 +1,22 @@
+## 2026-11-26 (director's cuts quality, port of #106)
+
+- Units: caption fragments close a unit after a quote or bracket that ends the sentence; rolling auto-caption repeats (the tail of
+  the previous fragment at the start of the next) are dropped only for YouTube's automatic captions, an authored caption or ASR
+  text keeps a genuine repeat (`build_units(..., rolling=)`). A repeat after a pause is kept.
+- Finalize: kept parts are merged and short parts dropped on the model's boundaries clamped to the video, then padded, so padding
+  cannot pull a dropped gap into a merge or keep a part the model made too short.
+- Target length: `select_for_target` charges the merged, padded, clamped length and skips parts under `min_part_s`, so the cut it
+  counts is the cut `finalize_parts` returns and a bridged gap cannot push it past the band.
+- Highlights prompt names the payoff moments and the filler to skip, next to main's many-short-moments wording.
+- `keep_guards(cfg, preset_id, target_s)` is the one place that decides the guards (main's rules: `short_presets`, highlights and
+  length targets skip the lower guard, only a typed prompt keeps the upper one); the quick build, the watched build and the bench
+  use it, so the watched build now honours `short_presets` too.
+- Cut bench: scores the production message, its repair round and the one-pass target retry, reads chapters, 16 requests.
+- TV: a tick landing anywhere inside a drop skips it (a seek is a backwards move or one over a tick of the speed), a seek the user
+  ends inside a drop plays, and the trailing drop says "End of cut" with "Watch the rest".
+- Not ported from the closed PR: its `keep_guards`/`keep_guards_for` rework (lower guard for the no-filler preset only, none for a
+  typed prompt) contradicts main's `short_presets` rule, and its `min_guard` parameter of `finalize_parts`.
+
 ## 2026-11-26 (client caption upload, issue 149)
 
 - `POST /v1/videos/{id}/captions/client` takes the tracks a client already has (json3, srv3, vtt; at most 10 of 2 MiB, configurable),
