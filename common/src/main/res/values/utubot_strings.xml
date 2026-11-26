@@ -135,6 +135,7 @@
     <string name="utubot_pair">Pair with code</string>
     <string name="utubot_pair_desc">Type the 6-digit code from the backend to get your access token</string>
     <string name="utubot_pair_hint">6-digit pairing code</string>
+    <string name="utubot_pair_open_browser">Open in browser</string>
     <string name="utubot_pair_invalid">The code has %d digits</string>
     <string name="utubot_pairing">Pairing…</string>
     <string name="utubot_paired">Paired as %s</string>
@@ -175,6 +176,11 @@
     <string name="utubot_cut_describe_on_phone">Describe on phone…</string>
     <string name="utubot_cut_describe_hint">Scan this with your phone, or open the address on it, and describe the cut there. The video keeps playing.</string>
     <string name="utubot_cut_describe_failed">The phone sheet could not be prepared: %s</string>
+    <string name="utubot_cut_describe_title">Describe the cut</string>
+    <string name="utubot_cut_describe_hint_touch">Describe the cut: what should stay, what should go…</string>
+    <string name="utubot_cut_describe_open">Open cut sheet</string>
+    <string name="utubot_cut_describe_build">Build</string>
+    <string name="utubot_cut_describe_empty">Describe the cut first</string>
     <string name="utubot_cut_channel_always">Always use %1$s for this channel</string>
     <string name="utubot_cut_channel_follow">Follow your default on this channel</string>
     <string name="utubot_cut_channel_saved">Channel default saved</string>

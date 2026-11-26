@@ -12,7 +12,6 @@ import android.net.Uri;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
@@ -23,8 +22,10 @@ import android.widget.TextView;
 
 import androidx.annotation.Nullable;
 
+import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.utils.QrCodeEncoder;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 
@@ -117,7 +118,7 @@ public final class UtubotCutQrView extends FrameLayout {
 
     private void buildTouchSheet(LinearLayout column, CutRequest request) {
         TextView title = new TextView(getContext());
-        title.setText(getString(R.string.utubot_cut_describe_title));
+        title.setText(getContext().getString(R.string.utubot_cut_describe_title));
         title.setTextColor(TEXT);
         title.setTextSize(TITLE_TEXT_SIZE_SP);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -125,11 +126,11 @@ public final class UtubotCutQrView extends FrameLayout {
         column.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         EditText description = new EditText(getContext());
-        description.setHint(getString(R.string.utubot_cut_describe_hint_touch));
+        description.setHint(getContext().getString(R.string.utubot_cut_describe_hint_touch));
         description.setTextColor(TEXT);
-        description.setTextColorHint(0xB0FFFFFF);
+        description.setHintTextColor(0xB0FFFFFF);
         description.setTextSize(HINT_TEXT_SIZE_SP);
-        description.setMinHeight(48 * getResources().getDisplayMetrics().density);
+        description.setMinHeight(Math.round(48 * getResources().getDisplayMetrics().density));
         description.setPadding(PADDING_PX / 2, PADDING_PX / 2, PADDING_PX / 2, PADDING_PX / 2);
         description.setBackground(null);
         column.addView(description, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -139,11 +140,11 @@ public final class UtubotCutQrView extends FrameLayout {
         buttons.setGravity(Gravity.CENTER_HORIZONTAL);
         column.addView(buttons, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        Button openSheet = makeButton(getString(R.string.utubot_cut_describe_open));
+        Button openSheet = makeButton(getContext().getString(R.string.utubot_cut_describe_open));
         openSheet.setOnClickListener(v -> openInBrowser(getContext(), UtubotManager.instance(getContext()).cutRequestUrl(request.id)));
         buttons.addView(openSheet, buttonLayoutParams());
 
-        Button build = makeButton(getString(R.string.utubot_cut_describe_build));
+        Button build = makeButton(getContext().getString(R.string.utubot_cut_describe_build));
         build.setOnClickListener(v -> buildCut(request, description));
         buttons.addView(build, buttonLayoutParams());
     }
@@ -177,14 +178,14 @@ public final class UtubotCutQrView extends FrameLayout {
         }
 
         TextView hintView = new TextView(getContext());
-        hintView.setText(getString(R.string.utubot_cut_describe_hint));
+        hintView.setText(getContext().getString(R.string.utubot_cut_describe_hint));
         hintView.setTextColor(TEXT);
         hintView.setTextSize(HINT_TEXT_SIZE_SP);
         hintView.setGravity(Gravity.CENTER);
         column.addView(hintView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
-    private View makeButton(String label) {
+    private Button makeButton(String label) {
         Button button = new Button(getContext());
         button.setText(label);
         button.setTextColor(TEXT);
@@ -203,7 +204,7 @@ public final class UtubotCutQrView extends FrameLayout {
         String prompt = description.getText().toString().trim();
 
         if (prompt.isEmpty()) {
-            MessageHelpers.showLongMessage(getContext(), getString(R.string.utubot_cut_describe_empty));
+            MessageHelpers.showLongMessage(getContext(), getContext().getString(R.string.utubot_cut_describe_empty));
             return;
         }
 
@@ -216,16 +217,15 @@ public final class UtubotCutQrView extends FrameLayout {
                             if (UtubotCutWatcher.isPending(built.state)) {
                                 UtubotCutNotices.instance(getContext()).ordered(request.id, request.videoId, request.title);
                             }
-                            MessageHelpers.showLongMessage(getContext(), getString(R.string.utubot_cut_state_building));
+                            MessageHelpers.showLongMessage(getContext(), getContext().getString(R.string.utubot_cut_state_building));
                             detach();
                         },
                         error -> MessageHelpers.showLongMessage(getContext(),
-                                getString(R.string.utubot_cut_describe_failed, describeError(error))));
+                                getContext().getString(R.string.utubot_cut_describe_failed, describeError(error))));
     }
 
     private static void openInBrowser(Context context, String url) {
         Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-        intent.addFlags(Intent.FLAG_GRANT_URI_PERMISSION);
         try {
             context.startActivity(intent);
         } catch (ActivityNotFoundException e) {
@@ -234,7 +234,7 @@ public final class UtubotCutQrView extends FrameLayout {
     }
 
     private String describeError(Throwable error) {
-        return error.getMessage() != null ? error.getMessage() : getString(R.string.utubot_answer_none);
+        return error.getMessage() != null ? error.getMessage() : getContext().getString(R.string.utubot_answer_none);
     }
 
     private void detach() {

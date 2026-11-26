@@ -86,6 +86,11 @@ public class SimpleEditDialog {
         show(context, dialogTitle, dialogHint, defaultValue, onChange, onDismiss, inputType, null);
     }
 
+    private static void show(Context context, String dialogTitle, String dialogHint, String defaultValue, OnChange onChange, Runnable onDismiss,
+                              int inputType, String privateImeOptions) {
+        show(context, dialogTitle, dialogHint, defaultValue, onChange, onDismiss, inputType, privateImeOptions, null, null);
+    }
+
     /**
      * @param inputType the InputType.TYPE_* of the field, or {@link InputType#TYPE_NULL} for the one of the layout
      * @param privateImeOptions for the keyboard (see EditorInfo.privateImeOptions), null for none
@@ -96,7 +101,7 @@ public class SimpleEditDialog {
                               int inputType, String privateImeOptions, @Nullable String actionLabel, @Nullable Runnable onAction) {
         AlertDialog.Builder builder = new AlertDialog.Builder(context, R.style.AppDialog);
         LayoutInflater inflater = LayoutInflater.from(context);
-        View contentView = inflater.inflate(R.layout.simple_edit_dialog, null);
+        LinearLayout contentView = (LinearLayout) inflater.inflate(R.layout.simple_edit_dialog, null);
 
         EditText editField = contentView.findViewById(R.id.simple_edit_value);
         if (inputType != InputType.TYPE_NULL) {

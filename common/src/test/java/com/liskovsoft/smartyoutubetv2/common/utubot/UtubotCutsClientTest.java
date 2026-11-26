@@ -68,6 +68,12 @@ public class UtubotCutsClientTest {
             return new TinyHttpServer.Response(200, "{\"id\":\"cut1\",\"video_id\":\"abcdefghijk\",\"state\":\"ready\"," +
                     "\"source\":\"TV\",\"preset_id\":\"cut-no-filler\",\"title\":\"A video\",\"duration_s\":240,\"cut\":" + CUT + "}");
         });
+        mServer.on("/v1/cut-requests/cut1", request -> {
+            mAuth.set(request.headers.get("authorization"));
+            mBody.set(request.body);
+            mMethod.set(request.method);
+            return new TinyHttpServer.Response(200, "{\"id\":\"cut1\",\"video_id\":\"abcdefghijk\",\"state\":\"building\",\"mode\":\"quick\"}");
+        });
     }
 
     @After
@@ -194,5 +200,22 @@ public class UtubotCutsClientTest {
         UtubotClient client = new UtubotClient(base(), TOKEN);
 
         assertEquals(base() + "cuts/cut1", client.cutRequestUrl("cut1"));
+    }
+
+    @Test
+    public void fillCutRequest_sendsThePromptAndMode() throws IOException {
+        CutRequest request = new UtubotClient(base(), TOKEN).fillCutRequest("cut1", "Keep the demo", "watched");
+
+        assertEquals("PUT", mMethod.get());
+        assertEquals("{\"prompt\":\"Keep the demo\",\"mode\":\"watched\"}", mBody.get());
+        assertEquals("Bearer " + TOKEN, mAuth.get());
+        assertEquals("building", request.state);
+    }
+
+    @Test
+    public void fillCutRequestWithoutMode_omitsTheMode() throws IOException {
+        new UtubotClient(base(), TOKEN).fillCutRequest("cut1", "Keep the demo", null);
+
+        assertEquals("{\"prompt\":\"Keep the demo\"}", mBody.get());
     }
 }
