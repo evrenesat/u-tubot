@@ -23,6 +23,11 @@ public class UtubotSettings {
     public static final int[] PANEL_DELAY_CHOICES_MS = {1000, DEFAULT_PANEL_DELAY_MS, 3000, 5000};
     /** How long the prompt highlight rests in the Summary view before its summary loads */
     public static final int VIEW_PROMPT_DELAY_MS = 400;
+    /** The keys that jump between the kept parts of an applied cut */
+    public static final int CUT_JUMP_OFF = 0;
+    public static final int CUT_JUMP_LEFT_RIGHT = 1;
+    public static final int CUT_JUMP_UP_DOWN = 2;
+    public static final int[] CUT_JUMP_CHOICES = {CUT_JUMP_LEFT_RIGHT, CUT_JUMP_UP_DOWN, CUT_JUMP_OFF};
     private static final String PREFS_NAME = "utubot_settings";
     private static final String KEY_URL = "url";
     private static final String KEY_TOKEN = "token";
@@ -32,6 +37,8 @@ public class UtubotSettings {
     private static final String KEY_PANEL = "summary_panel";
     private static final String KEY_AUTO_CAPTIONS = "auto_captions";
     private static final String KEY_AUTO_CUTS = "auto_cuts";
+    private static final String KEY_CUT_JUMP = "cut_jump";
+    private static final String KEY_CUT_LEGEND_SHOWN = "cut_legend_shown";
     private static final String KEY_WAIT_MS = "wait_ms";
     private static final String KEY_PANEL_DELAY_MS = "panel_delay_ms";
     private static final String KEY_BROWSE_REFRESH_MINUTES = "browse_refresh_minutes";
@@ -377,6 +384,43 @@ public class UtubotSettings {
 
     public void setApplyReadyCutsEnabled(boolean enabled) {
         mPrefs.edit().putBoolean(KEY_AUTO_CUTS, enabled).apply();
+    }
+
+    /**
+     * Which keys jump to the next and previous kept part while a cut is on: {@link #CUT_JUMP_LEFT_RIGHT} (the default),
+     * {@link #CUT_JUMP_UP_DOWN} or {@link #CUT_JUMP_OFF}
+     */
+    public int getCutJumpBinding() {
+        int stored = mPrefs.getInt(KEY_CUT_JUMP, CUT_JUMP_LEFT_RIGHT);
+
+        return isCutJumpChoice(stored) ? stored : CUT_JUMP_LEFT_RIGHT;
+    }
+
+    public void setCutJumpBinding(int binding) {
+        if (isCutJumpChoice(binding)) {
+            mPrefs.edit().putInt(KEY_CUT_JUMP, binding).apply();
+        }
+    }
+
+    private static boolean isCutJumpChoice(int binding) {
+        for (int choice : CUT_JUMP_CHOICES) {
+            if (choice == binding) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The seek bar's colours and the jump gesture are explained the first time a cut is applied
+     */
+    public boolean isCutLegendShown() {
+        return mPrefs.getBoolean(KEY_CUT_LEGEND_SHOWN, false);
+    }
+
+    public void setCutLegendShown(boolean shown) {
+        mPrefs.edit().putBoolean(KEY_CUT_LEGEND_SHOWN, shown).apply();
     }
 
     /**

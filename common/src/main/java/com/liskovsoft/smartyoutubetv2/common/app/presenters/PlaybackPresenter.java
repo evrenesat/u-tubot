@@ -69,6 +69,8 @@ public class PlaybackPresenter extends BasePresenter<PlaybackView> implements Pl
         mEventListeners.add(new RemoteController(context));
         mEventListeners.add(new SponsorBlockController());
         if (UtubotSettings.isBuiltIn()) {
+            // After the sponsor watcher: its onVideoLoaded starts the segment refresh the cut's skipper merges with, and the cut's double
+            // press is guarded so it never takes a key from the player's controls or from a quick-skip direction
             mEventListeners.add(new UtubotCutController());
         }
         mEventListeners.add(new CensoredWordsController());

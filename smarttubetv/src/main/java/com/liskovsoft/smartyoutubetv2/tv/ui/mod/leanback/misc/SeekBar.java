@@ -67,6 +67,7 @@ public final class SeekBar extends View {
     private static class SeekBarRectangle {
         public final RectF rect = new RectF();
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        public boolean hatched;
     }
 
     private final RectF mProgressRect = new RectF();
@@ -76,6 +77,8 @@ public final class SeekBar extends View {
     private final Paint mProgressPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mBackgroundPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mKnobPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint mHatchPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final float mHatchStepPx;
 
     private int mProgress;
     private int mSecondProgress;
@@ -96,6 +99,9 @@ public final class SeekBar extends View {
         mSecondProgressPaint.setColor(Color.LTGRAY);
         mProgressPaint.setColor(Color.RED);
         mKnobPaint.setColor(Color.WHITE);
+        mHatchPaint.setColor(0x55FFFFFF);
+        mHatchPaint.setStrokeWidth(Math.max(1f, context.getResources().getDisplayMetrics().density));
+        mHatchStepPx = 8 * context.getResources().getDisplayMetrics().density;
         mBarHeight = context.getResources().getDimensionPixelSize(
                 R.dimen.lb_playback_transport_progressbar_bar_height);
         mActiveBarHeight = context.getResources().getDimensionPixelSize(
@@ -162,9 +168,26 @@ public final class SeekBar extends View {
 
         for (SeekBarRectangle rectangle : mSeekBarRectangles) {
             canvas.drawRoundRect(rectangle.rect, radius, radius, rectangle.paint);
+
+            if (rectangle.hatched) {
+                drawHatch(canvas, rectangle.rect);
+            }
         }
 
         canvas.drawCircle(mKnobx, getHeight() / 2, radius, mKnobPaint);
+    }
+
+    private void drawHatch(Canvas canvas, RectF rect) {
+        float height = rect.height();
+
+        canvas.save();
+        canvas.clipRect(rect);
+
+        for (float x = rect.left - height; x < rect.right; x += mHatchStepPx) {
+            canvas.drawLine(x, rect.bottom, x + height, rect.top, mHatchPaint);
+        }
+
+        canvas.restore();
     }
 
     /**
@@ -307,8 +330,10 @@ public final class SeekBar extends View {
     }
 
     private void calculateSegments(List<SeekBarSegment> segments) {
+        // A new list replaces the rectangles that were drawn: a write never leaves the colours of an earlier list underneath it
+        mSeekBarRectangles.clear();
+
         if (segments == null) {
-            mSeekBarRectangles.clear();
             //invalidate();
             return;
         }
@@ -343,6 +368,7 @@ public final class SeekBar extends View {
             SeekBarRectangle rect = new SeekBarRectangle();
             rect.rect.set(leftPixels, verticalPadding, rightPixels, height - verticalPadding);
             rect.paint.setColor(segment.color);
+            rect.hatched = segment.hatched;
             mSeekBarRectangles.add(rect);
         }
 

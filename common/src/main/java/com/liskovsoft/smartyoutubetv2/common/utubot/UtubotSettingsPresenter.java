@@ -89,6 +89,8 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
                 option -> mSettings.setAutoCaptionsEnabled(option.isSelected()), mSettings.isAutoCaptionsEnabled())));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_cuts), context.getString(R.string.utubot_auto_cuts_desc),
                 option -> mSettings.setApplyReadyCutsEnabled(option.isSelected()), mSettings.isApplyReadyCutsEnabled())));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_jump),
+                formatCutJump(context, mSettings.getCutJumpBinding()), option -> showCutJump())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_prompts), option -> showPrompts())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_test_connection), option -> testConnection())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_advanced), context.getString(R.string.utubot_advanced_desc),
@@ -109,6 +111,35 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
 
         dialog.appendRadioCategory(context.getString(R.string.utubot_panel_delay), options);
         dialog.showDialog(context.getString(R.string.utubot_panel_delay));
+    }
+
+    private void showCutJump() {
+        Context context = getContext();
+        AppDialogPresenter dialog = AppDialogPresenter.instance(context);
+        List<OptionItem> options = new ArrayList<>();
+
+        for (int binding : UtubotSettings.CUT_JUMP_CHOICES) {
+            options.add(UiOptionItem.from(formatCutJump(context, binding), option -> mSettings.setCutJumpBinding(binding),
+                    binding == mSettings.getCutJumpBinding()));
+        }
+
+        dialog.appendRadioCategory(context.getString(R.string.utubot_cut_jump), options);
+        dialog.showDialog(context.getString(R.string.utubot_cut_jump));
+    }
+
+    /**
+     * "Double-press Left / Right", "Double-press Up / Down", "Off"
+     */
+    static String formatCutJump(Context context, int binding) {
+        if (binding == UtubotSettings.CUT_JUMP_UP_DOWN) {
+            return context.getString(R.string.utubot_cut_jump_value_up_down);
+        }
+
+        if (binding == UtubotSettings.CUT_JUMP_OFF) {
+            return context.getString(R.string.utubot_cut_jump_value_off);
+        }
+
+        return context.getString(R.string.utubot_cut_jump_value_left_right);
     }
 
     private void showBrowseRefresh() {

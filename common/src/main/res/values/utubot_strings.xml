@@ -153,6 +153,15 @@
     <string name="utubot_cut_state_ready_length">%1$s of %2$s</string>
     <string name="utubot_cut_state_ready_on">%s (on)</string>
     <string name="utubot_cut_parts">Kept parts: %s</string>
+    <string name="utubot_cut_outside">Outside the cut · ▶▶ next part in %s</string>
+    <string name="utubot_cut_outside_last">Outside the cut · no kept part after this</string>
+    <string name="utubot_cut_legend">Seek bar: bright = kept parts, dark = cut out.%s</string>
+    <string name="utubot_cut_legend_jump_left_right">\u0020Double-press Left or Right to jump between kept parts.</string>
+    <string name="utubot_cut_legend_jump_up_down">\u0020Double-press Up or Down to jump between kept parts.</string>
+    <string name="utubot_cut_jump">Jump between kept parts</string>
+    <string name="utubot_cut_jump_value_left_right">Double-press Left / Right</string>
+    <string name="utubot_cut_jump_value_up_down">Double-press Up / Down</string>
+    <string name="utubot_cut_jump_value_off">Off</string>
     <string name="utubot_cut_state_failed">Failed: %s · Retry</string>
     <string name="utubot_cut_state_failed_plain">Failed · Retry</string>
     <string name="utubot_cut_mode">Mode: %1$s</string>

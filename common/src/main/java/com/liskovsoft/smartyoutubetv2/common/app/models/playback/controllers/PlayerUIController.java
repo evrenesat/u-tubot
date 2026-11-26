@@ -45,6 +45,7 @@ import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SearchData;
 import com.liskovsoft.smartyoutubetv2.common.utils.AppDialogUtil;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutController;
 import com.liskovsoft.youtubeapi.service.YouTubeServiceManager;
 import com.liskovsoft.youtubeapi.service.YouTubeSignInService;
 import io.reactivex.Observable;
@@ -142,6 +143,13 @@ public class PlayerUIController extends BasePlayerController {
                 handlePlayPauseKey(keyCode) || handleNextFrameKey(keyCode) || handleLeftRightSkip(keyCode) || handleUpDownSkip(keyCode);
 
         if (isHandled) {
+            // A key consumed here never reaches the cut's double-press gesture: it must break the pair there too
+            UtubotCutController cutController = getController(UtubotCutController.class);
+
+            if (cutController != null) {
+                cutController.resetJumpGesture();
+            }
+
             return true; // don't show UI
         }
 

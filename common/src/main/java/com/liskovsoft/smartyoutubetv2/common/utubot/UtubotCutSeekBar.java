@@ -5,6 +5,8 @@ import androidx.annotation.Nullable;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerUI;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.SeekBarSegment;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +18,10 @@ import java.util.List;
  * behaves as it always has.
  */
 public final class UtubotCutSeekBar {
+    /** The kept parts: bright, clearly the video the cut keeps */
+    public static final int KEPT_COLOR = 0xFF26C6DA;
+    /** The cut-out ranges: dark and hatched, never mistaken for a kept part */
+    public static final int CUT_COLOR = 0xCC14181C;
     @Nullable
     private static volatile List<SeekBarSegment> sCutSegments;
     @Nullable
@@ -24,6 +30,81 @@ public final class UtubotCutSeekBar {
     private static volatile List<SeekBarSegment> sSponsorSegments;
 
     private UtubotCutSeekBar() {
+    }
+
+    /**
+     * What the seek bar draws for a cut: the kept parts bright and the cut-out ranges dark and hatched. The cut-outs come last so
+     * a shared boundary belongs to the cut-out. A duration of zero (not known yet) draws nothing.
+     */
+    public static List<SeekBarSegment> segmentsFor(@Nullable Cut cut, long durationMs) {
+        List<SeekBarSegment> segments = new ArrayList<>();
+
+        if (cut == null || durationMs <= 0) {
+            return segments;
+        }
+
+        List<long[]> keptRanges = new ArrayList<>();
+
+        for (CutPart part : cut.parts) {
+            if (part != null && part.endMs > part.startMs) {
+                keptRanges.add(new long[]{part.startMs, part.endMs});
+            }
+        }
+
+        if (keptRanges.isEmpty()) {
+            keptRanges = complement(cut.skipRangesMs, durationMs);
+        }
+
+        for (long[] range : keptRanges) {
+            addSegment(segments, range[0], range[1], durationMs, KEPT_COLOR, false);
+        }
+
+        for (long[] range : cut.skipRangesMs) {
+            addSegment(segments, range[0], range[1], durationMs, CUT_COLOR, true);
+        }
+
+        return segments;
+    }
+
+    private static List<long[]> complement(List<long[]> skipRangesMs, long durationMs) {
+        List<long[]> kept = new ArrayList<>();
+        long position = 0;
+
+        for (long[] range : skipRangesMs) {
+            if (range != null && range[0] > position) {
+                kept.add(new long[]{position, range[0]});
+            }
+
+            if (range != null) {
+                position = Math.max(position, range[1]);
+            }
+        }
+
+        if (position < durationMs) {
+            kept.add(new long[]{position, durationMs});
+        }
+
+        return kept;
+    }
+
+    private static void addSegment(List<SeekBarSegment> segments, long startMs, long endMs, long durationMs, int color, boolean hatched) {
+        float startProgress = clamp(startMs / (float) durationMs);
+        float endProgress = clamp(endMs / (float) durationMs);
+
+        if (endProgress <= startProgress) {
+            return;
+        }
+
+        SeekBarSegment segment = new SeekBarSegment();
+        segment.startProgress = startProgress;
+        segment.endProgress = endProgress;
+        segment.color = color;
+        segment.hatched = hatched;
+        segments.add(segment);
+    }
+
+    private static float clamp(float progress) {
+        return Math.max(0f, Math.min(1f, progress));
     }
 
     /**
