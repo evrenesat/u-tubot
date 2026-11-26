@@ -327,6 +327,20 @@ captions come out in English whatever the source language; `"off"` keeps the sou
 caption-recheck event says `skipped` / `forced`).
 → `{"status":"queued|running|ready|failed","job_id":"...","eta_s":null}`
 
+### `POST /v1/videos/{id}/captions/client`
+Caption tracks the client already holds, so the server need not fetch them from YouTube (its yt-dlp requests are rate limited).
+Body: `{"tracks":[{"lang":"en","kind":"auto|manual","name":"English","format":"json3|srv3|vtt","body":"<raw timed text>","original":true}]}`
+(`name` and `original` optional; `original` marks the video's own spoken language). Optional `title`, `channel`, `duration_s`,
+`is_live` query parameters like the other video routes. Limits (`[transcripts] client_max_tracks`, `client_max_track_bytes`, default 10
+and 2 MiB): too many tracks or a bad language code is `400`, a track over the size `413`, a format or kind outside the lists `400`, and a
+body that holds no readable timed text in any track `400`. One track is picked the way the server's own fetch picks (an authored track in
+the video's language, its automatic original, any authored, any automatic) and stored exactly like a fetch (`source = youtube_captions`,
+words kept for json3) but marked `origin = client`. A fresh stored copy that is manual is never replaced by an automatic upload, a
+stored speech-recognition transcript is never replaced, and an upload that brings nothing better than a fresh stored copy of the same
+kind is dropped; real captions clear the video's "no captions" and failure memories and end the wait of a fetch, cut or summary that
+was waiting for the transcript. Every later request finds the copy in the 30-day cache, so no yt-dlp call follows.
+→ `{"stored":true|false,"reason":"stored|kept_manual|kept_asr|kept_existing","lang":"en","kind":"auto|manual","tracks":1}`
+
 ### `GET /v1/videos/{id}/captions`
 ```json
 {"status":"none|queued|running|ready|failed","progress":0.0-1.0,
@@ -401,6 +415,9 @@ contract is built for both. Exceptions, each with its reason:
 - The browse cache: TV only. YouTube's site owns its own loading.
 - The 3-day disk cache of ready verdicts and summaries: TV only. It is scoped to the backend version; the extension
   keeps its caches in `storage.session`, which ends with the browser session, and does not keep failures either.
+- Caption upload (`POST /v1/videos/{id}/captions/client`): TV only for now. The TV player is handed YouTube's caption tracks with
+  the stream; the extension only draws HQ captions and reads no caption track of YouTube's page yet. Its row is in the plan's parity
+  matrix; the extension sends the same body when it reads the page's own tracks.
 - `GET /app/update.json`: TV only. Firefox updates extensions itself.
 
 The extension sends the bearer token from its background context only, to the backend's own origin, with no cookies

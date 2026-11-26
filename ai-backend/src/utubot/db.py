@@ -159,6 +159,7 @@ TRANSCRIPT_COLUMNS = {
     "job_id": "TEXT",
     "words": "TEXT",
     "caption_kind": "TEXT",
+    "origin": "TEXT",
 }
 CAPTION_COLUMNS = {"job_id": "TEXT", "timing_version": "INTEGER", "timing": "TEXT"}
 ARCHIVE_COLUMNS = {"last_used_at": "REAL"}

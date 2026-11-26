@@ -33,6 +33,7 @@ import com.liskovsoft.smartyoutubetv2.common.misc.MediaServiceManager;
 import com.liskovsoft.smartyoutubetv2.common.misc.MusicAutoplayManager;
 import com.liskovsoft.smartyoutubetv2.common.misc.VideoCategoryManager;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotClientCaptions;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 import com.liskovsoft.youtubeapi.service.YouTubeServiceManager;
 import com.liskovsoft.youtubeapi.videoinfo.V2.ClientAttempts;
@@ -440,6 +441,7 @@ public class VideoLoaderController extends BasePlayerController {
         boolean isRefetched = false;
 
         mCensoredWordsController.onFormatInfo(getVideo(), formatInfo);
+        UtubotClientCaptions.onFormatInfo(getContext(), getVideo().videoId, formatInfo, getPlayerData().getSubtitleLanguage());
 
         // Fix stretched video for a couple milliseconds (before the onVideoSizeChanged gets called)
         applyAspectRatio(formatInfo);

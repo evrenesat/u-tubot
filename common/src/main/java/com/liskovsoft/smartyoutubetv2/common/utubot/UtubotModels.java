@@ -254,6 +254,31 @@ public final class UtubotModels {
         }
     }
 
+    /**
+     * A caption track the player holds, as {@code POST /v1/videos/{id}/captions/client} takes it
+     */
+    public static final class ClientCaptionTrack {
+        public static final String KIND_AUTO = "auto";
+        public static final String KIND_MANUAL = "manual";
+        public static final String FORMAT_JSON3 = "json3";
+
+        public final String lang;
+        public final String kind;
+        public final String name;
+        public final String format;
+        public final String body;
+        public final boolean original;
+
+        public ClientCaptionTrack(String lang, String kind, String name, String format, String body, boolean original) {
+            this.lang = lang;
+            this.kind = kind;
+            this.name = name;
+            this.format = format;
+            this.body = body;
+            this.original = original;
+        }
+    }
+
     public static final class CaptionTrack {
         public String lang;
         public String label;

@@ -11,6 +11,13 @@
 
 # u·tubot devlog
 
+## 2026-11-26 (TV uploads its caption tracks to the backend, issue 149)
+
+- `VideoLoaderController` calls `UtubotClientCaptions.onFormatInfo`: in the background, once per video per app session, the TV
+  fetches the timed text (json3) of at most the original-language and the user-language track (no other YouTube request) and posts
+  them to `POST /v1/videos/{id}/captions/client`. Only with a configured, paired backend; failures are logged, never shown, and the
+  next play tries again. Extension: no caption track read yet, noted in `ai/CONTRACT.md`.
+
 ## 2026-11-25 (cuts: the explicit pick wins over stale answers, issue 103)
 
 - The TV keeps the viewer's own pick or off per video until the backend carries it: a cuts answer or a followed request that was

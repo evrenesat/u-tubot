@@ -9,6 +9,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
+from xml.etree import ElementTree
 
 import httpx
 import yt_dlp
@@ -41,6 +42,8 @@ log = logging.getLogger("utubot.transcripts")
 TIMESTAMP_BLOCK_S = 20
 SOURCE_CAPTIONS = "youtube_captions"
 SOURCE_ASR = "asr"
+STORED = "stored"
+ORIGIN_CLIENT = "client"  # captions a client (TV, extension) uploaded instead of a yt-dlp fetch
 VIDEO_URL = "https://www.youtube.com/watch?v={}"
 HTTP_ERROR_FLOOR = 400
 CAPTION_MANUAL = "manual"
@@ -69,6 +72,7 @@ class Transcript:
     caption_kind: str | None = (
         None  # CAPTION_MANUAL / CAPTION_AUTO; None for a row stored before it was kept
     )
+    origin: str | None = None  # ORIGIN_CLIENT when a client uploaded the captions, else None
 
 
 @dataclass
@@ -237,6 +241,18 @@ def parse_vtt(raw: str) -> list[tuple[float, float, str]]:
                 out.append((start, max(end, start), text))
                 last = text
             break
+    return out
+
+
+def parse_srv3(raw: str) -> list[tuple[float, float, str]]:
+    """`(start, end, text)` rows of a timedtext srv3 answer (`<p t= d=>` paragraphs of `<s>` words)."""
+    root = ElementTree.fromstring(raw)
+    out: list[tuple[float, float, str]] = []
+    for para in root.iter("p"):
+        text = " ".join("".join(para.itertext()).split())
+        if text:
+            start = int(para.get("t") or 0) / MS_PER_S
+            out.append((start, start + int(para.get("d") or 0) / MS_PER_S, text))
     return out
 
 
@@ -409,6 +425,14 @@ class YoutubeFetcher:
         )
 
 
+class _UploadedMeanwhile(Exception):
+    """A client uploaded the captions while the fetch waited for its slot: nothing to fetch."""
+
+    def __init__(self, transcript: Transcript):
+        super().__init__("captions uploaded by a client")
+        self.transcript = transcript
+
+
 class TranscriptService:
     """Transcript cache in front of YouTube: one fetch per video per TTL, always through the gate."""
 
@@ -427,6 +451,7 @@ class TranscriptService:
         self._meta_tried: dict[str, float] = {}
         self._length_tasks: dict[str, asyncio.Task[None]] = {}
         self._inflight: dict[str, asyncio.Task[Transcript]] = {}
+        self._client_arrivals: dict[str, asyncio.Event] = {}
         self._probe: asyncio.Task[None] | None = None
 
     def cached_meta(self, video_id: str) -> dict[str, Any] | None:
@@ -458,6 +483,7 @@ class TranscriptService:
             segments=_load_segments(row["segments"]),
             words=_load_words(row["words"]),
             caption_kind=row["caption_kind"],
+            origin=row["origin"],
         )
 
     def no_captions(self, video_id: str) -> bool:
@@ -555,13 +581,67 @@ class TranscriptService:
             " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
             " text=excluded.text, fetched_at=excluded.fetched_at, engine=excluded.engine,"
             " model=excluded.model, segments=excluded.segments, job_id=excluded.job_id,"
-            " words=NULL, caption_kind=NULL" + where,
+            " words=NULL, caption_kind=NULL, origin=NULL" + where,
             params,
         )
         if stored:
             self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])
             self.db.execute("DELETE FROM video_holds WHERE video_id=?", [video_id])
         return bool(stored)
+
+    def store_client_captions(
+        self,
+        video_id: str,
+        text: str,
+        lang: str | None,
+        caption_kind: str,
+        *,
+        segments: list[tuple[float, float, str]] | None = None,
+        words: list[tuple[float, str]] | None = None,
+    ) -> str:
+        """Keep captions a client uploaded, like a fetch would, marked `origin = client`.
+
+        Returns why nothing was stored (`kept_asr`, `kept_manual`, `kept_existing`) or `stored`.
+        Fresh stored captions stay when they are manual (an automatic upload never replaces them) or
+        when the upload brings nothing better (same kind); a speech-recognition transcript stays too.
+        A stored copy of an old row without a kind is replaced. Real captions clear the "no captions"
+        and failure memories of the video.
+        """
+        kept = self.cached(video_id)
+        if kept is not None:
+            if kept.source == SOURCE_ASR:
+                return "kept_asr"
+            if kept.caption_kind == CAPTION_MANUAL and caption_kind == CAPTION_AUTO:
+                return "kept_manual"
+            if kept.caption_kind is not None and not (
+                kept.caption_kind == CAPTION_AUTO and caption_kind == CAPTION_MANUAL
+            ):
+                return "kept_existing"
+        self.db.execute(
+            "INSERT INTO transcripts(video_id,lang,source,text,fetched_at,segments,words,caption_kind,origin)"
+            " VALUES(?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
+            " text=excluded.text, fetched_at=excluded.fetched_at, engine=NULL, model=NULL,"
+            " segments=excluded.segments, words=excluded.words, caption_kind=excluded.caption_kind,"
+            " origin=excluded.origin, job_id=NULL",
+            [
+                video_id,
+                lang,
+                SOURCE_CAPTIONS,
+                text,
+                time.time(),
+                json.dumps(segments) if segments else None,
+                json.dumps(words) if words else None,
+                caption_kind,
+                ORIGIN_CLIENT,
+            ],
+        )
+        self.db.execute("DELETE FROM no_captions WHERE video_id=?", [video_id])
+        self.db.execute("DELETE FROM video_holds WHERE video_id=?", [video_id])
+        arrival = self._client_arrivals.pop(video_id, None)
+        if arrival is not None:
+            arrival.set()
+        return STORED
 
     async def get(
         self,
@@ -610,6 +690,7 @@ class TranscriptService:
             task = asyncio.create_task(self._fetch(video_id, priority))
             self._inflight[video_id] = task
             task.add_done_callback(lambda _t: self._inflight.pop(video_id, None))
+            task.add_done_callback(lambda _t: self._client_arrivals.pop(video_id, None))
             task.add_done_callback(lambda t: t.cancelled() or t.exception())
         elif priority == INTERACTIVE:
             if not self.gate.interactive_ok(*FETCH_CLASSES):
@@ -619,7 +700,33 @@ class TranscriptService:
                     CLASS_CAPTIONS,
                 )
             self.gate.promote(video_id)
-        return await asyncio.shield(task)
+        return await self._await_fetch(video_id, task)
+
+    async def _await_fetch(self, video_id: str, task: asyncio.Task[Transcript]) -> Transcript:
+        """The running fetch's answer, or at once the captions a client uploads while it waits.
+
+        A fetch may sit in the gate (pacing, a cooling breaker) for a long time; an upload ends the
+        wait without touching YouTube, and the fetch itself then stands down (`_fetch_unless_uploaded`).
+        """
+        arrival = self._client_arrivals.setdefault(video_id, asyncio.Event())
+        waiting = asyncio.ensure_future(arrival.wait())
+        fetched = asyncio.ensure_future(asyncio.shield(task))
+        try:
+            await asyncio.wait({waiting, fetched}, return_when=asyncio.FIRST_COMPLETED)
+            if not fetched.done():
+                uploaded = self.cached(video_id)
+                if uploaded is not None:
+                    return uploaded
+            return await fetched
+        finally:
+            waiting.cancel()
+            fetched.cancel()
+
+    async def _fetch_unless_uploaded(self, video_id: str) -> FetchResult:
+        kept = self.cached(video_id)
+        if kept is not None and kept.origin == ORIGIN_CLIENT:
+            raise _UploadedMeanwhile(kept)
+        return await self.fetcher(video_id)
 
     async def ensure_length(
         self, video_id: str, priority: int = INTERACTIVE, wait_s: float | None = None
@@ -709,8 +816,13 @@ class TranscriptService:
     async def _fetch(self, video_id: str, priority: int) -> Transcript:
         try:
             result = await self.gate.run(
-                lambda: self.fetcher(video_id), priority, key=video_id, classes=FETCH_CLASSES
+                lambda: self._fetch_unless_uploaded(video_id),
+                priority,
+                key=video_id,
+                classes=FETCH_CLASSES,
             )
+        except _UploadedMeanwhile as uploaded:
+            return uploaded.transcript
         except YoutubeVideoError as exc:
             self.record_failure(video_id, exc.reason)
             raise
@@ -734,7 +846,7 @@ class TranscriptService:
             " ON CONFLICT(video_id) DO UPDATE SET lang=excluded.lang, source=excluded.source,"
             " text=excluded.text, fetched_at=excluded.fetched_at, engine=NULL, model=NULL,"
             " segments=excluded.segments, words=excluded.words, caption_kind=excluded.caption_kind,"
-            " job_id=NULL WHERE transcripts.source != ?",
+            " origin=NULL, job_id=NULL WHERE transcripts.source != ?",
             [
                 video_id,
                 result.lang,

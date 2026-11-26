@@ -31,6 +31,7 @@ from .captions.asr import ASRBackend, make_asr
 from .captions.jobs import JobQueue
 from .captions.pipeline import CaptionPipeline, Downloader
 from .captions.report import JobReports
+from .client_captions import ClientCaptions, ClientCaptionsRefused, store_upload
 from .config import (
     LANG_CODE_RE,
     TRANSLATE_OFF_VALUES,
@@ -236,6 +237,9 @@ def build_services(
 
 def error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
+
+
+CLIENT_CAPTIONS_PATH_RE = re.compile(r"^/v1/videos/[^/]+/captions/client$")
 
 
 def check_video_id(video_id: str) -> str:
@@ -490,7 +494,11 @@ def create_app(
         return response
 
     def max_bytes_for_path(path: str) -> int | None:
-        return cfg.speech.max_upload_bytes if path == "/v1/speech" else None
+        if path == "/v1/speech":
+            return cfg.speech.max_upload_bytes
+        if CLIENT_CAPTIONS_PATH_RE.match(path):
+            return cfg.transcripts.client_max_body_bytes
+        return None
 
     app.add_middleware(
         BodyLimitMiddleware,
@@ -929,6 +937,24 @@ def create_app(
             raise HTTPException(400, "invalid language code")
         job = svc.jobs.enqueue(user.name, video_id, body.lang, translate_to, force=body.force)
         return {"status": job["status"], "job_id": job["id"], "eta_s": None}
+
+    @app.post("/v1/videos/{video_id}/captions/client")
+    async def captions_client(
+        request: Request,
+        video_id: str,
+        body: ClientCaptions,
+        meta: QueryMeta = Depends(qmeta),
+        user: UserConfig = Depends(current_user),
+    ):
+        """Caption tracks the client already holds, stored like a fetch (`origin = client`) so the
+        server need not ask YouTube. The reply says whether the upload was kept and why not."""
+        check_video_id(video_id)
+        if meta.title or meta.channel or meta.duration_s is not None or meta.is_live is not None:
+            svc.transcripts.store_meta(video_id, meta.as_dict())
+        try:
+            return store_upload(svc.transcripts, video_id, body)
+        except ClientCaptionsRefused as exc:
+            raise HTTPException(exc.status, exc.message) from exc
 
     @app.get("/v1/videos/{video_id}/captions")
     async def captions_status(
