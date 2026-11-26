@@ -854,6 +854,65 @@ public class UtubotCutControllerTest {
         assertEquals("", UtubotCutController.formatPart(null));
     }
 
+    /**
+     * Pressing a kept part seeks the playing video to its start and leaves the cut applied: playback continues from there until the
+     * next dropped range.
+     */
+    @Test
+    public void aKeptPart_picked_seeksToItsStartAndKeepsTheCut() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        cut.parts = Collections.singletonList(cutPart(130_000, 185_000, "The demo"));
+        mController.onCutChosen(VIDEO, cut);
+        assertTrue(mController.isApplied(cut));
+
+        assertTrue(mController.jumpToPart(cut, cut.parts.get(0)));
+        assertEquals(130_000, mController.lastSeekMs());
+        assertTrue(mController.isApplied(cut));
+        mController.onFinish();
+    }
+
+    /**
+     * A part past the video length is clamped to the end instead of seeking past it
+     */
+    @Test
+    public void aKeptPartPastTheEnd_isClampedToTheVideoLength() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        cut.parts = Collections.singletonList(cutPart(300_000, 400_000, "Later"));
+        mController.onCutChosen(VIDEO, cut);
+
+        assertTrue(mController.jumpToPart(cut, cut.parts.get(0)));
+        assertEquals(240_000, mController.lastSeekMs());
+        mController.onFinish();
+    }
+
+    /**
+     * No live player of the video takes the seek: a view whose engine was released (a list card the picker was opened from) does
+     * nothing.
+     */
+    @Test
+    public void aKeptPart_pickedWithNoLivePlayer_seeksNothing() {
+        mController.open(video(VIDEO), 240_000);
+        mController.releasePlayer(); // engine gone: the view is not a live player
+        Cut cut = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+
+        assertFalse(mController.jumpToPart(cut, cutPart(130_000, 185_000, "The demo")));
+        assertFalse(mController.seekCalled());
+    }
+
+    /**
+     * A part of another video's cut (a list card's picker open while another video plays) must not move the video that plays
+     */
+    @Test
+    public void aKeptPart_ofAnotherVideosCut_seeksNothing() {
+        mController.open(video(VIDEO), 240_000);
+        Cut other = cutWithPreset("othervideo00", "cut-demo", "Only the demo", 240_000);
+
+        assertFalse(mController.jumpToPart(other, cutPart(130_000, 185_000, "The demo")));
+        assertFalse(mController.seekCalled());
+    }
+
     @Test
     public void aReadyPresetShowsItsRealLengthNextToTheLabel() {
         assertEquals("Highlights in 5 min \u00b7 5:02", UtubotCutController.presetTitle("Highlights in 5 min", 302_000));
@@ -1064,6 +1123,8 @@ public class UtubotCutControllerTest {
         private long mDurationMs;
         private String mButtonLabel;
         private long mPositionMs;
+        private boolean mSeekCalled;
+        private long mLastSeekMs;
         private boolean mOverlayShown;
         private boolean mSuggestionsShown;
         private boolean mEngineInitialized;
@@ -1085,7 +1146,7 @@ public class UtubotCutControllerTest {
 
         /**
          * The base controller keeps its own, private {@code mVideo} (used by its {@code tick}/{@code apply}); {@code getVideo()} is
-         * inherited and reads the real main controller instead. Set both so the playback tick and the video the picker answers to agree.
+         * inherited and reads this view's {@code mVideo} instead. Set both so the playback tick and the video the picker answers to agree.
          */
         private void setBaseControllerVideo(Video video) {
             try {
@@ -1109,6 +1170,14 @@ public class UtubotCutControllerTest {
             } catch (ReflectiveOperationException e) {
                 throw new AssertionError(e);
             }
+        }
+
+        boolean seekCalled() {
+            return mSeekCalled;
+        }
+
+        long lastSeekMs() {
+            return mLastSeekMs;
         }
 
         String getButtonLabel() {
@@ -1174,6 +1243,8 @@ public class UtubotCutControllerTest {
 
                         if ("setPositionMs".equals(method.getName())) {
                             mPositionMs = (long) args[0];
+                            mSeekCalled = true;
+                            mLastSeekMs = mPositionMs;
                             return null;
                         }
 
@@ -1332,6 +1403,14 @@ public class UtubotCutControllerTest {
 
     private static List<long[]> skipRanges() {
         return Arrays.asList(new long[]{60_000, 100_000}, new long[]{220_000, 300_000});
+    }
+
+    private static CutPart cutPart(long startMs, long endMs, String label) {
+        CutPart part = new CutPart();
+        part.startMs = startMs;
+        part.endMs = endMs;
+        part.label = label;
+        return part;
     }
 
     private CutList cutsEmpty() {
