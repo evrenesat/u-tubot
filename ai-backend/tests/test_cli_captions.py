@@ -348,7 +348,7 @@ def _scored_setup(tmp_path, lang_row="en"):
 
 
 def _cache_words(db, words):
-    key = asr_cache_key("sha", True, None, "none")
+    key = asr_cache_key("sha", None, "none")
     result = ASRResult(words=words, language="en", word_timing="real")
     StageCache(db).put(VID, ASR_CACHE_STAGE, key, asr_to_cache(result))
     assert key.startswith(f"v{ASR_CACHE_VERSION}:")

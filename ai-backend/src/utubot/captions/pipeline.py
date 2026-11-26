@@ -96,7 +96,7 @@ Progress = Callable[[float], None]
 ASR_CACHE_STAGE = "asr"
 
 
-ASR_CACHE_VERSION = 4  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review, 4: audio start offset)
+ASR_CACHE_VERSION = 5  # the layout and meaning of a cached ASR answer: a new value ignores older rows (3: chunk review, 4: audio start offset, 5: one cache, strongest answer serves every ask)
 TIMING_VERSION = 5  # the caption timing scheme of a stored track (`captions.timing_version`)
 SEGMENT_METRICS = 3  # no_speech_prob, avg_logprob, compression_ratio follow start, end, text
 
@@ -189,11 +189,47 @@ def _set_asr(st, result: ASRResult, cached: bool = False) -> None:
     )
 
 
-def asr_cache_key(audio_sha: str, want_words: bool, requested: str | None, separation: str) -> str:
-    """The ASR stage-cache key: the cache layout version, the audio bytes, the answer shape, the
-    language and the audio variant — separated vocals change what the engines hear, so the mode
-    joins the key."""
-    return f"v{ASR_CACHE_VERSION}:{audio_sha}:{int(want_words)}:{requested or 'auto'}:{separation}"
+def asr_cache_key(audio_sha: str, requested: str | None, separation: str) -> str:
+    """The ASR stage-cache key: the cache layout version, the audio bytes, the audio variant and the
+    language the answer is for (`auto` when the ask did not name one).
+
+    Word times are not part of the key. The strongest answer (with real or mixed word times) is
+    stored once and answers a segments-only ask too, so a transcript and the HQ captions it feeds
+    share one speech-recognition run instead of each computing its own. A result is stored under the
+    language it was made for, so one language-detected run answers a later ask with that language."""
+    return f"v{ASR_CACHE_VERSION}:{audio_sha}:{separation}:{requested or 'auto'}"
+
+
+def _asr_base_code(code: str | None) -> str:
+    return (code or "").split("-")[0].lower()
+
+
+def asr_answer_gives_words(asr: Any, requested: str | None) -> bool:
+    """Whether the current engine chain is known to return word times for this ask."""
+    gives_words = getattr(asr, "chain_gives_words", None)
+    return bool(gives_words and gives_words(requested))
+
+
+def asr_answer_usable(
+    payload: dict[str, Any], asr: Any, want_words: bool, requested: str | None
+) -> bool:
+    """A cached ASR answer serves this ask: its language matches and it is strong enough.
+
+    `want_words` needs words (real or mixed times). A wordless (interpolated) answer is reusable
+    only while no engine of the chain gives words: once one does, the ask recomputes for real times
+    instead of reusing an estimate. A named language matches that language; an unset one takes any
+    result, so a language-detected run answers a later ask with that language."""
+    if requested:
+        lang = normalize_language(payload.get("language"))
+        if not lang or _asr_base_code(lang) != _asr_base_code(normalize_language(requested)):
+            return False
+    if not want_words:
+        return True
+    if not payload.get("words"):
+        return False
+    if payload.get("word_timing") == "interpolated" and asr_answer_gives_words(asr, requested):
+        return False
+    return True
 
 
 def ref_check_summary(verdict: Check) -> dict[str, Any]:
@@ -507,13 +543,19 @@ class CaptionPipeline:
         if audio_s > c.max_duration_s:
             raise YoutubeVideoError(REASON_TOO_LONG)
         # the ASR cache is keyed by the separation mode too: the answer depends on the audio that
-        # went in, and a hit must skip the separation (demucs can take tens of minutes on CPU)
-        key = asr_cache_key(audio_sha, want_words, requested, c.separation)
-        cached = self._cached_asr(video_id, key, want_words, requested)
+        # went in, and a hit must skip the separation (demucs can take tens of minutes on CPU). The
+        # strongest cached answer (with words) answers a segments-only ask too, so a transcript and
+        # the HQ captions it feeds share one speech-recognition run.
+        cached = self._cached_asr(video_id, audio_sha, c.separation, want_words, requested)
         if cached is not None:
             result = drop_cached_credits(asr_from_cache(cached), self.cfg.captions)
+            saved_s = self._asr_saved_s(audio_s, requested, priority)
             with events.stage(events.ASR, requested_language=requested) as st:
                 _set_asr(st, result, cached=True)
+                st.set(
+                    reused_from_job=cached.get("job"),
+                    saved_s=round(saved_s, 1) if saved_s else None,
+                )
             self._require_speech(result, want_words, optional_asr)
             progress(0.85)
             return result, wav
@@ -557,7 +599,8 @@ class CaptionPipeline:
             priority=priority,
             want_words=want_words,
             optional_asr=optional_asr,
-            key=key,
+            audio_sha=audio_sha,
+            separation=c.separation,
             klass=klass,
             yield_check=yield_check,
         )
@@ -573,16 +616,24 @@ class CaptionPipeline:
         priority: int,
         want_words: bool,
         optional_asr: bool,
-        key: str,
+        audio_sha: str,
+        separation: str,
         klass: str = NORMAL,
         yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> ASRResult:
         """One ASR step of `_recognise`, with its per-video cache. See `_recognise`."""
-        cached = self._cached_asr(video_id, key, want_words, requested)
+        cached = self._cached_asr(video_id, audio_sha, separation, want_words, requested)
         if cached is not None:
             result = drop_cached_credits(asr_from_cache(cached), self.cfg.captions)
+            saved_s = self._asr_saved_s(
+                wav_duration(wav, self.cfg.captions.sample_rate), requested, priority
+            )
             with events.stage(events.ASR, requested_language=requested) as st:
                 _set_asr(st, result, cached=True)
+                st.set(
+                    reused_from_job=cached.get("job"),
+                    saved_s=round(saved_s, 1) if saved_s else None,
+                )
             self._require_speech(result, want_words, optional_asr)
             return result
         try:
@@ -605,11 +656,7 @@ class CaptionPipeline:
                 if result.stats.get("unresolved_chunks"):
                     st.set(cache="not_stored_unresolved")
                 elif not self._asr_empty(result, want_words):
-                    store = key
-                    if want_words and result.word_timing == "interpolated":
-                        # reusable only while the engines and their word modes stay as they are
-                        store = key + word_mode_suffix(self.asr, requested)
-                    self.cache.put(video_id, ASR_CACHE_STAGE, store, asr_to_cache(result))
+                    self._store_asr(video_id, audio_sha, separation, result, requested)
         except ASRError as exc:
             if not optional_asr:
                 raise
@@ -633,19 +680,74 @@ class CaptionPipeline:
         return normalize_language(str(meta.get("language") or "")) or None
 
     def _cached_asr(
-        self, video_id: str, key: str, want_words: bool, requested: str | None
+        self,
+        video_id: str,
+        audio_sha: str,
+        separation: str,
+        want_words: bool,
+        requested: str | None,
     ) -> dict[str, Any] | None:
-        """A cached answer: with real or mixed word times under `key`, without them under the
-        engine-and-word-mode variant of it (read only while no engine is known to give words)."""
-        cached = self.cache.get(video_id, ASR_CACHE_STAGE, key)
-        gives_words = getattr(self.asr, "chain_gives_words", None)
-        # a wordless answer is only reused while no engine is known to give words: a fallback's
-        # estimate must not outlive a recovery of the engine that does
-        if cached is None and want_words and not (gives_words and gives_words(requested)):
-            cached = self.cache.get(
-                video_id, ASR_CACHE_STAGE, key + word_mode_suffix(self.asr, requested)
+        """The strongest cached ASR answer for this audio, or None.
+
+        The answer is stored once per (audio, audio variant, language); the strongest one (with
+        words) answers a segments-only ask too. The exact-language key is tried first, then any other
+        cached answer for the same audio and variant is scanned for: a language-detected run answers
+        a later ask with that language, and an auto ask (no language) takes any cached result."""
+        base = asr_cache_key(audio_sha, requested, separation)
+        cached = self.cache.get(video_id, ASR_CACHE_STAGE, base)
+        if cached is not None and asr_answer_usable(cached, self.asr, want_words, requested):
+            return cached
+        prefix = f"v{ASR_CACHE_VERSION}:{audio_sha}:{separation}:"
+        best: dict[str, Any] | None = None
+        best_score = (-1, -1)
+        for row in self.db.all(
+            "SELECT json FROM stage_cache WHERE video_id=? AND stage=? AND cache_key LIKE ?",
+            [video_id, ASR_CACHE_STAGE, prefix + "%"],
+        ):
+            try:
+                payload = json.loads(row["json"])
+            except (ValueError, TypeError):
+                continue
+            if not asr_answer_usable(payload, self.asr, want_words, requested):
+                continue
+            score = (
+                bool(payload.get("words")),
+                1
+                if payload.get("word_timing")
+                in (
+                    "real",
+                    "mixed",
+                )
+                else 0,
             )
-        return cached
+            if score > best_score:
+                best_score, best = score, payload
+        return best
+
+    def _store_asr(
+        self,
+        video_id: str,
+        audio_sha: str,
+        separation: str,
+        result: ASRResult,
+        requested: str | None,
+    ) -> str:
+        """Store one ASR answer, once, under the language it was made for (its detected language, so
+        a later ask with that language finds it; `auto` when none was detected). Returns the key."""
+        langclass = normalize_language(result.language) or requested
+        key = asr_cache_key(audio_sha, langclass, separation)
+        store = asr_to_cache(result)
+        store["job"] = events.job_id()  # provenance: the job this answer was made for
+        self.cache.put(video_id, ASR_CACHE_STAGE, key, store)
+        return key
+
+    def _asr_saved_s(self, audio_s: float, requested: str | None, priority: int) -> float | None:
+        """How long the ASR step this job skipped would have taken: the engine chain's estimate for
+        the audio, so the job report can say how much a cache hit saved."""
+        estimate = getattr(self.asr, "estimate_s", None)
+        if not estimate:
+            return None
+        return estimate(audio_s, requested, priority)
 
     def _require_speech(self, result: ASRResult, want_words: bool, optional_asr: bool) -> None:
         """The audio path needs recognised speech; the captions-improvement path does not.
@@ -754,7 +856,11 @@ class CaptionPipeline:
         klass: str = NORMAL,
         yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> AsrTranscript:
-        """Plain-text transcript from the audio. `language` is a hint; unset, the engine detects it."""
+        """Plain-text transcript from the audio. `language` is a hint; unset, the engine detects it.
+
+        Words are requested too: the transcript is a weaker ask than the HQ captions that reuse it,
+        so computing the strongest answer once (with word times) lets captions reuse the same
+        speech-recognition run instead of running speech recognition a second time."""
         work = self.cfg.media_dir / video_id
         work.mkdir(parents=True, exist_ok=True)
         try:
@@ -764,7 +870,7 @@ class CaptionPipeline:
                 work,
                 progress,
                 priority=priority,
-                want_words=False,
+                want_words=True,
                 klass=klass,
                 yield_check=yield_check,
             )

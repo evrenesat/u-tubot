@@ -277,10 +277,10 @@ async def test_a_retried_captions_job_skips_separation_on_the_asr_cache_hit(env)
 def test_the_asr_cache_key_includes_the_separation_mode():
     from utubot.captions.pipeline import asr_cache_key
 
-    off = asr_cache_key("sha", True, "en", "off")
-    demucs = asr_cache_key("sha", True, "en", "demucs")
+    off = asr_cache_key("sha", "en", "off")
+    demucs = asr_cache_key("sha", "en", "demucs")
     assert off != demucs
-    assert off == asr_cache_key("sha", True, "en", "off")
+    assert off == asr_cache_key("sha", "en", "off")
 
 
 async def test_a_retried_captions_job_reuses_the_cached_asr(env):
@@ -404,8 +404,26 @@ def test_proofread_batch_must_be_at_least_one():
 def test_the_asr_cache_key_carries_a_version():
     from utubot.captions.pipeline import ASR_CACHE_VERSION, asr_cache_key
 
-    assert asr_cache_key("sha", True, None, "off").startswith(f"v{ASR_CACHE_VERSION}:sha:1:auto")
-    assert ASR_CACHE_VERSION == 4
+    # word times are not part of the key: the strongest answer answers a segments-only ask too, so
+    # a transcript and the HQ captions it feeds share one speech-recognition run
+    assert asr_cache_key("sha", None, "off").startswith(f"v{ASR_CACHE_VERSION}:sha:off:auto")
+    assert ASR_CACHE_VERSION == 5
+
+
+async def test_a_captions_job_reuses_the_transcript_s_speech_recognition(env):
+    # a transcript is made first (it now computes words), then HQ captions reuse that one run
+    env.fetcher.text = None
+    before = len(env.llm.audio_calls)
+    transcript = (await env.client.post(f"/v1/videos/{VID}/transcribe")).json()
+    await wait_state(env.client, transcript["job_id"])
+    assert len(env.llm.audio_calls) == before + 1  # the transcript ran speech recognition once
+    captions = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
+    doc = await wait_state(env.client, captions["job_id"])
+    assert doc["state"] == "ready", doc["events"]
+    asr = event(env, captions["job_id"], "asr", "ok")["detail"]
+    assert asr["cached"] is True  # no second speech recognition
+    assert asr["reused_from_job"] == transcript["job_id"]
+    assert len(env.llm.audio_calls) == before + 1  # the engine was not asked a second time
 
 
 async def test_an_old_cache_row_is_not_served(env):
@@ -442,11 +460,8 @@ async def test_interpolated_results_are_cached_per_engine_and_word_mode(env):
         r["cache_key"]
         for r in env.svc.db.all("SELECT cache_key FROM stage_cache WHERE stage='asr'")
     ]
-    assert (
-        len(keys) == 1
-        and keys[0].startswith(f"v{ASR_CACHE_VERSION}:")
-        and ":wm-default=none" in keys[0]
-    )
+    # one language-detected run is stored once and serves the retry and the later explicit ask
+    assert len(keys) == 1 and keys[0].startswith(f"v{ASR_CACHE_VERSION}:")
     calls = len(env.llm.audio_calls)
     retry = (await env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})).json()
     again = await wait_state(env.client, retry["job_id"])
@@ -519,7 +534,7 @@ async def test_mixed_word_times_are_cached(tmp_path):
     for _ in range(2):
         await pipe._asr_stage(
             VID, tmp_path / "x.wav", None, lambda f: None,
-            priority=1, want_words=True, optional_asr=False, key="v2:sha:1:auto:off",
+            priority=1, want_words=True, optional_asr=False, audio_sha="sha", separation="off",
         )  # fmt: skip
     assert asr.calls == 1
     assert word_mode_suffix(asr, None) == ":wm-x=both"
@@ -553,7 +568,7 @@ def test_cached_asr_keeps_timing_and_segment_metrics():
 async def test_a_wordless_fallback_answer_is_not_served_after_the_word_engine_recovers(tmp_path):
     from tests.test_asr_engines import FakeEngine, engine_cfg, make_wav
     from utubot.captions.engines import AsrRouter, EngineError
-    from utubot.captions.pipeline import CaptionPipeline
+    from utubot.captions.pipeline import ASR_CACHE_VERSION, CaptionPipeline
     from utubot.captions.types import TIMING_INTERPOLATED
     from utubot.config import CaptionsConfig, Config
     from utubot.db import Database
@@ -594,13 +609,15 @@ async def test_a_wordless_fallback_answer_is_not_served_after_the_word_engine_re
     async def job():
         return await pipe._asr_stage(
             VID, wav, None, lambda f: None,
-            priority=1, want_words=True, optional_asr=False, key="v2:sha:1:auto:off",
+            priority=1, want_words=True, optional_asr=False, audio_sha="sha", separation="off",
         )  # fmt: skip
 
     first = await job()
     assert first.word_timing == "interpolated" and first.engine == "fallback"
     stored = [r["cache_key"] for r in pipe.db.all("SELECT cache_key FROM stage_cache")]
-    assert len(stored) == 1 and ":wm-" in stored[0]
+    # the wordless answer is stored once, under its detected language; it is not served once a word
+    # engine recovers (the next ask recomputes for real times)
+    assert len(stored) == 1 and stored[0].startswith(f"v{ASR_CACHE_VERSION}:")
     good.down = False
     second = await job()
     assert second.word_timing == "real" and second.engine == "good"
@@ -658,7 +675,7 @@ async def test_a_result_with_unresolved_rechecks_is_not_cached(tmp_path):
         for _ in range(2):
             await pipe._asr_stage(
                 VID, tmp_path / "x.wav", None, lambda f: None,
-                priority=1, want_words=True, optional_asr=False, key="v3:sha:1:auto:off",
+                priority=1, want_words=True, optional_asr=False, audio_sha="sha", separation="off",
             )  # fmt: skip
     finally:
         events.unbind(token)
@@ -705,6 +722,36 @@ async def test_a_budget_skipped_result_is_cached(tmp_path):
     pipe = CaptionPipeline(cfg, db, Skipped())
     await pipe._asr_stage(
         VID, tmp_path / "x.wav", None, lambda f: None,
-        priority=1, want_words=True, optional_asr=False, key="v3:sha:1:auto:off",
+        priority=1, want_words=True, optional_asr=False, audio_sha="sha", separation="off",
     )  # fmt: skip
     assert len(db.all("SELECT 1 FROM stage_cache WHERE stage='asr'")) == 1
+
+
+def test_v4_asr_cache_rows_are_carried_over_to_the_one_cache(tmp_path):
+    import json
+
+    from utubot.db import Database
+
+    db = Database(tmp_path / "m.db")
+    words = [[0.0, 0.4, "hi", 0.9, "real"]]
+    base = {"v": 4, "language": "en", "segments": [[0.0, 0.4, "hi"]], "engine": "e", "model": "m"}
+    rows = {
+        "v4:abc:0:auto:off": {**base, "words": [], "word_timing": None},
+        "v4:abc:1:auto:off": {**base, "words": words, "word_timing": "real"},
+        "v4:def:1:en:off:wm-x": {**base, "words": words, "word_timing": "interpolated"},
+    }
+    for key, payload in rows.items():
+        db.execute(
+            "INSERT INTO stage_cache(video_id,stage,cache_key,json,created_at) VALUES(?,?,?,?,?)",
+            ["vid", "asr", key, json.dumps(payload), 1.0],
+        )
+    db._migrate()
+    db._migrate()  # idempotent
+    got = {
+        r["cache_key"]: json.loads(r["json"])
+        for r in db.all("SELECT cache_key, json FROM stage_cache WHERE cache_key LIKE 'v5:%'")
+    }
+    assert set(got) == {"v5:abc:off:en", "v5:def:off:en"}
+    assert got["v5:abc:off:en"]["words"] == words  # the strongest row won
+    assert got["v5:abc:off:en"]["v"] == 5
+    assert db.one("SELECT COUNT(*) n FROM stage_cache WHERE cache_key LIKE 'v4:%'")["n"] == 3

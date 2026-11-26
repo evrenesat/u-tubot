@@ -224,6 +224,12 @@ chosen speech engine's chunked recognition time.
 `400` when the video cannot be transcribed (live, or longer than the configured maximum), `429` when the user
 already has the maximum number of active transcriptions (`[captions] transcribe_max_active_per_user`, 5).
 
+A transcript runs speech recognition with word times (the strongest answer), so the one run is reused by every feature that needs the audio: a
+later "Prepare HQ captions" (`POST /v1/videos/{id}/captions`) finds that run in the cache and reuses it rather than recognising again, and the
+captions job's `asr` stage reports `cached` and `reused_from_job` (this transcript job's id). The cache is keyed on the audio and the separation;
+the result is stored under the language the audio was recognised in, so a language-detected transcript answers a later ask for that language, and
+an automatic ask (no language) reuses whichever language is cached. The cache version bumps when this sharing changes.
+
 ### `POST /v1/videos/{id}/retry`
 The Retry action. Forgets everything the backend remembers about a *failure* of this video, so the next request really tries again:
 a failed or delayed transcript fetch, the "no captions" memory, and failed summary, insight, answer and analysis tasks. Stored successes
@@ -301,7 +307,10 @@ a `running` event is followed by the `ok`/`failed`/`skipped` event of the same s
 `started` (also `class`), `in_line` (a normal caption or transcript job waiting for prime work: `reason:"priority"`, `progress`,
 `message`), `gate_wait`, `caption_recheck` (`found` carries `words` and `caption_kind` = `manual|auto`), `audio_download` (`format_id`, `track` = `original|dubbed|descriptive|unmarked`, `original`,
 `language`, `bytes`, `duration_s`, `source` = `downloaded|from_archive`), `media_archive` (`bytes`, `sha256` prefix; skipped when the audio
-came from the archive), `ffmpeg`, `separation` (skipped when off, the tool failed, or the ASR answer was cached), `chunking`, `asr`, `asr_chunk` (also `word_timing`, `words`, `word_mode`), `asr_wait` (`engine`, `waited_s`, `attempts`, `outcome` = `ready|gave_up`), `asr_fallback` (`reason` also `no_word_times`, `engine_unavailable`), `asr_recheck` (`start_s`, `end_s`, `reason` = comma-joined `language_mismatch|hallucination|sparse`, `action` = `forced_language|smaller_window|next_engine|dropped`, `detected`, `expected`, `outcome` = `replaced|kept|failed`, `flagged_share_before`, `flagged_share_after`; `dropped`: `dropped_segments`, `dropped_s`; `skipped` = `budget|requests`, `detected_after`; `asr` also has `rechecked_chunks`, `unresolved_chunks`, `skipped_chunks`, `recheck_requests`, `hallucination_drops`, `dropped_s`, `cache` = `not_stored_unresolved`), `stitching`,
+came from the archive), `ffmpeg`, `separation` (skipped when off, the tool failed, or the ASR answer was cached), `chunking`, `asr` (`cached`
+the speech recognition was reused from the cache instead of re-run, `reused_from_job` the transcript or cut job whose run it reused,
+`saved_s` an estimate of the recognition seconds the reuse avoided), `asr_chunk`
+(also `word_timing`, `words`, `word_mode`), `asr_wait` (`engine`, `waited_s`, `attempts`, `outcome` = `ready|gave_up`), `asr_fallback` (`reason` also `no_word_times`, `engine_unavailable`), `asr_recheck` (`start_s`, `end_s`, `reason` = comma-joined `language_mismatch|hallucination|sparse`, `action` = `forced_language|smaller_window|next_engine|dropped`, `detected`, `expected`, `outcome` = `replaced|kept|failed`, `flagged_share_before`, `flagged_share_after`; `dropped`: `dropped_segments`, `dropped_s`; `skipped` = `budget|requests`, `detected_after`; `asr` also has `rechecked_chunks`, `unresolved_chunks`, `skipped_chunks`, `recheck_requests`, `hallucination_drops`, `dropped_s`, `cache` = `not_stored_unresolved`), `stitching`,
 `word_timing` (`word_timing` = `real|mixed|interpolated`, `words`, `real`, `interpolated`, `real_share`, `zero_length`, `stretched`, `squeezed`,
 `nonmonotonic`, `unfixed`, `words_per_s`, `speech_s`, `silences`; `warn` with `message` when the times are estimates, `skipped` with `reason` = `no_words`),
 `ref_check` (captions jobs: `reference_words`, `anchors`, `anchor_share`, `median_s`, `p10_s`, `p90_s`, `within_s`, `source` = `words|rows`, `regions` = list of `[start_s, end_s, median_s]`; `warn` when `regions` is not empty; `skipped` with `reason` = `no_reference|too_few_anchors|other_script`; changes no times), `diarization` (`reason` and `message` when skipped; only when diarization is configured), `cues`, `align` (`mode` = `silence|words|captions_timing|merge`; `words`:
@@ -424,6 +433,10 @@ contract is built for both. Exceptions, each with its reason:
 - Caption upload (`POST /v1/videos/{id}/captions/client`): TV only for now. The TV player is handed YouTube's caption tracks with
   the stream; the extension only draws HQ captions and reads no caption track of YouTube's page yet. Its row is in the plan's parity
   matrix; the extension sends the same body when it reads the page's own tracks.
+- Content extraction cache (one speech-recognition run serves every feature: "Prepare HQ captions", cuts and watched cuts reuse a
+  transcript's run instead of recognising again; the `asr` stage of a job reports `cached`/`reused_from_job`/`saved_s`): TV + backend
+  only. The extension does no extraction and has no jobs UI, so it shows no job-stage details; these fields are backend metadata the web
+  UI job detail page renders. Its row is in the plan's parity matrix.
 - `GET /app/update.json`: TV only. Firefox updates extensions itself.
 - Update interval and development mode (offering the install at once when idle): TV only, the extension is updated by Firefox.
 - "What's new" after an app update: TV only (the extension's own version history is the add-on's). The two lists of `GET /v1/changelog`

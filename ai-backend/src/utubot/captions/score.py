@@ -62,19 +62,22 @@ def latin_share(words: list[Word]) -> float:
 
 
 def cached_engine_words(db: Database, video_id: str) -> list[Word] | None:
-    """The newest cached raw engine words of the video (current cache layout, word-time answer)."""
-    row = db.one(
+    """The newest cached raw engine words of the video (current cache layout, word-time answer).
+
+    The one cache holds the strongest answer per (audio, audio variant, language); the newest one
+    that actually carries words is the one a scored track was aligned from."""
+    for row in db.all(
         "SELECT json FROM stage_cache WHERE video_id=? AND stage=? AND cache_key LIKE ?"
-        " ORDER BY created_at DESC LIMIT 1",
-        [video_id, ASR_CACHE_STAGE, f"v{ASR_CACHE_VERSION}:%:1:%"],
-    )
-    if row is None:
-        return None
-    try:
-        words = asr_from_cache(json.loads(row["json"])).words
-    except (ValueError, TypeError, IndexError):
-        return None
-    return sorted(words, key=lambda w: w.start) or None
+        " ORDER BY created_at DESC",
+        [video_id, ASR_CACHE_STAGE, f"v{ASR_CACHE_VERSION}:%"],
+    ):
+        try:
+            words = asr_from_cache(json.loads(row["json"])).words
+        except (ValueError, TypeError, IndexError):
+            continue
+        if words:
+            return sorted(words, key=lambda w: w.start) or None
+    return None
 
 
 def match_errors(reference: list[Word], cached: list[Word], offset: float) -> list[float]:

@@ -25,7 +25,7 @@ from utubot.captions.asr import ASRResult
 from utubot.captions.engines import EngineError
 from utubot.captions.events import JobEvents, JobTrace, clean
 from utubot.captions.pipeline import CaptionPipeline, download_audio
-from utubot.captions.types import Segment
+from utubot.captions.types import TIMING_REAL, Segment, Word
 from utubot.config import Config
 from utubot.db import Database
 from utubot.llm import BACKGROUND
@@ -549,11 +549,12 @@ class StubAsr:
     ):
         progress(1.0)
         return ASRResult(
-            words=[],
+            words=[Word(0.0, 1.0, "Merhaba dünya", timing=TIMING_REAL)],
             language="tr",
             segments=[Segment(0.0, 1.0, "Merhaba dünya")],
             engine="stub",
             model="stub-1",
+            word_timing="real",
         )
 
 

@@ -1,3 +1,21 @@
+## 2026-11-26 (UTB-160 one cache, every artifact reused incl. ASR)
+
+- Issue 147: the ASR cache now serves every feature from one run instead of recognising again for the next need. A `transcript` job
+  runs speech recognition with word times (the strongest answer), so a later "Prepare HQ captions" reuses that one run rather than
+  recognising again. The cache key is `v{VERSION}:{audio_sha}:{separation}:{langclass}` (`langclass` = requested language or `auto`);
+  `want_words` is no longer part of it, so a segments-only ask and a words ask share a row.
+- The result is stored under the language the audio was recognised in (`result.language`), not the requested one, so a language-detected
+  transcript answers a later ask for that language; an automatic ask (no language) scans every cached answer for the audio and reuses the
+  strongest valid one (words preferred, real/mixed preferred). Wordless/interpolated results are no longer stored with a `:wm-` suffix;
+  they are reused only when the feature needs times (`chain_gives_words`).
+- The stored payload carries a `job` provenance field, so a reused run reports `reused_from_job` (the originating transcript/cut job) and
+  `saved_s` (estimate of recognition seconds avoided). `score.py`'s `cached_engine_words` query matches the new key format.
+- Tests: `test_caption_source.py` (transcript then HQ captions = one ASR call, `reused_from_job` set), `test_cuts_api.py` (cut then HQ
+  captions reuse), `test_cuts_watched.py` (a second watched build reuses the archived video + grids, describing cached); existing
+  `test_job_report.py` `StubAsr` now returns words, `test_asr_recheck.py` pins `ASR_CACHE_VERSION == 5`. Full suite green.
+- Data migration: `Database._migrate_asr_cache_v4` copies every `v4:` ASR row to its `v5:` key (strongest answer per audio/variant/language wins, old rows kept, never overwrites a v5 row, idempotent), so existing transcripts and cuts keep their recognition; test in `test_caption_source.py`.
+- Contract: `ai/CONTRACT.md` documents the transcript's word-time run, the shared cache, and the `asr` stage `cached`/`reused_from_job`/`saved_s`.
+
 ## 2026-11-26 (readable changelog)
 
 - `releasenotes.py`: one allow/deny table turns PR titles into at most 6 short lines per version ("New:", "Fixed:", "Changed:", then

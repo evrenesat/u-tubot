@@ -607,4 +607,4 @@ def test_a_cached_answer_loses_its_credit_lines():
     )
     cleaned = drop_cached_credits(result, CaptionsConfig())
     assert [s.text for s in cleaned.segments] == ["hello"] and len(cleaned.words) == 1
-    assert cleaned.stats["hallucination_drops"] == 1 and ASR_CACHE_VERSION == 4
+    assert cleaned.stats["hallucination_drops"] == 1 and ASR_CACHE_VERSION == 5

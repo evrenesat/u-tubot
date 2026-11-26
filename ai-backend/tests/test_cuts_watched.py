@@ -5,6 +5,7 @@ import time
 import pytest
 
 from tests.synth_video import ffmpeg_available, make_video
+from tests.test_job_report import event
 from utubot.config import LLMTask
 from utubot.watch import watched_deps_installed
 
@@ -116,6 +117,37 @@ class TestWatchedBuild:
         assert doc["state"] == "ready"
         assert len(watched_env.llm.describe_calls) == described
         assert not list((watched_env.svc.cfg.media_dir / "watched").rglob("*.jpg"))
+
+    async def test_a_second_watched_build_reuses_the_archived_video(self, watched_env, tmp_path):
+        # the small copy is downloaded once, kept in the archive, and reused by every later build
+        await store_video(watched_env, tmp_path)
+        set_transcript(watched_env.fetcher)
+        watched_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 3, "label": "Start"}],
+            "summary": "s",
+            "kept_s": 15,
+        }
+        first = await post_watched(watched_env, preset="cut-no-filler")
+        first_doc = await wait_ready(watched_env, first.json()["request_id"])
+        assert first_doc["state"] == "ready", first_doc.get("error")
+        assert (
+            event(watched_env, first_doc["job_id"], "video", "ok")["detail"]["source"]
+            == "from_archive"
+        )
+        described = len(watched_env.llm.describe_calls)
+        second = await post_watched(watched_env, preset="cut-highlights-5")
+        second_doc = await wait_ready(watched_env, second.json()["request_id"])
+        assert second_doc["state"] == "ready"
+        # the second build downloads nothing and re-describes nothing: it reuses the archive + grids
+        assert (
+            event(watched_env, second_doc["job_id"], "video", "ok")["detail"]["source"]
+            == "from_archive"
+        )
+        assert (
+            event(watched_env, second_doc["job_id"], "describing", "skipped")["detail"]["reason"]
+            == "cached"
+        )
+        assert len(watched_env.llm.describe_calls) == described
 
     async def test_failure_offers_the_ready_quick_cut_when_one_exists(self, watched_env, tmp_path):
         await store_video(watched_env, tmp_path)
