@@ -19,6 +19,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.settings.SponsorBlockSettingsPresenter;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SponsorBlockData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutController;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutSeekBar;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
@@ -243,7 +244,24 @@ public class SponsorBlockController extends BasePlayerController {
         return mActiveSegments;
     }
 
+    /**
+     * A u·tubot director's cut is applied to the video that plays: while it is, the sponsor block stays fully off (no skip, no prompt)
+     * so the two do not fight over the same section (u·tubot#145). It goes off again as soon as the cut is taken off or the video has
+     * no active cut.
+     */
+    private boolean isCutActive() {
+        UtubotCutController cut = getController(UtubotCutController.class);
+        return cut != null && cut.isCutActive();
+    }
+
     private void skipSegment(long interval) {
+        // A u·tubot director's cut is applied to the video that plays: the sponsor block stays fully off (no skip, no prompt) while
+        // it is, so the two do not fight over the same section and their seeks clash (u·tubot#145). It comes back when the cut is
+        // taken off or the video has no active cut.
+        if (isCutActive()) {
+            return;
+        }
+
         if (mActiveSegments == null || mActiveSegments.isEmpty() || getVideo() == null || !Helpers.equals(mVideoId, getVideo().videoId)) {
             disposeActions();
             return;
