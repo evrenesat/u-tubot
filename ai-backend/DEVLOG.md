@@ -52,6 +52,15 @@
   page (history, delete one or all), both only when `features.voice`. Demo seeds voice data; screenshots at 1440 and 390 px checked.
 - Mock backend (`scripts/emulator_mock_backend.py`): `/__mock/voice?enabled=1` and the same routes (test in `test_emulator_mock.py`).
 - Contract section "Voice control", parity row `voice-control`, the "Clients" exception, `docs/server.md`. No TV code.
+## 2026-11-26 (UTB-240 watched store test failed on machines without the `watched` extra)
+
+- `test_cuts_api.py::TestChannelModes::test_watched_cannot_be_stored_while_it_is_not_configured` failed on machines without the
+  `watched` extra (no Pillow): `watched_available` checks the installed dependencies before the config, so the error was
+  "not installed" instead of "not configured" (CI installs `--extra watched`, so it passed there).
+- Fix: the test now monkeypatches `utubot.watch.watched_not_configured` (same pattern as the adjacent
+  `test_a_channel_watched_default_downgrades_when_unavailable`), so it exercises the 409 refusal in any environment.
+- Verified: `test_cuts_api.py` without the extra (72 passed) and the full suite with `uv sync --frozen --extra watched`
+  (1478 passed); `ruff check` and `ruff format --check` clean.
 
 ## 2026-11-26 (UTB-160 one cache, every artifact reused incl. ASR)
 
