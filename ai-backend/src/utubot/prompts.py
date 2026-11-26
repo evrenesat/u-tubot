@@ -98,14 +98,15 @@ CUT_PRESET_INSTRUCTIONS = {
         "the results discussion and everything else."
     ),
     "highlights-5": (
-        "Keep the highlights: many short, distinct moments across the whole video — the single "
-        "most interesting, useful or entertaining scene or beat in each part of it, in the "
-        "original order — not a few long blocks. Jump across the video: take the best small "
-        "moments from the start, the middle and the end, each just a few seconds to a couple of "
-        "minutes, as several separate parts. Target about 5 minutes of kept time in total "
-        "(between 4 and 6 minutes), made up of these short moments. Prefer concrete, dense "
-        "passages over filler. This cut is fine however much it keeps, as long as it is the best "
-        "of the video."
+        "Keep the highlights: many short, distinct moments across the whole video — the payoff "
+        "moments (demos, tests, results, reveals, conclusions) and the single most interesting, "
+        "useful or entertaining scene or beat in each part of it, in the original order — not a "
+        "few long blocks. Jump across the video: take the best small moments from the start, "
+        "the middle and the end, each just a few seconds to a couple of minutes, as several "
+        "separate parts. Skip intros, sponsor reads, like-and-subscribe asks, recaps, setup "
+        "chatter and outros. Target about 5 minutes of kept time in total (between 4 and 6 "
+        "minutes), made up of these short moments. Prefer concrete, dense passages over filler. "
+        "This cut is fine however much it keeps, as long as it is the best of the video."
     ),
 }
 

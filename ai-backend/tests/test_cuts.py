@@ -17,6 +17,7 @@ from utubot.cuts import (
     effective_target_s,
     expand_candidate_parts,
     finalize_parts,
+    keep_guards,
     merge_candidates,
     parse_chapters,
     parse_cut_answer,
@@ -82,6 +83,58 @@ class TestBuildUnits:
         units = build_units(segs((0.0, 2.0, "  "), (2.5, 4.0, "real text")), CFG)
         assert len(units) == 1 and units[0].start == 2.5
 
+    def test_drops_rolling_caption_repeats(self):
+        units = build_units(
+            segs(
+                (0.0, 4.0, "one two three"),
+                (4.0, 8.0, "two three four five"),
+                (8.0, 12.0, "three four five six"),
+            ),
+            CFG,
+        )
+        # Auto captions repeat the tail of the last fragment at the start of the next one.
+        assert [u.text for u in units] == ["one two three four five six"]
+
+    def test_a_repeated_line_after_a_pause_is_kept(self):
+        units = build_units(segs((0.0, 2.0, "Yes."), (5.0, 7.0, "Yes.")), CFG)
+        assert [u.text for u in units] == ["Yes.", "Yes."]
+
+    def test_drops_a_rolling_repeat_after_a_sentence_boundary(self):
+        one_word = build_units(segs((0.0, 2.0, "Done."), (2.1, 4.0, "Done. It worked.")), CFG)
+        assert [u.text for u in one_word] == ["Done.", "It worked."]
+        two_words = build_units(
+            segs((0.0, 3.0, "We tested it. It works."), (3.1, 5.0, "It works. And it is fast.")),
+            CFG,
+        )
+        assert [u.text for u in two_words] == ["We tested it. It works.", "And it is fast."]
+
+    def test_an_authored_caption_keeps_a_genuine_repeat(self):
+        # "Done." twice at a sentence boundary is a rolling window in an auto caption, but an
+        # authored caption (or ASR) may genuinely say it twice; only auto captions drop it.
+        rolling = build_units(segs((0.0, 2.0, "Done."), (2.1, 4.0, "Done. It worked.")), CFG)
+        assert [u.text for u in rolling] == ["Done.", "It worked."]
+        authored = build_units(
+            segs((0.0, 2.0, "Done."), (2.1, 4.0, "Done. It worked.")), CFG, rolling=False
+        )
+        assert [u.text for u in authored] == ["Done.", "Done. It worked."]
+
+    def test_a_sentence_closed_by_a_quote_or_bracket_ends_a_unit(self):
+        units = build_units(
+            segs(
+                (0.0, 2.0, 'He said "Done."'),
+                (2.5, 4.0, "Then the demo happens."),
+                (4.5, 6.0, "(That was it.)"),
+                (6.5, 8.0, "The result follows."),
+            ),
+            CFG,
+        )
+        assert [u.text for u in units] == [
+            'He said "Done."',
+            "Then the demo happens.",
+            "(That was it.)",
+            "The result follows.",
+        ]
+
     def test_numbering_is_sequential(self):
         units = build_units(
             segs((0.0, 1.0, "a."), (2.0, 3.0, "b."), (4.0, 5.0, "c."), (6.0, 7.0, "d.")), CFG
@@ -145,6 +198,16 @@ class TestFinalize:
         parts, _ = finalize_parts([Part("a", 10000, 20000)], CFG, guard=False, duration_s=20.2)
         assert parts[0].end_ms == 20_200  # clamped to the duration, not 20500
 
+    def test_a_part_clamped_by_the_video_end_can_fall_under_the_minimum(self):
+        parts, _ = finalize_parts(
+            [Part("keep", 10000, 20000), Part("edge", 97000, 101000)],
+            CFG,
+            guard=False,
+            duration_s=100.0,
+        )
+        # "edge" is 4 s on the model's boundaries but only 3 s before the video ends.
+        assert [p.label for p in parts] == ["keep"]
+
     def test_merges_small_gaps_and_drops_short_parts(self):
         parts, _ = finalize_parts(
             [Part("a", 0, 5000), Part("b", 6800, 30000), Part("c", 40000, 42000)],
@@ -152,8 +215,31 @@ class TestFinalize:
             guard=False,
             duration_s=None,
         )
-        # a and b are 1.8 s apart (minus padding) -> one part; c is 2 s -> dropped.
+        # a and b are 1.8 s apart -> one part; c is 2 s -> dropped; then the part is padded.
         assert len(parts) == 1 and parts[0].start_ms == 0 and parts[0].end_ms == 30500
+
+    def test_padding_does_not_merge_a_gap_the_model_dropped(self):
+        parts, _ = finalize_parts(
+            [Part("a", 10000, 20000), Part("b", 22500, 30000)],
+            CFG,
+            guard=False,
+            duration_s=None,
+        )
+        # The gap is 2.5 s, over the 2 s merge budget. Padding both sides would shrink it to
+        # 1.7 s and pull the dropped material back into one part.
+        assert [p.label for p in parts] == ["a", "b"]
+        assert (parts[0].start_ms, parts[0].end_ms) == (9700, 20500)
+        assert (parts[1].start_ms, parts[1].end_ms) == (22200, 30500)
+
+    def test_padding_does_not_keep_a_part_under_the_minimum(self):
+        parts, _ = finalize_parts(
+            [Part("short", 10000, 13500), Part("long", 20000, 30000)],
+            CFG,
+            guard=False,
+            duration_s=None,
+        )
+        # The short part is 3.5 s on the model's own boundaries; padding would make it 4.2 s.
+        assert [p.label for p in parts] == ["long"]
 
     def test_keep_guard(self):
         with pytest.raises(Exception, match="remove almost everything"):
@@ -195,6 +281,16 @@ class TestFinalize:
                 guard_max=False,
                 duration_s=600.0,
             )
+
+    def test_keep_guards_follow_the_preset_and_the_target(self):
+        assert keep_guards(CFG, "cut-no-filler", None) == (True, False)
+        assert keep_guards(CFG, None, None) == (True, True)
+        assert keep_guards(CFG, "cut-mine-abc", None) == (True, False)
+        for short in ("cut-answer", "cut-demo", "cut-highlights-5"):
+            assert keep_guards(CFG, short, None) == (False, False)
+        # A length target defers to the band whatever the preset.
+        assert keep_guards(CFG, None, 300) == (False, False)
+        assert keep_guards(CFG, "cut-no-filler", 300) == (False, False)
 
 
 class TestDocument:
@@ -271,6 +367,12 @@ class TestPromptFiltering:
             "cut-demo",
             "cut-highlights-5",
         }
+
+    def test_highlights_preset_names_the_payoffs_and_the_filler(self):
+        by_id = {p.id: p for p in BUILTIN_SET.prompts}
+        text = by_id["cut-highlights-5"].template.lower()
+        for word in ("payoff", "demos", "results", "conclusions", "intros", "sponsor", "recaps"):
+            assert word in text, word
 
     def test_describe_hides_cut_presets_from_summary_pickers(self, tmp_path):
         from utubot.config import Config
@@ -422,14 +524,14 @@ class TestTargetLength:
 
     def test_many_close_parts_finalize_inside_the_band(self):
         units = [Unit(n, n - 1.0, float(n), f"u{n}") for n in range(1, 661)]
-        # 5 s parts with 2 s gaps: padding turns the gaps under merge_gap_s, so finalization
-        # merges them and adds the gaps back to the kept length.
+        # The parts are spaced past merge_gap_s, so finalize keeps them separate; the padded
+        # length select_for_target charges is the length the finished cut keeps (in band).
         spans = [(i * 7 + 1, i * 7 + 5, i + 1) for i in range(93)]
         chosen, total = select_for_target(ranked(units, spans), units, CFG, 300, duration_s=660.0)
         kept, kept_s = finalize_parts(chosen, CFG, guard=False, duration_s=660.0)
         low, high = target_band(300, CFG.length_tolerance)
         assert kept and low <= kept_s <= high
-        assert total == kept_s
+        assert round(total, 1) == kept_s
 
     def test_a_video_at_the_top_of_the_band_needs_no_target(self):
         assert effective_target_s(CFG, "cut-highlights-5", 345.0) is None
@@ -440,6 +542,82 @@ class TestTargetLength:
         parts = ranked(units, [(1, 6, 1), (11, 16, 2)])
         chosen, total = select_for_target(parts, units, CFG, 300)
         assert len(chosen) == 2 and total < target_band(300, CFG.length_tolerance)[0]
+
+    def test_short_parts_never_reach_the_target_band(self):
+        # 14 parts of 3.5 s: padding would make them 4.3 s each and reach 60.2 s, but
+        # finalize_parts drops every one, so the target must come back short instead.
+        units = [Unit(i, (i - 1) * 6.0, (i - 1) * 6.0 + 3.5, f"unit {i}") for i in range(1, 15)]
+        parts = [
+            Part(f"p{i}", int(u.start * 1000), int(u.end * 1000))
+            for i, u in enumerate(units, start=1)
+        ]
+        chosen, total = select_for_target(parts, units, CFG, 60, duration_s=100.0)
+        assert chosen == [] and total == 0.0
+
+    def test_target_selection_clamps_a_part_at_the_video_end(self):
+        units = [Unit(1, 0.0, 10.0, "keep"), Unit(2, 97.0, 101.0, "edge")]
+        parts = [
+            Part("keep", 0, 10000, rank=2),
+            Part("edge", 97000, 101000, rank=1),
+        ]
+        # "edge" is 4 s raw but 3 s clamped to the 100 s video; it cannot be selected.
+        chosen, total = select_for_target(parts, units, CFG, 10, duration_s=100.0)
+        assert [p.label for p in chosen] == ["keep"]
+        assert total == 10.5
+
+    def test_the_target_counts_the_merged_cut_not_the_sum_of_parts(self):
+        # 20 parts of 4 s, each 1.9 s from the next: padding and the gap merge into a longer
+        # cut than the individual parts charge. Selecting until the target on the merged cut
+        # keeps it inside the band; charging each part alone would pick too many and overshoot.
+        units = [Unit(i, (i - 1) * 5.9, (i - 1) * 5.9 + 4.0, f"unit {i}") for i in range(1, 21)]
+        parts = ranked(units, [(i, i, i) for i in range(1, 21)])
+        chosen, total = select_for_target(parts, units, CFG, 60, duration_s=200.0)
+        low, high = target_band(60, CFG.length_tolerance)
+        assert low <= total <= high, total
+        kept, kept_s = finalize_parts(chosen, CFG, guard=False, duration_s=200.0)
+        assert len(kept) == 1 and round(total, 1) == kept_s
+
+    def test_a_part_that_bridges_a_gap_does_not_push_the_cut_past_the_band(self):
+        # Eight ~7 s kept parts merge into a 57.7 s chain; a 10 s part 1.9 s later lands under
+        # merge_gap_s and would bridge that gap. Charging it alone (10.8 s) still fits the 69 s
+        # ceiling from a 57.7 s total, so a per-part check keeps it and the merged cut is 69.6 s,
+        # over the band. The selection charges the merged increase, so the cut stays in band.
+        ends = []
+        at = 0.0
+        for _ in range(8):
+            at += 7.15
+            ends.append(at)
+        units = [
+            Unit(i, ends[i - 2] if i > 1 else 0.0, ends[i - 1], f"unit {i}") for i in range(1, 9)
+        ]
+        gap = ends[-1]
+        units.append(Unit(9, gap, gap + 1.9, "gap"))
+        units.append(Unit(10, gap + 1.9, gap + 1.9 + 10.0, "unit 10"))
+        parts = [
+            Part(
+                f"p{i}",
+                int(units[i - 1].start * 1000),
+                int(units[i - 1].end * 1000),
+                rank=1,
+                first=i,
+                last=i,
+            )
+            for i in range(1, 9)
+        ] + [
+            Part(
+                "payoff",
+                int(units[9].start * 1000),
+                int(units[9].end * 1000),
+                rank=2,
+                first=10,
+                last=10,
+            )
+        ]
+        chosen, total = select_for_target(parts, units, CFG, 60, duration_s=200.0)
+        low, high = target_band(60, CFG.length_tolerance)
+        assert low <= total <= high, total
+        kept, kept_s = finalize_parts(chosen, CFG, guard=False, duration_s=200.0)
+        assert round(total, 1) == kept_s
 
     def test_prompt_names_the_target_and_asks_for_ranks(self):
         units = eleven_minute_units()

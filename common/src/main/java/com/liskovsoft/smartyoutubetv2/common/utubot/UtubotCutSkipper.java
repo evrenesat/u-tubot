@@ -14,11 +14,6 @@ import java.util.List;
  */
 public final class UtubotCutSkipper {
     /**
-     * A drop is skipped while the playback is this close to its start after crossing into it (with the speed factored in, like the
-     * sponsor skip's own window): a slower tick or a small rounding must not miss it, a seek deeper into the drop must not trigger it
-     */
-    public static final long ENTRY_WINDOW_MS = 2_000;
-    /**
      * A sponsor segment that starts this close after a jump destination is part of the same jump (the sponsor block groups its own
      * segments within the same window)
      */
@@ -80,7 +75,7 @@ public final class UtubotCutSkipper {
 
     /**
      * One step of the playback: whether to jump, and where. Only a crossing that the playback made by itself skips: the previous
-     * position was before the drop and the current one is just inside it. A seek (backwards, or any move a tick of the current speed
+     * position was before the drop and the current one is inside it. A seek (backwards, or any move a tick of the current speed
      * cannot explain) lands wherever it landed and plays. The position of a jump this decision causes is remembered, so the next
      * step compares against the destination, not against the place the jump started at.
      */
@@ -92,15 +87,27 @@ public final class UtubotCutSkipper {
             return Decision.play();
         }
 
-        long window = (long) (ENTRY_WINDOW_MS * Math.max(speed, 1f));
-
         for (long[] range : mCut.skipRangesMs) {
-            if (previous < range[0] && positionMs >= range[0] && positionMs <= Math.min(range[0] + window, range[1])) {
+            // Any flowing tick that lands inside the drop is a crossing, however deep it landed:
+            // a fast tick or a late one must not miss the drop and play all of it. A seek is
+            // already set aside above (backwards, or more than a tick of this speed can move).
+            if (previous < range[0] && positionMs >= range[0] && positionMs < range[1]) {
                 long destination = destination(range[1]);
                 mLastPositionMs = destination;
                 return Decision.jumpTo(destination);
             }
         }
+
+        return Decision.play();
+    }
+
+    /**
+     * A seek the user made: it wins and plays wherever it landed, even a short forward seek that lands just inside a drop. The next
+     * step compares against the landed position, so a later crossing of a drop is still skipped. Applying a cut is not a seek (see
+     * {@link #onAppliedAt(long)}).
+     */
+    public Decision onSeek(long positionMs) {
+        mLastPositionMs = positionMs;
 
         return Decision.play();
     }

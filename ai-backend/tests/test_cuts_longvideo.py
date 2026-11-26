@@ -272,7 +272,7 @@ def set_highlights_transcript(
         at += 0.9
         kept = spacing - (burst_lines * 3.2 + 0.9)
         for _ in range(max(1, int(kept // 4.3))):
-            segs.append((at, at + 4.0, "some filler line that just continues the video along."))
+            segs.append((at, at + 4.0, f"filler line {len(segs)} that just continues the video."))
             at += 4.3
     fetcher.segments = segs
     fetcher.meta_extra = {"duration_s": int(at)}

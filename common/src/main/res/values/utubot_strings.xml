@@ -126,6 +126,8 @@
     <string name="utubot_cut_ready_length">, %s</string>
     <string name="utubot_cut_skipped">Skipped %s</string>
     <string name="utubot_cut_back">Back</string>
+    <string name="utubot_cut_end">End of cut</string>
+    <string name="utubot_cut_watch_rest">Watch the rest</string>
     <string name="utubot_cut_other_length">This cut was built for a different length of the video</string>
     <string name="utubot_cut_force_off">Transcribe with u·tubot</string>
     <string name="utubot_cut_force_on">Transcribe with u·tubot (on)</string>

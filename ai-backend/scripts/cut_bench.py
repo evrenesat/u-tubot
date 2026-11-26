@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Score director's-cut models offline against the hand-marked test set.
 
-The set lives in `utubot.cutbench`: five hand-written transcripts x three requests, with
+The set lives in `utubot.cutbench`: five hand-written transcripts and 16 requests, with
 must-keep and must-skip spans marked by hand. Each request runs the real engine pieces
 (units -> the model -> parse -> validate -> finalize) and is marked on how much of the
 must-keep time survived and how much must-skip time leaked into the cut.
