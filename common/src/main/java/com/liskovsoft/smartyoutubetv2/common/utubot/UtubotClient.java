@@ -521,6 +521,18 @@ public class UtubotClient {
         return parse(() -> UtubotParser.parseProcessed(send(authorized(url), 0)));
     }
 
+    /**
+     * The version history (`GET /v1/changelog`), as the backend sends it: see {@link UtubotChangelog#parse}
+     *
+     * @param kind {@link UtubotChangelog#KIND_APP} or {@link UtubotChangelog#KIND_BACKEND}
+     */
+    public String changelogJson(String kind) throws IOException {
+        HttpUrl.Builder url = urlBuilder("/changelog");
+        url.addQueryParameter("kind", kind);
+
+        return send(authorized(url), 0);
+    }
+
     //endregion
 
     /**

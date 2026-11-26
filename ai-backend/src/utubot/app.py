@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -23,7 +23,7 @@ from fastapi.responses import (
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
-from . import __version__, appchannel
+from . import appchannel, buildinfo, changelog
 from .artifacts import KIND_NAMES, ArtifactCache
 from .assess import Assessor
 from .auth import CONFIG_TOKEN_ID, Auth, Forbidden, PairError, Principal, Unauthorized
@@ -174,6 +174,7 @@ class Services:
     status: StatusService
     updates: UpdatesStatus
     artifacts: ArtifactCache
+    build: buildinfo.Build = field(default_factory=buildinfo.detect)
 
 
 def build_services(
@@ -259,6 +260,10 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        try:
+            changelog.record_deploy(svc.db, svc.build)
+        except Exception:  # a history that cannot be written must not stop the server
+            logging.getLogger(__name__).exception("recording the deploy failed")
         svc.jobs.start()
         svc.cuts.start()
         yield
@@ -271,7 +276,7 @@ def create_app(
 
     app = FastAPI(
         title="u·tubot",
-        version=__version__,
+        version=svc.build.version,
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
@@ -574,7 +579,7 @@ def create_app(
 
     @app.get("/v1/health")
     async def health():
-        return {"ok": True, "version": __version__}
+        return {"ok": True, "version": svc.build.version, "commit": svc.build.commit[:7]}
 
     @app.get("/setup.json")
     async def setup():
@@ -597,6 +602,7 @@ def create_app(
             "user": user.name,
             "policy": user.policy.model_dump(),
             "admin": user.admin,
+            "backend_version": svc.build.version,
             "prime": user.prime,
             "class": user.klass,
             "settings_version": svc.auth.settings_version(user.name)[0],

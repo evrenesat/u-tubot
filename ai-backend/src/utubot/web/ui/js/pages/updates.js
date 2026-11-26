@@ -7,8 +7,38 @@ function parseIso(text) {
   return Number.isNaN(ms) ? 0 : ms / 1000;
 }
 
+const GROUP_TITLES = { features: "New", fixes: "Fixed", other: "Other" };
+
+function entryList(entries, emptyText) {
+  if (!entries.length) return note(emptyText);
+  return h(
+    "div",
+    { class: "stack" },
+    entries.map((entry) => {
+      const groups = ["features", "fixes", "other"]
+        .map((group) => [group, entry.changes.filter((c) => (c.group || "other") === group)])
+        .filter(([, items]) => items.length);
+      return h(
+        "details",
+        {},
+        h("summary", {}, h("strong", { text: entry.version }), " ", h("small", { class: "muted", text: fmtTime(entry.at) })),
+        groups.length
+          ? groups.map(([group, items]) => [
+              h("h3", { text: GROUP_TITLES[group] }),
+              h("ul", { class: "plain" }, items.map((c) => h("li", { text: c.text + (c.pr ? " (#" + c.pr + ")" : "") }))),
+            ])
+          : note("No user-visible changes listed."),
+      );
+    }),
+  );
+}
+
 export async function render(view) {
   let info = await api("/v1/updates");
+  const [appHistory, backendHistory] = await Promise.all([
+    api("/v1/changelog?kind=app").catch(() => ({ entries: [] })),
+    api("/v1/changelog?kind=backend").catch(() => ({ entries: [], current: null })),
+  ]);
   const host = h("div", { class: "stack" });
 
   async function check() {
@@ -61,6 +91,12 @@ export async function render(view) {
               sync.error ? h("p", { class: "bad", text: sync.error }) : null,
             ]
           : note("No sync has run. Schedule `utubot app sync-github` to follow GitHub releases automatically."),
+      ),
+      card("App versions", entryList(appHistory.entries, "No app release is recorded yet.")),
+      card(
+        "Backend deploys",
+        backendHistory.current ? statRow("Running", backendHistory.current) : null,
+        entryList(backendHistory.entries, "No deploy is recorded yet."),
       ),
       card("TV update address", h("p", { class: "mono", text: info.update_url }), note("TVs poll this address for new versions.")),
     );

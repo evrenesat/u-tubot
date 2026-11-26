@@ -168,4 +168,12 @@
     <string name="utubot_processed_cut_needs_transcript">Cut needs a transcript: %s</string>
     <string name="utubot_processed_cut_failed">Cut failed: %s</string>
     <string name="utubot_processed_cut">Cut: %s</string>
+    <string name="utubot_whats_new">What\'s new</string>
+    <string name="utubot_whats_new_in">What\'s new in %s</string>
+    <string name="utubot_whats_new_no_changes">No changes were listed for this version.</string>
+    <string name="utubot_whats_new_app">TV app</string>
+    <string name="utubot_whats_new_backend">Backend</string>
+    <string name="utubot_whats_new_failed">Couldn\'t load the version history: %s</string>
+    <string name="utubot_whats_new_none">No versions are recorded yet</string>
+    <string name="utubot_release_page_on_phone">Open the release page on a phone (QR code)</string>
 </resources>

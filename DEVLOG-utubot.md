@@ -1,3 +1,10 @@
+## 2026-11-26 (What's new, issue #175)
+
+- Settings, Updates, "What's new": the app's versions and the backend's deploys (`GET /v1/changelog`) as rows, an entry opens its text in the
+  scrolling long-text view. After an update, "What's new in X" is offered once (`UtubotWhatsNew`, from the 6 hour update check; a fresh
+  install shows nothing). The release notes fall back to their text, not a QR code, when the device has no WebView. QR codes remain only
+  where the purpose is opening an address on a phone (release page, About links, the cut request sheet). Not built here: Gradle runs in CI.
+
 ## 2026-11-24 (director's cuts: Quick/Watched backend)
 
 - Backend now serves two cut modes: Quick stays transcript-only and the default; Watched is an opt-in picture path that stores a

@@ -143,6 +143,10 @@ CREATE TABLE IF NOT EXISTS cut_choices(
   user TEXT NOT NULL, video_id TEXT NOT NULL, preset_id TEXT, request_id TEXT,
   off INTEGER NOT NULL DEFAULT 0, updated_at REAL NOT NULL,
   PRIMARY KEY(user, video_id));
+CREATE TABLE IF NOT EXISTS changelog(
+  kind TEXT NOT NULL, version TEXT NOT NULL, at REAL NOT NULL, commit_sha TEXT NOT NULL DEFAULT '',
+  changes TEXT NOT NULL DEFAULT '[]', PRIMARY KEY(kind, version));
+CREATE INDEX IF NOT EXISTS changelog_at ON changelog(kind, at);
 CREATE TABLE IF NOT EXISTS cut_last_presets(
   user TEXT PRIMARY KEY, preset_id TEXT NOT NULL, updated_at REAL NOT NULL);
 """
