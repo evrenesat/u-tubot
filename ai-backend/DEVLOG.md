@@ -25,6 +25,8 @@
 - `utubot changelog rebuild` (also run at start) rewrites stored entries in the short form; idempotent. `[llm.changelog]` (optional
   task, e.g. the `fast` alias) may reword a new deploy entry within a 2 s budget; any error keeps the deterministic lines.
 
+- Review fix: `feature_calls` telemetry is swept once a day on record (it was never swept); the new tables are `CREATE IF NOT EXISTS`, so an existing DB opens with its transcripts and cuts untouched (test in `test_feature.py`).
+
 ## 2026-11-26 (backend version monotonic on shallow clones, issue #191)
 
 - Backend version is `0.<series>.<HEAD commit time UTC YYYYMMDDHHMM>+<sha>` instead of the commit count, which a shallow clone

@@ -21,6 +21,8 @@ from .config import FEATURE_KEYS, Config
 from .db import Database
 
 ALIAS_MAX_CHARS = 200
+DEFAULT_KEEP_DAYS = 30
+SWEEP_INTERVAL_S = 86400
 
 
 def cost_for(cfg: Config, alias: str, prompt_tokens: int, completion_tokens: int) -> float | None:
@@ -52,8 +54,10 @@ def _percentile(ordered: list[float], pct: float) -> float:
 class FeatureUsage:
     """Per-call telemetry, one row per successful model call, keyed by feature and alias."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, keep_days: int = DEFAULT_KEEP_DAYS):
         self._db = db
+        self._keep_days = keep_days
+        self._last_sweep = 0.0
 
     def record(
         self,
@@ -66,6 +70,7 @@ class FeatureUsage:
     ) -> None:
         if feature is None or self._db is None:
             return
+        self._sweep_daily()
         self._db.execute(
             "INSERT INTO feature_calls(feature,alias,ts,elapsed_ms,prompt_tokens,"
             "completion_tokens,cost) VALUES(?,?,?,?,?,?,?)",
@@ -79,6 +84,14 @@ class FeatureUsage:
                 cost,
             ],
         )
+
+    def _sweep_daily(self) -> None:
+        """Keep the table bounded: drop rows past the retention window at most once a day."""
+        now = time.monotonic()
+        if self._last_sweep and now - self._last_sweep < SWEEP_INTERVAL_S:
+            return
+        self._last_sweep = now
+        self.sweep(self._keep_days)
 
     def sweep(self, keep_days: int) -> int:
         """Drop telemetry older than the retention window; returns the rows removed."""
@@ -131,7 +144,7 @@ class FeatureStore:
 
     def __init__(self, cfg: Config, db: Database):
         self.cfg, self.db = cfg, db
-        self.usage = FeatureUsage(db)
+        self.usage = FeatureUsage(db, cfg.usage.keep_days)
 
     def feature_names(self) -> list[str]:
         """Every feature with a configured model, in a stable order."""

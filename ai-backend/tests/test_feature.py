@@ -180,3 +180,32 @@ def cfg_for_store():
     c.llm.analysis = LLMTask(model="worker", max_tokens=900)
     c.usage = UsageConfig()
     return c
+
+
+def test_a_database_from_before_the_feature_tables_opens_with_its_data_intact(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE transcripts(video_id TEXT PRIMARY KEY, lang TEXT, source TEXT NOT NULL,"
+        " text TEXT NOT NULL, fetched_at REAL NOT NULL)"
+    )
+    conn.execute("INSERT INTO transcripts VALUES('vid','en','asr','kept words',1.0)")
+    conn.commit()
+    conn.close()
+    db = Database(path)
+    assert db.one("SELECT text FROM transcripts WHERE video_id='vid'")["text"] == "kept words"
+    usage = FeatureUsage(db)
+    usage.record("summary", "worker", 10, 1, 1, None)
+    assert db.one("SELECT COUNT(*) n FROM feature_calls")["n"] == 1
+
+
+def test_recording_sweeps_old_rows_once_a_day(tmp_path):
+    db = Database(tmp_path / "s.db")
+    db.execute(
+        "INSERT INTO feature_calls(feature,alias,ts,elapsed_ms,prompt_tokens,completion_tokens)"
+        " VALUES('summary','worker',1.0,1,1,1)"
+    )
+    FeatureUsage(db, keep_days=30).record("summary", "worker", 10, 1, 1, None)
+    assert db.one("SELECT COUNT(*) n FROM feature_calls")["n"] == 1
