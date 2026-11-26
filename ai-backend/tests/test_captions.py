@@ -206,6 +206,41 @@ async def test_translated_cues_are_proofread_again(env):
     assert proofread_calls(env.llm) == 1
 
 
+async def test_translation_skips_source_proofreading(env):
+    from tests.test_proofread import proofread_calls, respond_with_cues
+    from utubot.captions import events
+    from utubot.captions.events import JobEvents, JobTrace
+    from utubot.captions.types import Cue
+
+    respond_with_cues(env.llm, ["Hello, world."])
+    log = JobEvents(env.svc.db, env.svc.jobs.pipeline.cfg.captions)
+    token = events.bind(JobTrace("jt", log))
+    try:
+        await env.svc.jobs.pipeline._finish(
+            VID, [Cue(0, 2, ["merhaba dunya"], None)], "tr", "en", lambda _f: None
+        )
+    finally:
+        events.unbind(token)
+    skipped = next(
+        e for e in log.list("jt") if e["stage"] == "proofread" and e["status"] == "skipped"
+    )
+    assert skipped["detail"]["reason"] == "translated"
+    assert proofread_calls(env.llm) == 1  # only the translated text is proofread
+
+
+async def test_source_cues_are_proofread_without_translation(env):
+    from tests.test_proofread import proofread_calls, respond_with_cues
+    from utubot.captions.types import Cue
+
+    respond_with_cues(env.llm, ["Hello, world."])
+    track = await env.svc.jobs.pipeline._finish(
+        VID, [Cue(0, 2, ["hello world"], None)], "en", None, lambda _f: None
+    )
+    assert track == "en" and proofread_calls(env.llm) == 1
+    row = env.svc.db.one("SELECT vtt FROM captions WHERE video_id=?", [VID])
+    assert "Hello, world." in row["vtt"]
+
+
 async def test_pyannote_skips_without_token(monkeypatch, tmp_path):
     from utubot.captions.diarize import PyannoteDiarizer
 

@@ -731,7 +731,9 @@ class CaptionPipeline:
         events.emit(events.SYNC_SCORE, events.OK, **check)
         return check
 
-    async def _polish(self, video_id: str, cues: list[Cue], lang: str) -> list[Cue]:
+    async def _polish(
+        self, video_id: str, cues: list[Cue], lang: str, *, skip_reason: str | None = None
+    ) -> list[Cue]:
         """The proofreading pass, with the video's title and description as context."""
         meta = self.db.get_json("video_meta", "video_id=?", [video_id]) or {}
         context = {
@@ -740,7 +742,7 @@ class CaptionPipeline:
                 : self.cfg.captions.proofread_context_chars
             ],
         }
-        return await self.proofreader.polish(video_id, cues, lang, context)
+        return await self.proofreader.polish(video_id, cues, lang, context, skip_reason=skip_reason)
 
     async def transcribe(
         self,
@@ -857,7 +859,6 @@ class CaptionPipeline:
                     fill_stats=align_stats,
                 )
             track_lang = result.language or normalize_language(requested) or "und"
-            cues = await self._polish(video_id, cues, track_lang)
             track_lang = await self._finish(
                 video_id, cues, track_lang, translate_to, progress, timing
             )
@@ -1050,12 +1051,7 @@ class CaptionPipeline:
                 )
             track_lang = result.language or requested or base_hint or "und"
             track_lang = await self._finish(
-                video_id,
-                await self._polish(video_id, cues, track_lang),
-                track_lang,
-                translate_to,
-                progress,
-                timing,
+                video_id, cues, track_lang, translate_to, progress, timing
             )
             return track_lang
         finally:
@@ -1071,7 +1067,7 @@ class CaptionPipeline:
         progress: Progress,
         timing: dict[str, Any] | None = None,
     ) -> str:
-        """Proofread (done by the caller), optionally translate, then store the track.
+        """Proofread, optionally translate, then store the track.
 
         `timing` says how the cue times were made (stored in the `timing` column with
         `TIMING_VERSION`); a track made in legacy mode passes none and stays `timing_version` NULL.
@@ -1080,7 +1076,14 @@ class CaptionPipeline:
             reason = gate.check_attestation(self.cfg.captions.gate_attestation)
             if reason:
                 raise PipelineError(f"the caption release gate has not passed: {reason}")
-        if translate_to and translate_to != track_lang:
+        translating = bool(translate_to and translate_to != track_lang)
+        cues = await self._polish(
+            video_id,
+            cues,
+            track_lang,
+            skip_reason="translated" if translating and self.proofreader.enabled else None,
+        )
+        if translating:
             with events.stage(events.TRANSLATE, source=track_lang, to=translate_to) as st:
                 split, tstats = SplitStats(), TranslateStats()
                 try:

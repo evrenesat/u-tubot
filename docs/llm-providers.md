@@ -45,7 +45,7 @@ placeholders: set the models for your provider.
 | `[llm.glance]` | the short side-panel summary (`builtin/glance` and prompts with `"task": "glance"`); optional | 3 short lines |
 | `[llm.answer]` | `ask` and the answer to a title's question | prose |
 | `[llm.analysis]` | insight and the transcript-based second tier (short answer, inflation) | JSON |
-| `[llm.captions]` | optional caption translation | JSON array |
+| `[llm.captions]` | optional caption translation and proofreading | JSON array |
 | `[llm.cuts]` | director's-cut timelines from transcript units (Quick and Watched) | JSON with kept unit id ranges |
 | `[llm.cuts_vision]` | Watched grids: one 2x2 image per scene, described for the editor | JSON scene facts; optional but required for Watched |
 
@@ -83,7 +83,9 @@ so give the summary task a model with that much context and decent instruction f
 - `<think>...</think>` blocks in the answer are stripped, and JSON is extracted from prose or code fences. If a model returns bad
   JSON once, the backend asks again (`retries_on_bad_json`).
 - `reasoning_effort` is sent to the endpoint only when you set it. For triage use `"none"` (or the lowest your provider
-  accepts) so a reasoning model does not spend seconds per card. Endpoints that reject the field: leave it unset.
+  accepts) so a reasoning model does not spend seconds per card. `[llm.captions]` defaults to `"none"`:
+  proofreading and translation answer with JSON over many short strings, and reasoning can use the whole answer budget on
+  token-heavy scripts (Devanagari and others). Endpoints that reject the field: leave it unset.
 - `max_tokens` is the budget for the visible answer. The backend adds `[llm] reasoning_headroom_tokens` (default 2048) to
   every request so reasoning models can think without cutting the answer; a task may override it with its own
   `reasoning_headroom_tokens` (`0` for endpoints without reasoning). A prompt's `max_tokens` is an answer budget too.

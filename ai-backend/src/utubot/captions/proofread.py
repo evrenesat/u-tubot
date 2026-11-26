@@ -14,7 +14,8 @@ timing only for a cue without words), so the stored cues never break the limits.
 `words` so a later pass can still split on real pauses.
 
 Corrected batches are cached per video (`StageCache`), so a retried job does not pay for the same
-proofreading twice.
+proofreading twice. A job that follows with a translation skips the source-language pass
+(`skip_reason="translated"`): the translated text gets its own proofreading pass.
 """
 
 from __future__ import annotations
@@ -62,9 +63,19 @@ class Proofreader:
         return hashlib.sha256(payload.encode()).hexdigest()
 
     async def polish(
-        self, video_id: str, cues: list[Cue], lang: str, context: dict[str, str]
+        self,
+        video_id: str,
+        cues: list[Cue],
+        lang: str,
+        context: dict[str, str],
+        *,
+        skip_reason: str | None = None,
     ) -> list[Cue]:
         if not cues:
+            return cues
+        if skip_reason is not None:
+            with events.stage(events.PROOFREAD, cues=len(cues)) as st:
+                st.skip(reason=skip_reason)
             return cues
         cfg = self.cfg
         if not cfg.proofread:

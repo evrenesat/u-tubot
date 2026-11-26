@@ -332,7 +332,8 @@ async def test_a_captions_job_targets_english_by_default(env):
 async def test_the_config_default_is_the_translation_target(env):
     env.cfg.captions.translate_to = "de"
     env.fetcher.text = None
-    respond_with_cues(env.llm, ["Hello there, my friend.", "How are you doing today?"])
+    # The source pass is skipped, so the mock's proofreading answers are for the translated text.
+    respond_with_cues(env.llm, ["T:Hello there, my friend.", "T:How are you doing today?"])
     doc = await queue_captions(env)
     row = env.svc.db.one("SELECT translate_to FROM jobs WHERE id=?", [doc["id"]])
     assert row["translate_to"] == "de"
