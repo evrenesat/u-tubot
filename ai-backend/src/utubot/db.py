@@ -141,6 +141,21 @@ CREATE TABLE IF NOT EXISTS cut_choices(
   PRIMARY KEY(user, video_id));
 CREATE TABLE IF NOT EXISTS cut_last_presets(
   user TEXT PRIMARY KEY, preset_id TEXT NOT NULL, updated_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS research_requests(
+  id TEXT PRIMARY KEY, user TEXT NOT NULL, video_id TEXT NOT NULL,
+  prompt_key TEXT, question TEXT, kind TEXT NOT NULL DEFAULT 'open', language TEXT,
+  state TEXT NOT NULL, error TEXT, result_key TEXT, job_id TEXT, progress REAL,
+  created_at REAL NOT NULL, updated_at REAL NOT NULL,
+  ready_at REAL, seen_at REAL, force INTEGER NOT NULL DEFAULT 0,
+  klass TEXT NOT NULL DEFAULT 'normal');
+CREATE INDEX IF NOT EXISTS research_requests_user ON research_requests(user, created_at);
+CREATE INDEX IF NOT EXISTS research_requests_video ON research_requests(video_id);
+CREATE TABLE IF NOT EXISTS research_results(
+  cache_key TEXT PRIMARY KEY, video_id TEXT NOT NULL, version INTEGER NOT NULL,
+  kind TEXT NOT NULL, prompt_key TEXT, prompt TEXT,
+  model_plan TEXT, model_read TEXT, model_write TEXT,
+  transcript_hash TEXT, language TEXT, json TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS research_results_video ON research_results(video_id);
 """
 
 JOB_COLUMNS = {

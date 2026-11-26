@@ -76,6 +76,11 @@ class LLMConfig(BaseModel):
     smart: LLMTask = LLMTask(model="smart", max_tokens=1500)
     cuts: LLMTask | None = None
     cuts_vision: LLMTask | None = None
+    # Research (plan 2.6-2.7): the three task aliases a research request runs through. Each is
+    # an explicit alias; the feature reports "not configured" until all three are set.
+    research_plan: LLMTask | None = None
+    research_read: LLMTask | None = None
+    research_write: LLMTask | None = None
 
     @model_validator(mode="after")
     def _vision_fallback_same_provider(self) -> LLMConfig:
@@ -320,6 +325,30 @@ class CutsConfig(BaseModel):
     over_ask_frac: float = 0.2  # the model is asked for this much more than the target
     release_duration_tolerance_ms: int = 2000
     watched: WatchedCutsConfig = Field(default_factory=WatchedCutsConfig)
+
+
+class ResearchConfig(BaseModel):
+    """Research (plan 2.6-2.7): a model reads the transcript and answers fact-check, worth-it,
+    viewpoints and open questions.
+
+    The feature is behind `[research] enabled` (default `false`) and its three task aliases
+    (`[llm.research_plan]`, `[llm.research_read]`, `[llm.research_write]`). Checkpoint 1 ships a
+    stub pipeline: when enabled it answers a canned result after `stub_delay_s`; the real
+    pipeline (search + browser + the three models) takes over in a later checkpoint.
+    """
+
+    enabled: bool = False
+    # The stub pipeline's answer delay (seconds); the real pipeline ignores it.
+    stub_delay_s: float = 2.0
+    max_active_per_user: int = 2
+    max_queued_per_user: int = 100
+    max_prompt_chars: int = 2000
+    default_wait_ms: int = 3000
+    wait_ms_cap: int = 20000
+    poll_s: float = 2.0
+    # A research result is shared across users and kept for this long (days).
+    result_ttl_d: int = 14
+    pipeline_version: int = 1
 
 
 class ClassConfig(BaseModel):
@@ -878,6 +907,7 @@ class Config(BaseModel):
     transcripts: TranscriptConfig = Field(default_factory=TranscriptConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     cuts: CutsConfig = Field(default_factory=CutsConfig)
+    research: ResearchConfig = Field(default_factory=ResearchConfig)
     classes: ClassesConfig = Field(default_factory=ClassesConfig)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     captions: CaptionsConfig = Field(default_factory=CaptionsConfig)
