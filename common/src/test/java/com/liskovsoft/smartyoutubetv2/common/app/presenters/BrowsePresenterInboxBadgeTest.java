@@ -241,6 +241,10 @@ public class BrowsePresenterInboxBadgeTest {
         }
 
         @Override
+        public void showRefreshing(boolean show) {
+        }
+
+        @Override
         public boolean isProgressBarShowing() {
             return lastProgress;
         }

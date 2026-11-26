@@ -19,6 +19,7 @@ public interface BrowseView {
     void showError(ErrorFragmentData data);
     void showProgressBar(boolean show);
     boolean isProgressBarShowing();
+    void showRefreshing(boolean show);
     void focusOnContent();
     boolean isEmpty();
     void updateBadge();

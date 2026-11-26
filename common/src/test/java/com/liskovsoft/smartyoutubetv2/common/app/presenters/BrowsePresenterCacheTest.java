@@ -229,6 +229,81 @@ public class BrowsePresenterCacheTest {
     }
 
     @Test
+    public void manualRefreshFromCacheKeepsTheFocusedCard() throws Exception {
+        BrowseSection section = musicSection();
+        String target = "target0";
+
+        seed(section, Collections.singletonList(group(section, LIKED_MUSIC, 0, 9_700, target, "other")), now(), false);
+        PublishSubject<List<MediaGroup>> rows = PublishSubject.create();
+        putMapping("mRowMapping", MediaGroup.TYPE_MUSIC, rows);
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_MUSIC);
+        setField("mCurrentVideo", mCache.groups(section, identity()).get(0).getVideos().get(0));
+
+        mPresenter.refreshCurrentSection();
+        assertTrue(mView.isRefreshing());
+
+        rows.onNext(Collections.singletonList(mediaGroup(LIKED_MUSIC, 6, "target")));
+        rows.onComplete();
+        awaitFocusedCard(target);
+
+        assertFalse(mView.isRefreshing());
+        assertEquals(0, mView.errors);
+        assertTrue(mView.hasGroup(9_700, LIKED_MUSIC, 6));
+        assertTrue(mView.hasSelected(target));
+    }
+
+    @Test
+    public void manualRefreshWithoutCacheDoesFullReload() throws Exception {
+        BrowseSection section = musicSection();
+        PublishSubject<List<MediaGroup>> rows = PublishSubject.create();
+        putMapping("mRowMapping", MediaGroup.TYPE_MUSIC, rows);
+
+        setField("mCurrentSection", section);
+        mPresenter.refreshCurrentSection();
+        assertTrue(mView.isRefreshing());
+        assertTrue(mView.isProgressBarShowing());
+
+        rows.onNext(Collections.singletonList(mediaGroup(LIKED_MUSIC, 6, "target")));
+        rows.onComplete();
+        awaitTitle(LIKED_MUSIC, 6);
+
+        assertFalse(mView.isRefreshing());
+        assertFalse(mView.isProgressBarShowing());
+        assertEquals(0, mView.errors);
+        assertTrue(mView.hasTitle(LIKED_MUSIC, 6));
+    }
+
+    @Test
+    public void manualRefreshFromCacheKeepsTheCardsWhenTheLoadFails() throws Exception {
+        BrowseSection section = musicSection();
+        String target = "target0";
+
+        seed(section, Collections.singletonList(group(section, LIKED_MUSIC, 0, 9_700, target, "other")), now(), false);
+        PublishSubject<List<MediaGroup>> rows = PublishSubject.create();
+        putMapping("mRowMapping", MediaGroup.TYPE_MUSIC, rows);
+
+        mPresenter.onSectionFocused(MediaGroup.TYPE_MUSIC);
+        setField("mCurrentVideo", mCache.groups(section, identity()).get(0).getVideos().get(0));
+
+        mPresenter.refreshCurrentSection();
+        rows.onError(new RuntimeException("the refresh failed"));
+
+        assertFalse(mView.isRefreshing());
+        assertTrue(mView.hasGroup(9_700, LIKED_MUSIC, 2));
+        assertEquals(0, mView.errors);
+    }
+
+    @Test
+    public void manualRefreshWithoutACurrentSectionDoesNothing() throws Exception {
+        mPresenter.refreshCurrentSection();
+
+        assertFalse(mView.isRefreshing());
+        assertFalse(mView.isProgressBarShowing());
+        assertEquals(0, mView.errors);
+    }
+
+    @Test
     public void cachedRowsKeepTheAddedHomeRowMetadataForTheirMenus() throws Exception {
         BrowseSection section = sectionOf(MediaGroup.TYPE_HOME);
         VideoGroup row = group(section, "Channel row", 0, 9_800, "row-one");
@@ -978,6 +1053,7 @@ public class BrowsePresenterCacheTest {
         private final List<VideoGroup> mUpdates = new ArrayList<>();
         private final List<Video> mSelectedItems = new ArrayList<>();
         private boolean mProgressShowing;
+        private boolean mRefreshing;
         private int errors;
         private int refreshSubscriptions;
 
@@ -1035,6 +1111,11 @@ public class BrowsePresenterCacheTest {
         }
 
         @Override
+        public void showRefreshing(boolean show) {
+            mRefreshing = show;
+        }
+
+        @Override
         public void focusOnContent() {
         }
 
@@ -1053,6 +1134,10 @@ public class BrowsePresenterCacheTest {
 
         private int refreshSubscriptions() {
             return refreshSubscriptions;
+        }
+
+        private boolean isRefreshing() {
+            return mRefreshing;
         }
 
         private void countRefresh() {
