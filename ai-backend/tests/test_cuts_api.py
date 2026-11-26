@@ -681,15 +681,30 @@ class TestTranscriptPath:
 
 
 class TestCapsAndConfig:
-    async def test_per_user_cap_on_concurrent_builds(self, cuts_env):
+    async def test_a_cut_over_the_per_user_limit_waits_in_line(self, cuts_env):
         set_transcript(cuts_env.fetcher)
         cuts_env.llm.delay_s = 0.2
         cuts_env.cfg.cuts.max_active_per_user = 1
         first = (await post_cut(cuts_env, preset="cut-demo")).json()
         second = await post_cut(cuts_env, preset="cut-no-filler")
-        assert second.status_code == 429
+        assert second.status_code == 200, second.text
         cuts_env.llm.delay_s = 0.0
         await wait_ready(cuts_env, first["request_id"])
+        doc = await wait_ready(cuts_env, second.json()["request_id"])
+        assert doc["state"] in ("ready", "failed")
+        assert "Too many cuts" not in (doc.get("error") or "")
+        job = (await cuts_env.client.get(f"/v1/jobs/{doc['job_id']}")).json()
+        assert "in_line" in {event["stage"] for event in job["events"]}
+
+    async def test_only_a_runaway_queue_is_refused(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.delay_s = 0.5
+        cuts_env.cfg.cuts.max_active_per_user = 1
+        cuts_env.cfg.cuts.max_queued_per_user = 1
+        await post_cut(cuts_env, preset="cut-demo")
+        refused = await post_cut(cuts_env, preset="cut-no-filler")
+        assert refused.status_code == 429
+        assert "not recorded" in refused.json()["error"]
 
     async def test_not_configured_reports_plainly(self, env):
         env.cfg.cuts.poll_s = 0.02
