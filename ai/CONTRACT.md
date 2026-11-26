@@ -474,7 +474,7 @@ The extension sends the bearer token from its background context only, to the ba
 
 - Public endpoints (no token): `GET /setup.json`, `GET /v1/health`, `POST /v1/pair`,
   `GET /app/update.json`, `GET /app/info.json`, `GET /app/<file>.apk`, `GET /app/latest/<abi>.apk`, and for the web UI `GET /`, `GET /ui/*`
-  (static files, no data), `POST /v1/auth/login`, `POST /v1/auth/logout`. Everything else needs a bearer token or a session cookie. Rate limits return `429
+   (static files, no data), `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /web-login/<token>`. Everything else needs a bearer token or a session cookie. Rate limits return `429
   {"error":"rate limited"}` with `Retry-After`. Bodies over 256 KiB return 413.
 - Video ids must match `^[A-Za-z0-9_-]{11}$`, else `400`.
 - `POST /v1/pair` `{"code":"123456","device":"Living room TV"}` -> `{"token":"utb_...","user":"owner"}`.
@@ -485,6 +485,16 @@ The extension sends the bearer token from its background context only, to the ba
 - Admin only (user with `admin = true`, else `403 {"error":"forbidden"}`):
   `POST /v1/admin/pair {"user"}` -> `{"code","expires_in_s"}`, `GET /v1/admin/users`,
   `DELETE /v1/admin/devices/{id}`, `PUT /v1/admin/users/{name}/policy`.
+- One-time web sign-in link (issue 203): the TV's "u·tubot web admin" entry asks for a link that
+  opens the web UI on the same device, signed in, instead of a QR. `POST /v1/web-login` (a bearer
+  token, i.e. any authenticated user — a paired TV has its device token) -> `{"token":"wtl_...","expires_in_s":60}`.
+  The client opens `GET /web-login/<token>` (public, no auth) in a browser: the backend spends the
+  link once, makes a cookie session for that user (the session's `agent` records the device that
+  asked for the link, so the sign-in is attributable), and `302`s to `/#/home`. The link is single
+  use and lives `security.web_login_ttl_s` (60 s by default); an already-used, expired or unknown
+  link answers `400 {"error":"This sign-in link is invalid or expired"}`. The request is rate
+  limited per address (`security.web_login_attempts_per_ip_per_min`). The QR of "Describe on phone…"
+  stays the fallback only when no browser is installed on the device.
 - `GET /v1/me` policy also carries `auto_long` (`null` = follow the config).
 - Extra read endpoints: `GET /v1/prompts/sets/{set_id}` (raw set JSON), `GET /v1/captions/jobs`.
 - A prompt's `model` is an alias or `provider:model` naming a configured provider.

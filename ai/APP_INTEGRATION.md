@@ -31,6 +31,7 @@ so the other flavors behave as before.
 | `app/presenters/settings/AboutSimpleSettingsPresenter.java` | addresses from the resources above, no row without an address, Server row (built-in flavor), credit row | per-flavor About |
 | `app/presenters/settings/UpdatesSettingsPresenter.java` | update check interval and development mode (moved from the u·tubot panel); the release list marks the installed version; the update channel as fallback | release notes of the flavor only |
 | `misc/AppDataSourceManager.java` | Settings, Debugging only with a Submit data server (`DataSubmitter.isConfigured`) | diagnostics must not go to Electric Eel's server |
+| `app/presenters/settings/UtubotSettingsPresenter.java` | the "u·tubot web admin" entry, after "Pair with code", only in the built-in flavor: it asks the backend for a one-time sign-in link and opens it (`UtubotWebAdmin`); a QR sheet opens only when no browser is installed | open the web admin on the TV, signed in (issue #203) |
 | `diagnostics/DataSubmitter.java` | `isConfigured`, `autoSubmit` does nothing without it | same |
 | `.gitignore` | `utubot.properties`, `temp/` | local secrets and scratch |
 | `app/models/data/Video.java` | `utubotMark` field (copied in `copy`) | label of the card mark |
@@ -77,6 +78,13 @@ so the other flavors behave as before.
   mark only, answer in menu, Summary panel, Summary delay, Reading pace (the self-scroll of the long answer and Summary text, 30, 45 or 60 px/s),
   auto-select HQ captions, apply ready cuts automatically, Cut jump, Prompts (list, choose default, Import from URL, Refresh all). Browse refresh is in System,
   General; update check interval and development mode are in Updates.
+- Web admin on the TV (issue #203). In the "Backend" section the built-in flavor's "u·tubot web admin" (`UtubotWebAdmin`, only when
+  `isBuiltIn()`): it asks the backend for a short-lived, single-use sign-in link (`POST /v1/web-login`, `UtubotClient.webLogin`, bearer
+  token, rate-limited per IP), then opens it with an `ACTION_VIEW` intent (`https://<backend>/web-login/<token>`). The token is created for
+  the device the backend knows (`client_of(request)`) and is single-use and ~60 s old; the backend redeems it, turns it into a session
+  (`agent=device` — the TV is logged in) and redirects to `/#/home`. If no browser can handle the scheme, the entry falls back to a QR sheet
+  (`UtubotCutQrView`) of the same link so a phone can open it. The entry is offered only while paired and connected (otherwise a "pair first"
+  toast), and the link is requested once per open, so a re-open gets a fresh token.
 - Import setup (`UtubotSetup`, `UtubotSetupFlow`): the user types a bare host or a URL, the app fetches `/setup.json`
   (`ai/CONTRACT.md`), stores backend URL, update URL and switch defaults, then opens the pairing dialog.
 - Every launch without a backend offers Import setup (Not now / Don't ask again); pairing follows. With a backend but no
@@ -271,7 +279,42 @@ so the other flavors behave as before.
 - With the Summary view open the focus never rests on the screen under it: the first D-pad key, OK or Enter after the grid took
   the focus back restores the view's focus and is used (`UtubotKeys.actsOnFocus`).
 
-## update.json (self-update)
+## Web admin on the TV: WebView vs. system browser
+
+Issue #203 asked to evaluate an embedded `WebView` for opening the web admin on the TV and tablet. The app
+defaults to the system browser (an `ACTION_VIEW` intent); a `WebView` is not used. The evaluation:
+
+- **Focus / D-pad.** A browser tab already has D-pad focus when the TV firmware forwards navigation keys; the
+  web admin relies on that (`:focus-visible` outline on every control, 44px+ targets, `app.css`). A `WebView`
+  does not get focus for free: with `WebSettings.setFocusableInTouchMode(true)` and `setFocusable(true)`, the
+  firmware still has to deliver the arrow keys to it, and `onKeyDown`/`onKeyUp` must be wired by hand, arrow by
+  arrow, to move focus between the same controls the browser moves automatically. That is a lot of code to
+  re-implement what the browser gets out of the box.
+- **Keyboard.** Signing in by hand needs a keyboard; the one-time link exists precisely so nothing is typed on
+  the remote. A `WebView` needs a custom IME or `android:windowSoftInputMode` tuning to feel right on a big TV
+  screen, and a system browser already has one.
+- **Login cookies.** The one-time link is a plain URL with an opaque token in the path (`/web-login/<token>`).
+  The system browser stores the session cookie the backend sets on redeem and sends it back on `/#/home`, so the
+  admin stays signed in. A `WebView` must opt into cookies (`CookieManager.setCookie`, `setAcceptCookie`, the
+  `CookieManager` sync with `AccountManager`), keep it across the app's lifetime, and clear it on logout — all the
+  session handling a browser already does. It also re-surfaces the same-origin risk the CSP + `frame-ancestors
+  'none'` guards were added to avoid.
+- **Tablet.** Same story, bigger surface; the browser handles it and installs as a WebAPK (the raster icons in
+  the manifest make the install reliable).
+
+**Verdict.** System browser is the default and the only path today. A `WebView` would cost a hand-rolled focus
+and keyboard layer, cookie/session plumbing, and more attack surface, for no gain the browser does not already
+give. It is the fallback to add only if a future requirement makes a link-unopenable browser unavoidable.
+
+## Web admin on the TV: remote-friendliness
+
+The pages the admin opens on the TV (home, TVs, captions, login, account, settings) are already usable with a
+D-pad: `:focus-visible` gives every control a visible outline, and `.btn`, `.nav-link`, `.segmented` label and
+form controls clear a 44px+ target (`test_web_ui_is_remote_friendly` checks the CSS carries both). The one real
+gap is a password on a TV remote — which the one-time link removes, because the admin lands on `/#/home` signed
+in. Remaining gaps, accepted as "as far as reasonable": the removable-chip delete buttons (`.chip-x`, 36px) live
+on the phone-oriented prompt editor, not a page the admin opens by default, and a TV remote scrolls the page
+rather than clicking individual small links.
 
 The flavor has no update URL of its own: `AppUpdatePresenter` uses the `update_url` stored by Import setup
 (`UtubotSettings.getUpdateUrl`), and checks nothing without one. The checker (`SharedModules` `appupdatechecker2`,

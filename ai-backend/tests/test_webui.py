@@ -27,6 +27,7 @@ PUBLIC = {
     ("POST", "/v1/auth/login"),
     ("POST", "/v1/auth/logout"),
     ("GET", "/cuts/{request_id}"),
+    ("GET", "/web-login/{token}"),
 }
 SEGMENT = re.compile(r"\{[^}]+\}")
 
@@ -155,6 +156,18 @@ def test_ui_code_never_builds_markup_from_strings():
         assert not forbidden.search(path.read_text()), path
     css = (WEB / "ui" / "app.css").read_text()
     assert "@import" not in css and "url(http" not in css
+
+
+def test_web_ui_is_remote_friendly():
+    # Pages the web admin opens on the TV must be usable with a D-pad: visible focus and targets
+    # big enough for a thumb to reach. The CSS encodes both; assert they are present.
+    css = (WEB / "ui" / "app.css").read_text()
+    assert ":focus-visible" in css and "outline" in css
+    # Every interactive control the pages build must clear a 44px target.
+    assert re.search(r"\.btn\s*\{[^}]*min-height:\s*44px", css, re.S)
+    # The nav items reach the same bar: 62px via the --nav-h variable.
+    assert re.search(r"\.nav-link\s*\{[^}]*min-height:\s*var\(--nav-h\)", css, re.S)
+    assert "--nav-h: 62px" in css
 
 
 async def test_api_responses_carry_security_headers_and_are_not_cached(env):

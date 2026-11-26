@@ -3,6 +3,20 @@
 - `UtubotClient.send` reports a transport or 5xx failure of the app's own call to `POST /v1/ledger`, fire and forget, through
   `UtubotFailureThrottle` (one per operation and message a minute, ten a minute). Details in `ai-backend/DEVLOG.md`.
 
+## 2026-11-26 (web admin on the TV, signed in, issue #203)
+
+- The TV's Settings gains "u·tubot web admin" (after "Pair with code", only in the built-in flavor). It asks the backend
+  for a short-lived, single-use sign-in link (`POST /v1/web-login`, bearer token, rate-limited per IP) and opens it with an
+  `ACTION_VIEW` intent (`UtubotWebAdmin`); the backend redeems it, turns it into a session (`agent=device`, the TV is logged in)
+  and redirects to `/#/home`. If no browser can handle the scheme, it falls back to a QR sheet of the same link.
+- Backend: `web_logins` table, `create_web_login`/`redeem_web_login` (`wtl_` tokens, ~60 s TTL, single use via an atomic claim),
+  the two routes, and `SecurityConfig.web_login_ttl_s`/`web_login_attempts_per_ip_per_min`. Tests: `test_web_login.py` (requires auth,
+  short-lived single-use link, signs the browser in and logs the device, refused when expired/unknown, rate-limited).
+- WebView evaluated: a `WebView` would cost a hand-rolled focus/keyboard layer, cookie/session plumbing and more attack surface for
+  nothing the browser does not already give, so the system browser is the default and the only path (documented in APP_INTEGRATION.md).
+- The web admin pages already expose `:focus-visible` and 44px+ targets; `test_web_ui_is_remote_friendly` checks the CSS. Backend tests
+  green (1443, the one `test_cuts_api` failure is the pre-existing missing `watched` extra, not this change); ruff clean.
+
 ## 2026-11-26 (refused server download falls back to TV captions, issue #205)
 
 - Backend retries a 403 with another yt-dlp player client, then a cut waits for the TV's own captions; `UtubotMenu.stateText` shows the

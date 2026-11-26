@@ -83,7 +83,12 @@ public class UtubotBackendSettingsPresenter extends BasePresenter<Void> {
         }
 
         AppDialogPresenter.instance(context).closeDialog();
-        Utils.openLink(context, mSettings.getUrl());
+
+        if (UtubotSettings.isBuiltIn()) {
+            UtubotWebAdmin.open(context);
+        } else {
+            Utils.openLink(context, mSettings.getUrl());
+        }
     }
 
     private void showAdvanced() {

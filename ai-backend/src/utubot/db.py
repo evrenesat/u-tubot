@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS pair_codes(
   id TEXT PRIMARY KEY, user TEXT NOT NULL, code_sha256 TEXT NOT NULL, expires_at REAL NOT NULL,
   used INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS pair_failures(ip TEXT NOT NULL, ts REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS web_logins(
+  id TEXT PRIMARY KEY, user TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, device TEXT NOT NULL,
+  created_at REAL NOT NULL, expires_at REAL NOT NULL, used INTEGER NOT NULL DEFAULT 0, used_at REAL);
+CREATE INDEX IF NOT EXISTS web_logins_user ON web_logins(user, created_at);
 CREATE INDEX IF NOT EXISTS pair_failures_ip ON pair_failures(ip, ts);
 CREATE TABLE IF NOT EXISTS policy_overrides(
   user TEXT PRIMARY KEY, json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0,

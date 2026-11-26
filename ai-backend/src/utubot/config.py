@@ -903,6 +903,8 @@ class SecurityConfig(BaseModel):
     pair_code_digits: int = 6
     pair_code_ttl_s: int = 900
     pair_attempts_per_ip_per_min: int = 5
+    web_login_ttl_s: int = 60
+    web_login_attempts_per_ip_per_min: int = 10
     pair_lockout_failures: int = 5
     pair_lockout_s: int = 900
     pair_global_failures: int = 40
