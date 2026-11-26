@@ -581,7 +581,12 @@ def create_app(
 
     @app.get("/v1/health")
     async def health():
-        return {"ok": True, "version": svc.build.version, "commit": svc.build.commit[:7], "cache_schema": CACHE_SCHEMA}
+        return {
+            "ok": True,
+            "version": svc.build.version,
+            "commit": svc.build.commit[:7],
+            "cache_schema": CACHE_SCHEMA,
+        }
 
     @app.get("/setup.json")
     async def setup():

@@ -48,6 +48,7 @@ public class UtubotAssessFlowTest {
     private final AtomicInteger mAssessCalls = new AtomicInteger();
     private volatile boolean mAssessFails;
     private volatile String mServerVersion = "1.0";
+    private volatile String mCacheSchema = "1";
     private TinyHttpServer mServer;
     private UtubotSettings mSettings;
 
@@ -60,7 +61,7 @@ public class UtubotAssessFlowTest {
                 return new TinyHttpServer.Response(500, "{}");
             }
 
-            return new TinyHttpServer.Response(200, "{\"ok\":true,\"version\":\"" + mServerVersion + "\"}");
+            return new TinyHttpServer.Response(200, "{\"ok\":true,\"version\":\"" + mServerVersion + "\",\"cache_schema\":\"" + mCacheSchema + "\"}");
         });
         mServer.on("/v1/assess", request -> {
             mAssessCalls.incrementAndGet();
@@ -196,7 +197,19 @@ public class UtubotAssessFlowTest {
     }
 
     @Test
-    public void aNewBackendVersionAsksAgain() throws Exception {
+    public void aNewCacheSchemaAsksAgain() throws Exception {
+        resolve(createRow(video("good")));
+        int calls = mAssessCalls.get();
+
+        mCacheSchema = "2";
+        restart();
+        resolve(createRow(video("good")));
+
+        assertEquals(calls + 1, mAssessCalls.get());
+    }
+
+    @Test
+    public void aNewBackendVersionWithTheSameCacheSchemaKeepsTheVerdicts() throws Exception {
         resolve(createRow(video("good")));
         int calls = mAssessCalls.get();
 
@@ -204,7 +217,7 @@ public class UtubotAssessFlowTest {
         restart();
         resolve(createRow(video("good")));
 
-        assertEquals(calls + 1, mAssessCalls.get());
+        assertEquals(calls, mAssessCalls.get());
     }
 
     @Test
