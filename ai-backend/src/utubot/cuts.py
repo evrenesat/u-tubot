@@ -964,6 +964,7 @@ class CutService:
         self.transcripts, self.prompts, self.jobs = transcripts, prompts, jobs
         self.auth, self.archive, self.gate = auth, archive, gate
         self._watched_running = 0
+        self._user_running: dict[str, int] = {}
         self.engine = CutEngine(cfg.cuts, lambda: cfg.llm.cuts, llm)
         self._tasks: dict[str, asyncio.Task] = {}
         # One build in flight per cache key: a second request with the same key waits on the
@@ -1049,9 +1050,11 @@ class CutService:
         return int(row["n"])
 
     def _check_cap(self, user: str) -> None:
-        if self.building_count(user) >= self.cfg.cuts.max_active_per_user:
+        """Requests are recorded and wait their turn; only a runaway queue is refused."""
+        if self.building_count(user) >= self.cfg.cuts.max_queued_per_user:
             raise CutRefused(
-                "Too many cuts are already being built; try again when one has finished.",
+                f"You already have {self.cfg.cuts.max_queued_per_user} cuts waiting; "
+                "this one was not recorded.",
                 status=429,
             )
 
@@ -1580,10 +1583,40 @@ class CutService:
         self._watched_running += 1
         return True
 
+    async def _acquire_user(self, request_id: str, user: str, trace: events.JobTrace) -> bool:
+        """At most `max_active_per_user` builds per user run at once; the rest wait in line."""
+        limit = max(1, self.cfg.cuts.max_active_per_user)
+        if self._user_running.get(user, 0) >= limit:
+            trace.emit(
+                events.IN_LINE,
+                events.OK,
+                message="Your other cuts are being built; this one starts when one finishes.",
+            )
+        while self._user_running.get(user, 0) >= limit:
+            await asyncio.sleep(self.cfg.cuts.poll_s)
+            if self._dismissed(request_id):
+                return False
+        self._user_running[user] = self._user_running.get(user, 0) + 1
+        return True
+
+    def _release_user(self, user: str) -> None:
+        self._user_running[user] = max(0, self._user_running.get(user, 0) - 1)
+
     async def _build(self, request_id: str) -> None:
         row = self._row(request_id)
         if row is None or row["state"] not in ("building", "needs_transcript"):
             return
+        user = row["user"]
+        if not await self._acquire_user(
+            request_id, user, events.JobTrace(row["job_id"], self.jobs.events)
+        ):
+            return
+        try:
+            await self._build_slot(request_id, row)
+        finally:
+            self._release_user(user)
+
+    async def _build_slot(self, request_id: str, row: dict[str, Any]) -> None:
         watched_slot = False
         if (row["mode"] or "quick") == "watched":
             trace = events.JobTrace(row["job_id"], self.jobs.events)

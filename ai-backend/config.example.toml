@@ -198,7 +198,8 @@ max_tokens = 2000
 # min_keep_frac = 0.1              # keeping less is refused ("would remove almost everything")
 # max_keep_frac = 0.95             # a typed prompt without a target keeping more is refused
 #                                  # ("nothing to cut"); named presets have no upper guard
-# max_active_per_user = 2          # cuts building at the same time per user
+# max_active_per_user = 2          # cuts building at the same time per user; more wait in line
+# max_queued_per_user = 100        # only a runaway queue beyond this is refused
 # default_wait_ms = 3000           # a cuts GET waits this long for a build before answering
 # wait_ms_cap = 20000              # ... and never longer than this, whatever `wait_ms` asks
 # transcript_wait_s = 900.0        # how long a cut waits for a transcript to be built

@@ -294,6 +294,7 @@ class CutsConfig(BaseModel):
     min_keep_frac: float = 0.10
     max_keep_frac: float = 0.95
     max_active_per_user: int = 2
+    max_queued_per_user: int = 100
     max_prompt_chars: int = 2000
     default_wait_ms: int = 3000
     wait_ms_cap: int = 20000
