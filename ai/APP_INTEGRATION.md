@@ -120,7 +120,7 @@ so the other flavors behave as before.
 - Working indicator: `UtubotWorkingIndicator` (three pulsing dots, redrawn about 12 times a second, only while active, attached and shown), in the panel, the
   view and the answer, and `UtubotBadgeController` (badge at the top right of every screen but the player, shown after 300 ms of work,
   kept for 700 ms) fed by `UtubotBusyTracker`, which counts every `UtubotClient` call in flight.
-- Auto-update (`UtubotUpdates`, `UtubotUpdateSchedule`): 20 s after the app starts, then every 6 hours (a check that can't happen now, e.g.
+- Auto-update (`UtubotUpdates`, `UtubotUpdateSchedule`): 20 s after the app starts, then every interval of Settings, u·tubot, "Update check interval" (default 5 min; development mode, on by default, opens the dialog with Install selected when no video plays) (a check that can't happen now, e.g.
   the player is open, is tried again after 5 minutes), through `AppUpdatePresenter` (the checker of `SharedModules`, `appupdatechecker2`: version
   check, APK of the device's ABI, update dialog, installer). The scheduled check (`startAutomatic`) asks the channel on every run, whatever
   the shared checker's 60 second "recently checked" window says, and only while "Notify about updates" is on. On by default; Settings, Updates,

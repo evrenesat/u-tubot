@@ -112,4 +112,23 @@ public class UtubotPanelSettingsTest {
         assertEquals(mActivity.getString(R.string.utubot_panel_delay), delay.options.get(0).getTitle().toString());
         assertEquals("3 s", delay.options.get(0).getDescription().toString());
     }
+
+    @Test
+    public void updateChecksRunEveryFiveMinutesByDefaultAndOnlyChosenIntervalsAreKept() {
+        assertEquals(5, mSettings.getUpdateIntervalMinutes());
+
+        mSettings.setUpdateIntervalMinutes(60);
+        assertEquals(60, mSettings.getUpdateIntervalMinutes());
+
+        mSettings.setUpdateIntervalMinutes(7);
+        assertEquals(60, mSettings.getUpdateIntervalMinutes());
+    }
+
+    @Test
+    public void developmentModeIsOnByDefaultForTheBuiltInFlavor() {
+        assertEquals(UtubotSettings.isBuiltIn(), mSettings.isDevelopmentMode());
+
+        mSettings.setDevelopmentMode(false);
+        assertEquals(false, mSettings.isDevelopmentMode());
+    }
 }

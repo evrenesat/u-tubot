@@ -209,4 +209,27 @@ public class UtubotUpdateScheduleTest {
 
         assertEquals(0, mChecks);
     }
+
+    @Test
+    public void theIntervalIsReadAfterEveryCheckSoAChangedSettingApplies() {
+        long[] interval = {5 * UtubotUpdateSchedule.MS_PER_MINUTE};
+        UtubotUpdateSchedule schedule = new UtubotUpdateSchedule(mScheduler, () -> {
+            mChecks++;
+            return true;
+        }, () -> interval[0]);
+        schedule.start();
+        mScheduler.advance(UtubotUpdateSchedule.START_DELAY_MS);
+        assertEquals(1, mChecks);
+
+        mScheduler.advance(interval[0]);
+        assertEquals(2, mChecks);
+
+        interval[0] = 15 * UtubotUpdateSchedule.MS_PER_MINUTE;
+        mScheduler.advance(5 * UtubotUpdateSchedule.MS_PER_MINUTE);
+        assertEquals(3, mChecks);
+        mScheduler.advance(10 * UtubotUpdateSchedule.MS_PER_MINUTE);
+        assertEquals(3, mChecks);
+        mScheduler.advance(5 * UtubotUpdateSchedule.MS_PER_MINUTE);
+        assertEquals(4, mChecks);
+    }
 }

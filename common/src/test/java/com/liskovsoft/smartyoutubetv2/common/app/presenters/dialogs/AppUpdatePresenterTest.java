@@ -319,6 +319,16 @@ public class AppUpdatePresenterTest {
         mPresenter.onUpdateError(new UnknownHostException("github.com"));
     }
 
+    @Test
+    public void developmentModeFollowsTheSetting() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        UtubotSettings.instance(mActivity).setDevelopmentMode(true);
+        assertTrue(mPresenter.isDevelopmentMode());
+
+        UtubotSettings.instance(mActivity).setDevelopmentMode(false);
+        assertFalse(mPresenter.isDevelopmentMode());
+    }
+
     private static void idle(long ms) {
         ShadowLooper.shadowMainLooper().idleFor(Duration.ofMillis(ms));
     }

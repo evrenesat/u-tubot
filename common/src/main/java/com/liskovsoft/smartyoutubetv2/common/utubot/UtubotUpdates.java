@@ -13,7 +13,7 @@ import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 /**
  * The automatic update check of the built-in flavor: it runs Electric Eel's update flow (AppUpdatePresenter: version check against
  * the stored update URL, download of the APK of the device's ABI, the update dialog with the changelog, the installer) after the
- * app starts and every {@link UtubotUpdateSchedule#INTERVAL_MS}.
+ * app starts and every interval set in the settings.
  */
 public final class UtubotUpdates {
     private static final String TAG = UtubotUpdates.class.getSimpleName();
@@ -33,7 +33,8 @@ public final class UtubotUpdates {
 
         if (sSchedule == null) {
             Context appContext = context.getApplicationContext();
-            sSchedule = new UtubotUpdateSchedule(UtubotScheduler.mainThread(), () -> check(appContext));
+            sSchedule = new UtubotUpdateSchedule(UtubotScheduler.mainThread(), () -> check(appContext),
+                    () -> UtubotSettings.instance(appContext).getUpdateIntervalMinutes() * UtubotUpdateSchedule.MS_PER_MINUTE);
         }
 
         sSchedule.start();
@@ -48,7 +49,7 @@ public final class UtubotUpdates {
 
     /**
      * An update was found and could not be shown (the player is open, the app is in the background): it is offered again soon,
-     * not at the next 6 hour check.
+     * not at the next scheduled check.
      */
     public static synchronized void onUpdateDeferred() {
         if (sSchedule != null) {
