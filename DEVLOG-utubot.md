@@ -2,6 +2,10 @@
 
 - `UtubotCutNotices.onCutReady`: the open cut picker of that video re-renders (`UtubotMenu.refresh`, mode kept) so it stops saying "Building..."; otherwise, with no video playing (`UtubotCutController.hasLivePlayer`) and a browse card focused (`UtubotCutFocus`, fed by `UtubotPanelController`, cleared on pause), the cut opens by itself; anything else asks "Your cut is ready, play it?" through the #113 prompt queue. A playing video is never interrupted. Parity row `cut-ready-on-page`.
 
+## 2026-11-26 (refresh the browse screens on demand, issue #198)
+
+- `BrowsePresenter.refreshCurrentSection` (cache-backed, keeps cards and focus; full reload when nothing is cached) is called by a refresh button in the modern top bar (next to search/mic, "Refreshing..." while it runs, `BrowseView.showRefreshing`) and by re-selecting the active sidebar category. The automatic timer is unchanged and focus is not moved.
+
 ## 2026-11-26 (Android tablet: installs, step 1 of #201)
 
 - The merged manifest required `android.software.leanback`, `android.hardware.usb.host` (MediaServiceCore) and, through the leanbackassistant module, leanback again, so the Play-style feature filter and `pm install` refused the package on a tablet (`INSTALL_FAILED_MISSING_FEATURE`). `smarttubetv/src/main/AndroidManifest.xml` now declares leanback, USB host and Bluetooth as `required="false"` with `tools:node="replace"`. The LAUNCHER intent filter was already on `SplashActivity` (with LEANBACK_LAUNCHER), no orientation is locked (`unspecified`). `UtubotTabletManifestTest` guards both.
@@ -816,7 +820,6 @@ Findings of the review of PR 20 (app round 1), each with a unit test.
 - `UtubotBadgeController` (the value of a `WeakHashMap<Activity, ...>` in `UtubotAppHooks`) held its activity and its badge view
   (which holds the activity as its context) strongly; both are weak references now. `mReturnFocus` was already a weak reference and
   is cleared in `closeOverlay`.
-
 
 ## 2026-11-12 (fast transcripts)
 
