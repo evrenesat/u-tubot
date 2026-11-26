@@ -495,7 +495,7 @@ async def test_a_transcript_job_rechecks_captions_only_when_the_class_lets_it_th
         calls.append((priority, recheck))
         raise NoCaptions(video_id)
 
-    async def transcribe(video_id, progress, *, priority, language):
+    async def transcribe(video_id, progress, *, priority, language, klass=None, yield_check=None):
         return AsrTranscript(ASR_TEXT, "en", [], "mac", "m")
 
     env.svc.transcripts.get = get
@@ -578,7 +578,7 @@ async def test_expired_captions_with_captions_limited_do_not_loop_through_empty_
     put_captions_row(env, VID, env.cfg.transcripts.cache_ttl_s + 60)
     cool_captions(env)
 
-    async def transcribe(video_id, progress, *, priority, language):
+    async def transcribe(video_id, progress, *, priority, language, klass=None, yield_check=None):
         return AsrTranscript(ASR_TEXT, "en", [], "mac", "m")
 
     env.svc.jobs.pipeline.transcribe = transcribe
@@ -594,7 +594,7 @@ async def test_expired_captions_with_captions_limited_do_not_loop_through_empty_
 
 
 async def test_a_job_whose_transcript_was_not_stored_is_failed_and_recorded(env):
-    async def transcribe(video_id, progress, *, priority, language):
+    async def transcribe(video_id, progress, *, priority, language, klass=None, yield_check=None):
         return AsrTranscript(ASR_TEXT, "en", [], "mac", "m")
 
     env.svc.jobs.pipeline.transcribe = transcribe
@@ -610,7 +610,7 @@ async def test_a_job_whose_transcript_was_not_stored_is_failed_and_recorded(env)
 
 
 async def test_a_job_that_finds_fresh_captions_stored_is_done(env):
-    async def transcribe(video_id, progress, *, priority, language):
+    async def transcribe(video_id, progress, *, priority, language, klass=None, yield_check=None):
         return AsrTranscript(ASR_TEXT, "en", [], "mac", "m")
 
     env.svc.jobs.pipeline.transcribe = transcribe

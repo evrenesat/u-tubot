@@ -16,6 +16,7 @@ import logging
 import shutil
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -235,6 +236,7 @@ class WatchedBuilder:
         entry: dict[str, Any],
         transcript: Any,
         thash: str,
+        yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[dict[str, Any], bool]:
         task = self.cfg.llm.cuts_vision
         if task is None:
@@ -279,6 +281,7 @@ class WatchedBuilder:
                     progress=progress,
                     on_segment=partial,
                     should_stop=lambda: cuts._dismissed(request_id),
+                    yield_check=yield_check,
                 )
             except LLMError as exc:
                 raise CutRefused(
@@ -365,7 +368,12 @@ class WatchedBuilder:
     # ---- the whole build -----------------------------------------------------------------------
 
     async def build(
-        self, cuts: CutService, request_id: str, row: dict[str, Any], trace: events.JobTrace
+        self,
+        cuts: CutService,
+        request_id: str,
+        row: dict[str, Any],
+        trace: events.JobTrace,
+        yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[dict[str, Any], str]:
         """The Watched request from video to cached cut; returns (cut document, cache key)."""
         video_id = row["video_id"]
@@ -408,7 +416,7 @@ class WatchedBuilder:
             cuts, request_id, row, trace, thash, duration_s, work
         )
         tdt, partial = await self._describe(
-            cuts, request_id, row, trace, plan, entry, transcript, thash
+            cuts, request_id, row, trace, plan, entry, transcript, thash, yield_check
         )
         tdt_segments = tdt.get("segments") or []
         errors = validate_tdt(tdt, plan.manifest)

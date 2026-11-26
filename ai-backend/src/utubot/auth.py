@@ -76,13 +76,20 @@ def check_user_name(name: str) -> str:
     return name
 
 
-def append_user(users_path: Path, name: str, token_hash: str, admin: bool = False) -> None:
+def append_user(
+    users_path: Path,
+    name: str,
+    token_hash: str,
+    admin: bool = False,
+    prime: bool = False,
+) -> None:
     """Write (or replace) a user block in users.toml; an empty hash makes a password-only user."""
     check_user_name(name)
     users_path.parent.mkdir(parents=True, exist_ok=True)
     existing = users_path.read_text() if users_path.exists() else ""
     blocks = [b for b in existing.split(USER_BLOCK)[1:] if b.strip() and not _block_is(b, name)]
     extra = "admin = true\n" if admin else ""
+    extra += "prime = true\n" if prime else ""
     blocks.append(f'\nname = "{name}"\ntoken_sha256 = "{token_hash}"\n{extra}')
     users_path.write_text("".join(f"{USER_BLOCK}{b}" for b in blocks))
     users_path.chmod(0o600)
@@ -100,16 +107,29 @@ def users_file_names(users_path: Path) -> set[str]:
 
 def set_user_admin(users_path: Path, name: str, admin: bool) -> bool:
     """Flip `admin` on a user block of users.toml; False when the file has no such user."""
+    return _set_user_flag(users_path, name, "admin", admin)
+
+
+def set_user_prime(users_path: Path, name: str, prime: bool) -> bool:
+    """Flip `prime` on a user block of users.toml; False when the file has no such user."""
+    return _set_user_flag(users_path, name, "prime", prime)
+
+
+def _set_user_flag(users_path: Path, name: str, flag: str, value: bool) -> bool:
     if not users_path.exists():
         return False
     parts = users_path.read_text().split(USER_BLOCK)
     for idx in range(1, len(parts)):
         if not _block_is(parts[idx], name):
             continue
-        block = re.sub(r"^admin\s*=.*\n?", "", parts[idx], flags=re.MULTILINE)
-        if admin:
+        block = re.sub(rf"^{flag}\s*=.*\n?", "", parts[idx], flags=re.MULTILINE)
+        if value:
             block = re.sub(
-                r'^(name\s*=\s*".*"\s*\n)', r"\1admin = true\n", block, count=1, flags=re.MULTILINE
+                r'^(name\s*=\s*".*"\s*\n)',
+                rf"\1{flag} = true\n",
+                block,
+                count=1,
+                flags=re.MULTILINE,
             )
         parts[idx] = block
         users_path.write_text(USER_BLOCK.join(parts))

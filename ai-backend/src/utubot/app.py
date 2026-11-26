@@ -20,6 +20,7 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
 from . import __version__, appchannel
@@ -31,6 +32,7 @@ from .captions.asr import ASRBackend, make_asr
 from .captions.jobs import JobQueue
 from .captions.pipeline import CaptionPipeline, Downloader
 from .captions.report import JobReports
+from .classes import bind_class
 from .client_captions import ClientCaptions, ClientCaptionsRefused, store_upload
 from .config import (
     LANG_CODE_RE,
@@ -427,14 +429,22 @@ def create_app(
         request.state.principal = Principal(user, SESSION_TOKEN_ID)
         return user
 
-    def current_user(request: Request) -> UserConfig:
-        return authenticate(request, bearer(request))
+    async def authenticated(request: Request, token: str | None) -> UserConfig:
+        """Authenticate off the event loop, then bind the class in the context the route sees."""
+        user = await run_in_threadpool(authenticate, request, token)
+        bind_class(user.klass)
+        return user
 
-    def current_user_or_query(request: Request, token: str | None = Query(None)) -> UserConfig:
-        return authenticate(request, bearer(request) or token)
+    async def current_user(request: Request) -> UserConfig:
+        return await authenticated(request, bearer(request))
 
-    def admin_user(request: Request) -> UserConfig:
-        user = authenticate(request, bearer(request))
+    async def current_user_or_query(
+        request: Request, token: str | None = Query(None)
+    ) -> UserConfig:
+        return await authenticated(request, bearer(request) or token)
+
+    async def admin_user(request: Request) -> UserConfig:
+        user = await current_user(request)
         if not user.admin:
             raise Forbidden
         return user
@@ -576,6 +586,8 @@ def create_app(
             "user": user.name,
             "policy": user.policy.model_dump(),
             "admin": user.admin,
+            "prime": user.prime,
+            "class": user.klass,
             "settings_version": svc.auth.settings_version(user.name)[0],
             "features": {
                 "assess": True,
@@ -627,6 +639,8 @@ def create_app(
                 {
                     "name": name,
                     "admin": u.admin,
+                    "prime": u.prime,
+                    "class": u.klass,
                     "policy": u.policy.model_dump(),
                     "devices": svc.auth.list_devices(name),
                 }

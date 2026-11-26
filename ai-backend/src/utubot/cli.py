@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from . import appchannel, appsync
-from .auth import Auth, PairError, append_user, hash_token, new_token
+from .auth import Auth, PairError, append_user, hash_token, new_token, set_user_prime
 from .config import load_config
 from .db import Database
 from .media_archive import KIND_AUDIO, KIND_VIDEO, MediaArchive, MediaArchiveError, MediaArchiveFull
@@ -40,6 +40,15 @@ def cmd_user_add(args: argparse.Namespace) -> int:
     print(f"user: {args.name}")
     print(f"token: {token}")
     print(f"hash stored in {cfg.users_path}; the token is not stored and cannot be shown again")
+    return 0
+
+
+def cmd_user_prime(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    if not set_user_prime(cfg.users_path, args.name, args.state == "on"):
+        print(f"error: unknown user {args.name!r}", file=sys.stderr)
+        return 1
+    print(f"prime {'on' if args.state == 'on' else 'off'} for {args.name}")
     return 0
 
 
@@ -371,6 +380,10 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("name")
     add.add_argument("--admin", action="store_true", help="mark the user as admin")
     add.set_defaults(func=cmd_user_add)
+    prime = user.add_parser("prime", help="put a user in the prime class or back to normal")
+    prime.add_argument("name")
+    prime.add_argument("state", choices=("on", "off"))
+    prime.set_defaults(func=cmd_user_prime)
     passwd = user.add_parser("passwd", help="set a user's web sign-in password")
     passwd.add_argument("name")
     passwd.add_argument(

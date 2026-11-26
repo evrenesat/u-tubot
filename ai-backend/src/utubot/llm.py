@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from .classes import NORMAL, RANK, current_class, normalize_class
 from .config import Config, LLMTask
 from .db import Database
 from .usage import (
@@ -64,25 +65,44 @@ class LLMBusyError(LLMError):
 
 
 class PriorityLimiter:
-    """Slot limiter; interactive waiters go first, background keeps `reserve` slots free."""
+    """Slot limiter; prime waiters, then interactive ones, go first.
 
-    def __init__(self, limit: int, reserve: int = 0):
+    `reserve` keeps background work off some slots and `reserved_prime` keeps normal work off one
+    more, so a prime request never waits for normal work to drain.
+    """
+
+    def __init__(self, limit: int, reserve: int = 0, reserved_prime: int = 0):
         self.limit = max(1, limit)
         self.reserve = max(0, min(reserve, self.limit - 1))
+        self.reserved_prime = max(0, min(reserved_prime, self.limit - 1))
         self.in_use = 0
-        self._waiters: list[tuple[int, int, asyncio.Future]] = []
+        self._waiters: list[tuple[int, int, int, asyncio.Future]] = []
         self._seq = itertools.count()
 
-    def _free_for(self, priority: int) -> bool:
-        cap = self.limit if priority == INTERACTIVE else self.limit - self.reserve
-        return self.in_use < cap
+    def _free_for(self, priority: int, klass: str) -> bool:
+        if klass == "prime":
+            return self.in_use < self.limit
+        cap = self.limit - self.reserved_prime
+        if priority != INTERACTIVE:
+            cap -= self.reserve
+        return self.in_use < max(1, min(self.limit, cap))
 
-    async def acquire(self, priority: int) -> None:
-        if self._free_for(priority) and (priority == INTERACTIVE or not self._waiters):
+    @staticmethod
+    def _rank(priority: int, klass: str) -> tuple[int, int]:
+        return RANK[klass], priority
+
+    async def acquire(self, priority: int, klass: str = NORMAL) -> None:
+        klass = normalize_class(klass)
+        key = self._rank(priority, klass)
+        ahead = any(
+            ((w_class_rank, w_priority) <= key and not fut.done())
+            for w_class_rank, w_priority, _, fut in self._waiters
+        )
+        if self._free_for(priority, klass) and not ahead:
             self.in_use += 1
             return
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
-        heapq.heappush(self._waiters, (priority, next(self._seq), fut))
+        heapq.heappush(self._waiters, (key[0], key[1], next(self._seq), fut))
         try:
             await fut
         except asyncio.CancelledError:
@@ -93,11 +113,12 @@ class PriorityLimiter:
     def release(self) -> None:
         self.in_use -= 1
         while self._waiters:
-            priority, _, fut = self._waiters[0]
+            class_rank, priority, _, fut = self._waiters[0]
             if fut.done():
                 heapq.heappop(self._waiters)
                 continue
-            if not self._free_for(priority):
+            klass = "prime" if class_rank == RANK["prime"] else NORMAL
+            if not self._free_for(priority, klass):
                 return
             heapq.heappop(self._waiters)
             self.in_use += 1
@@ -188,8 +209,11 @@ class LLMClient:
         lim = self._limiters.get(provider)
         if lim is None:
             pc = self.cfg.llm.providers[provider]
+            # A slot kept for prime only makes sense with the class system; without `[classes]`
+            # the route model is used exactly as before, so no slot is reserved.
+            reserved_prime = pc.reserved_prime if self.cfg.classes_configured else 0
             lim = self._limiters[provider] = PriorityLimiter(
-                pc.max_concurrent, pc.reserved_interactive
+                pc.max_concurrent, pc.reserved_interactive, reserved_prime
             )
         return lim
 
@@ -236,8 +260,14 @@ class LLMClient:
         return max(delay, retry_after or 0.0)
 
     async def _call(
-        self, provider: str, body: dict[str, Any], priority: int, deadline_at: float
+        self,
+        provider: str,
+        body: dict[str, Any],
+        priority: int,
+        deadline_at: float,
+        klass: str | None = None,
     ) -> httpx.Response:
+        klass = normalize_class(klass if klass is not None else current_class())
         loop = asyncio.get_running_loop()
         llm = self.cfg.llm
         url = llm.providers[provider].base_url.rstrip("/") + "/chat/completions"
@@ -246,7 +276,7 @@ class LLMClient:
         while True:
             try:
                 await asyncio.wait_for(
-                    limiter.acquire(priority), timeout=max(0.0, deadline_at - loop.time())
+                    limiter.acquire(priority, klass), timeout=max(0.0, deadline_at - loop.time())
                 )
             except TimeoutError as exc:
                 raise LLMBusyError("llm slot wait exceeded deadline") from exc
@@ -293,7 +323,9 @@ class LLMClient:
         json_mode: bool = False,
         deadline_s: float | None = None,
         deadline_at: float | None = None,
+        klass: str | None = None,
     ) -> Completion:
+        klass = normalize_class(klass if klass is not None else current_class())
         llm = self.cfg.llm
         loop = asyncio.get_running_loop()
         if deadline_at is None:
@@ -313,7 +345,7 @@ class LLMClient:
                 body["response_format"] = {"type": "json_object"}
             share = (deadline_at - loop.time()) / (len(chain) - idx)
             try:
-                resp = await self._call(provider, body, priority, loop.time() + share)
+                resp = await self._call(provider, body, priority, loop.time() + share, klass)
             except LLMError as exc:
                 self.usage.add(METRIC_LLM_ERRORS)
                 last = exc
@@ -372,7 +404,9 @@ class LLMClient:
         max_tokens: int | None = None,
         priority: int = BACKGROUND,
         deadline_s: float | None = None,
+        klass: str | None = None,
     ) -> ChatResult:
+        klass = normalize_class(klass if klass is not None else current_class())
         answer_budget = max_tokens or task.max_tokens
         deadline_at = asyncio.get_running_loop().time() + self.deadline_for(priority, deadline_s)
         done = await self.complete(
@@ -382,6 +416,7 @@ class LLMClient:
             max_tokens=answer_budget,
             priority=priority,
             deadline_at=deadline_at,
+            klass=klass,
         )
         if done.finish_reason == "length":
             log.warning("llm output kind=truncated retry=1 reasoning=%s", done.reasoning)
@@ -393,6 +428,7 @@ class LLMClient:
                     max_tokens=answer_budget * TRUNCATION_RETRY_FACTOR,
                     priority=priority,
                     deadline_at=deadline_at,
+                    klass=klass,
                 )
             except LLMError as exc:
                 if not done.text:
@@ -416,6 +452,7 @@ class LLMClient:
         max_tokens: int | None = None,
         priority: int = BACKGROUND,
         deadline_s: float | None = None,
+        klass: str | None = None,
     ) -> str:
         result = await self.chat_result(
             task,
@@ -424,6 +461,7 @@ class LLMClient:
             max_tokens=max_tokens,
             priority=priority,
             deadline_s=deadline_s,
+            klass=klass,
         )
         return result.text + CUT_MARK if result.truncated else result.text
 
@@ -435,7 +473,9 @@ class LLMClient:
         model: str | None = None,
         priority: int = BACKGROUND,
         deadline_s: float | None = None,
+        klass: str | None = None,
     ) -> Any:
+        klass = normalize_class(klass if klass is not None else current_class())
         llm = self.cfg.llm
         attempts = 1 + llm.retries_on_bad_json
         convo = list(messages)
@@ -451,6 +491,7 @@ class LLMClient:
                 priority=priority,
                 json_mode=True,
                 deadline_at=deadline_at,
+                klass=klass,
             )
             try:
                 return extract_json(done.text)

@@ -536,7 +536,16 @@ def test_format_track_and_language_come_from_the_chosen_yt_dlp_format(tmp_path, 
 
 class StubAsr:
     async def transcribe(
-        self, wav, language, progress, *, priority=1, want_words=True, expected_language=None
+        self,
+        wav,
+        language,
+        progress,
+        *,
+        priority=1,
+        want_words=True,
+        expected_language=None,
+        klass=None,
+        yield_check=None,
     ):
         progress(1.0)
         return ASRResult(

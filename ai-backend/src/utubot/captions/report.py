@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..classes import normalize_class
 from ..config import Config
 from ..db import METADATA_ONLY, Database
 from ..transcripts import TranscriptService, parse_vtt
@@ -53,6 +54,7 @@ class JobReports:
             "progress": job["progress"],
             "error": job["error"],
             "priority": events.priority_name(job["priority"]),
+            "class": normalize_class(job.get("klass")),
             "attempts": job["attempts"] or 0,
             "created_at": job["created_at"],
             "updated_at": job["updated_at"],
@@ -85,6 +87,7 @@ class JobReports:
                 "endpoint": queued.get("endpoint"),
                 "trigger": queued.get("trigger"),
                 "priority": queued.get("priority") or events.priority_name(job["priority"]),
+                "class": normalize_class(queued.get("class", job.get("klass"))),
                 "at": job["created_at"],
             },
         }

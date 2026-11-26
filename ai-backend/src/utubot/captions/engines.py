@@ -21,6 +21,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from ..classes import NORMAL
 from ..config import (
     ASR_KIND_FASTER_WHISPER,
     ASR_KIND_OPENAI,
@@ -499,6 +500,8 @@ class _Job:
     total_s: float
     source: str
     recheck: RecheckBudget | None = None
+    klass: str = NORMAL
+    yield_check: Callable[[], Awaitable[None]] | None = None
 
 
 @dataclass
@@ -804,8 +807,10 @@ class AsrRouter:
     async def _chunk_on(
         self, engine: AsrEngineConfig, span: Span, job: _Job, rest: list[AsrEngineConfig]
     ) -> ChunkResult:
+        if job.yield_check is not None:
+            await job.yield_check()
         limiter = self._limiter(engine)
-        await limiter.acquire(job.priority)
+        await limiter.acquire(job.priority, job.klass)
         began = time.monotonic()
         try:
             if self._passed_over(engine, rest):
@@ -970,6 +975,8 @@ class AsrRouter:
         want_words: bool = True,
         expected_language: str | None = None,
         review: bool = True,
+        klass: str = NORMAL,
+        yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> ASRResult:
         """Transcribe `wav` through the chain.
 
@@ -1006,7 +1013,17 @@ class AsrRouter:
             return result
 
         with tempfile.TemporaryDirectory(prefix="asr-", dir=wav.parent) as scratch:
-            job = _Job(wav, language, want_words, priority, Path(scratch), total, str(wav))
+            job = _Job(
+                wav,
+                language,
+                want_words,
+                priority,
+                Path(scratch),
+                total,
+                str(wav),
+                klass=klass,
+                yield_check=yield_check,
+            )
             results = await gather_all([run(span, job) for span in spans])
             if review and self.cfg.asr_recheck:
                 results = await self._review(chain, spans, results, job, expected_language)

@@ -95,6 +95,7 @@ deadline_background_s = 120.0     # triage, tier-2 analysis, caption translation
 base_url = "http://127.0.0.1:11434/v1"
 max_concurrent = 2                # in-flight requests; interactive work is served before background
 reserved_interactive = 1          # slots background work may not use (capped at max_concurrent - 1)
+reserved_prime = 1                # slots normal work may not use, kept for prime users (capped at max_concurrent - 1); only with [classes] configured
 json_mode = false                 # true: send response_format json_object for triage/analysis
 
 # OpenAI itself. api_key_env names the env var holding the key (never the key itself).

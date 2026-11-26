@@ -15,7 +15,7 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -153,6 +153,7 @@ async def describe_scenes(
     progress: Callable[[float], None] | None = None,
     on_segment: Callable[[dict[str, Any]], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    yield_check: Callable[[], Awaitable[None]] | None = None,
 ) -> DescribingResult:
     """Describe every grid in order, resuming the seen segments of `existing_tdt`."""
     task = cfg.llm.cuts_vision
@@ -276,6 +277,11 @@ async def describe_scenes(
             )
         if progress is not None:
             progress(len(records) / max(1, len(plan.manifest)))
+        # A prime demanding job that arrived while this grid was described takes the slot next;
+        # stop after the grid, resume later. Describing is resumable per grid, so the paused
+        # build continues at the next one with the same stored TDT.
+        if yield_check is not None:
+            await yield_check()
     seen_count = len(analyses)
     unseen = len(plan.manifest) - seen_count
     partial = unseen > 0

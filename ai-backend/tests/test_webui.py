@@ -212,6 +212,8 @@ async def test_admin_creates_users_and_sets_passwords(env):
         "devices": 0,
         "sessions": 0,
         "admin_editable": True,
+        "prime": False,
+        "class": "normal",
     }
     login = await anon_client(env).post(
         "/v1/auth/login", json={"username": "newbie", "password": PASSWORD}

@@ -25,6 +25,7 @@ from typing import Any
 from .auth import Auth
 from .captions import events
 from .captions.jobs import JobQueue
+from .classes import NORMAL, PRIME, bind_class, highest, normalize_class, unbind_class
 from .config import WATCHED_MODES, Config, CutsConfig, LLMTask
 from .db import Database
 from .llm import INTERACTIVE, LLMClient, LLMError
@@ -141,6 +142,9 @@ def removal_summary(
     if preset_id == NO_FILLER_PRESET_ID:
         return f"Removed {cut_clock(removed_ms)} of filler, {percent} % of the video"
     return f"Removed {cut_clock(removed_ms)}, {percent} % of the video"
+
+
+ClassSource = str | Callable[[], str]
 
 
 CUT_SYSTEM = (
@@ -984,11 +988,18 @@ class CutService:
         self.auth, self.archive, self.gate = auth, archive, gate
         self._watched_running = 0
         self._user_running: dict[str, int] = {}
+        # Whether the build that holds the single watched slot for a request currently holds it:
+        # a normal build releases the slot while it yields to a prime build and re-acquires it, so
+        # the release in `_build`'s finally must not double-count a slot that was given up.
+        self._watched_held: dict[str, bool] = {}
         self.engine = CutEngine(cfg.cuts, lambda: cfg.llm.cuts, llm)
         self._tasks: dict[str, asyncio.Task] = {}
         # One build in flight per cache key: a second request with the same key waits on the
         # leader's future instead of calling the model again (shared builds, plan v2).
         self._inflight: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        # A shared build's class only rises: a prime request joining it makes the build prime,
+        # a normal request never lowers or raises a build.
+        self._build_class: dict[str, str] = {}
 
     def stored_tdt(self, video_id: str) -> dict[str, Any] | None:
         """The newest stored watched TDT for the admin job page; None when no description exists."""
@@ -1158,6 +1169,44 @@ class CutService:
                 status=429,
             )
 
+    async def _wait_for_prime(
+        self,
+        row: dict[str, Any],
+        trace: events.JobTrace,
+        klass: str | Callable[[], str] = NORMAL,
+        *,
+        release_slot_request_id: str | None = None,
+    ) -> bool:
+        """Pause a normal watched build while prime demanding work is queued or running.
+
+        With `release_slot_request_id` the build holds the single watched-build slot while it
+        waits: releasing it lets the prime build it yields to take that slot instead of blocking
+        on it forever, and the build re-acquires the slot afterwards. Describing is resumable per
+        grid (2.4), so the paused build continues at the next grid with the same stored TDT.
+        """
+        if (row.get("mode") or "quick") != "watched":
+            return False
+        job_id = row["job_id"]
+        current = klass if callable(klass) else (lambda: klass)
+        waited = False
+        while normalize_class(current()) != PRIME and self.jobs.class_gate.prime_active(job_id):
+            if not waited:
+                if release_slot_request_id is not None:
+                    self._release_watched(release_slot_request_id)
+                trace.emit(
+                    events.IN_LINE,
+                    events.INFO,
+                    reason="priority",
+                    progress=self._job_progress(job_id),
+                    message="Waiting for a priority job.",
+                )
+            waited = True
+            await asyncio.sleep(self.jobs.class_gate.poll_s)
+        if waited and release_slot_request_id is not None:
+            if not self._dismissed(release_slot_request_id):
+                await self._acquire_watched(release_slot_request_id, trace)
+        return waited
+
     def _validate_prompt(self, prompt: str | None) -> str | None:
         if prompt is None:
             return None
@@ -1232,6 +1281,7 @@ class CutService:
             if not await_prompt:
                 self._remember_request(existing)
             return existing
+        klass = self.jobs._class_for(user, None)
         if not await_prompt:
             self._check_cap(user)
         request_id = uuid.uuid4().hex[:12]
@@ -1240,13 +1290,14 @@ class CutService:
         title = self._meta(video_id).get("title")
         self.db.execute(
             "INSERT INTO jobs(id,user,video_id,lang,translate_to,status,progress,created_at,"
-            "updated_at,kind,title,priority) VALUES(?,?,?,'',NULL,'queued',0,?,?, 'cuts',?,?)",
-            [job_id, user, video_id, now, now, title, INTERACTIVE],
+            "updated_at,kind,title,priority,klass)"
+            " VALUES(?,?,?,'',NULL,'queued',0,?,?, 'cuts',?,?,?)",
+            [job_id, user, video_id, now, now, title, INTERACTIVE, klass],
         )
         self.db.execute(
             "INSERT INTO cut_requests(id,user,video_id,source,preset_id,prompt,state,job_id,"
-            "created_at,updated_at,mode,source_kind,source_key,force)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "created_at,updated_at,mode,source_kind,source_key,force,klass)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 request_id,
                 user,
@@ -1262,6 +1313,7 @@ class CutService:
                 "youtube",
                 f"youtube:{video_id}",
                 1 if force else 0,
+                klass,
             ],
         )
         origin = events.current_origin()
@@ -1272,6 +1324,7 @@ class CutService:
             {
                 "kind": "cuts",
                 "user": user,
+                "class": klass,
                 "client": source or (origin.client if origin else "server"),
                 "endpoint": origin.endpoint if origin else None,
                 "video_id": video_id,
@@ -1416,7 +1469,8 @@ class CutService:
             },
         }
         if row["state"] in BUILDING_STATES and row["job_id"]:
-            out["stage"] = self._last_stage(row["job_id"])
+            stage = self._last_stage(row["job_id"])
+            out["stage"] = stage
             if (row["mode"] or "quick") == "watched":
                 out["progress"] = float(row["progress"] or 0.0)
                 out["eta_s"] = self._eta(row)
@@ -1424,6 +1478,12 @@ class CutService:
                 progress = self._last_progress(row["job_id"])
                 if progress:
                     out["progress"] = progress
+            if stage == events.IN_LINE:
+                out["reason"] = "priority"
+                out["message"] = "Waiting for a priority job."
+                done = self._job_progress(row["job_id"])
+                if done is not None:
+                    out["progress"] = done
         if row["state"] == "failed" and (row["mode"] or "quick") == "watched":
             out["fallback"] = self._fallback(row)
         if row["state"] == "ready" and row["cut_key"]:
@@ -1515,6 +1575,10 @@ class CutService:
         if "done" not in detail or "of" not in detail:
             return None
         return {"done": int(detail["done"]), "of": int(detail["of"])}
+
+    def _job_progress(self, job_id: str) -> float | None:
+        row = self.db.one("SELECT progress FROM jobs WHERE id=?", [job_id])
+        return round(float(row["progress"]), 3) if row and row["progress"] is not None else None
 
     def get(self, request_id: str, user: str) -> dict[str, Any] | None:
         """One request for its owner, with the cut and the build report once it has them."""
@@ -1746,6 +1810,7 @@ class CutService:
             return False
         if self._watched_running < limit:
             self._watched_running += 1
+            self._watched_held[request_id] = True
             return True
         trace.emit(
             events.IN_LINE,
@@ -1757,11 +1822,15 @@ class CutService:
             if self._dismissed(request_id):
                 return False
         self._watched_running += 1
+        self._watched_held[request_id] = True
         return True
 
-    async def _acquire_user(self, request_id: str, user: str, trace: events.JobTrace) -> bool:
+    async def _acquire_user(
+        self, request_id: str, user: str, trace: events.JobTrace, klass: str = NORMAL
+    ) -> bool:
         """At most `max_active_per_user` builds per user run at once; the rest wait in line."""
-        limit = max(1, self.cfg.cuts.max_active_per_user)
+        class_cap = self.cfg.classes.for_class(klass).max_active_cuts
+        limit = max(1, min(self.cfg.cuts.max_active_per_user, class_cap))
         if self._user_running.get(user, 0) >= limit:
             trace.emit(
                 events.IN_LINE,
@@ -1778,13 +1847,22 @@ class CutService:
     def _release_user(self, user: str) -> None:
         self._user_running[user] = max(0, self._user_running.get(user, 0) - 1)
 
+    def _release_watched(self, request_id: str) -> None:
+        """Give back the watched-build slot this request currently holds, if any."""
+        if not self._watched_held.pop(request_id, False):
+            return
+        self._watched_running = max(0, self._watched_running - 1)
+
     async def _build(self, request_id: str) -> None:
         row = self._row(request_id)
         if row is None or row["state"] not in ("building", "needs_transcript"):
             return
         user = row["user"]
         if not await self._acquire_user(
-            request_id, user, events.JobTrace(row["job_id"], self.jobs.events)
+            request_id,
+            user,
+            events.JobTrace(row["job_id"], self.jobs.events),
+            normalize_class(row.get("klass")),
         ):
             return
         try:
@@ -1796,6 +1874,9 @@ class CutService:
         watched_slot = False
         if (row["mode"] or "quick") == "watched":
             trace = events.JobTrace(row["job_id"], self.jobs.events)
+            # Wait before taking the one slot: a normal build holding it would block the prime
+            # build it is waiting for.
+            await self._wait_for_prime(row, trace, row.get("klass") or NORMAL)
             watched_slot = await self._acquire_watched(request_id, trace)
             if not watched_slot:
                 return
@@ -1805,8 +1886,15 @@ class CutService:
         )
         trace = events.JobTrace(row["job_id"], self.jobs.events)
         token = events.bind(trace)
+        class_token = bind_class(row.get("klass"))
         try:
-            trace.emit(events.STARTED, events.OK, kind="cuts", video_id=row["video_id"])
+            trace.emit(
+                events.STARTED,
+                events.OK,
+                kind="cuts",
+                video_id=row["video_id"],
+                **{"class": normalize_class(row.get("klass"))},
+            )
             await self._run_build(row, trace)
         except asyncio.CancelledError:
             raise
@@ -1819,9 +1907,9 @@ class CutService:
             log.warning("cut %s failed", request_id, exc_info=True)
             self._fail(request_id, row["job_id"], "The cut could not be built; try again.")
         finally:
+            unbind_class(class_token)
             events.unbind(token)
-            if watched_slot:
-                self._watched_running = max(0, self._watched_running - 1)
+            self._release_watched(request_id)
 
     def _fail(self, request_id: str, job_id: str, message: str) -> None:
         row = self._row(request_id)
@@ -1854,7 +1942,19 @@ class CutService:
                 self.archive,
                 self.gate,
             )
-            doc, cache_key = await builder.build(self, request_id, row, trace)
+
+            # A watched build yields at the next grid while a prime demanding job waits; the
+            # yield drives the describing loop, so the build stops after the grid it is on. It
+            # gives up the single watched slot while waiting so the prime build it yields to can
+            # take it, then takes the slot back and continues at the next grid.
+            async def yield_check() -> None:
+                await self._wait_for_prime(
+                    row, trace, row.get("klass"), release_slot_request_id=request_id
+                )
+
+            doc, cache_key = await builder.build(
+                self, request_id, row, trace, yield_check=yield_check
+            )
             if not self._dismissed(request_id):
                 self._finish(request_id, row, cache_key, doc)
             return
@@ -1896,6 +1996,9 @@ class CutService:
             leader = self._inflight.get(cache_key)
             if leader is None:
                 break
+            self._build_class[cache_key] = highest(
+                self._build_class.get(cache_key, NORMAL), row.get("klass")
+            )
             events.emit(STAGE_MODEL, events.SKIPPED, reason="shared build")
             try:
                 doc = await asyncio.shield(leader)
@@ -1916,8 +2019,23 @@ class CutService:
         leader = asyncio.get_running_loop().create_future()
         leader.add_done_callback(lambda f: None if f.cancelled() else f.exception())
         self._inflight[cache_key] = leader
+        self._build_class[cache_key] = highest(
+            self._build_class.get(cache_key, NORMAL), row.get("klass")
+        )
+
+        def build_class() -> str:
+            return self._build_class.get(cache_key, normalize_class(row.get("klass")))
+
         try:
-            data, parts = await self.engine.pick_parts(units, chapters, meta, instruction, target_s)
+            await self._wait_for_prime(row, trace, build_class)
+            data, parts = await self.engine.pick_parts(
+                units,
+                chapters,
+                meta,
+                instruction,
+                target_s,
+                klass=build_class,
+            )
             with events.stage(STAGE_CHECKING):
                 # Presets that keep a small part by design (just the answer, the demo, the
                 # highlights) are never refused as "removes almost everything".
@@ -2007,6 +2125,7 @@ class CutService:
             raise
         finally:
             self._inflight.pop(cache_key, None)
+            self._build_class.pop(cache_key, None)
             if not leader.done():
                 leader.cancel()  # dismissed or gone without an answer: waiters build it themselves
         # A dismissed request stops here (dismiss already marked it and its job), but the
@@ -2122,7 +2241,9 @@ class CutService:
             self._meta(video_id).get("title"),
             priority=INTERACTIVE,
             force=forced,
+            klass=row.get("klass"),
         )
+        self.jobs.promote_transcript(video_id, row.get("klass"))
         deadline = time.monotonic() + self.cfg.cuts.transcript_wait_s
         while time.monotonic() < deadline:
             if self._dismissed(request_id):
@@ -2173,6 +2294,8 @@ class CutEngine:
         meta: dict[str, Any],
         instruction: str,
         target_s: int | None,
+        *,
+        klass: ClassSource = NORMAL,
     ) -> tuple[Any, list[Part]]:
         """The model's final answer and the parts to keep (before padding and the checks)."""
         if self.fits(units, chapters, meta, instruction, target_s):
@@ -2180,10 +2303,19 @@ class CutEngine:
             with events.stage(
                 STAGE_MODEL, model=task.model if task else "", units=len(units)
             ) as model_stage:
-                data, parts = await self._ask_parts(units, chapters, meta, instruction, target_s)
+                data, parts = await self._ask_parts(
+                    units, chapters, meta, instruction, target_s, klass=klass
+                )
                 model_stage.set(answer=json.dumps(data, ensure_ascii=False))
             return data, parts
-        return await self._map_reduce(units, chapters, meta, instruction, target_s)
+        return await self._map_reduce(
+            units,
+            chapters,
+            meta,
+            instruction,
+            target_s,
+            klass=klass,
+        )
 
     async def _ask_parts(
         self,
@@ -2194,6 +2326,7 @@ class CutEngine:
         target_s: int | None,
         *,
         candidates: list[Candidate] | None = None,
+        klass: ClassSource = NORMAL,
     ) -> tuple[Any, list[Part]]:
         """The model's answer as parts: one repair round for a broken answer and, with a target
         length, one retry that names the measured length when the answer is below the band.
@@ -2209,7 +2342,7 @@ class CutEngine:
             style = {"system": REDUCE_SYSTEM, "note": REDUCE_NOTE, "mark": CANDIDATES_MARK}
         for attempt in range(2 if target_s else 1):
             data, parts = await self._ask_parsed(
-                shown, chapters, meta, instruction, target_s, problem=problem, **style
+                shown, chapters, meta, instruction, target_s, problem=problem, klass=klass, **style
             )
             if candidates is not None:
                 parts = expand_candidate_parts(parts, candidates, units)
@@ -2242,18 +2375,26 @@ class CutEngine:
         *,
         problem: str | None = None,
         allow_empty: bool = False,
+        klass: ClassSource = NORMAL,
         **style: Any,
     ) -> tuple[Any, list[Part]]:
         """One question and its parsed answer; a broken answer gets one repair round."""
         data = await self._ask(
-            shown, chapters, meta, instruction, target_s, problem=problem, **style
+            shown, chapters, meta, instruction, target_s, problem=problem, klass=klass, **style
         )
         try:
             return data, parse_cut_answer(data, shown, allow_empty=allow_empty)
         except CutFormatError as exc:
             events.emit(STAGE_MODEL, events.WARN, problem=exc.problem, repair=1)
             data = await self._ask(
-                shown, chapters, meta, instruction, target_s, problem=exc.problem, **style
+                shown,
+                chapters,
+                meta,
+                instruction,
+                target_s,
+                problem=exc.problem,
+                klass=klass,
+                **style,
             )
             try:
                 return data, parse_cut_answer(data, shown, allow_empty=allow_empty)
@@ -2298,6 +2439,8 @@ class CutEngine:
         meta: dict[str, Any],
         instruction: str,
         target_s: int | None,
+        *,
+        klass: ClassSource = NORMAL,
     ) -> tuple[Any, list[Part]]:
         """A cut for a transcript too long for one request.
 
@@ -2305,7 +2448,8 @@ class CutEngine:
         the previous one) are each asked for ranked candidate parts, with the excerpt's share of
         the target length. Reduce: one call over the candidates picks the cut, with the same
         rank selection as a one-pass cut; candidates that do not fit one call are narrowed in
-        rounds first."""
+        rounds first. The map runs the excerpts together; a watched build yields between grids
+        instead, in the describing stage."""
         cfg = self.cfg
         chunks = self._plan_chunks(units, chapters, meta, instruction, target_s)
         total_s = sum(u.end - u.start for u in units) or 1.0
@@ -2319,7 +2463,7 @@ class CutEngine:
             share = max(1, round(target_s * core_s / total_s)) if target_s else None
             async with gate:
                 proposed[chunk.index] = await self._map_chunk(
-                    chunk, len(chunks), chapters, meta, instruction, share
+                    chunk, len(chunks), chapters, meta, instruction, share, klass=klass
                 )
             done += 1
             events.emit(STAGE_MAP, events.RUNNING, done=done, of=len(chunks))
@@ -2331,7 +2475,7 @@ class CutEngine:
             map_stage.set(candidates=len(cands))
         if not cands:
             raise CutRefused("Nothing was worth keeping, so there is no cut.")
-        return await self._reduce(cands, units, chapters, meta, instruction, target_s)
+        return await self._reduce(cands, units, chapters, meta, instruction, target_s, klass=klass)
 
     def _plan_chunks(
         self,
@@ -2363,6 +2507,8 @@ class CutEngine:
         meta: dict[str, Any],
         instruction: str,
         share: int | None,
+        *,
+        klass: ClassSource = NORMAL,
     ) -> list[Part]:
         """Candidate parts of one excerpt; a failed excerpt is asked once more, then the cut fails."""
         note = MAP_NOTE.format(i=chunk.index + 1, n=n)
@@ -2379,6 +2525,7 @@ class CutEngine:
                     allow_empty=True,
                     note=note,
                     scope="from this excerpt",
+                    klass=klass,
                 )
                 return parts
             except CutRefused as exc:
@@ -2402,6 +2549,8 @@ class CutEngine:
         meta: dict[str, Any],
         instruction: str,
         target_s: int | None,
+        *,
+        klass: ClassSource = NORMAL,
     ) -> tuple[Any, list[Part]]:
         """The final choice over the candidates; too many for one call are narrowed in rounds."""
         cfg = self.cfg
@@ -2415,7 +2564,7 @@ class CutEngine:
             if self._tokens(message) <= cfg.max_input_tokens:
                 with events.stage(STAGE_REDUCE, candidates=len(cands), rounds=rounds):
                     return await self._ask_parts(
-                        units, chapters, meta, instruction, target_s, candidates=cands
+                        units, chapters, meta, instruction, target_s, candidates=cands, klass=klass
                     )
             if rounds >= cfg.max_reduce_rounds:
                 raise CutRefused(
@@ -2423,7 +2572,7 @@ class CutEngine:
                 )
             rounds += 1
             narrowed = await self._reduce_round(
-                cands, units, chapters, meta, instruction, target_s, rounds
+                cands, units, chapters, meta, instruction, target_s, rounds, klass=klass
             )
             if not narrowed:
                 raise CutRefused("Nothing was worth keeping, so there is no cut.")
@@ -2442,6 +2591,8 @@ class CutEngine:
         instruction: str,
         target_s: int | None,
         round_no: int,
+        *,
+        klass: ClassSource = NORMAL,
     ) -> list[Candidate]:
         """One narrowing round: groups of candidates that fit a call each keep their best parts
         (with a target: the group's share of it, plus the usual over-ask)."""
@@ -2462,7 +2613,7 @@ class CutEngine:
                 _data, parts = await self._ask_parsed(
                     shown, chapters, meta, instruction, share,
                     allow_empty=True, system=REDUCE_SYSTEM, note=REDUCE_NOTE,
-                    mark=CANDIDATES_MARK,
+                    mark=CANDIDATES_MARK, klass=klass,
                 )  # fmt: skip
             kept = expand_candidate_parts(parts, group, units)
             if share and kept:
@@ -2486,8 +2637,10 @@ class CutEngine:
         note: str | None = None,
         scope: str = "in total",
         mark: str = UNITS_MARK,
+        klass: ClassSource = NORMAL,
     ) -> Any:
         """The model's parsed answer. One repair round when the ids break the rules."""
+        klass = klass() if callable(klass) else klass
         task = self.task()
         if task is None:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
@@ -2518,4 +2671,4 @@ class CutEngine:
                     "content": f"Your previous answer was rejected: {problem} {CUT_JSON_RULES}",
                 }
             )
-        return await self.llm.chat_json(task, messages, priority=INTERACTIVE)
+        return await self.llm.chat_json(task, messages, priority=INTERACTIVE, klass=klass)

@@ -350,6 +350,7 @@ class Transcription:
         priority: int = INTERACTIVE,
         trigger: dict[str, Any] | None = None,
         force: bool = False,
+        klass: str | None = None,
     ) -> dict[str, Any]:
         """Queue (or rejoin) the user's ASR transcript job for a video.
 
@@ -377,7 +378,7 @@ class Transcription:
                     429, "too many transcriptions queued, wait for one to finish"
                 )
             job = self.jobs.enqueue_transcript(
-                user, video_id, meta.get("title"), priority, trigger, force=force
+                user, video_id, meta.get("title"), priority, trigger, force=force, klass=klass
             )
         else:
             if force and not job["force"]:

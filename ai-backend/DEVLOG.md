@@ -1182,3 +1182,30 @@ Production steps (run by the coordinator after deploy; nothing here calls YouTub
 - `security.trusted_proxies` now defaults to loopback only; add a reverse proxy address
   explicitly (docs/server.md).
 - Version 0.2.0.
+## 2026-11-26 (P1 review r4 fixes: user classes)
+
+- Watched builds now yield to prime after their current grid. `describe_scenes` takes a
+  `yield_check` and runs it once per grid; `WatchedBuilder.build`/`_describe` thread it through,
+  and `CutService._run_build` drives it from `_wait_for_prime`. A running normal watched build
+  therefore stops after the grid it is on while a prime demanding job waits, and the prime build
+  takes the slot and runs before the normal one resumes with the same stored TDT (describing is
+  resumable per grid). Replaced the mocked-builder wait test with one that drives the real
+  describing loop (vision call mocked) and asserts the pause and that the prime build actually
+  runs and finishes, then the normal build resumes.
+- The watched yield no longer deadlocks. The single watched-build slot was held across the yield,
+  so a normal build yielding to a prime build held the slot the prime build needed and neither
+  finished. `_wait_for_prime` now releases the slot while a normal build waits and re-acquires it
+  afterwards (`_watched_held` tracks what a request currently holds so the finally does not
+  double-count); the prime build takes the freed slot and runs, then the normal build resumes.
+- Caption/transcript jobs yield the same way. The single caption worker ran a job to completion,
+  so a normal job yielding at an ASR-chunk boundary blocked the worker and the queued prime job
+  could never be claimed. `_yield_to_prime` now calls `ClassGate.yield_if_prime`, which raises
+  `JobYielded` instead of blocking; `JobQueue.run_one` puts the job back in the queue and returns,
+  so the worker claims the prime job first and re-claims the normal one once no prime work is
+  active. The job resumes from its saved state (its transcript and ASR cache are kept). Added a
+  test that runs a running normal caption job against a queued prime job.
+- `reserved_prime` only applies with `[classes]`: `Config.classes_configured` records whether the
+  section was loaded and `LLMClient.limiter` keeps the slot only then, so without `[classes]` the
+  route model is used exactly as before.
+- Removed the dead `yield_check` map-reduce path in `CutEngine` (watched builds never call
+  `pick_parts`); the yield now lives in the describing stage where it is reachable.

@@ -11,6 +11,7 @@ function userRow(user, reload) {
   const panel = h("div", {});
   const flags = [
     user.admin ? pill("admin", "ok") : null,
+    user.prime ? pill("prime", "ok") : pill("normal"),
     pill(user.has_password ? "password" : "no password", user.has_password ? "" : "warn"),
     pill(user.has_token ? "token" : "no token"),
     pill(user.devices + (user.devices === 1 ? " TV" : " TVs")),
@@ -52,6 +53,12 @@ function userRow(user, reload) {
     await reload();
   }
 
+  async function togglePrime() {
+    await api("/v1/users/" + encodeURIComponent(user.name), { method: "PUT", body: { prime: !user.prime } });
+    toast(user.name + (user.prime ? " is now normal" : " is now prime"));
+    await reload();
+  }
+
   return h(
     "div",
     { class: "job" },
@@ -64,6 +71,7 @@ function userRow(user, reload) {
       button("Password", passwordForm, { kind: "sec" }),
       button("Pairing code", pairing, { kind: "sec" }),
       user.admin_editable && user.name !== session.user ? button(user.admin ? "Remove admin" : "Make admin", toggleAdmin, { kind: "sec" }) : null,
+      user.admin_editable ? button(user.prime ? "Make normal" : "Make prime", togglePrime, { kind: "sec" }) : null,
     ),
     panel,
   );
@@ -73,6 +81,7 @@ function newUserCard(reload) {
   const name = textInput("", { placeholder: "name", maxlength: 32, autocomplete: "off" });
   const pw = textInput("", { type: "password", autocomplete: "new-password", maxlength: 512 });
   const adminSwitch = switchRow("Admin", "Can manage users and see every user's settings.", false);
+  const primeSwitch = switchRow("Prime", "Goes first for demanding work; normal users wait.", false);
   const msg = h("p", { class: "bad", text: "" });
   return card(
     "Add a user",
@@ -82,11 +91,12 @@ function newUserCard(reload) {
       field("Name", name, "Letters, digits, dot, dash and underscore."),
       field("Password (optional)", pw, "Without one the user can only sign in with a token or from a TV."),
       adminSwitch,
+      primeSwitch,
       msg,
       button("Create user", async () => {
         msg.textContent = "";
         try {
-          await api("/v1/users", { method: "POST", body: { name: name.value.trim(), password: pw.value || null, admin: adminSwitch.input.checked } });
+          await api("/v1/users", { method: "POST", body: { name: name.value.trim(), password: pw.value || null, admin: adminSwitch.input.checked, prime: primeSwitch.input.checked } });
           toast("User created");
           name.value = "";
           pw.value = "";
@@ -113,7 +123,7 @@ async function usersPage(view) {
         h("div", { class: "row" }, h("a", { class: "btn sec", href: "#/admin/archive", text: "Open the media archive" })),
         note("Every downloaded audio or video file, kept for reuse. Removing entries is manual."),
       ),
-      note("Users declared in config.toml keep their admin flag there. Tokens are created with `utubot user add`."),
+      note("Users declared in config.toml keep their admin and prime flags there. Tokens are created with `utubot user add`."),
     );
   }
   mount(view, host);

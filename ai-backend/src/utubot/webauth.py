@@ -22,6 +22,7 @@ from .auth import (
     check_user_name,
     normalize_user_name,
     set_user_admin,
+    set_user_prime,
     users_file_names,
 )
 from .config import Config, UserConfig
@@ -282,6 +283,8 @@ class WebAuth:
         return {
             "name": name,
             "admin": user.admin,
+            "prime": user.prime,
+            "class": user.klass,
             "has_password": self.has_password(name),
             "has_token": bool(user.token_sha256),
             "devices": len(self.auth.list_devices(name)),
@@ -295,23 +298,31 @@ class WebAuth:
             self.cfg.users_path
         )
 
-    def create_user(self, name: str, admin: bool, password: str | None) -> None:
+    def create_user(
+        self, name: str, admin: bool, password: str | None, prime: bool = False
+    ) -> None:
         check_user_name(name)
         folded = normalize_user_name(name)
         if any(normalize_user_name(n) == folded for n in self.auth.user_names()):
             raise PairError("user already exists", 409)
         if password is not None:
             self._check_strength(password)
-        append_user(self.cfg.users_path, name, "", admin=admin)
+        append_user(self.cfg.users_path, name, "", admin=admin, prime=prime)
         if self.auth.user_config(name) is None:
             raise PairError("could not create the user", 500)
         if password is not None:
             self.set_password(name, password)
 
     def set_admin(self, name: str, admin: bool) -> None:
+        self._set_role(name, set_user_admin, "admin", admin)
+
+    def set_prime(self, name: str, prime: bool) -> None:
+        self._set_role(name, set_user_prime, "prime", prime)
+
+    def _set_role(self, name: str, setter, field: str, value: bool) -> None:
         if self.auth.user_config(name) is None:
             raise PairError("unknown user", 404)
         if not self.admin_editable(name):
-            raise PairError("this user is declared in config.toml; change `admin` there", 409)
-        if not set_user_admin(self.cfg.users_path, name, admin):
+            raise PairError(f"this user is declared in config.toml; change `{field}` there", 409)
+        if not setter(self.cfg.users_path, name, value):
             raise PairError("unknown user", 404)

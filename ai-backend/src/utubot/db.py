@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS jobs(
   translate_to TEXT, status TEXT NOT NULL, progress REAL NOT NULL DEFAULT 0, error TEXT,
   created_at REAL NOT NULL, updated_at REAL NOT NULL, kind TEXT NOT NULL DEFAULT 'captions',
   title TEXT, finished_at REAL, attempts INTEGER NOT NULL DEFAULT 0, not_before REAL,
-  priority INTEGER NOT NULL DEFAULT 1);
+  priority INTEGER NOT NULL DEFAULT 1, klass TEXT NOT NULL DEFAULT 'normal');
 CREATE TABLE IF NOT EXISTS job_events(
   id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, ts REAL NOT NULL,
   stage TEXT NOT NULL, status TEXT NOT NULL, detail TEXT);
@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS cut_requests(
   updated_at REAL NOT NULL, finished_at REAL,
   mode TEXT NOT NULL DEFAULT 'quick', progress REAL,
   source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
-  release_duration_ms INTEGER, force INTEGER NOT NULL DEFAULT 0);
+  release_duration_ms INTEGER, force INTEGER NOT NULL DEFAULT 0,
+  klass TEXT NOT NULL DEFAULT 'normal');
 CREATE INDEX IF NOT EXISTS cut_requests_user ON cut_requests(user, created_at);
 CREATE INDEX IF NOT EXISTS cut_requests_video ON cut_requests(video_id);
 CREATE TABLE IF NOT EXISTS cuts(
@@ -150,6 +151,7 @@ JOB_COLUMNS = {
     "not_before": "REAL",
     "priority": "INTEGER NOT NULL DEFAULT 1",
     "force": "INTEGER NOT NULL DEFAULT 0",
+    "klass": "TEXT NOT NULL DEFAULT 'normal'",
 }
 POLICY_COLUMNS = {"version": "INTEGER NOT NULL DEFAULT 0", "updated_at": "REAL NOT NULL DEFAULT 0"}
 TRANSCRIPT_COLUMNS = {
@@ -179,6 +181,7 @@ CUTS_COLUMNS = {
     "release_key": "TEXT",
     "release_duration_ms": "INTEGER",
 }
+CUT_REQUEST_CLASS_COLUMNS = {"klass": "TEXT NOT NULL DEFAULT 'normal'"}
 METADATA_ONLY = "metadata_only"
 
 
@@ -210,6 +213,7 @@ class Database:
         self._add_missing_columns("media_archive", ARCHIVE_COLUMNS)
         self._add_missing_columns("cut_requests", CUT_REQUEST_COLUMNS)
         self._add_missing_columns("cuts", CUTS_COLUMNS)
+        self._add_missing_columns("cut_requests", CUT_REQUEST_CLASS_COLUMNS)
         # Rows written when a transcript could not be fetched: nothing may be built on a title alone.
         self._conn.execute("DELETE FROM transcripts WHERE source=?", [METADATA_ONLY])
         self._conn.execute("DELETE FROM summaries WHERE source=?", [METADATA_ONLY])
