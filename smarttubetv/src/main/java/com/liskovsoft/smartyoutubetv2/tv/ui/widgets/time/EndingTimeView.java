@@ -6,6 +6,7 @@ import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.TextView;
+import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
 import com.liskovsoft.sharedutils.helpers.DateHelper;
@@ -16,10 +17,15 @@ import com.liskovsoft.smartyoutubetv2.common.misc.TickleManager;
 import com.liskovsoft.smartyoutubetv2.common.misc.TickleManager.TickleListener;
 import com.liskovsoft.smartyoutubetv2.common.prefs.common.DataChangeBase.OnDataChange;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutController;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutTime;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.tv.R;
 
 @SuppressLint("AppCompatCustomView")
 public class EndingTimeView extends TextView implements TickleListener, OnDataChange {
+    /** Marks the time as the end of the playing cut rather than of the full video */
+    private static final String CUT_MARKER = "\u2702";
     private final Runnable mUpdateHandler = this::update;
     private TickleManager mTickleManager;
     private PlayerData mPlayerData;
@@ -88,9 +94,13 @@ public class EndingTimeView extends TextView implements TickleListener, OnDataCh
 
         if (getVisibility() == View.VISIBLE) {
             PlaybackView playbackView = PlaybackPresenter.instance(getContext()).getView();
-            long endingTimeMs = getEndingTimeMs(playbackView);
+            long cutRemainingMs = getCutRemainingMs(playbackView);
+            boolean cutTime = cutRemainingMs > 0;
+            long remainingTimeMs = applySpeedCorrection(cutTime ? cutRemainingMs : getFullRemainingMs(playbackView));
+            long endingTimeMs = remainingTimeMs > 0 ? System.currentTimeMillis() + remainingTimeMs : 0;
+            String text = endingTimeMs != 0 ? formatEndingTime(endingTimeMs, cutTime) : null;
 
-            setText(endingTimeMs != 0 ? String.format("%s %s", Helpers.HOURGLASS, DateHelper.toShortTime(endingTimeMs)) : null);
+            setText(text);
 
             // Paused or buffering, the ending time moves with the clock. Re-render it when its minute changes.
             // While playing it stands still, and the minute tick and the player events keep it current.
@@ -123,19 +133,39 @@ public class EndingTimeView extends TextView implements TickleListener, OnDataCh
         removeCallbacks(mUpdateHandler);
     }
 
-    private long getEndingTimeMs(PlaybackView playbackView) {
-        long remainingTimeMs = 0;
-
-        if (playbackView != null && playbackView.getVideo() != null && !playbackView.getVideo().isLive) {
-            remainingTimeMs = playbackView.getDurationMs() - playbackView.getPositionMs();
-            remainingTimeMs = applySpeedCorrection(remainingTimeMs);
-        }
-
-        if (remainingTimeMs == 0) {
+    /**
+     * The kept time left in the cut that plays, or 0 when no cut plays (none applied, its skipping off, or the playback is past its
+     * last kept part and the full video is on again).
+     */
+    private long getCutRemainingMs(PlaybackView playbackView) {
+        if (!hasPlayback(playbackView)) {
             return 0;
         }
 
-        return System.currentTimeMillis() + remainingTimeMs;
+        UtubotCutController cutController = PlaybackPresenter.instance(getContext()).getController(UtubotCutController.class);
+
+        if (cutController == null) {
+            return 0;
+        }
+
+        Cut cut = cutController.getPlayingCut();
+
+        return cut != null ? UtubotCutTime.remainingKeptMs(cut, playbackView.getPositionMs()) : 0;
+    }
+
+    private long getFullRemainingMs(PlaybackView playbackView) {
+        return hasPlayback(playbackView) ? playbackView.getDurationMs() - playbackView.getPositionMs() : 0;
+    }
+
+    private boolean hasPlayback(PlaybackView playbackView) {
+        return playbackView != null && playbackView.getVideo() != null && !playbackView.getVideo().isLive;
+    }
+
+    private String formatEndingTime(long endingTimeMs, boolean cutTime) {
+        String time = DateHelper.toShortTime(endingTimeMs);
+
+        return cutTime ? String.format("%s %s %s", Helpers.HOURGLASS, time, CUT_MARKER)
+                : String.format("%s %s", Helpers.HOURGLASS, time);
     }
 
     private long applySpeedCorrection(long timeMs) {

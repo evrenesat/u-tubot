@@ -133,6 +133,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         mVideo = item;
         showMenuCutLabel();
         updateCutSkipButton();
+        updateEndingTime();
 
         if (item != null && item.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
             UtubotManager.instance(getContext()).followCuts(item.videoId, this);
@@ -176,6 +177,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         }
 
         updateBadge();
+        updateEndingTime();
     }
 
     /**
@@ -483,6 +485,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         }
 
         updateCutSkipButton();
+        updateEndingTime();
         return true;
     }
 
@@ -544,6 +547,15 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
      */
     public boolean isCutActive() {
         return mCut != null;
+    }
+
+    /**
+     * The cut that plays: the applied cut while its skipping is on. With the skipping off the full video plays, even though the cut
+     * stays selected, so callers that follow the cut's time treat it as off.
+     */
+    @Nullable
+    public Cut getPlayingCut() {
+        return mSkipActive ? mCut : null;
     }
 
     /**
@@ -660,6 +672,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         mCut = null;
         showMenuCutLabel();
         updateCutSkipButton();
+        updateEndingTime();
 
         if (mVideo != null && mVideo.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
             noteLocalOff(mVideo.videoId);
@@ -697,6 +710,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         }
 
         updateBadge();
+        updateEndingTime();
     }
 
     /**
@@ -773,6 +787,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         if (mCut != null) {
             refreshCutLabel();
+            updateEndingTime();
         }
         updateBadge(); // a paused playback inside a cut-out keeps the badge and its countdown
 
@@ -833,6 +848,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         player.setPositionMs(destinationMs);
         updateBadge();
+        updateEndingTime();
     }
 
     private void updateBadge() {
@@ -924,6 +940,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         getPlayer().setPositionMs(toMs);
         showSkippedToast(fromMs, toMs - fromMs);
+        updateEndingTime();
     }
 
     /**
@@ -1189,6 +1206,18 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         player.setButtonState(R.id.action_utubot_cut_skip, mSkipActive ? PlayerUI.BUTTON_ON : PlayerUI.BUTTON_OFF);
         player.setCutSkipActive(mCut != null);
+    }
+
+    /**
+     * The hourglass follows the cut: the player recomputes its ending time from the cut when one plays and falls back to the full video
+     * when the cut is off, its skipping is off, or the playback is past its last part.
+     */
+    private void updateEndingTime() {
+        PlaybackView player = getPlayer();
+
+        if (player != null) {
+            player.updateEndingTime();
+        }
     }
 
     /**

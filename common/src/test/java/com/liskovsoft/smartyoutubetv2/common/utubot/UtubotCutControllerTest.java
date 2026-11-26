@@ -1191,6 +1191,7 @@ public class UtubotCutControllerTest {
         mController.open(video(VIDEO), 240_000);
 
         assertFalse(mController.cutSkipActive());
+        assertNull(mController.getPlayingCut());
     }
 
     /**
@@ -1208,10 +1209,12 @@ public class UtubotCutControllerTest {
         assertTrue(mController.toggle(cut));
         assertTrue(mController.isApplied(cut));
         assertEquals(PlayerUI.BUTTON_ON, mController.getButtonState());
+        assertNotNull(mController.getPlayingCut());
 
         assertTrue(mController.toggleSkipping());
         assertEquals(PlayerUI.BUTTON_OFF, mController.getButtonState());
         assertTrue(mController.isApplied(cut)); // the cut stays selected
+        assertNull(mController.getPlayingCut()); // the full video plays now, so the hourglass follows it
     }
 
     /**
