@@ -89,7 +89,7 @@ public final class SkinRegistry implements Skins.Provider {
         }
 
         Skins.setProvider(this);
-        apply(context, getPickedSkin(context));
+        apply(context, getEffectiveSkin(context));
     }
 
     public List<Skin> getSkins() {
@@ -113,6 +113,21 @@ public final class SkinRegistry implements Skins.Provider {
     @NonNull
     public Skin getPickedSkin(Context context) {
         return getSkin(MainUIData.instance(context).getSkinId());
+    }
+
+    /**
+     * The skin the device actually gets. On a large touch screen (a tablet) the leanback (classic) layout is unusable without a
+     * remote, so it is shown as the modern, touch-friendly skin instead; the stored choice is kept, so a TV still gets classic.
+     */
+    @NonNull
+    Skin getEffectiveSkin(Context context) {
+        Skin picked = getPickedSkin(context);
+
+        if (Tablets.isLargeTouchScreen(context) && picked.getId() == MainUIData.SKIN_CLASSIC) {
+            return getSkin(MainUIData.SKIN_MODERN);
+        }
+
+        return picked;
     }
 
     /**
@@ -151,7 +166,7 @@ public final class SkinRegistry implements Skins.Provider {
 
     @Override
     public void applyPickedSkin(Context context) {
-        Skin picked = getPickedSkin(context);
+        Skin picked = getEffectiveSkin(context);
 
         if (picked == getAppliedSkin()) {
             return;

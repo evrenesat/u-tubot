@@ -37,9 +37,13 @@
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
+    <!-- The same APK runs on a TV (leanback, D-pad) and on a tablet (touch): leanback is not required, so the installer and the
+         store offer it on touch devices too. The leanback library still declares it required; tools:node=replace lets this one
+         win, and the LAUNCHER category (not only LEANBACK_LAUNCHER) puts the icon on a tablet's home screen. -->
     <uses-feature
         android:name="android.software.leanback"
-        android:required="true" />
+        android:required="false"
+        tools:node="replace" />
 
     <!-- android:usesCleartextTraffic - allow HTTP traffic -->
     <!-- Alt cleartext options: https://stackoverflow.com/questions/45940861/android-8-cleartext-http-traffic-not-permitted -->
