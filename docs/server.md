@@ -104,7 +104,7 @@ key and its default is in `config.example.toml`.
 (`0`: no limit), `warn_frac` (`0.9`), `eviction` (`never`, the default, or `lru`, see [Media archive](#media-archive)) and
 `evict_protect_s` (`3600`).
 
-**`[transcripts]`**: `cache_ttl_s`, `no_captions_ttl_s` (default 3 days), `video_failure_ttl_s` (15 min), `empty_track_retry_s` (15 min), `meta_retry_s` (10 min), `fetch_timeout_s`, `default_language`, `cookies_file`
+**`[transcripts]`**: `cache_ttl_s`, `no_captions_ttl_s` (default 3 days), `video_failure_ttl_s` (15 min), `empty_track_retry_s` (15 min), `meta_retry_s` (10 min), `client_max_tracks` (10), `client_max_track_bytes` (2 MiB; caption tracks a client uploads), `fetch_timeout_s`, `default_language`, `cookies_file`
 (only if YouTube blocks the host), `skip_if_longer_than_s`. (`max_concurrency` is gone: `[youtube] max_concurrent` replaces it;
 an old entry is ignored.)
 
@@ -188,7 +188,7 @@ still worked, now it only pauses caption fetches.
   arrive), so a 20 minute download never stalls an interactive metadata or caption fetch. A video that yt-dlp reports as live or
   longer than `captions.max_duration_s` (3 h) is refused from the real info before anything is downloaded, and audio larger than
   `captions.max_download_bytes` is skipped.
-- **Fewer fetches.** A transcript is fetched at most once per `transcripts.cache_ttl_s` (30 days), concurrent requests share one fetch,
+- **Fewer fetches.** Clients upload the caption tracks they already hold (`POST /v1/videos/{id}/captions/client`, stored like a fetch with `origin = client`), so a watched video usually needs no yt-dlp request. A transcript is fetched at most once per `transcripts.cache_ttl_s` (30 days), concurrent requests share one fetch,
   and "this video has no captions" is remembered for `transcripts.no_captions_ttl_s` (3 days, then checked again). The second tier
   (inflation and answer analysis) runs only for videos with a title question or a clickbait score above
   `assess.tier2_clickbait_threshold`, at most `assess.tier2_daily_cap_per_user` (30) per user per day, only while the breaker is

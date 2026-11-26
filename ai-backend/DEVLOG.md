@@ -1,3 +1,13 @@
+## 2026-11-26 (client caption upload, issue 149)
+
+- `POST /v1/videos/{id}/captions/client` takes the tracks a client already has (json3, srv3, vtt; at most 10 of 2 MiB, configurable),
+  picks one like the server's own fetch does and stores it in `transcripts` with the new nullable `origin = client` column. An
+  automatic upload never replaces a fresh manual copy or an ASR transcript; real captions clear the no-captions and failure holds and
+  end the wait of a fetch sitting in the gate (`TranscriptService._await_fetch`), so cuts and summaries pick it up at once. The
+  server's fetch path already prefers a fresh stored copy, and a queued fetch stands down when a client copy lands. New srv3 parser.
+- TV: `UtubotClientCaptions` uploads the original-language and user-language tracks once per video per session. The extension has no
+  caption track to send yet (`ai/CONTRACT.md`, Clients).
+
 ## 2026-11-24 (UTB-25 watched cuts, backend checkpoints 1-4)
 
 1. **Modes.** `[cuts] default_mode` / `UserPolicy.cut_mode` (per-user `cuts.cut_mode`, read-only on the TV, changed in the web

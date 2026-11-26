@@ -86,6 +86,9 @@ host anywhere, import by URL (short links followed, 256 KiB cap).
 
 ## Captions
 
+Clients that already hold YouTube's caption tracks (the TV player) upload them with `POST /v1/videos/ID/captions/client`; they are stored like
+a fetch (marked `origin = client`) and the server's own yt-dlp request is skipped. Limits: `[transcripts] client_max_tracks` / `client_max_track_bytes`.
+
 `POST /v1/videos/ID/captions` queues a persisted job: yt-dlp audio, ffmpeg 16 kHz mono, ASR,
 optional diarization, segmentation (42 chars x 2 lines, 1-7 s), WebVTT with `[S1]` prefixes.
 Jobs survive restarts. Needs `ffmpeg` on PATH.

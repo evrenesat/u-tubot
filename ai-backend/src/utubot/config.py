@@ -173,6 +173,14 @@ class TranscriptConfig(BaseModel):
     default_language: str = "en"
     cookies_file: str | None = None
     skip_if_longer_than_s: int = 4 * 3600
+    client_max_tracks: int = Field(10, ge=1)  # caption tracks one client upload may carry
+    client_max_track_bytes: int = Field(2 * 1024 * 1024, ge=1)  # timed text of one uploaded track
+    client_body_slack_bytes: int = Field(64 * 1024, ge=0)  # JSON framing around the track bodies
+
+    @property
+    def client_max_body_bytes(self) -> int:
+        """The request cap of a client caption upload: every track at its limit, plus framing."""
+        return self.client_max_tracks * self.client_max_track_bytes + self.client_body_slack_bytes
 
 
 class SummaryConfig(BaseModel):

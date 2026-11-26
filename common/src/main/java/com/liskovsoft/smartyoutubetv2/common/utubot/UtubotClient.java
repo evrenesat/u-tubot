@@ -59,6 +59,7 @@ public class UtubotClient {
     private static final int WRITE_TIMEOUT_SEC = 10;
     private static final int LONG_POLL_SLACK_MS = 10_000;
     private static final int IMPORT_TIMEOUT_MS = 30_000;
+    private static final int CLIENT_CAPTIONS_TIMEOUT_MS = 30_000;
     private static final int MAX_ERROR_CHARS = 120;
     private static final int CHUNK_BYTES = 4096;
     private static final long MAX_SETUP_BYTES = 64 * 1024;
@@ -303,6 +304,31 @@ public class UtubotClient {
 
     public Captions captions(String videoId) throws IOException {
         return parse(() -> UtubotParser.parseCaptions(send(builder("/videos/" + videoId + "/captions", true), 0)));
+    }
+
+    /**
+     * Gives the backend the caption tracks the player already holds (`POST /v1/videos/{id}/captions/client`), so it need not fetch them
+     * from YouTube itself. Answers whether the backend kept them.
+     */
+    public boolean uploadCaptions(String videoId, List<UtubotModels.ClientCaptionTrack> tracks) throws IOException {
+        JSONArray array = new JSONArray();
+
+        try {
+            for (UtubotModels.ClientCaptionTrack track : tracks) {
+                array.put(new JSONObject()
+                        .put("lang", track.lang)
+                        .put("kind", track.kind)
+                        .put("name", track.name)
+                        .put("format", track.format)
+                        .put("body", track.body)
+                        .put("original", track.original));
+            }
+        } catch (JSONException e) {
+            throw new IOException(e);
+        }
+
+        return parse(() -> new JSONObject(send(builder("/videos/" + videoId + "/captions/client", true)
+                .post(json(new JSONObject().put("tracks", array))), CLIENT_CAPTIONS_TIMEOUT_MS)).optBoolean("stored"));
     }
 
     //region Director's cuts
