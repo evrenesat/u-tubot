@@ -35,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 
 import okhttp3.Call;
+import okhttp3.ConnectionPool;
 import okhttp3.Dns;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
@@ -51,6 +52,10 @@ public class UtubotClient {
     public static final String API_PREFIX = "/v1";
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private static final int CONNECT_TIMEOUT_SEC = 5;
+    // Idle connections are dropped before the server's keep-alive (75 s) closes them, so a
+    // request never lands on a dead connection ("unexpected end of stream").
+    private static final int POOL_MAX_IDLE = 5;
+    private static final int POOL_KEEP_ALIVE_SEC = 30;
     private static final int WRITE_TIMEOUT_SEC = 10;
     private static final int LONG_POLL_SLACK_MS = 10_000;
     private static final int IMPORT_TIMEOUT_MS = 30_000;
@@ -69,6 +74,7 @@ public class UtubotClient {
             .writeTimeout(WRITE_TIMEOUT_SEC, TimeUnit.SECONDS)
             .readTimeout(DEFAULT_READ_TIMEOUT_SEC, TimeUnit.SECONDS)
             .retryOnConnectionFailure(false)
+            .connectionPool(new ConnectionPool(POOL_MAX_IDLE, POOL_KEEP_ALIVE_SEC, TimeUnit.SECONDS))
             .build();
 
     /**

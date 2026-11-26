@@ -8,6 +8,7 @@ data_dir = "/var/lib/utubot"          # SQLite db, users.toml, media scratch (de
 app_dir = "/var/lib/utubot/app"       # APKs + update.json served without auth under /app/ (dev: "./app")
 public_base_url = "https://utubot.example.com"   # example; default http://127.0.0.1:8790; the public URL of this server: used in /setup.json and APK download URLs
 # users_file = "/var/lib/utubot/users.toml"   # token hashes written by `utubot user add`
+# keep_alive_s = 75            # idle connections stay open this long; above the TV client's 30 s
 
 [security]
 # Peers allowed to set X-Forwarded-For. The real client is the right-most entry that is not
