@@ -433,6 +433,13 @@ keeps the real per-preset length on screen) plus backend (`cuts.py`: cap no-targ
 the video and trim by rank, log kept/removed seconds per excerpt, supersede and requeue the near-full cuts made before the
 algorithm). This note is the extension's side of the parity box for that pull request.
 
+The "skim the film" cut (UTB-223: a built-in preset that keeps the story beat by beat to about half a film's length) is a
+backend-only change on the wire. The cut picker already offers every preset the server lists, so `cut-skim-film` ("Skim the film")
+appears in the extension's "Cut" tab and chip menu without a matrix row change, and it runs in the viewer's chosen mode: `quick`
+from the timed transcript, or `watched` when picked for the vision pass. The fraction target is a backend computation; the cut
+document still carries the effective `target_s` and the real `kept_ms`, which the extension reads for the label length. No
+`extension/` file and no matrix row change were needed; this note is the extension's side of the parity box for that pull request.
+
 ## 4. Architecture
 
 ```

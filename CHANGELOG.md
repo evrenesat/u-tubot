@@ -7,6 +7,9 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 ## Unreleased
 
+- New: a "Skim the film" cut keeps the story beat by beat — the scene's best moments, in order, no cut mid-shot or mid-sentence — to
+  about half a film's length. It runs from the timed transcript, or from a picture pass when you pick "Watched" for it, and falls back
+  to speech recognition when the film has poor or no captions.
 - Fixed: the Updates list and release notes are short plain lines instead of long commit text.
 - AI verdicts and summaries that are ready survive a restart of the app: the TV keeps them on its own storage for 3 days, scoped by the
   backend address, the user's token and the backend's version, so the rows and the summary panel do not ask the backend again. Only ready

@@ -7,6 +7,25 @@
   or fails. The TV's cut picker shows that message. The `youtube_forbidden` usage metric counts refusals per day.
 - Migration: none (the metric is a row in the existing `usage_daily`). Tests: `test_youtube_retry.py`, three in `test_cuts_api.py`.
 
+## 2026-11-26 (UTB-223 the "skim the film" cut, a fraction target)
+
+- New built-in cut preset `cut-skim-film` ("Skim the film"): it keeps the story beat by beat — the scene's best moments, in order,
+  no cut mid-shot or mid-sentence — to about half the film's length, inferred from the scenes themselves. It has no description (the
+  preset infers the story), and it runs in either mode: `quick` from the timed transcript, or `watched` when the viewer picks it for
+  the vision pass. It is offered like the other built-in presets (`GET /v1/videos/{id}/cuts`).
+- Fraction target: a built-in preset can target a fraction of the video instead of a fixed length (`[cuts] preset_target_frac`,
+  `0 < f < 1`, validated). Its target is `duration_s * f`, applied after `preset_target_s` and only when the video is long enough to
+  fall outside the band, so `target_s` in the cut document is the effective fraction target. `cut-skim-film` defaults to `0.5`.
+- Film-length handling: the film preset is a film-length cut, so for a film too long for one request the map/reduce path limits it to
+  `[cuts] map_max_keep_frac` of the video (the model still picks), and it builds from any timed transcript — auto captions, an ASR
+  transcript when the film has poor or no captions, or the download.
+- Docs: `ai/CONTRACT.md` (Director's cuts addendum: the fraction target and the film preset), `CHANGELOG.md` (Unreleased), and
+  `config.example.toml` (documents `preset_target_frac`).
+- Tests: `tests/test_cuts_skim_film.py` (the preset, its scene instruction, the fraction target, validation of the fraction range,
+  a build to half the film's length, and a build from an ASR transcript). Updated `test_cuts.py`, `test_cuts_api.py`, `test_glance.py`
+  to list the new preset. Full suite green (the two `test_watch_*` collection errors and the pre-existing `watched`-extra assertion
+  are unrelated to this change).
+
 ## 2026-11-26 (voice control checkpoint 1: consent, history, contract; issues #188, #181)
 
 - `[voice] enabled` (default `false`, `VoiceConfig`): with it off the voice routes answer 404, `/v1/me` only gains `features.voice = false`,

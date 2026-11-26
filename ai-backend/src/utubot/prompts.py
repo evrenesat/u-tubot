@@ -78,6 +78,7 @@ PRETTY_CUT_LABELS = {
     "answer": "Just the answer",
     "demo": "Only the demo",
     "highlights-5": "Highlights in 5 min",
+    "skim-film": "Skim the film",
 }
 CUT_PRESET_INSTRUCTIONS = {
     "no-filler": (
@@ -85,6 +86,14 @@ CUT_PRESET_INSTRUCTIONS = {
         "plugs, 'like and subscribe' asks, sponsor segments and ads read aloud, dead air, "
         "repetition and small talk that adds nothing. Keep the substance from start to finish, "
         "in the original order."
+    ),
+    "skim-film": (
+        "Skim the film: follow the story beat by beat and keep the best scenes, scene by scene, "
+        "to about half the film's length. Keep the narrative arc and the strongest moments across "
+        "the whole runtime, in order — the key turns, the revelations, the quiet beats that "
+        "matter — not only the loudest highlights. Cut at scene and sentence boundaries, never "
+        "mid-shot or mid-sentence; drop repeats, dead patches, filler and tangents that do not "
+        "move the story forward."
     ),
     "answer": (
         "Keep only what directly answers what the title promises or asks — the reveal, the "
@@ -359,6 +368,7 @@ BUILTIN_SET = PromptSet(
         cut_preset_prompt("answer"),
         cut_preset_prompt("demo"),
         cut_preset_prompt("highlights-5"),
+        cut_preset_prompt("skim-film"),
     ],
 )
 

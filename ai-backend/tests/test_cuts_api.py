@@ -333,6 +333,7 @@ class TestCreateAndBuild:
             "Just the answer",
             "Only the demo",
             "Highlights in 5 min",
+            "Skim the film",
         ]
         r = await post_cut(cuts_env, preset="cut-no-filler")
         await wait_ready(cuts_env, r.json()["request_id"])
