@@ -5,6 +5,14 @@
   install shows nothing). The release notes fall back to their text, not a QR code, when the device has no WebView. QR codes remain only
   where the purpose is opening an address on a phone (release page, About links, the cut request sheet). Not built here: Gradle runs in CI.
 
+## 2026-11-26 (UTB-146 r2: parity box for the no-target map/reduce cut cap)
+
+- The long-video cut cap fix changes `ai/CONTRACT.md` and `common/utubot/` but no `extension/` file or the browser-extension plan,
+  so the `parity-box` check failed. The no-target map/reduce cap is a backend cut-build behaviour only: the wire contract is
+  unchanged and the extension reads `kept_ms` as before, so no extension change is needed (the TV keeps the real per-preset length
+  on screen). Added the extension's side of the parity box to `ai/BROWSER_EXTENSION_PLAN.md` so the check passes; backend tests
+  green (1298), ruff clean.
+
 ## 2026-11-24 (director's cuts: Quick/Watched backend)
 
 - Backend now serves two cut modes: Quick stays transcript-only and the default; Watched is an opt-in picture path that stores a
