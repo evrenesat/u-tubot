@@ -18,6 +18,7 @@ from utubot.cuts import (
     expand_candidate_parts,
     finalize_parts,
     keep_guards,
+    keep_guards_for,
     merge_candidates,
     parse_chapters,
     parse_cut_answer,
@@ -298,6 +299,16 @@ class TestFinalize:
         assert keep_guards("cut-highlights-5") == (False, False)
         assert keep_guards(None) == (False, True)
         assert keep_guards("cut-mine-abc") == (False, False)
+
+    def test_a_targeted_cut_defers_to_the_band_not_the_keep_guard(self):
+        # With a target length the band decides what is acceptable, so neither guard fires,
+        # whatever the preset. Without one, the preset's guards from keep_guards apply.
+        assert keep_guards_for(None, 300) == (False, False)
+        assert keep_guards_for("cut-no-filler", 300) == (False, False)
+        assert keep_guards_for("cut-highlights-5", 300) == (False, False)
+        assert keep_guards_for(None, None) == (False, True)
+        assert keep_guards_for("cut-no-filler", None) == (True, False)
+        assert keep_guards_for("cut-answer", None) == (False, False)
 
 
 class TestDocument:

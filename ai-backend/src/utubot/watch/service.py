@@ -28,6 +28,7 @@ from ..cuts import (
     CutRefused,
     cut_document,
     finalize_parts,
+    keep_guards_for,
     parse_chapters,
     parse_cut_answer,
     select_for_target,
@@ -459,8 +460,7 @@ class WatchedBuilder:
             stage_holder.set(parts=len(parts), scenes=len(scenes))
         with events.stage(STAGE_CHECKING) as stage_holder:
             snapped = snap_parts(parts, plan.scene_cuts, units, watched.snap_s)
-            guard = target_s is None and not (preset_id or "").endswith("highlights-5")
-            guard_max = guard and preset_id is None
+            guard, guard_max = keep_guards_for(preset_id, target_s)
             kept, _kept_s = finalize_parts(
                 snapped,
                 self.cfg.cuts,

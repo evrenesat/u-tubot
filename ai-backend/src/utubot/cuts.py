@@ -919,6 +919,19 @@ def keep_guards(preset_id: str | None) -> tuple[bool, bool]:
     return preset_id == "cut-no-filler", preset_id is None
 
 
+def keep_guards_for(preset_id: str | None, target_s: int | None) -> tuple[bool, bool]:
+    """(min_guard, max_guard) of a request: the preset decides, but a length-targeted cut
+    defers to the band, not the keep guard, so it may keep little or much.
+
+    Both the TV and the watched build take the preset's guards from `keep_guards`; a cut built
+    for a target length is governed by the accepted band instead.
+    """
+    min_guard, max_guard = keep_guards(preset_id)
+    if target_s is not None:
+        min_guard, max_guard = False, False
+    return min_guard, max_guard
+
+
 def finalize_parts(
     parts: list[Part],
     cfg,
@@ -1989,11 +2002,7 @@ class CutService:
         try:
             data, parts = await self.engine.pick_parts(units, chapters, meta, instruction, target_s)
             with events.stage(STAGE_CHECKING):
-                min_guard, max_guard = keep_guards(preset_id)
-                if target_s is not None:
-                    # A length-targeted cut is allowed to keep little or much; the band,
-                    # not the keep guard, decides what is acceptable.
-                    min_guard = max_guard = False
+                min_guard, max_guard = keep_guards_for(preset_id, target_s)
                 parts, _kept_s = finalize_parts(
                     parts,
                     self.cfg.cuts,
