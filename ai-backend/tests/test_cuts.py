@@ -27,6 +27,7 @@ from utubot.cuts import (
     split_candidates,
     target_band,
     transcript_hash,
+    trim_to_cap,
     unit_line,
 )
 from utubot.prompts import BUILTIN_SET, TASK_CUTS, Prompt, PromptStore
@@ -645,6 +646,30 @@ def long_units(n: int, seconds: float = 10.0) -> list[Unit]:
     return [
         Unit(i + 1, i * seconds, (i + 1) * seconds, f"Sentence number {i + 1}.") for i in range(n)
     ]
+
+
+class TestKeepCap:
+    def test_a_single_huge_part_is_trimmed_not_dropped(self):
+        units = eleven_minute_units()
+        parts = ranked(units, [(1, 66, 1)])  # the whole 11 min as one part
+        kept = trim_to_cap(parts, units, CFG, 300)
+        assert len(kept) == 1
+        assert kept[0].end_ms - kept[0].start_ms <= 300_000 + int(
+            (CFG.pad_before_s + CFG.pad_after_s) * 1000
+        )
+        assert kept[0].first == 1 and kept[0].last < 66
+
+    def test_a_cut_under_the_cap_is_returned_whole(self):
+        units = eleven_minute_units()
+        parts = ranked(units, [(1, 6, 1), (11, 16, 2)])
+        assert trim_to_cap(parts, units, CFG, 300) == parts
+
+    def test_the_lowest_ranked_parts_go_first(self):
+        units = eleven_minute_units()
+        parts = ranked(units, [(1, 6, 1), (11, 16, 2), (21, 26, 3), (31, 36, 4)])
+        kept = trim_to_cap(parts, units, CFG, 130)
+        assert {p.rank for p in kept} == {1, 2}
+        assert [p.start_ms for p in kept] == sorted(p.start_ms for p in kept)
 
 
 class TestChunks:

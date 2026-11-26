@@ -12,6 +12,14 @@
   install shows nothing). The release notes fall back to their text, not a QR code, when the device has no WebView. QR codes remain only
   where the purpose is opening an address on a phone (release page, About links, the cut request sheet). Not built here: Gradle runs in CI.
 
+## 2026-11-26 (UTB-146 r2: parity box for the no-target map/reduce cut cap)
+
+- The long-video cut cap fix changes `ai/CONTRACT.md` and `common/utubot/` but no `extension/` file or the browser-extension plan,
+  so the `parity-box` check failed. The no-target map/reduce cap is a backend cut-build behaviour only: the wire contract is
+  unchanged and the extension reads `kept_ms` as before, so no extension change is needed (the TV keeps the real per-preset length
+  on screen). Added the extension's side of the parity box to `ai/BROWSER_EXTENSION_PLAN.md` so the check passes; backend tests
+  green (1298), ruff clean.
+
 ## 2026-11-24 (director's cuts: Quick/Watched backend)
 
 - Backend now serves two cut modes: Quick stays transcript-only and the default; Watched is an opt-in picture path that stores a
@@ -97,6 +105,15 @@
   menu still switches it or turns it off.
 - Tests: backend `TestCutChoice` (chosen wins, last used, no ready for the last preset, several ready in any order, typed choice, off),
   TV follower/controller/parser/client cases. Extension parity row `cut-mode-watched`.
+
+## 2026-11-25 (long-video cuts keep almost everything, issue 125)
+
+- A long video cut by map/reduce no longer keeps nearly all of itself when the preset has no target length: each
+  excerpt applies the task locally, a no-target build is capped at `[cuts] map_max_keep_frac` (default 0.90) and the
+  highest-ranked parts are kept, and the TV picker still shows each cut's own length.
+- Old bad cuts are repaired once on server start (or `utubot cuts repair`): the affected request and cut row are
+  superseded and the same user, video and preset are queued again with the current algorithm version. The map and
+  reduce job events now log what each excerpt kept and removed.
 
 ## 2026-11-25 (a failed cut retries; no-filler keeps nearly all, issue 99)
 

@@ -117,7 +117,8 @@ CREATE TABLE IF NOT EXISTS cuts(
   json TEXT NOT NULL, duration_s REAL, kept_s REAL, created_at REAL NOT NULL,
   mode TEXT NOT NULL DEFAULT 'quick',
   source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
-  release_duration_ms INTEGER);
+  release_duration_ms INTEGER,
+  algo_version INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS cuts_video ON cuts(video_id);
 CREATE TABLE IF NOT EXISTS video_scenes(
   cache_key TEXT PRIMARY KEY, video_id TEXT NOT NULL,
@@ -188,6 +189,7 @@ CUTS_COLUMNS = {
     "source_key": "TEXT",
     "release_key": "TEXT",
     "release_duration_ms": "INTEGER",
+    "algo_version": "INTEGER NOT NULL DEFAULT 0",
 }
 CUT_REQUEST_CLASS_COLUMNS = {"klass": "TEXT NOT NULL DEFAULT 'normal'"}
 CUT_REQUEST_MODE_COLUMNS = {

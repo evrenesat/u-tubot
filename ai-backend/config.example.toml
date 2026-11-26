@@ -202,6 +202,7 @@ max_tokens = 2000
 # short_presets = ["cut-answer", "cut-demo", "cut-highlights-5"]   # short by design: never refused for that
 # max_keep_frac = 0.95             # a typed prompt without a target keeping more is refused
 #                                  # ("nothing to cut"); named presets have no upper guard
+# map_max_keep_frac = 0.9          # on a long video cut by map/reduce, a preset with no target keeps at most this share
 # max_active_per_user = 2          # cuts building at the same time per user; more wait in line
 # max_queued_per_user = 100        # only a runaway queue beyond this is refused
 # default_wait_ms = 3000           # a cuts GET waits this long for a build before answering
@@ -210,6 +211,9 @@ max_tokens = 2000
 # length_tolerance = 0.15          # a preset with a target length keeps target +/- this fraction
 # over_ask_frac = 0.2              # the model is asked for this much more than the target
 # preset_target_s = { "cut-highlights-5" = 300 }   # target kept seconds per preset id
+# repair_near_full_frac = 0.9      # repair: an old map/reduce cut with no target that kept more is rebuilt once
+# repair_min_duration_s = 1800     # ... when its transcript is gone, treat a video this long as map/reduce
+# repair_on_start = true           # run the repair when the server starts (idempotent); `utubot cuts repair` also does it
 # poll_s = 2.0                     # queue and state polling interval
 # max_report_chars = 4000          # cut report text shown in the app
 # release_duration_tolerance_ms = 2000  # cached cut's duration may differ from the video by this

@@ -110,6 +110,24 @@
 - Verified: `uv run ruff check`, `uv run ruff format --check`, `uv run pytest -q` (1287 passed, the two `test_watch_*`
   collection errors are a pre-existing missing `Pillow` optional extra, unrelated to this change).
 
+## 2026-11-25 (long videos: no-target cuts keep almost everything, issue 125)
+
+- Problem: a long video goes through map/reduce; with a preset that has no target length (`cut-demo`, a saved
+  preset) each excerpt proposed all of itself and the reduce kept every candidate, so the cut kept ~99 % and the
+  upper keep guard did not apply to named presets.
+- `cuts.py`: the map note now asks each excerpt to apply the task locally, not to propose every part that fits. A
+  no-target map/reduce build has a hard maximum, `[cuts] map_max_keep_frac` (default 0.90): each excerpt is trimmed
+  to its share and the final choice is trimmed at unit boundaries, keeping the highest-ranked parts. A target cut is
+  unchanged. Every `map` event now records the excerpt's kept/removed seconds and part count; the `reduce` event
+  records kept seconds and the target or cap.
+- Repair: `cuts.algo_version` (additive, default 0) remembers the build algorithm. `CutService.start()` (unless
+  `repair_on_start` is false) and `utubot cuts repair [--dry-run]` find older cuts on the map/reduce path with no
+  target that kept over `repair_near_full_frac` (0.90), supersede their requests and rows, and queue the same user,
+  video and preset or prompt again. A rebuilt cut carries the current version, so it is not repaired twice.
+- Tests: `test_cuts_longvideo.py` (100-minute fixture, over-inclusive model, preset and typed prompt stay under 95 %,
+  configurable cap, per-excerpt log), `test_cuts.py` (cap trimming), `test_cuts_repair.py` (dry run, targeted/small/
+  current cuts left alone, requeue once, orphan cut), `UtubotCutsParserTest` (each ready preset keeps its own length).
+
 ## 2026-11-25 (Tailscale Serve sign-in, UTB-105)
 
 - New optional `[auth]` section: `tailscale_identity` (default off) and `tailscale_users` (tailnet login to local user;

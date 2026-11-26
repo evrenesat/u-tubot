@@ -516,12 +516,24 @@ the video facts). `GET|PUT|DELETE /v1/cut-channels` edit them.
   100k-token alias; a small local model needs a lower one). A longer transcript is cut by
   map/reduce: excerpts of at most `map_chunk_tokens` (starting on chapter boundaries where
   there are chapters, `map_overlap_units` shared with the previous excerpt) are asked in parallel
-  (`map_parallel`, further capped by the provider's limiter) for ranked candidate parts with
-  their share of the target length; one final call over the candidates (id, time range, label,
-  rank, `reduce_excerpt_chars` of text) picks the cut with the usual rank selection. Candidates
-  that do not fit one call are narrowed in rounds (`max_reduce_rounds`). A failed excerpt is
-  retried once, then the cut fails naming the part. Typed prompts keep their meaning: the map
-  collects candidates for the prompt, the reduce applies it.
+  (`map_parallel`, further capped by the provider's limiter) to apply the task to their own text,
+  with their share of the target length; one final call over the candidates (id, time range,
+  label, rank, `reduce_excerpt_chars` of text) picks the cut with the usual rank selection.
+  Candidates that do not fit one call are narrowed in rounds (`max_reduce_rounds`). A failed
+  excerpt is retried once, then the cut fails naming the part. Typed prompts keep their meaning:
+  the map collects candidates for the prompt, the reduce applies it. A preset with no target
+  length (`cut-demo`, a saved preset with no length) would otherwise let every excerpt stand for
+  all of itself, so each excerpt is limited to its share of `map_max_keep_frac` (default 0.90) and
+  the final choice is trimmed to that maximum, keeping the highest-ranked parts; the model still
+  chooses what to keep. Each excerpt's decision is logged (kept and removed seconds, part count),
+  and the final `reduce` event carries the kept seconds and the target or cap.
+- Old near-full long cuts are repaired once: on start (unless `[cuts] repair_on_start` is false)
+  and with `utubot cuts repair [--dry-run]`, a cut built by an older cut algorithm
+  (`algo_version`) that kept over `repair_near_full_frac` (default 0.90) on the map/reduce path
+  with no target length is superseded — its request leaves the queue and its cut row is deleted —
+  and the same user, video and preset (or typed prompt) is queued again. Rebuilt cuts carry the
+  current algorithm version, so a repaired cut that legitimately keeps a high share is never
+  queued again. The command prints each old kept share and the new request id.
 - **Watched** is opt-in picture analysis, chosen with mode `watched` (Quick is the default). It
   stores a small video copy (`bestvideo` at most 360p, up to 90 minutes/1 GiB) in the media
   archive, samples 2x2 grids with `ffmpeg`, and describes each grid with `[llm.cuts_vision]`
@@ -539,7 +551,7 @@ the video facts). `GET|PUT|DELETE /v1/cut-channels` edit them.
   `fallback` = the same preset's Quick state, so the app can build Quick in one press. Quick
   itself never carries a fallback. The app can choose the mode per picker session; the viewer's
   default is `cut_mode` in Settings (web UI), following `[cuts] default_mode`.
-- The stages of a build are in its job report (kind `cuts`): Quick runs `transcript` → `model` →
+- The stages of a build are in its job report (kind `cuts`): `transcript` → `model` →
   `checking` (long videos: `transcript` → `map` → `reduce` → `checking`; `map` events carry
   `done`/`of`, and the request document's `progress` mirrors them); Watched runs `transcript` →
   `video` → `grids` → `describing` → `model` → `checking` (cached stages report `skipped`), and a

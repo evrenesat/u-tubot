@@ -412,6 +412,16 @@ is the toolbar button's popup (on Android: the extension's entry in the extensio
 | channel-cut-defaults | Channel cut defaults: the cut picker stores "Always use this mode for this channel" or clears it (`UtubotMenu.showCuts`) | `GET /v1/videos/{id}/cuts?channel_id`, `GET|PUT|DELETE /v1/cut-channels`, `mode_rule` on cuts, `channel_id` on requests; resolution is request > channel > user > server | "Cut" tab and sheet: the channel's mode, a quick/watched/follow-user choice, sent as `PUT /v1/cut-channels/{id}`; watched stays disabled until `cuts_watched` | Same |
 | whats-new | What's new: app versions and backend deploys as text, with release time and changes (`UpdatesSettingsPresenter`, `UtubotChangelog`) | `GET /v1/changelog?kind=app\|backend` | Options page, "Updates" section: two lists (App versions, Backend deploys), each entry expandable. "What's new in X" after an update is TV only (the add-on's own version history is the store's) | Same list in the options page |
 
+## 3a. Parity notes for backend-only cut changes
+
+The no-target map/reduce cap (UTB-146: long videos cut by map/reduce kept ~99% for presets with no target length) is a backend
+cut-build behaviour change only. The wire contract did not change in a way the extension consumes: the cut document gained the
+additive `kept_s`/`target_s`/`cap_s` fields, and the extension reads `kept_ms`, which was always present, so it shows the cut's
+own length exactly as before. No `extension/` file and no matrix row change were needed; the fix is TV-app (`UtubotCutsParser`
+keeps the real per-preset length on screen) plus backend (`cuts.py`: cap no-target map/reduce builds at `map_max_keep_frac` of
+the video and trim by rank, log kept/removed seconds per excerpt, supersede and requeue the near-full cuts made before the
+algorithm). This note is the extension's side of the parity box for that pull request.
+
 ## 4. Architecture
 
 ```

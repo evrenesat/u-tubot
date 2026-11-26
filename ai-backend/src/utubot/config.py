@@ -309,6 +309,10 @@ class CutsConfig(BaseModel):
         default_factory=lambda: ["cut-answer", "cut-demo", "cut-highlights-5"]
     )
     max_keep_frac: float = 0.95
+    # Map/reduce without a target (cut-demo, a saved preset with no length): each excerpt may not
+    # propose more than its share of this cap, and the final choice is trimmed to it. The model
+    # still decides which parts to keep; this only stops a long video from keeping nearly all.
+    map_max_keep_frac: float = Field(default=0.90, gt=0.0, le=1.0)
     max_active_per_user: int = 2
     max_queued_per_user: int = 100
     max_prompt_chars: int = 2000
@@ -317,6 +321,12 @@ class CutsConfig(BaseModel):
     transcript_wait_s: float = 900.0
     poll_s: float = 2.0
     max_report_chars: int = 4000
+    # Repair of old near-full map/reduce cuts: a kept share over this, on a preset without a
+    # target, is rebuilt once (`utubot cuts repair`, and on server start). A cut with no stored
+    # transcript is treated as long above `repair_min_duration_s`.
+    repair_near_full_frac: float = Field(default=0.90, gt=0.0, le=1.0)
+    repair_min_duration_s: float = Field(default=1800.0, ge=0.0)
+    repair_on_start: bool = True
     # Presets with a target kept length (s); typed prompts and saved presets have none.
     preset_target_s: dict[str, int] = Field(default_factory=lambda: {"cut-highlights-5": 300})
     length_tolerance: float = 0.15  # accepted kept length: target +/- this fraction

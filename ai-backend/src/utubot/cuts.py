@@ -62,6 +62,11 @@ REQUEST_STATES = ("waiting", "building", "needs_transcript", "ready", "failed", 
 BUILDING_STATES = ("building", "needs_transcript")
 QUEUE_LIMIT = 100
 CUT_DOC_VERSION = 1
+# Stored cuts remember the algorithm that built them. A repair only rebuilds cuts older than
+# this, so a rebuilt cut that legitimately keeps a high share is not queued again on every start.
+CUT_BUILD_VERSION = 2
+# Marker of "superseded by a repair" rows: they leave the queue like a dismissed request.
+REPAIR_MESSAGE = "This cut kept almost the whole video on a long video; it was rebuilt."
 
 # A sentence end in caption text: one of these characters ends a unit early.
 SENTENCE_END = ".!?…？！。"
@@ -182,7 +187,9 @@ REDUCE_SYSTEM = (
     '{"parts":[{"from":<int>,"to":<int>,"label":"<2-6 words>"}],'
     '"summary":"<one line, at most 120 characters>","kept_s":<int>}. '
     'Every part is ONE candidate: "from" and "to" are the same candidate id. Ids must exist and '
-    "parts stay in video order. When the task gives a target length, add "
+    "parts stay in video order. Keep only candidates the task asks to keep: drop candidates that "
+    "are merely content, context or filler, and prefer the task's own definition of the cut over "
+    "completeness. When the task gives a target length or a maximum, add "
     '"rank":<int> to every part (1 = the most important part, every part its own number). '
     "Each candidate shows its rank inside its own excerpt; ranks of different excerpts are not "
     "comparable, so judge by the label and the text. Be faithful to the candidates; never "
@@ -190,16 +197,18 @@ REDUCE_SYSTEM = (
 )
 MAP_NOTE = (
     "This is excerpt {i} of {n} of a long video that is read in pieces; neighbouring excerpts "
-    "share a few units. Propose candidate parts from THIS excerpt only, with the unit ids as "
-    "given. A later step makes the final choice across the whole video, so propose every part "
-    "that fits the task, give every part a rank (1 = the best fit for the task in this "
-    'excerpt, every part its own number) and answer {{"parts":[]}} when nothing here fits.'
+    "share a few units. Apply the task to THIS excerpt: propose the parts it asks to keep, as if "
+    "you were cutting this excerpt on its own, and leave out what it asks to cut. A later step "
+    "merges the excerpts' choices and makes the final cut, so give every part a rank (1 = the "
+    "best fit for the task in this excerpt, every part its own number) and answer "
+    '{{"parts":[]}} when nothing here fits.'
 )
 REDUCE_NOTE = (
     "The video is long, so it was read in excerpts. The lines below are CANDIDATE parts the "
     "excerpts proposed, not transcript units: each shows its id, time range, label, its rank "
-    "inside its own excerpt and a short text excerpt. Choose the candidates to keep; each part "
-    "you return is one candidate (from and to are the same id)."
+    "inside its own excerpt and a short text excerpt. Choose the candidates to keep; keep only "
+    "the ones the task asks for and drop the rest. Each part you return is one candidate (from "
+    "and to are the same id)."
 )
 
 
@@ -388,6 +397,7 @@ def serialize_units(
     target_s: int | None = None,
     over_ask_frac: float = 0.0,
     *,
+    cap_s: int | None = None,
     note: str | None = None,
     scope: str = "in total",
     mark: str = UNITS_MARK,
@@ -396,7 +406,7 @@ def serialize_units(
 
     `note` is an extra paragraph after the task (map/reduce says which excerpt this is), `scope`
     what the target length counts ("in total", or "from this excerpt"), `mark` the line that
-    introduces the numbered lines."""
+    introduces the numbered lines. `cap_s` is a maximum (not a goal) for a cut with no target."""
     duration = meta.get("duration_s")
     lines = [
         f"Title: {meta.get('title') or ''}",
@@ -416,6 +426,12 @@ def serialize_units(
             f"Target length: {target_s} s kept {scope}. Keep a little more than that, about "
             f"{ask_s} s of unit time, and give every part a rank (1 = most important): the "
             "server drops the lowest-ranked parts until the target fits."
+        )
+    elif cap_s:
+        lines.append(
+            f"Maximum length: at most {cap_s} s kept {scope}. Keep only what the task asks "
+            "for, and give every part a rank (1 = most important): the server drops the "
+            "lowest-ranked parts beyond that maximum."
         )
     lines.append(mark)
     lines.extend(unit_line(u) for u in units)
@@ -689,7 +705,8 @@ def _trim_to(
     sub-gap past the budget is trimmed to fit instead of dropped whole."""
     if part.first is None or part.last is None:
         return None
-    base = _kept_total_s(chosen or [], cfg, duration_s)
+    chosen = chosen or []
+    base = _kept_total_s(chosen, cfg, duration_s)
     trimmed = None
     for n in range(part.first, part.last + 1):
         candidate = Part(
@@ -706,6 +723,14 @@ def _trim_to(
     if trimmed is None or _clamped_s(trimmed, duration_s) < cfg.min_part_s:
         return None
     return trimmed
+
+
+def _rank_order(parts: list[Part]) -> list[int]:
+    """Part indexes by importance: rank ascending, unranked parts after the ranked ones."""
+    return sorted(
+        range(len(parts)),
+        key=lambda i: (parts[i].rank if parts[i].rank is not None else len(parts) + i + 1, i),
+    )
 
 
 def select_for_target(
@@ -731,10 +756,7 @@ def select_for_target(
     pool_s = _kept_total_s([parts[i] for i in eligible], cfg, duration_s)
     if pool_s < low:
         return [parts[i] for i in eligible], pool_s
-    order = sorted(
-        eligible,
-        key=lambda i: (parts[i].rank if parts[i].rank is not None else len(parts) + i + 1, i),
-    )
+    order = [i for i in _rank_order(parts) if i in set(eligible)]
     chosen: list[Part] = []
     total = 0.0
     for i in order:
@@ -750,6 +772,39 @@ def select_for_target(
         total = _kept_total_s(chosen, cfg, duration_s)
     chosen.sort(key=lambda p: p.start_ms)
     return chosen, total
+
+
+def trim_to_cap(
+    parts: list[Part], units: list[Unit], cfg, cap_s: int, duration_s: float | None = None
+) -> list[Part]:
+    """The highest-ranked parts of a no-target cut that fit `cap_s`, in video order.
+
+    A cap never adds parts beyond the model's answer: it keeps the ranked parts while they fit
+    and trims the one that crosses the maximum at a unit boundary. A single part always
+    survives, so a one-part answer is trimmed rather than dropped; the caller still checks it.
+    """
+    if sum(_padded_s(p, cfg, duration_s) for p in parts) <= cap_s or not parts:
+        return list(parts)
+    chosen: list[Part] = []
+    spent = 0.0
+    for i in _rank_order(parts):
+        if spent >= cap_s:
+            break
+        part = parts[i]
+        remaining = cap_s - spent
+        length = _padded_s(part, cfg, duration_s)
+        if length <= remaining:
+            chosen.append(part)
+            spent += length
+            continue
+        trimmed = _trim_to(part, units, remaining, cfg, duration_s)
+        if trimmed is not None:
+            chosen.append(trimmed)
+            spent += _padded_s(trimmed, cfg, duration_s)
+    if not chosen:
+        chosen = [parts[_rank_order(parts)[0]]]
+    chosen.sort(key=lambda p: p.start_ms)
+    return chosen
 
 
 @dataclass
@@ -1499,10 +1554,48 @@ class CutService:
         klass = self.jobs._class_for(user, None)
         if not await_prompt:
             self._check_cap(user)
+        request_id = self._enqueue(
+            user,
+            video_id,
+            source=source,
+            preset=preset,
+            prompt=prompt,
+            await_prompt=await_prompt,
+            mode=mode,
+            force=force,
+            klass=klass,
+            channel_id=channel_id,
+        )
+        if not await_prompt:
+            row = self._row(request_id)
+            if row is not None:
+                self._remember_request(row)
+            self._start(request_id)
+        return self._row(request_id)  # type: ignore[return-value]
+
+    def _enqueue(
+        self,
+        user: str,
+        video_id: str,
+        *,
+        source: str = "",
+        preset: str | None = None,
+        prompt: str | None = None,
+        await_prompt: bool = False,
+        mode: str | None = None,
+        force: bool = False,
+        klass: str | None = None,
+        message: str | None = None,
+        channel_id: str | None = None,
+    ) -> str:
+        """Insert a request and its job row; the caller decides whether to start the build."""
+        klass = klass or NORMAL
         request_id = uuid.uuid4().hex[:12]
         job_id = uuid.uuid4().hex[:12]
         now = time.time()
         title = self._meta(video_id).get("title")
+        channel_id, _ = self._video_channel(video_id, channel_id)
+        chosen_mode, mode_rule = self.resolve_mode_rule(user, mode, channel_id)
         self.db.execute(
             "INSERT INTO jobs(id,user,video_id,lang,translate_to,status,progress,created_at,"
             "updated_at,kind,title,priority,klass)"
@@ -1534,31 +1627,29 @@ class CutService:
             ],
         )
         origin = events.current_origin()
+        detail: dict[str, Any] = {
+            "kind": "cuts",
+            "user": user,
+            "class": klass,
+            "client": source or (origin.client if origin else "server"),
+            "endpoint": origin.endpoint if origin else None,
+            "video_id": video_id,
+            "title": title,
+            "preset": preset,
+            "prompt": prompt,
+            "await_prompt": await_prompt,
+            "mode": chosen_mode,
+        }
+        if message:
+            detail["message"] = message
         self.jobs.events.record(
             job_id,
             events.QUEUED,
             events.OK,
-            {
-                "kind": "cuts",
-                "user": user,
-                "class": klass,
-                "client": source or (origin.client if origin else "server"),
-                "endpoint": origin.endpoint if origin else None,
-                "video_id": video_id,
-                "title": self._meta(video_id).get("title"),
-                "preset": preset,
-                "prompt": prompt,
-                "await_prompt": await_prompt,
-                "mode": chosen_mode,
-            },
+            detail,
             ts=now,
         )
-        if not await_prompt:
-            row = self._row(request_id)
-            if row is not None:
-                self._remember_request(row)
-            self._start(request_id)
-        return self._row(request_id)  # type: ignore[return-value]
+        return request_id
 
     def _active_same(
         self,
@@ -2019,10 +2110,172 @@ class CutService:
                 return None
         return json.loads(row["json"])
 
+    # ---- repair of old near-full long cuts ------------------------------------------------------
+
+    def repair_near_full(
+        self, *, dry_run: bool = False, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Rebuild the cuts this bug left nearly uncut: a map/reduce build older than
+        `CUT_BUILD_VERSION`, without a target length, that kept over `repair_near_full_frac`.
+
+        Idempotent: the old cut row and its requests are superseded, then the same user, video and
+        preset (or typed prompt) are queued again; a rebuilt cut carries the current build version,
+        so it is never selected again. `dry_run` only reports."""
+        if not self.configured:
+            return []
+        rows = self.db.all(
+            "SELECT * FROM cuts WHERE COALESCE(algo_version,0) < ? ORDER BY created_at",
+            [CUT_BUILD_VERSION],
+        )
+        items = []
+        for row in rows:
+            if limit is not None and len(items) >= limit:
+                break
+            item = self._repair_item(dict(row))
+            if item is not None:
+                items.append(item)
+        if dry_run:
+            return items
+        for item in items:
+            self._apply_repair(item)
+        return items
+
+    def _repair_item(self, cut: dict[str, Any]) -> dict[str, Any] | None:
+        """The repair record for one stored cut, or None when it is not this bug's work."""
+        duration = float(cut["duration_s"] or 0.0)
+        if not duration:
+            try:
+                duration = float(json.loads(cut["json"] or "{}").get("duration_ms") or 0) / 1000.0
+            except (TypeError, ValueError, json.JSONDecodeError):
+                duration = 0.0
+        kept_s = float(cut["kept_s"] or 0.0)
+        if not duration or kept_s / duration <= self.cfg.cuts.repair_near_full_frac:
+            return None
+        requests = self.db.all(
+            "SELECT id,user,source,preset_id,prompt FROM cut_requests WHERE cut_key=?"
+            " ORDER BY created_at",
+            [cut["cache_key"]],
+        )
+        wanted: list[dict[str, Any]] = []
+        seen: set[tuple[str, str | None, str | None]] = set()
+        for row in requests:
+            found = dict(row)
+            key = (found["user"], found["preset_id"], found["prompt"])
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                instruction, preset_id, _source = self._instruction(found)
+            except CutRefused:
+                continue
+            saved = next((p for p in self.presets(found["user"]) if p.id == preset_id), None)
+            target_s = self.target_for(preset_id, duration, instruction, saved)
+            if target_s is not None:
+                continue
+            if not self._was_map_reduce(cut, instruction, target_s, duration):
+                continue
+            wanted.append(
+                {
+                    "user": found["user"],
+                    "source": found["source"],
+                    "preset_id": found["preset_id"],
+                    "prompt": found["prompt"],
+                }
+            )
+        if not requests:
+            wanted = []
+        if not wanted and requests:
+            return None
+        return {
+            "cache_key": cut["cache_key"],
+            "video_id": cut["video_id"],
+            "preset_id": cut["preset_id"],
+            "prompt": cut["prompt"],
+            "duration_s": duration,
+            "kept_s": kept_s,
+            "old_share": kept_s / duration,
+            "requests": wanted,
+            "new": [],
+        }
+
+    def _was_map_reduce(
+        self, cut: dict[str, Any], instruction: str, target_s: int | None, duration: float
+    ) -> bool:
+        """Whether this cut was built by map/reduce; without a stored transcript, by length."""
+        transcript = self.transcripts.cached(cut["video_id"])
+        if transcript is None or not transcript.segments:
+            return duration >= self.cfg.cuts.repair_min_duration_s
+        units = build_units(transcript.segments, self.cfg.cuts)
+        if not units:
+            return False
+        meta = {**transcript.meta, **self._meta(cut["video_id"])}
+        meta.setdefault("duration_s", duration)
+        chapters = parse_chapters(meta.get("description"))
+        return not self.engine.fits(units, chapters, meta, instruction, target_s)
+
+    def _apply_repair(self, item: dict[str, Any]) -> None:
+        now = time.time()
+        old = self.db.all(
+            "SELECT id,job_id FROM cut_requests WHERE cut_key=? AND state!='dismissed'",
+            [item["cache_key"]],
+        )
+        for row in old:
+            self.db.execute(
+                "UPDATE cut_requests SET state='dismissed', error=?, updated_at=?, finished_at=?"
+                " WHERE id=?",
+                [REPAIR_MESSAGE, now, now, row["id"]],
+            )
+            if row["job_id"]:
+                self.db.execute(
+                    "UPDATE jobs SET status='cancelled', error=?, updated_at=?, finished_at=?"
+                    " WHERE id=?",
+                    [REPAIR_MESSAGE, now, now, row["job_id"]],
+                )
+                self.jobs.events.record(
+                    row["job_id"],
+                    events.FINISHED,
+                    events.CANCELLED,
+                    {"message": REPAIR_MESSAGE},
+                )
+        self.db.execute("DELETE FROM cuts WHERE cache_key=?", [item["cache_key"]])
+        for spec in item["requests"]:
+            request_id = self._enqueue(
+                spec["user"],
+                item["video_id"],
+                source=spec["source"],
+                preset=spec["preset_id"],
+                prompt=spec["prompt"],
+                klass=self.jobs._class_for(spec["user"], None),
+                message=f"Rebuilt by the cut repair: the old cut kept {item['old_share']:.0%}.",
+            )
+            item["new"].append(
+                {
+                    "user": spec["user"],
+                    "preset_id": spec["preset_id"],
+                    "prompt": spec["prompt"],
+                    "request_id": request_id,
+                }
+            )
+        log.info(
+            "cut repair: %s %s kept %.1f%% of %.0f s; %d request(s) queued",
+            item["video_id"],
+            item["preset_id"] or (item["prompt"] or "")[:40],
+            item["old_share"] * 100,
+            item["duration_s"],
+            len(item["new"]),
+        )
+
     # ---- the build ------------------------------------------------------------------------------
 
     def start(self) -> None:
         """Resume the builds a restart interrupted (idempotent: the cache absorbs the repeats)."""
+        if self.cfg.cuts.repair_on_start:
+            try:
+                repaired = self.repair_near_full()
+                if repaired:
+                    log.info("cut repair: %d near-full cut(s) queued again", len(repaired))
+            except Exception:
+                log.warning("cut repair failed", exc_info=True)
         rows = self.db.all(
             "SELECT id FROM cut_requests WHERE state IN ('building','needs_transcript')"
         )
@@ -2318,7 +2571,7 @@ class CutService:
             self.db.execute(
                 "INSERT OR REPLACE INTO cuts(cache_key,video_id,version,preset_id,prompt,model,"
                 "transcript_hash,json,duration_s,kept_s,created_at,mode,source_kind,source_key,"
-                "release_key,release_duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "release_key,release_duration_ms,algo_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     cache_key,
                     video_id,
@@ -2336,6 +2589,7 @@ class CutService:
                     src["key"],
                     src["release_key"],
                     src["release_duration_ms"],
+                    CUT_BUILD_VERSION,
                 ],
             )
             self.db.execute(
@@ -2558,6 +2812,7 @@ class CutEngine:
         instruction: str,
         target_s: int | None,
         *,
+        cap_s: int | None = None,
         candidates: list[Candidate] | None = None,
         klass: ClassSource = NORMAL,
     ) -> tuple[Any, list[Part]]:
@@ -2565,7 +2820,8 @@ class CutEngine:
         length, one retry that names the measured length when the answer is below the band.
 
         With `candidates` this is the reduce call: the model sees the candidates instead of the
-        units and its answer is expanded back to parts over the real units."""
+        units and its answer is expanded back to parts over the real units. Without a target a
+        `cap_s` maximum is applied by dropping the lowest-ranked parts, never by adding any."""
         cfg = self.cfg
         problem: str | None = None
         shown = units
@@ -2575,11 +2831,21 @@ class CutEngine:
             style = {"system": REDUCE_SYSTEM, "note": REDUCE_NOTE, "mark": CANDIDATES_MARK}
         for attempt in range(2 if target_s else 1):
             data, parts = await self._ask_parsed(
-                shown, chapters, meta, instruction, target_s, problem=problem, klass=klass, **style
+                shown,
+                chapters,
+                meta,
+                instruction,
+                target_s,
+                cap_s=cap_s,
+                problem=problem,
+                klass=klass,
+                **style,
             )
             if candidates is not None:
                 parts = expand_candidate_parts(parts, candidates, units)
             if not target_s:
+                if cap_s:
+                    parts = trim_to_cap(parts, units, cfg, cap_s)
                 return data, parts
             chosen, total_s = select_for_target(parts, units, cfg, target_s, meta.get("duration_s"))
             low, high = target_band(target_s, cfg.length_tolerance)
@@ -2604,6 +2870,7 @@ class CutEngine:
         instruction: str,
         target_s: int | None,
         *,
+        cap_s: int | None = None,
         problem: str | None = None,
         allow_empty: bool = False,
         klass: ClassSource = NORMAL,
@@ -2611,7 +2878,15 @@ class CutEngine:
     ) -> tuple[Any, list[Part]]:
         """One question and its parsed answer; a broken answer gets one repair round."""
         data = await self._ask(
-            shown, chapters, meta, instruction, target_s, problem=problem, klass=klass, **style
+            shown,
+            chapters,
+            meta,
+            instruction,
+            target_s,
+            cap_s=cap_s,
+            problem=problem,
+            klass=klass,
+            **style,
         )
         try:
             return data, parse_cut_answer(data, shown, allow_empty=allow_empty)
@@ -2623,6 +2898,7 @@ class CutEngine:
                 meta,
                 instruction,
                 target_s,
+                cap_s=cap_s,
                 problem=exc.problem,
                 klass=klass,
                 **style,
@@ -2676,13 +2952,14 @@ class CutEngine:
         """A cut for a transcript too long for one request.
 
         Map: excerpts (on chapter boundaries when there are chapters, a few units shared with
-        the previous one) are each asked for ranked candidate parts, with the excerpt's share of
-        the target length. Reduce: one call over the candidates picks the cut, with the same
-        rank selection as a one-pass cut; candidates that do not fit one call are narrowed in
-        rounds first. The map runs the excerpts together; a watched build yields between grids
-        instead, in the describing stage."""
+        the previous one) are each asked to apply the task to their own text, with the excerpt's
+        share of the target length or of the no-target maximum. Reduce: one call over the
+        candidates picks the cut, with the same rank selection as a one-pass cut; candidates that
+        do not fit one call are narrowed in rounds first. The map runs the excerpts together; a
+        watched build yields between grids instead, in the describing stage."""
         cfg = self.cfg
-        chunks = self._plan_chunks(units, chapters, meta, instruction, target_s)
+        cap_s = self._cap_s(meta, target_s)
+        chunks = self._plan_chunks(units, chapters, meta, instruction, target_s, cap_s)
         total_s = sum(u.end - u.start for u in units) or 1.0
         gate = asyncio.Semaphore(cfg.map_parallel)
         proposed: list[list[Part]] = [[] for _ in chunks]
@@ -2691,12 +2968,48 @@ class CutEngine:
         async def one(chunk: Chunk) -> None:
             nonlocal done
             core_s = sum(u.end - u.start for u in chunk.core)
-            share = max(1, round(target_s * core_s / total_s)) if target_s else None
+            share = (
+                max(1, round((target_s if target_s is not None else cap_s) * core_s / total_s))
+                if target_s is not None or cap_s
+                else None
+            )
+            share_target = share if target_s else None
+            share_cap = share if target_s is None else None
             async with gate:
-                proposed[chunk.index] = await self._map_chunk(
-                    chunk, len(chunks), chapters, meta, instruction, share, klass=klass
+                parts = await self._map_chunk(
+                    chunk,
+                    len(chunks),
+                    chapters,
+                    meta,
+                    instruction,
+                    share_target,
+                    share_cap,
+                    units,
+                    klass=klass,
                 )
+            proposed[chunk.index] = parts
             done += 1
+            core_start = chunk.core[0].start
+            core_end = chunk.core[-1].end
+            kept_s = self._kept_seconds(parts, core_start, core_end)
+            removed_s = max(0.0, core_s - kept_s)
+            events.emit(
+                STAGE_MAP,
+                events.OK,
+                excerpt=chunk.index + 1,
+                of=len(chunks),
+                parts=len(parts),
+                kept_s=round(kept_s, 1),
+                removed_s=round(removed_s, 1),
+            )
+            log.info(
+                "cut map excerpt %d/%d: %.1f s kept, %.1f s removed (%d parts)",
+                chunk.index + 1,
+                len(chunks),
+                kept_s,
+                removed_s,
+                len(parts),
+            )
             events.emit(STAGE_MAP, events.RUNNING, done=done, of=len(chunks))
 
         with events.stage(STAGE_MAP, chunks=len(chunks), units=len(units)) as map_stage:
@@ -2706,7 +3019,29 @@ class CutEngine:
             map_stage.set(candidates=len(cands))
         if not cands:
             raise CutRefused("Nothing was worth keeping, so there is no cut.")
-        return await self._reduce(cands, units, chapters, meta, instruction, target_s, klass=klass)
+        return await self._reduce(
+            cands, units, chapters, meta, instruction, target_s, cap_s=cap_s, klass=klass
+        )
+
+    def _cap_s(self, meta: dict[str, Any], target_s: int | None) -> int | None:
+        """The no-target maximum kept length of a map/reduce build, from the video's duration."""
+        if target_s is not None:
+            return None
+        duration = meta.get("duration_s")
+        if not duration:
+            return None
+        return max(MIN_TARGET_S, int(float(duration) * self.cfg.map_max_keep_frac))
+
+    @staticmethod
+    def _kept_seconds(parts: list[Part], start: float, end: float) -> float:
+        """How much of `[start, end]` the parts cover, without counting their overlap twice."""
+        total = 0.0
+        for part in parts:
+            low = max(part.start_ms / 1000.0, start)
+            high = min(part.end_ms / 1000.0, end)
+            if high > low:
+                total += high - low
+        return total
 
     def _plan_chunks(
         self,
@@ -2715,6 +3050,7 @@ class CutEngine:
         meta: dict[str, Any],
         instruction: str,
         target_s: int | None,
+        cap_s: int | None,
     ) -> list[Chunk]:
         cfg = self.cfg
         header = serialize_units(
@@ -2724,6 +3060,7 @@ class CutEngine:
             instruction,
             target_s,
             cfg.over_ask_frac,
+            cap_s=cap_s,
             note=MAP_NOTE.format(i=99, n=99),
         )
         tokens = min(cfg.map_chunk_tokens, cfg.max_input_tokens)
@@ -2737,7 +3074,9 @@ class CutEngine:
         chapters: list[tuple[float, str]],
         meta: dict[str, Any],
         instruction: str,
-        share: int | None,
+        share_target: int | None,
+        share_cap: int | None,
+        units: list[Unit],
         *,
         klass: ClassSource = NORMAL,
     ) -> list[Part]:
@@ -2752,12 +3091,15 @@ class CutEngine:
                     span,
                     meta,
                     instruction,
-                    share,
+                    share_target,
+                    cap_s=share_cap,
                     allow_empty=True,
                     note=note,
                     scope="from this excerpt",
                     klass=klass,
                 )
+                if share_cap:
+                    parts = trim_to_cap(parts, units, self.cfg, share_cap)
                 return parts
             except CutRefused as exc:
                 problem = exc.message
@@ -2781,6 +3123,7 @@ class CutEngine:
         instruction: str,
         target_s: int | None,
         *,
+        cap_s: int | None = None,
         klass: ClassSource = NORMAL,
     ) -> tuple[Any, list[Part]]:
         """The final choice over the candidates; too many for one call are narrowed in rounds."""
@@ -2790,20 +3133,54 @@ class CutEngine:
             shown = candidate_units(cands, units, cfg.reduce_excerpt_chars)
             message = serialize_units(
                 shown, chapters, meta, instruction, target_s, cfg.over_ask_frac,
-                note=REDUCE_NOTE, mark=CANDIDATES_MARK,
+                cap_s=cap_s, note=REDUCE_NOTE, mark=CANDIDATES_MARK,
             )  # fmt: skip
             if self._tokens(message) <= cfg.max_input_tokens:
-                with events.stage(STAGE_REDUCE, candidates=len(cands), rounds=rounds):
-                    return await self._ask_parts(
-                        units, chapters, meta, instruction, target_s, candidates=cands, klass=klass
+                with events.stage(
+                    STAGE_REDUCE, candidates=len(cands), rounds=rounds
+                ) as reduce_stage:
+                    data, parts = await self._ask_parts(
+                        units,
+                        chapters,
+                        meta,
+                        instruction,
+                        target_s,
+                        cap_s=cap_s,
+                        candidates=cands,
+                        klass=klass,
                     )
+                    kept_s = sum(_padded_s(p, cfg) for p in parts)
+                    reduce_stage.set(
+                        parts=len(parts),
+                        kept_s=round(kept_s, 1),
+                        target_s=target_s,
+                        cap_s=cap_s,
+                    )
+                    log.info(
+                        "cut reduce: %d candidates -> %d parts, %.1f s kept%s",
+                        len(cands),
+                        len(parts),
+                        kept_s,
+                        f" (target {target_s} s)"
+                        if target_s
+                        else (f" (cap {cap_s} s)" if cap_s else ""),
+                    )
+                    return data, parts
             if rounds >= cfg.max_reduce_rounds:
                 raise CutRefused(
                     "This video gave too many candidate parts to choose from, so no cut was built."
                 )
             rounds += 1
             narrowed = await self._reduce_round(
-                cands, units, chapters, meta, instruction, target_s, rounds, klass=klass
+                cands,
+                units,
+                chapters,
+                meta,
+                instruction,
+                target_s,
+                cap_s,
+                rounds,
+                klass=klass,
             )
             if not narrowed:
                 raise CutRefused("Nothing was worth keeping, so there is no cut.")
@@ -2821,16 +3198,18 @@ class CutEngine:
         meta: dict[str, Any],
         instruction: str,
         target_s: int | None,
+        cap_s: int | None,
         round_no: int,
         *,
         klass: ClassSource = NORMAL,
     ) -> list[Candidate]:
         """One narrowing round: groups of candidates that fit a call each keep their best parts
-        (with a target: the group's share of it, plus the usual over-ask)."""
+        (with a target: the group's share of it, plus the usual over-ask; with a cap: at most
+        the group's share of it)."""
         cfg = self.cfg
         header = serialize_units(
             [], chapters, meta, instruction, target_s, cfg.over_ask_frac,
-            note=REDUCE_NOTE, mark=CANDIDATES_MARK,
+            cap_s=cap_s, note=REDUCE_NOTE, mark=CANDIDATES_MARK,
         )  # fmt: skip
         budget = cfg.max_input_tokens * cfg.chars_per_token - len(header) - len(REDUCE_SYSTEM)
         groups = split_candidates(cands, units, budget, cfg.reduce_excerpt_chars)
@@ -2838,23 +3217,28 @@ class CutEngine:
         gate = asyncio.Semaphore(cfg.map_parallel)
 
         async def one(group: list[Candidate], span_s: float) -> list[Candidate]:
-            share = max(1, round(target_s * span_s / (sum(spans) or 1.0))) if target_s else None
+            budget_s = target_s if target_s is not None else cap_s
+            share = max(1, round(budget_s * span_s / (sum(spans) or 1.0))) if budget_s else None
+            share_target = share if target_s else None
+            share_cap = share if target_s is None else None
             shown = candidate_units(group, units, cfg.reduce_excerpt_chars)
             async with gate:
                 _data, parts = await self._ask_parsed(
-                    shown, chapters, meta, instruction, share,
-                    allow_empty=True, system=REDUCE_SYSTEM, note=REDUCE_NOTE,
-                    mark=CANDIDATES_MARK, klass=klass,
+                    shown, chapters, meta, instruction, share_target,
+                    cap_s=share_cap, allow_empty=True, system=REDUCE_SYSTEM,
+                    note=REDUCE_NOTE, mark=CANDIDATES_MARK, klass=klass,
                 )  # fmt: skip
             kept = expand_candidate_parts(parts, group, units)
-            if share and kept:
+            if share_target and kept:
                 kept, _ = select_for_target(
                     kept,
                     units,
                     cfg,
-                    int(share * (1 + cfg.over_ask_frac)),
+                    int(share_target * (1 + cfg.over_ask_frac)),
                     meta.get("duration_s"),
                 )
+            elif share_cap and kept:
+                kept = trim_to_cap(kept, units, cfg, share_cap, meta.get("duration_s"))
             return candidates_from(kept)
 
         with events.stage(STAGE_REDUCE, candidates=len(cands), groups=len(groups), round=round_no):
@@ -2869,6 +3253,7 @@ class CutEngine:
         instruction: str,
         target_s: int | None = None,
         *,
+        cap_s: int | None = None,
         problem: str | None = None,
         system: str = CUT_SYSTEM,
         note: str | None = None,
@@ -2888,6 +3273,7 @@ class CutEngine:
             instruction,
             target_s,
             self.cfg.over_ask_frac,
+            cap_s=cap_s,
             note=note,
             scope=scope,
             mark=mark,
