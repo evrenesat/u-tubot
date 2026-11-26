@@ -459,7 +459,9 @@ _CUES = frozenset(
      "about", "around", "roughly", "within", "length", "long", "short", "version"}
 )  # fmt: skip
 _LENGTH_TAIL = re.compile(
-    r"\s*(?:of (?:it|the video)\b|as long\b|long\b|version\b|shorter\b|total\b)"
+    r"\s*(?:of (?:it|the video)\b|as long\b|long\b|version\b|shorter\b|total\b"
+    r"|(?:of )?(?:the |its )?(?:original |full |whole |video'?s? )?"
+    r"(?:size|length|duration|runtime|running time)\b)"
 )
 _AFTER_CUE = frozenset({"of", "as", "it", "long", "please", "total", "version", "or", "and", "in"})
 
