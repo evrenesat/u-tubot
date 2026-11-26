@@ -103,7 +103,11 @@ async def test_mixed_items_are_one_per_video_newest_first(env):
     base = time.time()
     env.svc.transcripts.store_meta(
         VID1,
-        {"title": "First title", "thumbnail_url": "https://i.ytimg.com/vi/first.jpg", "duration_s": 633.0},
+        {
+            "title": "First title",
+            "thumbnail_url": "https://i.ytimg.com/vi/first.jpg",
+            "duration_s": 633.0,
+        },
     )
     add_caption(env, VID1, lang="en", translate_to="de", updated_at=base - 10)
     add_cut(env, VID1, preset="cut-demo", updated_at=base)
