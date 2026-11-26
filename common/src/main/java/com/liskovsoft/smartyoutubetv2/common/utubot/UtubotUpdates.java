@@ -78,6 +78,11 @@ public final class UtubotUpdates {
             return false;
         }
 
+        // After an update its notes come first, as text; the update check follows at the next round
+        if (UtubotWhatsNew.offerIfUpdated(appContext)) {
+            return true;
+        }
+
         Log.d(TAG, "Checking for updates");
         AppUpdatePresenter.instance(BrowsePresenter.instance(appContext).getContext()).startAutomatic();
 

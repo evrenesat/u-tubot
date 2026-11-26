@@ -1,3 +1,9 @@
+## 2026-11-26 (version histories, issue #175)
+
+- Real backend version `0.<series>.<commit count>+<sha>` from the checkout's git (`buildinfo.py`), in `/v1/health` and `/v1/me`.
+- `changelog` table (additive): a deploy entry at start when the running commit is new (merged subjects since the previous one,
+  grouped New/Fixed), app release notes and times from `sync-github`; `GET /v1/changelog?kind=app|backend`; web UI Updates lists.
+
 ## 2026-11-26 (director's cuts quality, port of #106)
 
 - Units: caption fragments close a unit after a quote or bracket that ends the sentence; rolling auto-caption repeats (the tail of

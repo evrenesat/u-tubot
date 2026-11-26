@@ -94,10 +94,12 @@ priority (claimed first, interactive engine use); a side-panel job is background
 ## Endpoints
 
 ### `GET /v1/health` (no auth)
-`{"ok":true,"version":"0.1.0"}`
+`{"ok":true,"version":"0.3.412+a1b2c3d","commit":"a1b2c3d"}`. `version` is the real backend version, `0.<series>.<commit count>+<short sha>` from the
+checkout the server runs (the series is the minor of `utubot.version`); an install without git reports the package version and no commit.
+It changes with every deploy, so the TV's disk cache keyed on it starts fresh after a deploy.
 
 ### `GET /v1/me`
-`{"user":"owner","policy":{...},"admin":false,"prime":false,"class":"normal","settings_version":3,"features":{"assess":true,"insight":true,"captions":true}}`
+`{"user":"owner","policy":{...},"admin":false,"backend_version":"0.3.412+a1b2c3d","prime":false,"class":"normal","settings_version":3,"features":{"assess":true,"insight":true,"captions":true}}`
 `settings_version` is the version of the [settings document](#per-user-settings), a cheap way to notice a change. `prime` and `class`
 say whether the caller's work is prime (`normal` otherwise).
 
@@ -421,6 +423,9 @@ contract is built for both. Exceptions, each with its reason:
   the stream; the extension only draws HQ captions and reads no caption track of YouTube's page yet. Its row is in the plan's parity
   matrix; the extension sends the same body when it reads the page's own tracks.
 - `GET /app/update.json`: TV only. Firefox updates extensions itself.
+- "What's new" after an app update: TV only (the extension's own version history is the add-on's). The two lists of `GET /v1/changelog`
+  (app versions, backend deploys) are in the extension options page too; until the options page exists, that is row 35 of the
+  plan's parity matrix.
 
 The extension sends the bearer token from its background context only, to the backend's own origin, with no cookies
 (`credentials: "omit"`) and never as `?token=`. It needs no CORS headers from the backend.
@@ -853,6 +858,15 @@ when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-adm
   "published_at"},"github":{"configured":true,"repo","checked_at","latest":{"tag","version","published_at","url"}|"error":"..."},
   "behind":true,"last_sync":{"checked_at","status","version_name","error"}|null,"update_url"}`. `last_sync` is the last real
   `utubot app sync-github` run. `POST /v1/updates/refresh` asks GitHub again (cached otherwise for 10 minutes).
+
+- `GET /v1/changelog?kind=app|backend&limit=50` (any signed-in user; `kind` defaults to `backend`) -> `{"kind","current":"<backend version>"|null,
+  "entries":[{"kind","version","at":<epoch s>,"commit":"<sha>"|"","changes":[{"group":"features|fixes|other","text","pr":<number>|null}]}]}`,
+  newest first. `backend` entries are deploys: written at server start when the running commit differs from the last recorded
+  one (never twice for a restart), `changes` are the merged first-parent commit subjects between the two commits in plain words
+  (`type/scope: summary (#n)` becomes "Scope: summary" under New or Fixed; docs, test, chore, ci and refactor commits are left out). `app` entries are
+  the app releases the release sync saw: `version` is the app version name, `at` its GitHub release time, `changes` the lines of
+  its `release.json` changelog (older releases: the bullets of the release body), all in group `other`.
+  The TV shows both lists as text under Settings, Updates, What's new (no QR code); the web UI shows them under Updates.
 
 ### Devices, prompts, videos
 

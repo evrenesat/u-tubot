@@ -159,10 +159,11 @@ public class UtubotClient {
     }
 
     /**
-     * The version the backend reports (`GET /v1/health`, no token needed), empty when it reports none
+     * The schema of the cacheable data the backend reports (`GET /v1/health`, no token needed): it changes only when the shape of
+     * the answers changes, never with a deploy. A backend that reports none has the first schema.
      */
-    public String serverVersion() throws IOException {
-        return parse(() -> new JSONObject(send(builder("/health", false), 0)).optString("version", ""));
+    public String cacheSchema() throws IOException {
+        return parse(() -> new JSONObject(send(builder("/health", false), 0)).optString("cache_schema", "1"));
     }
 
     /**
@@ -519,6 +520,18 @@ public class UtubotClient {
         }
 
         return parse(() -> UtubotParser.parseProcessed(send(authorized(url), 0)));
+    }
+
+    /**
+     * The version history (`GET /v1/changelog`), as the backend sends it: see {@link UtubotChangelog#parse}
+     *
+     * @param kind {@link UtubotChangelog#KIND_APP} or {@link UtubotChangelog#KIND_BACKEND}
+     */
+    public String changelogJson(String kind) throws IOException {
+        HttpUrl.Builder url = urlBuilder("/changelog");
+        url.addQueryParameter("kind", kind);
+
+        return send(authorized(url), 0);
     }
 
     //endregion

@@ -141,8 +141,13 @@ public class UtubotSummaryCacheTest {
         assertNull(mManager.getCachedSummary(PENDING_ID, "panel"));
     }
 
-    private void answerHealth(String version) {
-        mServer.on("/v1/health", request -> new TinyHttpServer.Response(200, "{\"ok\":true,\"version\":\"" + version + "\"}"));
+    private void answerHealth(String schema) {
+        answerHealth("9.9.9-build", schema);
+    }
+
+    private void answerHealth(String buildVersion, String schema) {
+        mServer.on("/v1/health", request -> new TinyHttpServer.Response(200,
+                "{\"ok\":true,\"version\":\"" + buildVersion + "\",\"cache_schema\":\"" + schema + "\"}"));
     }
 
     @Test
@@ -189,6 +194,21 @@ public class UtubotSummaryCacheTest {
         assertEquals(3, mRequests.get());
         assertEquals("- one", again.text);
         assertEquals("asr", again.source);
+    }
+
+    @Test
+    public void aDeployThatKeepsTheDataSchemaKeepsTheSummary() {
+        answerHealth("0.3.10+aaaaaaa", "1");
+        ask(READY_ID);
+        assertEquals(1, mRequests.get());
+
+        // A new build of the backend with the same data schema: the disk cache is not the build's business
+        answerHealth("0.3.11+bbbbbbb", "1");
+        mManager.mVersionRecheckMs = 0;
+        ask(SECOND_READY_ID);
+        ask(READY_ID);
+
+        assertEquals(2, mRequests.get());
     }
 
     @Test

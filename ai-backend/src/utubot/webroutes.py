@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
+from . import changelog
 from .auth import PairError
 from .captions.jobs import JobRefused
 from .config import UserConfig
@@ -202,6 +203,18 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
     @app.get("/v1/updates")
     async def updates(user: UserConfig = Depends(current_user)):
         return await svc.updates.snapshot()
+
+    @app.get("/v1/changelog")
+    async def changelog_history(
+        kind: str = "backend", limit: int = 50, user: UserConfig = Depends(current_user)
+    ):
+        if kind not in changelog.KINDS:
+            raise HTTPException(400, "kind must be app or backend")
+        return {
+            "kind": kind,
+            "current": svc.build.version if kind == "backend" else None,
+            "entries": changelog.history(svc.db, kind, limit),
+        }
 
     @app.post("/v1/updates/refresh")
     async def updates_refresh(user: UserConfig = Depends(current_user)):

@@ -19,13 +19,15 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-from . import apkmanifest, apksig, appchannel
+from . import apkmanifest, apksig, appchannel, changelog
 from .config import Config
+from .db import Database
 
 GITHUB_API = "https://api.github.com"
 GITHUB_API_VERSION = "2022-11-28"
@@ -379,6 +381,46 @@ def release_info(
     return _manifest_info(data, repo, tag, version, assets)
 
 
+def _published_epoch(release: dict) -> float | None:
+    stamp = str(release.get("published_at") or release.get("created_at") or "")
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def record_history(
+    cfg: Config, releases: list[Any], include_prerelease: bool, picked: ReleaseInfo | None = None
+) -> None:
+    """Keep every listed release's notes and time in the changelog store; the picked one's release.json notes win.
+    The history is a convenience: it never fails or holds back a sync."""
+    try:
+        db = Database(cfg.db_path)
+    except Exception:
+        return
+    try:
+        for release in releases:
+            if not isinstance(release, dict) or release.get("draft"):
+                continue
+            if release.get("prerelease") and not include_prerelease:
+                continue
+            match = TAG_RE.match(str(release.get("tag_name", "")))
+            if not match:
+                continue
+            version = f"{match[1]}.{match[2]}.{match[3]}"
+            exact = picked is not None and picked.version_name == version
+            notes = (
+                picked.changelog if exact and picked else _bullets(str(release.get("body") or ""))
+            )
+            changelog.record_app_release(
+                db, version, notes, _published_epoch(release), overwrite=exact
+            )
+    except Exception:
+        return
+    finally:
+        db.close()
+
+
 def is_newer(info: ReleaseInfo, latest: dict | None) -> bool:
     """versionCode decides; a release without release.json has a derived code, so its version name decides."""
     if not latest:
@@ -587,6 +629,8 @@ def sync_github(
             )
         release, version = picked
         info = release_info(client, repo, release, version)
+        if not dry_run:
+            record_history(cfg, releases, include_prerelease, info)
         latest = appchannel.load_latest(cfg)
         channel = (
             f"channel at {latest.get('version_name')} (versionCode {latest.get('version_code')})"

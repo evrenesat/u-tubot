@@ -325,7 +325,7 @@ no external requests). Everything it shows comes from authenticated JSON endpoin
 | Filters | hide and mark topics as chips, thresholds as sliders, mark-only |
 | Captions | the automatic-transcription policy, "transcribe this video" from a link, the job list with cancel and retry; every job links to its [detail report](#job-details) |
 | TVs | *Link a TV* (a big one-time code and the steps), linked devices with revoke, the TV settings kept on the server |
-| Updates | the app version this server publishes, the newest GitHub release, the last `sync-github` run |
+| Updates | the app version this server publishes, the newest GitHub release, the last `sync-github` run, and two histories: app versions (release time, notes) and backend deploys (time, real version, changes since the previous deploy) |
 | Admin | users (add, set a password, admin flag, pairing code), each user's settings and TVs, the [media archive](#media-archive) (usage, per-video entries, manual cleanup) |
 
 Screenshots (390 x 844 at 2x): [home](screenshots/webui/02-home.png), [models](screenshots/webui/04-models.png),
@@ -763,6 +763,12 @@ at least one release. A rollback does not undo data that the newer revision wrot
 undo even that, copy `data_dir` first (`sqlite3 utubot.sqlite ".backup utubot.before-update.sqlite"` is safe while the service runs).
 
 ## Updates
+
+The backend version (`/v1/health`, `/v1/me`, the web UI) is `0.<series>.<commit count>+<short sha>` read from the git checkout the
+server runs from; the series is the minor of `utubot.version`. Without git (an installed package) it is the package version. At every
+start the server compares the running commit with the last recorded deploy and, when they differ, stores a deploy entry (time, version,
+commit, the merged changes since the previous one) in the database, so a restart never adds one. `utubot app sync-github` stores the
+notes and release time of the app releases it sees in the same table. `GET /v1/changelog?kind=app|backend` serves both (`ai/CONTRACT.md`).
 
 TVs poll `/app/update.json` on your server, so the update channel is whatever is published in `app_dir`. Two ways to fill it.
 

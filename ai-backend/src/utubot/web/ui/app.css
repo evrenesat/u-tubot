@@ -359,3 +359,6 @@ progress::-moz-progress-bar { background: var(--accent); }
 .tl-text { overflow-wrap: anywhere; font-size: 14px; }
 @keyframes tl-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .tl-icon.run .icon { animation: none; } }
+
+details > summary { cursor: pointer; padding: 6px 0; }
+details > h3 { font-size: 0.95rem; margin: 8px 0 2px; }
