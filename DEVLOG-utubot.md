@@ -48,6 +48,12 @@
 - Backend retries a 403 with another yt-dlp player client, then a cut waits for the TV's own captions; `UtubotMenu.stateText` shows the
   server's message for a cut in `needs_transcript` instead of "Needs a transcript". Details in `ai-backend/DEVLOG.md`.
 
+## 2026-11-26 (fast dev install for the owner's devices, issue #219)
+
+- `scripts/dev_install.py`: after a release fetches the universal APK of the GitHub release (checked against the release's SHA256SUMS), or takes a local debug build with `--apk`, and for every device in the gitignored `adb-devices` list (one `host:port` per line) runs `adb connect <host>:<port>` and `adb -s <host>:<port> install -r`; a failed device does not stop the others, and the exit code is non-zero when any fails. Off by default, never run in CI or by the release workflow; the device list is gitignored, so no personal host ever ends up in the tree.
+- `docs/development.md`: "Fast dev install for the owner's devices" section (tablet wireless debugging and pairing, pre-Android 11 `adb tcpip 5555` fallback).
+- Tests: `ai-backend/tests/test_dev_install.py` (15 tests, no network).
+
 ## 2026-11-26 (the player's hourglass follows the director's cut, issue #209)
 
 - `UtubotCutTime.remainingKeptMs`: the kept time after a position, the rest of the kept part it is in plus every later part. A position in a
