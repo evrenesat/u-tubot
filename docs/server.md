@@ -653,6 +653,22 @@ bytes and duration, never the audio or the words. Wire details:
 - ffmpeg is needed on the modelgate host when the phone's webm/opus cannot be passed through
   (EVR-464 documents the format matrix).
 
+## Voice control
+
+Plan: `ai/VOICE_CONTROL_PLAN.md`. Checkpoint 1 is the backend half only: consent per device, the command history, retention and the
+addresses clients read. It is off by default (`[voice] enabled = false`): the voice routes answer `404`, `GET /v1/me` has
+`features.voice = false` and nothing else new, `/setup.json` has no `realtime_url`, and the web UI shows no Voice page. Rolling back is
+that switch or reverting the revision: the three new tables (`device_voice`, `user_voice`, `voice_commands`) are `CREATE IF NOT EXISTS`
+and nothing reads them while voice is off, so no database step is needed either way.
+
+- Config: `[voice] enabled`, `realtime_path` (`/rt`; `/setup.json` gets `realtime_url` = `public_base_url` + this), `retention_days`
+  (30), `max_text_chars`, `max_args_bytes`, `history_page_max`, `commands_per_min` (see `config.example.toml`).
+- A device is off until its owner switches it on in the web UI (TVs page, Voice control) after reading the consent text the server
+  serves (`consent.version` must be sent back). The all-off button switches every device off and the next switch-on asks again.
+- The history is text only (what was said, the tool, its arguments, the outcome, timing marks), kept `retention_days` (the user may
+  choose 0 to keep nothing) and read and deleted on the Voice page. No audio is stored by this backend or, by design, by anything else.
+- The live server that carries audio is a later checkpoint; until it exists the switches and the history are all that does anything.
+
 ## Reverse proxy and TLS
 
 Keep the service on `127.0.0.1:8790` and terminate TLS in front of it. Set `server.public_base_url` to the public URL.

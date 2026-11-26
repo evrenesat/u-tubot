@@ -9,7 +9,7 @@ export class ApiError extends Error {
   }
 }
 
-export const session = { user: null, admin: false, klass: "normal", csrf: null, via: null, hasPassword: false };
+export const session = { user: null, admin: false, klass: "normal", csrf: null, via: null, hasPassword: false, voice: null };
 
 const SAFE = new Set(["GET", "HEAD"]);
 
@@ -66,12 +66,23 @@ export async function loadSession() {
   }
 }
 
+// Whether this server has voice control switched on (`features.voice` of /v1/me); null until asked.
+export async function loadFeatures() {
+  try {
+    const me = await api("/v1/me");
+    session.voice = !!(me.features && me.features.voice);
+  } catch {
+    session.voice = false;
+  }
+  return session;
+}
+
 export function adoptLogin(info) {
   Object.assign(session, { user: info.user, admin: info.admin, klass: info.class, csrf: info.csrf, via: "cookie" });
 }
 
 export function forgetSession() {
-  Object.assign(session, { user: null, admin: false, klass: "normal", csrf: null, via: null, hasPassword: false });
+  Object.assign(session, { user: null, admin: false, klass: "normal", csrf: null, via: null, hasPassword: false, voice: null });
 }
 
 export async function upload(path, form) {

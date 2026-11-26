@@ -93,6 +93,7 @@ from .status import StatusService, UpdatesStatus
 from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
 from .videoref import VIDEO_ID_RE
+from .voice import VoiceService, install_voice_routes
 from .webauth import SESSION_TOKEN_ID, VIA_TAILSCALE, WebAuth, csrf_valid, hash_session
 from .webroutes import Deps, install_web_routes
 from .youtube import Clock, YoutubeGate
@@ -175,6 +176,7 @@ class Services:
     cuts: CutService
     processed: ProcessedService
     inbox: InboxService
+    voice: VoiceService
     speech: SpeechService
     gate: YoutubeGate
     transcription: Transcription
@@ -239,6 +241,7 @@ def build_services(
         cuts=CutService(cfg, db, llm, transcripts, prompts, jobs, auth, archive, gate, inbox),
         processed=ProcessedService(db, transcripts, prompts),
         inbox=inbox,
+        voice=VoiceService(cfg.voice, db, auth),
         speech=SpeechService(cfg, transport=llm_transport),
         gate=gate,
         transcription=transcription,
@@ -628,12 +631,25 @@ def create_app(
             "pairing": cfg.setup.pairing,
             "defaults": cfg.setup.defaults.model_dump(),
         }
+        if cfg.voice.enabled:
+            out["realtime_url"] = base + "/" + cfg.voice.realtime_path.strip("/")
         if cfg.setup.prompt_set_urls:
             out["prompt_set_urls"] = cfg.setup.prompt_set_urls
         return out
 
+    def voice_me(req: Request, who: UserConfig) -> dict[str, Any]:
+        """The `device` and `voice` objects of /v1/me; nothing at all while voice is off."""
+        if not cfg.voice.enabled:
+            return {}
+        device_id = svc.auth.device_id_of(getattr(req.state, "principal", None))
+        device = svc.db.one("SELECT device FROM device_tokens WHERE id=?", [device_id])
+        return {
+            "device": {"id": device_id, "name": device["device"]} if device else None,
+            "voice": svc.voice.me(who.name, device_id),
+        }
+
     @app.get("/v1/me")
-    async def me(user: UserConfig = Depends(current_user)):
+    async def me(request: Request, user: UserConfig = Depends(current_user)):
         return {
             "user": user.name,
             "policy": user.policy.model_dump(),
@@ -651,7 +667,9 @@ def create_app(
                 "cuts_watched": svc.cuts.watched_available[0],
                 "speech": svc.speech.configured,
                 "speech_max_s": cfg.speech.max_record_s,
+                "voice": cfg.voice.enabled,
             },
+            **voice_me(request, user),
         }
 
     @app.put("/v1/me/policy")
@@ -1427,23 +1445,22 @@ def create_app(
         )
         return {"ok": True}
 
-    install_web_routes(
-        app,
-        Deps(
-            svc=svc,
-            current_user=current_user,
-            admin_user=admin_user,
-            ip_of=ip_of,
-            session_cookie=session_cookie,
-            set_session_cookie=set_session_cookie,
-            clear_session_cookie=clear_session_cookie,
-            check_same_origin=check_same_origin,
-            check_csrf=check_csrf,
-            client_of=client_of,
-            mark_origin=mark_origin,
-            note_delivery=note_delivery,
-        ),
+    deps = Deps(
+        svc=svc,
+        current_user=current_user,
+        admin_user=admin_user,
+        ip_of=ip_of,
+        session_cookie=session_cookie,
+        set_session_cookie=set_session_cookie,
+        clear_session_cookie=clear_session_cookie,
+        check_same_origin=check_same_origin,
+        check_csrf=check_csrf,
+        client_of=client_of,
+        mark_origin=mark_origin,
+        note_delivery=note_delivery,
     )
+    install_web_routes(app, deps)
+    install_voice_routes(app, deps)
     return app
 
 

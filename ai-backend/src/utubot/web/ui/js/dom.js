@@ -53,6 +53,7 @@ const ICONS = {
   chevron: "M9 6l6 6-6 6",
   download: "M12 4v11M7 11l5 5 5-5M5 20h14",
   back: "M15 6l-6 6 6 6",
+  mic: "M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zM6 11a6 6 0 0 0 12 0M12 17v4M9 21h6",
 };
 
 export function icon(name) {

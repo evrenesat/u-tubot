@@ -166,6 +166,18 @@ CREATE TABLE IF NOT EXISTS inbox(
    length_s INTEGER, label TEXT, thumbnail TEXT, created_at REAL NOT NULL, read_at REAL, dismissed INTEGER
    NOT NULL DEFAULT 0, dismissed_at REAL);
 CREATE INDEX IF NOT EXISTS inbox_user ON inbox(user, dismissed, created_at DESC);
+CREATE TABLE IF NOT EXISTS device_voice(
+  device_id TEXT PRIMARY KEY, user TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0,
+  listen_mode TEXT NOT NULL DEFAULT 'push', speak INTEGER NOT NULL DEFAULT 0,
+  consent_version INTEGER, consented_at REAL, updated_at REAL NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS device_voice_user ON device_voice(user);
+CREATE TABLE IF NOT EXISTS user_voice(
+  user TEXT PRIMARY KEY, retention_days INTEGER, updated_at REAL NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS voice_commands(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT NOT NULL, device_id TEXT NOT NULL DEFAULT '',
+  at REAL NOT NULL, text TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '',
+  args TEXT NOT NULL DEFAULT '{}', outcome TEXT NOT NULL DEFAULT '', marks TEXT NOT NULL DEFAULT '{}');
+CREATE INDEX IF NOT EXISTS voice_commands_user ON voice_commands(user, at DESC);
 """
 
 JOB_COLUMNS = {

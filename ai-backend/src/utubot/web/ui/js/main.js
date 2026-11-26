@@ -1,10 +1,11 @@
-import { ApiError, forgetSession, loadSession, session } from "./api.js";
+import { ApiError, forgetSession, loadFeatures, loadSession, session } from "./api.js";
 import { h, icon, mount } from "./dom.js";
 import { errorText, failure, loading } from "./components.js";
 import * as account from "./pages/account.js";
 import * as admin from "./pages/admin.js";
 import * as cuts from "./pages/cuts.js";
 import * as devices from "./pages/devices.js";
+import * as history from "./pages/history.js";
 import * as filtering from "./pages/filtering.js";
 import * as home from "./pages/home.js";
 import * as job from "./pages/job.js";
@@ -27,6 +28,7 @@ const ROUTES = [
   { path: "captions", label: "Captions", icon: "captions", page: transcripts, primary: true },
   { path: "jobs", label: "Job", icon: "captions", page: job, parent: "captions", hidden: true },
   { path: "tvs", label: "TVs", icon: "tv", page: devices },
+  { path: "history", label: "Voice", icon: "mic", page: history, voiceOnly: true },
   { path: "updates", label: "Updates", icon: "updates", page: updates },
   { path: "account", label: "Account", icon: "account", page: account },
   { path: "admin", label: "Admin", icon: "admin", page: admin, adminOnly: true },
@@ -43,8 +45,12 @@ function parseHash() {
   return { path: path || "home", rest: rest.map(decodeURIComponent) };
 }
 
+function allowed(route) {
+  return (!route.adminOnly || session.admin) && (!route.voiceOnly || session.voice);
+}
+
 function drawNav(current) {
-  const items = ROUTES.filter((r) => (!r.adminOnly || session.admin) && !r.hidden);
+  const items = ROUTES.filter((r) => allowed(r) && !r.hidden);
   const primary = items.filter((r) => r.primary);
   const links = primary.map((r) => navLink(r, current === r.path));
   links.push(
@@ -85,14 +91,15 @@ async function renderRoute() {
     cleanup = await login.render(view, { onSignedIn });
     return;
   }
+  if (session.voice === null) await loadFeatures();
   const { path, rest } = parseHash();
   if (path === "more") {
     drawNav("more");
     mount(view);
-    cleanup = await more.render(view, { routes: ROUTES.filter((r) => !r.primary && !r.hidden && (!r.adminOnly || session.admin)) });
+    cleanup = await more.render(view, { routes: ROUTES.filter((r) => !r.primary && !r.hidden && allowed(r)) });
     return;
   }
-  const route = ROUTES.find((r) => r.path === path && (!r.adminOnly || session.admin));
+  const route = ROUTES.find((r) => r.path === path && allowed(r));
   if (!route) {
     location.hash = "#/home";
     return;

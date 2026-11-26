@@ -117,6 +117,7 @@ def build(data: Path):
     cfg.speech.alias = "stt"
     cfg.speech.max_record_s = 50
     cfg.speech.per_user_per_min = 20
+    cfg.voice.enabled = True
     cfg.security.scrypt_n = 2**12
     # The seeded "running" job parks its worker on the never-downloading fake; a second worker
     # keeps the queue alive for the cut builds the pages show live.
@@ -214,6 +215,49 @@ def vtt_of(cues) -> str:
     for i, (start, text) in enumerate(cues, 1):
         blocks += [str(i), f"{stamp(start)} --> {stamp(start + 3.5)}", text, ""]
     return "\n".join(blocks)
+
+
+def seed_voice(db, now: float) -> None:
+    """One device with voice on and a few spoken commands, so the Devices and Voice pages have content."""
+    tv = db.one("SELECT id FROM device_tokens WHERE device='Living room TV'")["id"]
+    db.execute(
+        "INSERT INTO device_voice(device_id,user,enabled,listen_mode,speak,consent_version,consented_at,"
+        "updated_at) VALUES(?,?,1,'push',1,1,?,?)",
+        [tv, "owner", now - 2 * 86400, now - 2 * 86400],
+    )
+    rows = [
+        (
+            90,
+            "make a cut that keeps only the benchmarks",
+            "cut_custom",
+            {"prompt": "only the benchmarks"},
+            "ok",
+            {"stt_ms": 412, "intent_ms": 230, "total_ms": 1480},
+        ),
+        (400, "pause", "pause", {}, "ok", {"stt_ms": 380, "total_ms": 610}),
+        (
+            3600,
+            "back thirty seconds",
+            "seek",
+            {"delta_s": -30},
+            "ok",
+            {"stt_ms": 360, "total_ms": 590},
+        ),
+        (
+            7200,
+            "summarise the whole thing in Turkish please and read it out loud",
+            "summary",
+            {"language": "tr"},
+            "clarify",
+            {"stt_ms": 905, "intent_ms": 840},
+        ),
+        (86400, "next part", "next_part", {}, "refused", {"stt_ms": 350}),
+    ]
+    for age, text, tool, args, outcome, marks in rows:
+        db.execute(
+            "INSERT INTO voice_commands(user,device_id,at,text,tool,args,outcome,marks) VALUES(?,?,?,?,?,?,?,?)",
+            ["owner", tv, now - age, text, tool, json.dumps(args), outcome, json.dumps(marks)],
+        )
 
 
 def seed_job_reports(svc, now: float) -> None:
@@ -1004,6 +1048,7 @@ def seed(cfg: Config, app, mock: MockOpenAI) -> None:
             "INSERT INTO device_tokens(id,user,token_sha256,device,created_at,last_used) VALUES(?,?,?,?,?,?)",
             [uuid.uuid4().hex[:12], "owner", uuid.uuid4().hex, name, now - 20 * 86400, used],
         )
+    seed_voice(db, now)
     jobs = [
         (
             "transcript",
