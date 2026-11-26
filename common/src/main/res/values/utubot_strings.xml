@@ -30,6 +30,8 @@
     <string name="utubot_summary_panel_desc">A side panel with a short summary of the focused video</string>
     <string name="utubot_panel_delay">Summary delay</string>
     <string name="utubot_panel_delay_value">%s s</string>
+    <string name="utubot_auto_scroll">Reading pace</string>
+    <string name="utubot_auto_scroll_value">%s px/s</string>
     <string name="utubot_browse_refresh">Browse refresh</string>
     <string name="utubot_update_interval">Update check interval</string>
     <string name="utubot_development_mode">Development mode</string>

@@ -133,6 +133,7 @@ public class UtubotSetupFlowTest {
                 mActivity.getString(R.string.utubot_answer_in_menu),
                 mActivity.getString(R.string.utubot_summary_panel),
                 mActivity.getString(R.string.utubot_panel_delay),
+                mActivity.getString(R.string.utubot_auto_scroll),
                 mActivity.getString(R.string.utubot_browse_refresh),
                 mActivity.getString(R.string.utubot_update_interval),
                 mActivity.getString(R.string.utubot_development_mode),
@@ -155,7 +156,7 @@ public class UtubotSetupFlowTest {
 
         List<OptionCategory> categories = UtubotSettingsPresenter.instance(mActivity).buildCategories();
 
-        assertEquals(16, categories.size());
+        assertEquals(17, categories.size());
         assertEquals(mActivity.getString(R.string.utubot_import_setup), categories.get(0).options.get(0).getTitle().toString());
         assertEquals(mActivity.getString(R.string.utubot_pair), categories.get(1).options.get(0).getTitle().toString());
     }

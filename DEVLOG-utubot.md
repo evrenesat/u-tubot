@@ -56,6 +56,24 @@
 - Tests: the snap edges and the kept-part stay in `UtubotCutSkipperTest`, the forward/backward snap, the seek with skipping off and the
   toggle resume in `UtubotCutControllerTest`.
 
+## 2026-11-26 (AI answers and the Summary view scroll by themselves at a reading pace, issue 167)
+
+- The long answer and Summary text of the Summary view crawl slowly and smoothly by themselves at the reading pace of the options
+  page (30, 45 or 60 px/s, default 45) when they are taller than the view, and stop at the bottom; any key pauses it and it resumes
+  after a few seconds, Up and Down still scroll one page at a time, and waiting long enough shows the whole text. The answer is
+  rendered by the same view (`UtubotSummaryOverlay.isAnswer`), so it scrolls the same way.
+- `UtubotAutoScroll` (`common/.../utubot`) is a pure pacing/pause state machine: a `LongSupplier` for the speed, a `LongSupplier` for
+  the resume delay and a `ScrollTarget` (current/max/next scroll) — it advances a tick every 40 ms while enabled and paused less than
+  the resume delay, and never touches a view. `UtubotPageScrollView` owns one, enabled only when the request is on and the view has
+  more to scroll, and pauses on any `ACTION_DOWN` key. `UtubotSummaryOverlay` turns it on when the state is Ready and off while opening
+  or waiting.
+- Tests: `UtubotAutoScrollTest` (pacing, pause/resume, disabled, no content) and `UtubotPageScrollViewTest` (Robolectric: tall text
+  crawls and stops at the bottom, short text does not, a key pauses then resumes, Up and Down page). The settings list gained a
+  "Reading pace" row, so `UtubotPanelSettingsTest` and `UtubotSetupFlowTest` were updated for the new index and category count.
+- Extension parity: the parity matrix rows `answer-in-label` (AI answer) and `summary-view` (Summary view) now say the answer and
+  the Summary text crawl by themselves at the reading pace on the extension too; the extension UI for the Summary view is a later
+  checkpoint.
+
 ## 2026-11-26 (frequent update checks, issue #200)
 
 - The update schedule now reads its interval from the settings after every check: "Update check interval" (5, 15, 60 or 360 min;
@@ -103,7 +121,7 @@
 - TV: a tick landing anywhere inside a drop skips it (a seek is a backwards move or one over a tick of the speed), a seek the user
   ends inside a drop plays, and the trailing drop says "End of cut" with "Watch the rest".
 - Not ported from the closed PR: its `keep_guards`/`keep_guards_for` rework (lower guard for the no-filler preset only, none for a
-  typed prompt) contradicts main's `short_presets` rule, and its `min_guard` parameter of `finalize_parts`.
+   typed prompt) contradicts main's `short_presets` rule, and its `min_guard` parameter of `finalize_parts`.
 
 ## 2026-11-26 (cuts: the player shows cut time and part number, flow-80)
 

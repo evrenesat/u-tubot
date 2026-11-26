@@ -28,6 +28,10 @@ public class UtubotSettings {
     public static final int CUT_JUMP_LEFT_RIGHT = 1;
     public static final int CUT_JUMP_UP_DOWN = 2;
     public static final int[] CUT_JUMP_CHOICES = {CUT_JUMP_LEFT_RIGHT, CUT_JUMP_UP_DOWN, CUT_JUMP_OFF};
+
+    /** Reading pace of the self-scrolling summary/answer text, in pixels per second (Settings choices) */
+    public static final int DEFAULT_AUTO_SCROLL_SPEED_PX_PER_SEC = 45;
+    public static final int[] AUTO_SCROLL_SPEEDS_PX_PER_SEC = {30, DEFAULT_AUTO_SCROLL_SPEED_PX_PER_SEC, 60};
     private static final String PREFS_NAME = "utubot_settings";
     private static final String KEY_URL = "url";
     private static final String KEY_TOKEN = "token";
@@ -41,6 +45,7 @@ public class UtubotSettings {
     private static final String KEY_CUT_LEGEND_SHOWN = "cut_legend_shown";
     private static final String KEY_WAIT_MS = "wait_ms";
     private static final String KEY_PANEL_DELAY_MS = "panel_delay_ms";
+    private static final String KEY_AUTO_SCROLL_SPEED = "auto_scroll_speed";
     private static final String KEY_BROWSE_REFRESH_MINUTES = "browse_refresh_minutes";
     private static final String KEY_PAIR_PROMPT_DONE = "pair_prompt_done";
     private static final String KEY_SETUP_PROMPT_DONE = "setup_prompt_done";
@@ -503,6 +508,31 @@ public class UtubotSettings {
         if (BrowseCachePolicy.isChoice(minutes)) {
             mPrefs.edit().putInt(KEY_BROWSE_REFRESH_MINUTES, minutes).apply();
         }
+    }
+
+    /**
+     * The reading pace of the self-scrolling summary/answer text: one of {@link #AUTO_SCROLL_SPEEDS_PX_PER_SEC}
+     */
+    public int getAutoScrollSpeedPxPerSec() {
+        int stored = mPrefs.getInt(KEY_AUTO_SCROLL_SPEED, DEFAULT_AUTO_SCROLL_SPEED_PX_PER_SEC);
+
+        return isAutoScrollSpeedChoice(stored) ? stored : DEFAULT_AUTO_SCROLL_SPEED_PX_PER_SEC;
+    }
+
+    public void setAutoScrollSpeedPxPerSec(int pxPerSec) {
+        if (isAutoScrollSpeedChoice(pxPerSec)) {
+            mPrefs.edit().putInt(KEY_AUTO_SCROLL_SPEED, pxPerSec).apply();
+        }
+    }
+
+    private static boolean isAutoScrollSpeedChoice(int pxPerSec) {
+        for (int choice : AUTO_SCROLL_SPEEDS_PX_PER_SEC) {
+            if (choice == pxPerSec) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static boolean isPanelDelayChoice(int delayMs) {
