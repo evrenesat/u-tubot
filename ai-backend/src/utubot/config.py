@@ -76,6 +76,9 @@ class LLMConfig(BaseModel):
     smart: LLMTask = LLMTask(model="smart", max_tokens=1500)
     cuts: LLMTask | None = None
     cuts_vision: LLMTask | None = None
+    changelog: LLMTask | None = (
+        None  # optional plain-words rewrite of the deploy notes (2 s budget)
+    )
 
     @model_validator(mode="after")
     def _vision_fallback_same_provider(self) -> LLMConfig:

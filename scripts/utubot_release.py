@@ -5,17 +5,24 @@ next-version  print the next version of a series from the existing release versi
 cert          print the SHA-256 of an APK's signing certificate (nothing when apksigner cannot say)
 manifest      write release.json and SHA256SUMS for the APKs in a directory
 notes         write the release notes; never fails, a release is not held back by its notes
+rewrite-notes optional: rewrite the bodies of existing releases in the short form (dry run unless --apply)
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+RULES_PATH = Path(__file__).resolve().parents[1] / "ai-backend" / "src" / "utubot" / "releasenotes.py"
+_spec = importlib.util.spec_from_file_location("utubot_releasenotes", RULES_PATH)
+RELEASENOTES = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(RELEASENOTES)  # the same rules as the backend's deploy notes
 
 APPLICATION_ID = "dev.utubot.tv"
 APK_NAME_RE = re.compile(r"^u-tubot_(?P<version>\d+\.\d+\.\d+)_(?P<abi>[a-z0-9_-]+)\.apk$")
@@ -34,9 +41,7 @@ HASH_CHUNK_BYTES = 1 << 20
 TOOL_TIMEOUT_S = 120
 GH_TIMEOUT_S = 60
 MAX_CHANGELOG_LINES = 20
-MAX_COMMIT_LINES = 40
-UNRELEASED_HEADING = "## Unreleased"
-NOTES_FALLBACK = "See CHANGELOG.md."
+NOTES_FALLBACK = RELEASENOTES.MAINTENANCE_ONLY
 
 
 def parse_version(text: str) -> tuple[int, int, int] | None:
@@ -174,25 +179,6 @@ def write_checksums(directory: Path, manifest: dict) -> None:
     )
 
 
-def unreleased_section(changelog_text: str) -> str:
-    out: list[str] = []
-    inside = False
-    for line in changelog_text.splitlines():
-        if line.startswith("## "):
-            inside = line.strip().lower() == UNRELEASED_HEADING.lower()
-            continue
-        if inside:
-            out.append(line)
-    return "\n".join(out).strip()
-
-
-def lines_not_in(section: str, released_body: str) -> str:
-    """The lines of the Unreleased section that the previous release notes do not already carry."""
-    released = {line.strip() for line in released_body.splitlines() if line.strip()}
-    kept = [line for line in section.splitlines() if line.strip() and line.strip() not in released]
-    return "\n".join(kept)
-
-
 def gh_api(path: str, jq: str) -> str:
     done = subprocess.run(
         ["gh", "api", path, "--jq", jq],
@@ -204,40 +190,28 @@ def gh_api(path: str, jq: str) -> str:
     return done.stdout.strip()
 
 
-def commit_log(repo: str, previous_tag: str | None, sha: str) -> str:
-    """Subjects of the commits since the previous release, merge commits left out."""
+def commit_subjects(repo: str, previous_tag: str | None, sha: str) -> list[str]:
+    """PR titles (first lines of the squash-merge commits) since the previous release, merge commits left out."""
     if not previous_tag:
-        return ""
-    subjects = gh_api(
+        return []
+    out = gh_api(
         f"repos/{repo}/compare/{previous_tag}...{sha}",
-        '[.commits[].commit.message | split("\\n")[0]] | map(select(startswith("Merge ") | not)) | .[]',
+        '[.commits[].commit.message | split("\\n")[0]] | map(select(startswith("Merge ") | not)) | reverse | .[]',
     )
-    lines = [f"- {subject}" for subject in subjects.splitlines() if subject.strip()]
-    return "\n".join(lines[:MAX_COMMIT_LINES])
+    return [line for line in out.splitlines() if line.strip()]
 
 
 def release_notes(
-    repo: str, version: str, sha: str, changelog_path: Path, existing: list[str], cert: str | None
+    repo: str, version: str, sha: str, existing: list[str], cert: str | None
 ) -> str:
     previous = previous_version(version, existing)
     previous_tag = f"utubot-v{previous}" if previous else None
-    body = ""
+    lines: list[str] = []
     try:
-        section = unreleased_section(changelog_path.read_text(encoding="utf-8"))
-        released = (
-            gh_api(f"repos/{repo}/releases/tags/{previous_tag}", ".body // empty")
-            if previous_tag
-            else ""
-        )
-        body = lines_not_in(section, released)
+        lines = RELEASENOTES.summarize(commit_subjects(repo, previous_tag, sha))
     except (OSError, subprocess.SubprocessError) as exc:
-        print(f"::warning::CHANGELOG notes unavailable: {exc}")
-    if not body:
-        try:
-            body = commit_log(repo, previous_tag, sha)
-        except (OSError, subprocess.SubprocessError) as exc:
-            print(f"::warning::commit log unavailable: {exc}")
-    parts = [body or NOTES_FALLBACK]
+        print(f"::warning::commit log unavailable: {exc}")
+    parts = ["\n".join(f"- {line}" for line in lines) or NOTES_FALLBACK]
     if cert:
         parts.append(f"Signing certificate SHA-256: `{cert}`")
     if previous_tag:
@@ -245,6 +219,41 @@ def release_notes(
             f"Full changelog: https://github.com/{repo}/compare/{previous_tag}...utubot-v{version}"
         )
     return "\n\n".join(parts) + "\n"
+
+
+def rewrite_notes(repo: str, apply: bool) -> int:
+    """Rewrite the bullet list of every existing u·tubot release body; the certificate and compare lines stay."""
+    tags = sorted(
+        gh_api(f"repos/{repo}/releases?per_page=100", ".[].tag_name").splitlines(),
+        key=lambda tag: parse_version(tag.removeprefix("utubot-v")) or (0, 0, 0),
+    )
+    tags = [tag for tag in tags if parse_version(tag.removeprefix("utubot-v"))]
+    changed = 0
+    for index, tag in enumerate(tags):
+        previous = tags[index - 1] if index else None
+        body = gh_api(f"repos/{repo}/releases/tags/{tag}", ".body // empty")
+        kept = [line for line in body.splitlines() if line.strip() and not BULLET_RE.match(line)]
+        kept = [line for line in kept if not line.startswith(("  ", "\t"))]
+        kept = [line for line in kept if line != "See CHANGELOG.md."]
+        lines = RELEASENOTES.normalize(bullets(body))
+        head = "\n".join(f"- {line}" for line in lines) or NOTES_FALLBACK
+        fresh = "\n\n".join([head, *kept]) + "\n"
+        if previous is None or fresh.strip() == body.strip():
+            continue
+        changed += 1
+        print(f"{tag}: {len(bullets(body))} lines -> {len(lines)}")
+        if apply:
+            subprocess.run(
+                ["gh", "release", "edit", tag, "--repo", repo, "--notes", fresh],
+                check=True,
+                timeout=GH_TIMEOUT_S,
+            )
+    print(f"{changed} release bodies {'rewritten' if apply else 'would change (use --apply)'}")
+    return 0
+
+
+def cmd_rewrite_notes(args: argparse.Namespace) -> int:
+    return rewrite_notes(args.repo, args.apply)
 
 
 def read_lines(path: str) -> list[str]:
@@ -295,7 +304,6 @@ def cmd_notes(args: argparse.Namespace) -> int:
             args.repo,
             args.version,
             args.sha,
-            Path(args.changelog),
             read_lines(args.tags),
             args.cert or None,
         )
@@ -336,13 +344,16 @@ def main(argv: list[str] | None = None) -> int:
     notes.add_argument("--repo", required=True)
     notes.add_argument("--version", required=True)
     notes.add_argument("--sha", required=True)
-    notes.add_argument("--changelog", required=True, help="path of CHANGELOG.md")
     notes.add_argument(
         "--tags", required=True, help="file of existing release versions, one per line"
     )
     notes.add_argument("--cert", help="signing certificate SHA-256 to print in the notes")
     notes.add_argument("--out", required=True)
     notes.set_defaults(func=cmd_notes)
+    rewrite = sub.add_parser("rewrite-notes")
+    rewrite.add_argument("--repo", required=True)
+    rewrite.add_argument("--apply", action="store_true", help="edit the releases (default: dry run)")
+    rewrite.set_defaults(func=cmd_rewrite_notes)
     args = parser.parse_args(argv)
     return args.func(args)
 

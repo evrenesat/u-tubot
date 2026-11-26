@@ -227,7 +227,7 @@ jobs:
           gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/utubot-v" --jq '.[].ref' \
             | sed -n 's#^refs/tags/utubot-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' > "$RUNNER_TEMP/versions.txt"
           python3 u-tubot/scripts/utubot_release.py notes --repo "$GITHUB_REPOSITORY" --version "$VERSION" --sha "$SHA" \
-            --changelog u-tubot/CHANGELOG.md --tags "$RUNNER_TEMP/versions.txt" --cert "$CERT" --out notes.md
+            --tags "$RUNNER_TEMP/versions.txt" --cert "$CERT" --out notes.md
           cat notes.md
 
       - name: Write release.json and the checksums

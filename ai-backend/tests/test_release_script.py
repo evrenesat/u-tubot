@@ -56,17 +56,6 @@ def test_previous_version():
     assert release.previous_version("0.2.0", existing) is None
 
 
-def test_unreleased_section_and_what_a_release_already_carried():
-    text = (
-        "# Changelog\n\n## Unreleased\n\n- new thing\n- old thing\n\n## 0.2.2 (date)\n\n- shipped\n"
-    )
-    section = release.unreleased_section(text)
-    assert section == "- new thing\n- old thing"
-    assert release.lines_not_in(section, "intro\n- old thing\n") == "- new thing"
-    assert release.lines_not_in(section, "- new thing\n- old thing") == ""
-    assert release.unreleased_section("## 0.2.2\n- x") == ""
-
-
 def test_bullets_become_the_changelog():
     assert release.bullets("- one\n* two\ntext\n\nFull changelog: x") == ["one", "two"]
 
@@ -134,30 +123,50 @@ def test_manifest_command_writes_the_files(tmp_path, capsys):
     assert "error:" in capsys.readouterr().err
 
 
-def test_notes_use_only_unreleased_lines_not_in_the_previous_release(tmp_path, monkeypatch):
-    changelog = tmp_path / "CHANGELOG.md"
-    changelog.write_text("## Unreleased\n\n- shipped before\n- brand new\n")
-    monkeypatch.setattr(release, "gh_api", lambda path, jq: "- shipped before\n")
-    text = release.release_notes("o/r", "0.3.1", "sha", changelog, ["0.3.0"], "ab" * 32)
-    assert text.startswith("- brand new\n")
-    assert "shipped before" not in text
-    assert f"`{'ab' * 32}`" in text
-    assert "compare/utubot-v0.3.0...utubot-v0.3.1" in text
-
-
-def test_notes_fall_back_to_the_commit_log_without_merges(tmp_path, monkeypatch):
-    changelog = tmp_path / "CHANGELOG.md"
-    changelog.write_text("## 0.3.0\n\n- done\n")
+def test_notes_are_short_user_visible_lines_from_pr_titles(monkeypatch):
     calls = []
 
     def fake_gh(path, jq):
         calls.append(path)
-        return "" if "releases/tags" in path else "fix/app: one\nfeat/app: two"
+        return "fix/tv: stop the crash on resume (#5)\ndocs/plan: more words (#4)\nfeat/cuts: skip sponsor reads (#3)"
 
     monkeypatch.setattr(release, "gh_api", fake_gh)
-    text = release.release_notes("o/r", "0.3.1", "sha", changelog, ["0.3.0"], None)
-    assert text.startswith("- fix/app: one\n- feat/app: two")
+    text = release.release_notes("o/r", "0.3.1", "sha", ["0.3.0"], "ab" * 32)
+    assert text.startswith(
+        "- Fixed: stop the crash on resume (TV)\n- New: skip sponsor reads (cuts)\n\n"
+    )
+    assert "docs" not in text
+    assert f"`{'ab' * 32}`" in text
+    assert "compare/utubot-v0.3.0...utubot-v0.3.1" in text
     assert any("compare/utubot-v0.3.0...sha" in c for c in calls)
+
+
+def test_notes_say_maintenance_only_without_visible_changes(monkeypatch):
+    monkeypatch.setattr(release, "gh_api", lambda path, jq: "ci/release: pin (#1)")
+    assert release.release_notes("o/r", "0.3.1", "sha", ["0.3.0"], None).startswith(
+        "Maintenance only"
+    )
+
+
+def test_rewrite_notes_dry_run_then_apply(monkeypatch, capsys):
+    bodies = {
+        "utubot-v0.3.0": "- first\n",
+        "utubot-v0.3.1": "- docs/x: words (#1)\n- fix/tv: stop the crash (#2)\n\nSigning certificate SHA-256: `ab`\n",
+    }
+
+    def fake_gh(path, jq):
+        if path.startswith("repos/o/r/releases?"):
+            return "\n".join(bodies)
+        return bodies[path.rsplit("/", 1)[1]]
+
+    edits = []
+    monkeypatch.setattr(release, "gh_api", fake_gh)
+    monkeypatch.setattr(release.subprocess, "run", lambda argv, **kw: edits.append(argv))
+    release.rewrite_notes("o/r", apply=False)
+    assert edits == []
+    release.rewrite_notes("o/r", apply=True)
+    assert len(edits) == 1 and edits[0][3] == "utubot-v0.3.1"
+    assert edits[0][-1] == "- Fixed: stop the crash (TV)\n\nSigning certificate SHA-256: `ab`\n"
 
 
 def test_notes_never_fail(tmp_path, monkeypatch, capsys):
@@ -181,10 +190,10 @@ def test_notes_never_fail(tmp_path, monkeypatch, capsys):
         "--out",
         str(out),
     ]
-    assert release.main(argv + ["--changelog", str(tmp_path / "missing.md")]) == 0
-    assert out.read_text().startswith("See CHANGELOG.md.")
+    assert release.main(argv) == 0
+    assert out.read_text().startswith("Maintenance only")
     monkeypatch.setattr(
         release, "release_notes", lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))
     )
-    assert release.main(argv + ["--changelog", str(tmp_path / "missing.md")]) == 0
+    assert release.main(argv) == 0
     assert "fell back to a stub" in capsys.readouterr().out

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from tests.test_appsync import PIN, REPO, make_cfg  # noqa: F401
-from utubot import appsync, buildinfo, changelog
+from utubot import appsync, buildinfo, changelog, releasenotes
 from utubot.db import Database
 
 
@@ -84,17 +86,6 @@ def test_version_falls_back_without_git(tmp_path):
     assert buildinfo.derive_version(tmp_path / "nothing", "9.9.9").version == "9.9.9"
 
 
-def test_describe_groups_and_hides():
-    assert buildinfo.describe("feat/cuts: add skip (#4)") == {
-        "group": "features",
-        "text": "Cuts: add skip",
-        "pr": 4,
-    }
-    assert buildinfo.describe("fix/tv: stop crash")["group"] == "fixes"
-    assert buildinfo.describe("docs/readme: words") is None
-    assert buildinfo.describe("Plain subject")["group"] == "other"
-
-
 def test_deploy_recorded_once_with_changes_since_previous(repo):
     db = Database(":memory:")
     first = buildinfo.derive_version(repo)
@@ -106,7 +97,9 @@ def test_deploy_recorded_once_with_changes_since_previous(repo):
     assert changelog.record_deploy(db, second, now=300.0)
     entries = changelog.history(db, "backend")
     assert [e["version"] for e in entries] == [second.version, first.version]
-    assert entries[0]["changes"] == [{"group": "fixes", "text": "Tv: stop the crash", "pr": 11}]
+    assert entries[0]["changes"] == [
+        {"group": "fixes", "text": "Fixed: stop the crash (TV)", "pr": None}
+    ]
     assert entries[1]["changes"][0]["group"] == "features"
     assert entries[0]["commit"] == second.commit
 
@@ -127,11 +120,11 @@ async def test_changelog_endpoint(env):
     backend = (await env.client.get("/v1/changelog?kind=backend")).json()
     assert backend["current"] == env.svc.build.version
     assert backend["entries"][0]["version"] == env.svc.build.version
-    changelog.record_app_release(env.svc.db, "0.3.1", ["Faster"], 1000.0, overwrite=False)
-    changelog.record_app_release(env.svc.db, "0.3.2", ["Fixed"], 2000.0, overwrite=False)
+    changelog.record_app_release(env.svc.db, "0.3.1", ["New: faster"], 1000.0, overwrite=False)
+    changelog.record_app_release(env.svc.db, "0.3.2", ["Fixed: it"], 2000.0, overwrite=False)
     app = (await env.client.get("/v1/changelog?kind=app")).json()
     assert [e["version"] for e in app["entries"]] == ["0.3.2", "0.3.1"]
-    assert app["entries"][0]["changes"][0]["text"] == "Fixed"
+    assert app["entries"][0]["changes"][0]["text"] == "Fixed: it"
     assert (await env.client.get("/v1/changelog?kind=nope")).status_code == 400
 
 
@@ -163,6 +156,95 @@ def test_release_history_keeps_notes_and_time(tmp_path):
     db = Database(cfg.db_path)
     entries = changelog.history(db, "app")
     assert [e["version"] for e in entries] == ["0.3.5", "0.3.4"]
-    assert [c["text"] for c in entries[0]["changes"]] == ["Manifest note"]
-    assert [c["text"] for c in entries[1]["changes"]] == ["Older note", "Another"]
+    assert [c["text"] for c in entries[0]["changes"]] == ["Changed: Manifest note"]
+    assert [c["text"] for c in entries[1]["changes"]] == ["Changed: Older note", "Changed: Another"]
     assert entries[0]["at"] == 1795600800.0
+
+
+def test_deploy_with_only_internal_commits_says_maintenance_only(repo):
+    db = Database(":memory:")
+    changelog.record_deploy(db, buildinfo.derive_version(repo), now=1.0)
+    commit(repo, "docs/readme: words (#12)")
+    commit(repo, "ci/release: pin (#13)")
+    changelog.record_deploy(db, buildinfo.derive_version(repo), now=2.0)
+    assert [c["text"] for c in changelog.history(db, "backend")[0]["changes"]] == [
+        "Maintenance only"
+    ]
+
+
+def _store(db, kind, version, at, sha, texts):
+    changes = [{"group": "other", "text": t, "pr": None} for t in texts]
+    db.execute(
+        "INSERT INTO changelog(kind, version, at, commit_sha, changes) VALUES(?, ?, ?, ?, ?)",
+        [kind, version, at, sha, json.dumps(changes)],
+    )
+
+
+def test_rebuild_shortens_stored_entries_and_is_idempotent(repo):
+    db = Database(":memory:")
+    wall = (
+        "AI verdicts and summaries that are ready survive a restart of the app: "
+        + "the TV keeps them " * 20
+    )
+    _store(db, "app", "0.3.1", 1.0, "", [wall, "feat/cuts: skip reads (#3)", "docs/x: words (#4)"])
+    _store(db, "app", "0.3.2", 2.0, "", [f"fix/tv: thing {n}" for n in range(9)])
+    first = buildinfo.derive_version(repo)
+    commit(repo, "feat/captions: speaker labels (#21)")
+    commit(repo, "test/captions: more cases (#22)")
+    second = buildinfo.derive_version(repo)
+    _store(db, "backend", first.version, 3.0, first.commit, ["Old long wall text " * 10])
+    _store(
+        db,
+        "backend",
+        second.version,
+        4.0,
+        second.commit,
+        ["Captions: speaker labels", "Captions: more cases"],
+    )
+    assert changelog.rebuild(db, repo) == 4
+    snapshot = [changelog.history(db, k) for k in changelog.KINDS]
+    assert changelog.rebuild(db, repo) == 0
+    assert [changelog.history(db, k) for k in changelog.KINDS] == snapshot
+    app = {e["version"]: [c["text"] for c in e["changes"]] for e in changelog.history(db, "app")}
+    assert app["0.3.1"] == [
+        "Changed: AI verdicts and summaries that are ready survive a restart of the app",
+        "New: skip reads (cuts)",
+    ]
+    assert len(app["0.3.2"]) == 7 and app["0.3.2"][-1] == "+ 3 smaller fixes"
+    backend = changelog.history(db, "backend")
+    assert [c["text"] for c in backend[0]["changes"]] == ["New: speaker labels (captions)"]
+    assert all(
+        len(c["text"]) <= releasenotes.MAX_LINE_CHARS
+        for e in snapshot[0] + snapshot[1]
+        for c in e["changes"]
+    )
+
+
+async def test_polish_falls_back_on_error_and_accepts_good_rewrites():
+    from utubot.config import LLMTask
+
+    class Boom:
+        async def chat(self, *a, **k):
+            raise RuntimeError("down")
+
+    class Slow:
+        async def chat(self, *a, **k):
+            await asyncio.sleep(5)
+
+    class Plain:
+        def __init__(self, text):
+            self.text = text
+
+        async def chat(self, *a, **k):
+            return self.text
+
+    task = LLMTask(model="fast")
+    lines = ["Fixed: stop the crash (TV)", "New: skip reads (cuts)"]
+    assert await changelog.polish(Boom(), task, lines) == lines
+    assert await changelog.polish(Slow(), task, lines, timeout_s=0.05) == lines
+    assert (
+        await changelog.polish(Plain("Fixed: the TV no longer crashes"), task, lines) == lines
+    )  # wrong count
+    good = "Fixed: the TV no longer crashes on resume\nNew: skip sponsor reads"
+    assert await changelog.polish(Plain(good), task, lines) == good.splitlines()
+    assert await changelog.polish(Plain("blah\nblah"), task, lines) == lines

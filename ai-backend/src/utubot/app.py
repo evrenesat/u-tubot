@@ -263,7 +263,9 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
-            changelog.record_deploy(svc.db, svc.build)
+            changelog.rebuild(svc.db, svc.build.root)
+            if changelog.record_deploy(svc.db, svc.build) and cfg.llm.changelog:
+                await changelog.polish_latest_deploy(svc.db, svc.llm, cfg.llm.changelog)
         except Exception:  # a history that cannot be written must not stop the server
             logging.getLogger(__name__).exception("recording the deploy failed")
         svc.jobs.start()

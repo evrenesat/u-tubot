@@ -124,6 +124,19 @@ def cmd_app_publish(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_changelog_rebuild(args: argparse.Namespace) -> int:
+    from . import buildinfo, changelog
+
+    cfg = load_config(args.config)
+    db = Database(cfg.db_path)
+    try:
+        count = changelog.rebuild(db, buildinfo.detect().root)
+    finally:
+        db.close()
+    print(f"rewrote {count} changelog entries")
+    return 0
+
+
 def cmd_app_sync_github(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     repo = args.repo or cfg.app.github_repo
@@ -426,6 +439,13 @@ def main(argv: list[str] | None = None) -> int:
         help="say what would happen; download no APK, write nothing",
     )
     sync.set_defaults(func=cmd_app_sync_github)
+    clog = sub.add_parser("changelog", help="version history").add_subparsers(
+        dest="sub", required=True
+    )
+    rebuild = clog.add_parser(
+        "rebuild", help="rewrite the stored entries in the short, plain form (safe to repeat)"
+    )
+    rebuild.set_defaults(func=cmd_changelog_rebuild)
     prompts = sub.add_parser("prompts", help="prompt set tools").add_subparsers(
         dest="sub", required=True
     )
