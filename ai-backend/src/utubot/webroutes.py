@@ -104,6 +104,7 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
             {
                 "user": user.name,
                 "admin": user.admin,
+                "class": user.klass,
                 "csrf": csrf_token(token),
                 "expires_in_s": cfg.security.session_ttl_s,
             }
@@ -129,6 +130,7 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
         return {
             "user": user.name,
             "admin": user.admin,
+            "class": user.klass,
             "via": "cookie" if via_cookie else "token",
             "csrf": csrf_token(cookie) if via_cookie and cookie else None,
             "has_password": svc.webauth.has_password(user.name),
@@ -295,7 +297,9 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
     @app.post("/v1/users")
     async def create_user(body: NewUser, admin: UserConfig = Depends(admin_user)):
         try:
-            await asyncio.to_thread(svc.webauth.create_user, body.name, body.admin, body.password)
+            await asyncio.to_thread(
+                svc.webauth.create_user, body.name, body.admin, body.password, body.prime
+            )
         except PairError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
         return svc.webauth.describe_user(body.name)
@@ -303,10 +307,13 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
     @app.put("/v1/users/{name}")
     async def patch_user(name: str, body: UserPatch, admin: UserConfig = Depends(admin_user)):
         known_user(name)
-        if name == admin.name and not body.admin:
+        if name == admin.name and body.admin is False:
             raise HTTPException(409, "you cannot remove your own admin flag")
         try:
-            svc.webauth.set_admin(name, body.admin)
+            if body.admin is not None:
+                svc.webauth.set_admin(name, body.admin)
+            if body.prime is not None:
+                svc.webauth.set_prime(name, body.prime)
         except PairError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
         return svc.webauth.describe_user(name)

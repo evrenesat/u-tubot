@@ -49,6 +49,7 @@ class ProviderConfig(BaseModel):
     api_key_env: str | None = None
     max_concurrent: int = 2
     reserved_interactive: int = 1
+    reserved_prime: int = 1
     json_mode: bool = False
 
 
@@ -319,6 +320,42 @@ class CutsConfig(BaseModel):
     over_ask_frac: float = 0.2  # the model is asked for this much more than the target
     release_duration_tolerance_ms: int = 2000
     watched: WatchedCutsConfig = Field(default_factory=WatchedCutsConfig)
+
+
+class ClassConfig(BaseModel):
+    """What one user class may start; `UserPolicy` and the cut/watched limits still apply."""
+
+    cut_mode: Literal["quick", "watched"] = "quick"
+    watched_effort: Literal["keyframes", "standard", "dense"] = "keyframes"
+    watched_max_effort: Literal["keyframes", "standard", "dense"] = "keyframes"
+    max_active_cuts: int = Field(default=2, ge=0)
+    routes: dict[str, list[str]] = Field(
+        default_factory=lambda: {"text": ["local"], "pictures": ["local"], "speech": ["local"]}
+    )
+
+    @model_validator(mode="after")
+    def _effort_order(self) -> ClassConfig:
+        levels = {"keyframes": 0, "standard": 1, "dense": 2}
+        if levels[self.watched_effort] > levels[self.watched_max_effort]:
+            raise ValueError("watched_effort is above watched_max_effort")
+        return self
+
+
+class ClassesConfig(BaseModel):
+    """Per-class defaults; the config keys are `[classes.prime]` and `[classes.normal]`."""
+
+    prime: ClassConfig = Field(
+        default_factory=lambda: ClassConfig(
+            cut_mode="watched",
+            watched_effort="standard",
+            watched_max_effort="dense",
+            routes={"text": ["local", "cloud"], "pictures": ["claimed"], "speech": ["local"]},
+        )
+    )
+    normal: ClassConfig = Field(default_factory=ClassConfig)
+
+    def for_class(self, klass: str) -> ClassConfig:
+        return self.prime if klass == "prime" else self.normal
 
 
 class SpeechConfig(BaseModel):
@@ -695,7 +732,12 @@ class UserConfig(BaseModel):
     name: str
     token_sha256: str = ""
     admin: bool = False
+    prime: bool = False
     policy: UserPolicy = Field(default_factory=UserPolicy)
+
+    @property
+    def klass(self) -> str:
+        return "prime" if self.prime else "normal"
 
 
 DEFAULT_PUBLIC_BASE_URL = "http://127.0.0.1:8790"
@@ -836,6 +878,7 @@ class Config(BaseModel):
     transcripts: TranscriptConfig = Field(default_factory=TranscriptConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     cuts: CutsConfig = Field(default_factory=CutsConfig)
+    classes: ClassesConfig = Field(default_factory=ClassesConfig)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     captions: CaptionsConfig = Field(default_factory=CaptionsConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
@@ -846,6 +889,9 @@ class Config(BaseModel):
     config_path: str = ""
     config_user_names: list[str] = Field(default_factory=list)
     declared_users: list[UserConfig] | None = None
+    # Whether `[classes]` was present in the loaded config; the per-class limiter reservation
+    # (reserved_prime) and the per-class routes only apply when the class system is configured.
+    classes_configured: bool = False
 
     @property
     def data_dir(self) -> Path:
@@ -920,6 +966,7 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         raw = tomllib.loads(cfg_path.read_text())
     cfg = Config(**raw)
     cfg.config_path = str(cfg_path)
+    cfg.classes_configured = "classes" in raw
     cfg.config_user_names = [u.name for u in cfg.users]
     cfg.declared_users = list(cfg.users)
     cfg.users = resolve_users(cfg, cfg.declared_users)

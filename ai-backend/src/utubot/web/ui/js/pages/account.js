@@ -47,7 +47,7 @@ export async function render(view, { onSignedOut }) {
   mount(
     view,
     h("h1", { class: "page-title", text: "Account" }),
-    card("Signed in", statRow("User", info.user), statRow("Role", info.admin ? "admin" : "user"), statRow("Session", info.via === "cookie" ? "browser session" : "token")),
+    card("Signed in", statRow("User", info.user), statRow("Role", info.admin ? "admin" : "user"), statRow("Class", info.class), statRow("Session", info.via === "cookie" ? "browser session" : "token")),
     card("Password", form),
     card(
       "Theme",

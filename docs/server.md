@@ -38,6 +38,7 @@ restart; `users.toml` changes are picked up live.
 ```
 utubot [--config PATH] serve [--host H] [--port P]
 utubot user add NAME [--admin]      create a user, print a token once
+utubot user prime NAME on|off       put a user in the prime class or back to normal
 utubot user passwd NAME [--stdin]   set the web sign-in password (prompts twice; --stdin reads one line)
 utubot user pair NAME               one-time 6-digit code (15 minutes) for a TV
 utubot user devices [NAME]          list paired devices (id, user, name)
@@ -294,9 +295,10 @@ space or gone) fails the job and keeps the file in its scratch directory instead
 
 A *user* is a person (own settings, own prompt sets). Create users with `utubot user add NAME` (token printed once, hash stored in
 `users.toml`), with *Admin, Add a user* in the web UI (a user without a token that signs in with a password; `users.toml` gets a
-block with an empty `token_sha256`), or declare them in `[[users]]` with `admin = true` for admins. A person signs in to the web UI
-with a password (`utubot user passwd NAME`, or the web UI) or with their token. Users declared in `config.toml` keep their admin flag
-there; the web UI changes it only for users that live in `users.toml`.
+block with an empty `token_sha256`), or declare them in `[[users]]` with `admin = true` for admins and `prime = true` for the prime
+class (`utubot user prime NAME on|off` or the web UI for `users.toml` users). A person signs in to the web UI
+with a password (`utubot user passwd NAME`, or the web UI) or with their token. Users declared in `config.toml` keep their admin and
+prime flags there; the web UI changes them only for users that live in `users.toml`.
 
 TVs do not use that token. `utubot user pair NAME` (or *New pairing code* in the admin UI) prints a single-use 6-digit code,
 valid 15 minutes. The TV posts it to `POST /v1/pair` and receives a separate per-device token, so each TV is revocable:
@@ -341,7 +343,8 @@ only; anybody else gets `404`). It shows
 
 - **What was requested**: the video (id, title, channel, length, spoken language), the kind of job, who asked and from which client (a
   paired TV by the name it was linked under, "Web UI", or "API token"), the endpoint, why it was queued (asked for explicitly, or started by
-  the automatic-transcription policy: `on_open` / `on_dwell`, side panel or not, the minutes limit), its priority.
+  the automatic-transcription policy: `on_open` / `on_dwell`, side panel or not, the minutes limit), its priority and class
+  (`normal` or `prime`).
 - **What it produced**: the transcript (source, language, engine, model, size, the first 10 lines, a download of the whole text) or the
   captions track(s) (label, language, speakers, cue count, size, the first 10 cues, `.vtt` and text downloads).
 - **Delivery**: which client fetched the result, how (the `.vtt`, the captions list, the transcript status, a summary, the panel summary,
@@ -355,7 +358,7 @@ only; anybody else gets `404`). It shows
 The log is the `job_events` table: one row per event (`job_id`, `ts`, `stage`, `status`, `detail` JSON), written as the stage happens, so a
 running job shows its progress and a crashed one shows where it stopped. A director's-cuts job adds `video`, `grids`, `describing`
 and `in_line` to the stages below if it runs Watched. Stages: `queued`, `promoted`, `started` (attempt and time
-waited), `gate_wait` (the YouTube class and how long the gate held the job), `caption_recheck` (found, none, delayed or skipped and why; `found` also says how many YouTube word times (`words`) and which `caption_kind` (`manual|auto`) the stored captions have),
+waited, and the class), `in_line` (a normal caption or transcript job waiting for prime work: `reason`, `progress` and a message), `gate_wait` (the YouTube class and how long the gate held the job), `caption_recheck` (found, none, delayed or skipped and why; `found` also says how many YouTube word times (`words`) and which `caption_kind` (`manual|auto`) the stored captions have),
 `audio_download` (format id, original/dubbed/unmarked track, language, bytes, length, seconds, and `source`: `downloaded` or `from_archive`),
 `media_archive` (bytes and the sha256 prefix of what was kept; skipped when the audio came from the archive), `ffmpeg` (`audio_s`, `sample_rate`, and `start_offset_s` when the container placed the first audio sample away from time 0), `chunking` (chunks and their sizes), `asr` and `asr_chunk` (engine, model, seconds, characters, detected language per chunk),
 `asr_wait` (an engine was still starting and was waited for: `engine`, `waited_s`, `attempts`, `outcome` = `ready|gave_up`; one per wait, shared by all chunks), `asr_fallback` (an engine gave up on a chunk, and why: `http_503`, `transport_timeout`, `unhealthy`, `engine_unavailable`, `language_mismatch`, `no_word_times` ...; `asr_chunk` also carries `word_timing`, `words` and `word_mode`), `asr_recheck` (a chunk heard in the wrong language, mostly made-up text or far sparser than the rest was listened to again: one event per attempt with `reason`, `action` `forced_language|smaller_window|next_engine`, `detected`, `expected`, `outcome` `replaced|kept|failed`, `flagged_share_before`/`after`; one with `action` `dropped` and `dropped_segments`, `dropped_s` when text that is not speech was removed; `skipped` = `budget|requests` when a re-listen was not done; `detected_after`; `asr` also carries `rechecked_chunks`, `unresolved_chunks`, `skipped_chunks`, `recheck_requests`, `hallucination_drops`, `dropped_s`, and `cache` = `not_stored_unresolved`), `stitching`
@@ -528,7 +531,7 @@ or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#direct
   `checking` (long videos: `transcript` → `map` → `reduce` → `checking`; `map` events carry
   `done`/`of`, and the request document's `progress` mirrors them); Watched runs `transcript` →
   `video` → `grids` → `describing` → `model` → `checking` (cached stages report `skipped`), and a
-  queued watched request shows `in_line` while another build holds the one slot. The job page
+  queued watched request shows `in_line` while another build holds the one slot, and any normal build shows `in_line` (`reason` `priority`) while it waits for prime work. The job page
   shows `progress`/`eta_s` and the new stages, with the model's raw answer trimmed into the row.
   Cut jobs never appear in the caption worker's cancel/retry paths — a cut is retried or
   dismissed from its cut sheet. Admins can read the newest TDT with

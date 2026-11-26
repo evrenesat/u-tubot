@@ -9,7 +9,7 @@ export class ApiError extends Error {
   }
 }
 
-export const session = { user: null, admin: false, csrf: null, via: null, hasPassword: false };
+export const session = { user: null, admin: false, klass: "normal", csrf: null, via: null, hasPassword: false };
 
 const SAFE = new Set(["GET", "HEAD"]);
 
@@ -54,6 +54,7 @@ export async function loadSession() {
     Object.assign(session, {
       user: info.user,
       admin: info.admin,
+      klass: info.class,
       csrf: info.csrf,
       via: info.via,
       hasPassword: info.has_password,
@@ -66,11 +67,11 @@ export async function loadSession() {
 }
 
 export function adoptLogin(info) {
-  Object.assign(session, { user: info.user, admin: info.admin, csrf: info.csrf, via: "cookie" });
+  Object.assign(session, { user: info.user, admin: info.admin, klass: info.class, csrf: info.csrf, via: "cookie" });
 }
 
 export function forgetSession() {
-  Object.assign(session, { user: null, admin: false, csrf: null, via: null, hasPassword: false });
+  Object.assign(session, { user: null, admin: false, klass: "normal", csrf: null, via: null, hasPassword: false });
 }
 
 export async function upload(path, form) {

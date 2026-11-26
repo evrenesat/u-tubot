@@ -155,11 +155,13 @@ class PasswordSet(BaseModel):
 class NewUser(BaseModel):
     name: str = Field(max_length=64)
     admin: bool = False
+    prime: bool = False
     password: str | None = Field(default=None, max_length=512)
 
 
 class UserPatch(BaseModel):
-    admin: bool
+    admin: bool | None = None
+    prime: bool | None = None
 
 
 class ResolveRequest(BaseModel):

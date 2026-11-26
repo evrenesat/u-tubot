@@ -314,6 +314,10 @@ def cut_request_doc(request, wait=False):
                     doc["eta_s"] = max(1, int(round(CUTS_CONFIG["watched_delay"] * (1 - doc["progress"]))))
                 else:
                     doc["stage"] = CUTS_CONFIG["stage"] if state == "building" else "transcript"
+                    if state == "building" and doc["stage"] == "in_line":
+                        doc["reason"] = "priority"
+                        doc["message"] = "Waiting for a priority job."
+                        doc["progress"] = {"done": 0, "of": 1}
             if state == "ready":
                 doc["cut"] = cut_document(request.get("duration_ms", 240000), request["video_id"],
                                           label=cut_label(request), preset_id=request.get("preset_id"), mode=mode)
@@ -379,6 +383,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         print(time.strftime("%H:%M:%S"), self.command, self.path, flush=True)
+
+    def user_class(self):
+        token = (self.headers.get("Authorization") or "").strip()
+        return "prime" if token == "Bearer utb_emulator_prime" else "normal"
 
     def send_json(self, obj, code=200):
         body = json.dumps(obj).encode()
@@ -674,8 +682,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             return self.send_json({"error": "not found"}, 404)
         if path == "/v1/me":
+            klass = self.user_class()
             return self.send_json({"user": self.user_name, "policy": {}, "features": {"assess": True, "insight": True, "captions": True,
-                                                                            "cuts": True}, "admin": False})
+                                                                            "cuts": True},
+                                   "admin": False, "prime": klass == "prime", "class": klass})
         if path == "/v1/prompts":
             return self.send_json(prompt_list())
         if path == "/v1/processed":

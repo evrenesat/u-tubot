@@ -13,6 +13,7 @@ from typing import Any
 
 import yt_dlp
 
+from ..classes import NORMAL
 from ..config import CaptionsConfig, Config
 from ..db import Database
 from ..llm import BACKGROUND, LLMBadJSONError, LLMClient
@@ -422,6 +423,8 @@ class CaptionPipeline:
         priority: int = BACKGROUND,
         want_words: bool = True,
         optional_asr: bool = False,
+        klass: str = NORMAL,
+        yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[ASRResult, Path]:
         """Audio (from the archive, else a download that the archive keeps), 16 kHz WAV, ASR.
 
@@ -555,6 +558,8 @@ class CaptionPipeline:
             want_words=want_words,
             optional_asr=optional_asr,
             key=key,
+            klass=klass,
+            yield_check=yield_check,
         )
         return result, wav
 
@@ -569,6 +574,8 @@ class CaptionPipeline:
         want_words: bool,
         optional_asr: bool,
         key: str,
+        klass: str = NORMAL,
+        yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> ASRResult:
         """One ASR step of `_recognise`, with its per-video cache. See `_recognise`."""
         cached = self._cached_asr(video_id, key, want_words, requested)
@@ -587,6 +594,8 @@ class CaptionPipeline:
                     priority=priority,
                     want_words=want_words,
                     expected_language=self._expected_language(video_id, requested),
+                    klass=klass,
+                    yield_check=yield_check,
                 )
                 if want_words and result.word_timing is None:
                     result.word_timing = classify(
@@ -740,13 +749,22 @@ class CaptionPipeline:
         *,
         priority: int = BACKGROUND,
         language: str | None = None,
+        klass: str = NORMAL,
+        yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> AsrTranscript:
         """Plain-text transcript from the audio. `language` is a hint; unset, the engine detects it."""
         work = self.cfg.media_dir / video_id
         work.mkdir(parents=True, exist_ok=True)
         try:
             result, _wav = await self._recognise(
-                video_id, language, work, progress, priority=priority, want_words=False
+                video_id,
+                language,
+                work,
+                progress,
+                priority=priority,
+                want_words=False,
+                klass=klass,
+                yield_check=yield_check,
             )
             with events.stage(events.TEXT, announce=False) as st:
                 text = segments_to_text([(seg.start, seg.text) for seg in result.segments])
@@ -768,6 +786,8 @@ class CaptionPipeline:
         translate_to: str | None,
         progress: Progress,
         priority: int = BACKGROUND,
+        klass: str = NORMAL,
+        yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> str:
         """HQ captions from the audio (no usable captions on YouTube, or fetching is limited)."""
         c = self.cfg.captions
@@ -777,7 +797,13 @@ class CaptionPipeline:
         try:
             requested = None if lang == "auto" else lang
             result, wav = await self._recognise(
-                video_id, requested, work, progress, priority=priority
+                video_id,
+                requested,
+                work,
+                progress,
+                priority=priority,
+                klass=klass,
+                yield_check=yield_check,
             )
             silences: list[tuple[float, float]] | None = None
             words, stats = result.words, WordStats()
@@ -904,6 +930,8 @@ class CaptionPipeline:
         priority: int = BACKGROUND,
         ref_words: list[tuple[float, str]] | None = None,
         caption_kind: str | None = None,
+        klass: str = NORMAL,
+        yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> str:
         """HQ captions built on the video's own captions: better text, times from the audio.
 
@@ -931,6 +959,8 @@ class CaptionPipeline:
                     priority=priority,
                     want_words=True,
                     optional_asr=True,
+                    klass=klass,
+                    yield_check=yield_check,
                 )
             except (YoutubeVideoError, MediaArchiveFull) as exc:
                 # the captions are already in hand: audio trouble (unavailable video, a limited

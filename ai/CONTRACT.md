@@ -97,8 +97,9 @@ priority (claimed first, interactive engine use); a side-panel job is background
 `{"ok":true,"version":"0.1.0"}`
 
 ### `GET /v1/me`
-`{"user":"owner","policy":{...},"settings_version":3,"features":{"assess":true,"insight":true,"captions":true}}`
-`settings_version` is the version of the [settings document](#per-user-settings), a cheap way to notice a change.
+`{"user":"owner","policy":{...},"admin":false,"prime":false,"class":"normal","settings_version":3,"features":{"assess":true,"insight":true,"captions":true}}`
+`settings_version` is the version of the [settings document](#per-user-settings), a cheap way to notice a change. `prime` and `class`
+say whether the caller's work is prime (`normal` otherwise).
 
 ### `POST /v1/assess`
 Batch triage for one row/emission (≤ 50 videos).
@@ -270,13 +271,13 @@ anybody else and for an unknown id.
 
 ```json
 {"id":"a1b2c3d4e5f6","kind":"transcript|captions","user":"owner","state":"waiting|processing|ready|failed|cancelled",
- "progress":1.0,"error":null,"priority":"interactive|background","attempts":0,
+ "progress":1.0,"error":null,"priority":"interactive|background","class":"normal|prime","attempts":0,
  "created_at":1700000000.0,"updated_at":1700000050.0,"finished_at":1700000050.0,"retry_after_s":null,
  "detail_url":"/#/jobs/a1b2c3d4e5f6","api_url":"/v1/jobs/a1b2c3d4e5f6",
  "can_cancel":false,"can_retry":false,
  "inputs":{"video_id":"...","title":"...","channel":"...","duration_s":1740,"language":"tr","lang":"auto","translate_to":null,
            "requested":{"user":"owner","client":"Living room TV","endpoint":"POST /v1/videos/{video_id}/captions",
-                        "trigger":{"kind":"explicit"},"priority":"background","at":1700000000.0}},
+                        "trigger":{"kind":"explicit"},"priority":"background","class":"normal","at":1700000000.0}},
  "outputs":{"transcript":{"source":"asr","lang":"en","engine":"mac","model":"whisper-large-v3-turbo","chars":4830,"lines":6,
                           "segments":6,"stored_at":1700000050.0,"from_this_job":true,"first_lines":["[00:00] ..."],
                           "text_url":"/v1/jobs/a1b2c3d4e5f6/transcript.txt"},
@@ -295,7 +296,8 @@ anybody else and for an unknown id.
 
 `events` is the log in order of writing. `status` is `running`, `ok`, `warn`, `skipped`, `failed`, `info`, `cancelled` or `interrupted`;
 a `running` event is followed by the `ok`/`failed`/`skipped` event of the same stage, which carries `seconds`. Stages: `queued`, `promoted`,
-`started`, `gate_wait`, `caption_recheck` (`found` carries `words` and `caption_kind` = `manual|auto`), `audio_download` (`format_id`, `track` = `original|dubbed|descriptive|unmarked`, `original`,
+`started` (also `class`), `in_line` (a normal caption or transcript job waiting for prime work: `reason:"priority"`, `progress`,
+`message`), `gate_wait`, `caption_recheck` (`found` carries `words` and `caption_kind` = `manual|auto`), `audio_download` (`format_id`, `track` = `original|dubbed|descriptive|unmarked`, `original`,
 `language`, `bytes`, `duration_s`, `source` = `downloaded|from_archive`), `media_archive` (`bytes`, `sha256` prefix; skipped when the audio
 came from the archive), `ffmpeg`, `separation` (skipped when off, the tool failed, or the ASR answer was cached), `chunking`, `asr`, `asr_chunk` (also `word_timing`, `words`, `word_mode`), `asr_wait` (`engine`, `waited_s`, `attempts`, `outcome` = `ready|gave_up`), `asr_fallback` (`reason` also `no_word_times`, `engine_unavailable`), `asr_recheck` (`start_s`, `end_s`, `reason` = comma-joined `language_mismatch|hallucination|sparse`, `action` = `forced_language|smaller_window|next_engine|dropped`, `detected`, `expected`, `outcome` = `replaced|kept|failed`, `flagged_share_before`, `flagged_share_after`; `dropped`: `dropped_segments`, `dropped_s`; `skipped` = `budget|requests`, `detected_after`; `asr` also has `rechecked_chunks`, `unresolved_chunks`, `skipped_chunks`, `recheck_requests`, `hallucination_drops`, `dropped_s`, `cache` = `not_stored_unresolved`), `stitching`,
 `word_timing` (`word_timing` = `real|mixed|interpolated`, `words`, `real`, `interpolated`, `real_share`, `zero_length`, `stretched`, `squeezed`,
@@ -495,7 +497,7 @@ routes answer `200` with `"configured": false`, and `GET /v1/me` features carrie
 Request document (both the queue cards and the single request):
 `{"id","video_id","state","source","preset_id","prompt","error","created_at","updated_at",
 "title"?,"channel"?,"duration_s"?,"stage"?,"progress"?,"cut"?,"job_id"?,"instruction"?,"raw_answer"?}`.
-`stage` (`transcript`|`model`|`checking`, and for a video too long for one request `map`|`reduce`;
+`stage` (`transcript`|`model`|`checking`, `in_line` while a normal build waits for prime work, and for a video too long for one request `map`|`reduce`;
 clients show an unknown stage as its name) rides while building; `progress` (`{"done","of"}`,
 additive) rides during `map` and counts the excerpts answered; `cut` once ready; `job_id`
 opens the build report in the jobs API; `raw_answer` is the model's answer, trimmed. A video whose
@@ -838,9 +840,9 @@ when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-adm
 
 ### User administration (admin only)
 
-`GET /v1/users` -> `{"users":[{"name","admin","has_password","has_token","devices","sessions","admin_editable"}]}`;
-`POST /v1/users` `{"name","admin":false,"password":null}` (a user without a token; `409` if it exists, `400` for a bad name or a short
-password); `PUT /v1/users/{name}` `{"admin":true}` (`409` for a user declared in `config.toml` or for your own flag);
+`GET /v1/users` -> `{"users":[{"name","admin","prime","class","has_password","has_token","devices","sessions","admin_editable"}]}`;
+`POST /v1/users` `{"name","admin":false,"prime":false,"password":null}` (a user without a token; `409` if it exists, `400` for a bad name or a short
+password); `PUT /v1/users/{name}` `{"admin":true,"prime":true}` (either field optional; `409` for a user declared in `config.toml` or for your own `admin` flag);
 `PUT /v1/users/{name}/password` `{"password"}`; `GET/PUT /v1/users/{name}/settings` as above. The older `GET /v1/admin/users`,
 `POST /v1/admin/pair`, `DELETE /v1/admin/devices/{id}` and `PUT /v1/admin/users/{name}/policy` stay.
 

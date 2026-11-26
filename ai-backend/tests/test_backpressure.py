@@ -7,6 +7,7 @@ import pytest
 
 from tests.mock_openai import MockOpenAI
 from tests.test_prompts_summary import VID
+from utubot.classes import NORMAL, PRIME
 from utubot.config import Config, LLMTask, ProviderConfig
 from utubot.errors import MSG_BUSY
 from utubot.llm import BACKGROUND, INTERACTIVE, LLMBusyError, LLMClient, LLMError, PriorityLimiter
@@ -57,6 +58,16 @@ async def test_limiter_reserves_slot_for_interactive():
     blocked.cancel()
 
 
+async def test_limiter_keeps_prime_slot_from_normal_interactive():
+    lim = PriorityLimiter(2, reserved_prime=1)
+    await lim.acquire(INTERACTIVE, NORMAL)
+    blocked = asyncio.create_task(lim.acquire(INTERACTIVE, NORMAL))
+    await asyncio.sleep(0.01)
+    assert not blocked.done()
+    await asyncio.wait_for(lim.acquire(BACKGROUND, PRIME), 0.1)
+    blocked.cancel()
+
+
 async def test_limiter_cancel_does_not_leak_slot():
     lim = PriorityLimiter(1)
     await lim.acquire(BACKGROUND)
@@ -69,6 +80,7 @@ async def test_limiter_cancel_does_not_leak_slot():
 
 async def test_background_saturation_does_not_block_interactive(client, mock_llm, cfg):
     cfg.llm.providers["default"].max_concurrent = 2
+    cfg.llm.providers["default"].reserved_prime = 0
     mock_llm.delay_s = 0.3
     loop = asyncio.get_running_loop()
     bg = [asyncio.create_task(client.chat(TASK, MSGS, priority=BACKGROUND)) for _ in range(6)]

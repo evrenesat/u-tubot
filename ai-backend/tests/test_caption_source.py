@@ -134,7 +134,16 @@ async def test_a_captions_job_keeps_the_caption_text_when_the_audio_has_no_speec
 
     class SilentASR:
         async def transcribe(
-            self, wav, language, progress, *, priority=1, want_words=True, expected_language=None
+            self,
+            wav,
+            language,
+            progress,
+            *,
+            priority=1,
+            want_words=True,
+            expected_language=None,
+            klass=None,
+            yield_check=None,
         ):
             return ASRResult(words=[], language=None, segments=[], engine="mock", model="mock")
 
@@ -175,7 +184,16 @@ async def test_the_improve_path_stores_cues_within_the_line_and_cps_limits(env):
 
     class WordyASR:
         async def transcribe(
-            self, wav, language, progress, *, priority=1, want_words=True, expected_language=None
+            self,
+            wav,
+            language,
+            progress,
+            *,
+            priority=1,
+            want_words=True,
+            expected_language=None,
+            klass=None,
+            yield_check=None,
         ):
             # 18 words inside the one 6 s cue window: ~125 characters, over the 2x42 limit
             words = []
@@ -470,7 +488,16 @@ async def test_mixed_word_times_are_cached(tmp_path):
         calls = 0
 
         async def transcribe(
-            self, wav, language, progress, *, priority=1, want_words=True, expected_language=None
+            self,
+            wav,
+            language,
+            progress,
+            *,
+            priority=1,
+            want_words=True,
+            expected_language=None,
+            klass=None,
+            yield_check=None,
         ):
             self.calls += 1
             words = [Word(0.0, 0.5, "a"), Word(0.5, 1.0, "b", timing=TIMING_INTERPOLATED)]
@@ -592,7 +619,16 @@ async def test_a_result_with_unresolved_rechecks_is_not_cached(tmp_path):
         hint = None
 
         async def transcribe(
-            self, wav, language, progress, *, priority=1, want_words=True, expected_language=None
+            self,
+            wav,
+            language,
+            progress,
+            *,
+            priority=1,
+            want_words=True,
+            expected_language=None,
+            klass=None,
+            yield_check=None,
         ):
             self.calls += 1
             self.hint = expected_language
@@ -643,7 +679,16 @@ async def test_a_budget_skipped_result_is_cached(tmp_path):
 
     class Skipped:
         async def transcribe(
-            self, wav, language, progress, *, priority=1, want_words=True, expected_language=None
+            self,
+            wav,
+            language,
+            progress,
+            *,
+            priority=1,
+            want_words=True,
+            expected_language=None,
+            klass=None,
+            yield_check=None,
         ):
             return ASRResult(
                 words=[Word(0.0, 0.5, "a")],

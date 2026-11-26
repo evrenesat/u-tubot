@@ -7,6 +7,16 @@ import time
 import uuid
 from typing import Any
 
+from ..classes import (
+    NORMAL,
+    PRIME,
+    ClassGate,
+    JobYielded,
+    bind_class,
+    current_class,
+    normalize_class,
+    unbind_class,
+)
 from ..config import Config
 from ..db import Database
 from ..errors import MSG_JOB, MSG_JOB_RETRIES, MSG_TRANSCRIBE
@@ -65,6 +75,8 @@ class JobQueue:
         self._wake = asyncio.Event()
         self._workers: list[asyncio.Task] = []
         self._stopping = False
+        self.class_gate = ClassGate(db, poll_s=cfg.captions.job_poll_s)
+        self._in_line_announced: set[str] = set()
 
     def start(self) -> None:
         if not self.cfg.captions.keep_media:
@@ -109,7 +121,9 @@ class JobQueue:
         translate_to: str | None,
         trigger: dict[str, Any] | None = None,
         force: bool = False,
+        klass: str | None = None,
     ) -> dict[str, Any]:
+        klass = self._class_for(user, klass)
         row = self.db.one(
             "SELECT * FROM jobs WHERE kind=? AND video_id=? AND lang=?"
             " AND IFNULL(translate_to,'')=? AND status IN ('queued','running')"
@@ -117,7 +131,14 @@ class JobQueue:
             [KIND_CAPTIONS, video_id, lang, translate_to or ""],
         )
         if row:
-            return self.force_job(row["id"]) if force and not row["force"] else dict(row)
+            job = dict(row)
+            if force and not job["force"]:
+                job = self.force_job(job["id"])
+            if klass == PRIME and (job["klass"] != PRIME or job["priority"] != INTERACTIVE):
+                self._promote_captions(job, video_id)
+                job["klass"] = PRIME
+                job["priority"] = INTERACTIVE
+            return job
         return self._insert(
             user,
             video_id,
@@ -125,9 +146,32 @@ class JobQueue:
             lang,
             translate_to,
             None,
+            klass=klass,
             trigger=trigger,
             force=force,
         )
+
+    def _promote_captions(self, row: dict[str, Any], video_id: str) -> None:
+        """A prime request joined queued or running captions: raise them, never lower them."""
+        self.db.execute(
+            "UPDATE jobs SET priority=?, klass=? WHERE id=? AND (klass!=? OR priority!=?)",
+            [INTERACTIVE, PRIME, row["id"], PRIME, INTERACTIVE],
+        )
+        origin = events.current_origin()
+        self.events.record(
+            row["id"],
+            events.PROMOTED,
+            events.INFO,
+            {
+                "priority": events.priority_name(INTERACTIVE),
+                "class": PRIME,
+                "client": origin.client if origin else UNKNOWN_CLIENT,
+                "user": origin.user if origin else None,
+                "message": "A prime request joined this video, so the job now goes first.",
+            },
+        )
+        self.pipeline.gate.promote(f"audio:{video_id}")
+        self._wake.set()
 
     def find_active_transcript(self, user: str, video_id: str) -> dict[str, Any] | None:
         row = self.db.one(
@@ -154,6 +198,7 @@ class JobQueue:
         priority: int = BACKGROUND,
         trigger: dict[str, Any] | None = None,
         force: bool = False,
+        klass: str | None = None,
     ) -> dict[str, Any]:
         """Queue an ASR transcript; the same user asking again gets the job already queued.
 
@@ -171,7 +216,8 @@ class JobQueue:
             None,
             title,
             priority,
-            trigger,
+            klass=self._class_for(user, klass),
+            trigger=trigger,
             force=force,
         )
 
@@ -181,17 +227,23 @@ class JobQueue:
         self._wake.set()
         return dict(self.db.one("SELECT * FROM jobs WHERE id=?", [job_id]))
 
-    def promote_transcript(self, video_id: str) -> None:
-        """Someone now waits on this video's transcript: queued work goes first, a running download too."""
-        raised = self.db.all(
-            "SELECT id FROM jobs WHERE kind=? AND video_id=? AND priority>?"
-            " AND status IN ('queued','running')",
-            [KIND_TRANSCRIPT, video_id, INTERACTIVE],
+    def promote_transcript(self, video_id: str, klass: str | None = None) -> None:
+        """Someone now waits on this video's transcript: queued work goes first, a running download too.
+
+        A prime waiter also raises the job's class; a normal waiter never lowers it.
+        """
+        klass = normalize_class(klass if klass is not None else current_class())
+        scope = (
+            "kind=? AND video_id=? AND status IN ('queued','running')"
+            " AND (priority>? OR (?='prime' AND klass!='prime'))"
         )
+        params = [KIND_TRANSCRIPT, video_id, INTERACTIVE, klass]
+        raised = self.db.all(f"SELECT id FROM jobs WHERE {scope}", params)
         self.db.execute(
-            "UPDATE jobs SET priority=? WHERE kind=? AND video_id=? AND priority>?"
-            " AND status IN ('queued','running')",
-            [INTERACTIVE, KIND_TRANSCRIPT, video_id, INTERACTIVE],
+            "UPDATE jobs SET priority=?,"
+            " klass=CASE WHEN ?='prime' THEN 'prime' ELSE klass END"
+            f" WHERE {scope}",
+            [INTERACTIVE, klass, *params],
         )
         origin = events.current_origin()
         for row in raised:
@@ -201,6 +253,7 @@ class JobQueue:
                 events.INFO,
                 {
                     "priority": events.priority_name(INTERACTIVE),
+                    "class": klass,
                     "client": origin.client if origin else UNKNOWN_CLIENT,
                     "user": origin.user if origin else None,
                     "message": "Someone is waiting on this video, so the job now goes first.",
@@ -220,12 +273,15 @@ class JobQueue:
         priority: int = BACKGROUND,
         trigger: dict[str, Any] | None = None,
         force: bool = False,
+        klass: str | None = None,
     ) -> dict[str, Any]:
+        klass = self._class_for(user, klass)
         job_id = uuid.uuid4().hex[:12]
         now = time.time()
         self.db.execute(
             "INSERT INTO jobs(id,user,video_id,lang,translate_to,status,progress,created_at,"
-            "updated_at,kind,title,priority,force) VALUES(?,?,?,?,?,'queued',0,?,?,?,?,?,?)",
+            "updated_at,kind,title,priority,klass,force)"
+            " VALUES(?,?,?,?,?,'queued',0,?,?,?,?,?,?,?)",
             [
                 job_id,
                 user,
@@ -237,6 +293,7 @@ class JobQueue:
                 kind,
                 title,
                 priority,
+                klass,
                 int(force),
             ],
         )
@@ -252,6 +309,7 @@ class JobQueue:
                 "endpoint": origin.endpoint if origin else None,
                 "trigger": trigger or TRIGGER_EXPLICIT,
                 "priority": events.priority_name(priority),
+                "class": klass,
                 "video_id": video_id,
                 "title": title,
                 "lang": lang,
@@ -262,6 +320,14 @@ class JobQueue:
         )
         self._wake.set()
         return dict(self.db.one("SELECT * FROM jobs WHERE id=?", [job_id]))
+
+    def _class_for(self, user: str, klass: str | None) -> str:
+        if klass is not None:
+            return normalize_class(klass)
+        for candidate in self.cfg.users:
+            if candidate.name == user:
+                return candidate.klass
+        return NORMAL
 
     def active_count(self, user: str, kind: str) -> int:
         row = self.db.one(
@@ -520,14 +586,17 @@ class JobQueue:
         """
         if not self.pipeline.gate.healthy(CLASS_MEDIA):
             return None
+        prime = self.class_gate.prime_active()
         row = self.db.one(
             "SELECT * FROM jobs WHERE status='queued' AND kind!='cuts'"
             " AND (not_before IS NULL OR not_before<=?)"
+            " AND (? IS NULL OR klass=?)"
             " AND NOT EXISTS"
             " (SELECT 1 FROM jobs r WHERE r.video_id=jobs.video_id AND r.status='running'"
-            "  AND r.kind!='cuts')"
-            " ORDER BY priority, created_at LIMIT 1",
-            [self.pipeline.gate.now()],
+            "  AND r.kind!='cuts'"
+            "  AND (jobs.klass!='prime' OR r.klass='prime'))"
+            " ORDER BY CASE klass WHEN 'prime' THEN 0 ELSE 1 END, priority, created_at LIMIT 1",
+            [self.pipeline.gate.now(), "prime" if prime else None, "prime" if prime else None],
         )
         if not row:
             return None
@@ -561,6 +630,52 @@ class JobQueue:
             return False
         base = normalize_language(found.lang)
         return bool(base) and base.split("-")[0] != "en"
+
+    def _yield_to_prime(self, job: dict[str, Any]):
+        """A callback the pipeline awaits at safe points: normal work yields so a single worker
+        can run the prime job it yields to, then resumes. A running normal job would otherwise
+        hold the one worker while prime stays queued, and neither would finish."""
+
+        async def check() -> None:
+            def waited() -> None:
+                events.emit(
+                    events.IN_LINE,
+                    events.INFO,
+                    reason="priority",
+                    progress=round(float(job.get("progress") or 0.0), 3),
+                    message="Waiting for a priority job.",
+                )
+
+            await self.class_gate.yield_if_prime(job["id"], job.get("klass"), waited)
+
+        return check
+
+    def _announce_waiting_for_prime(self) -> None:
+        """Mark queued normal caption/transcript jobs as in line while prime work is active."""
+        if not self.class_gate.prime_active():
+            self._in_line_announced.clear()
+            return
+        rows = self.db.all(
+            "SELECT id, progress FROM jobs WHERE status='queued' AND klass!='prime'"
+            " AND kind IN (?,?)",
+            [KIND_CAPTIONS, KIND_TRANSCRIPT],
+        )
+        waiting = {row["id"] for row in rows}
+        self._in_line_announced &= waiting
+        for row in rows:
+            if row["id"] in self._in_line_announced:
+                continue
+            self.events.record(
+                row["id"],
+                events.IN_LINE,
+                events.INFO,
+                {
+                    "reason": "priority",
+                    "progress": round(float(row["progress"] or 0.0), 3),
+                    "message": "Waiting for a priority job.",
+                },
+            )
+        self._in_line_announced = waiting
 
     async def _run_captions(self, job: dict[str, Any]) -> None:
         """HQ captions, lean: captions of the video are improved, missing ones are made from audio.
@@ -601,6 +716,8 @@ class JobQueue:
                 job["translate_to"],
                 lambda f: self._set_progress(job["id"], f),
                 priority,
+                klass=job.get("klass", NORMAL),
+                yield_check=self._yield_to_prime(job),
             )
             return
         found = await self._recheck_for_captions(video_id, priority)
@@ -637,6 +754,8 @@ class JobQueue:
                 priority,
                 ref_words=found.words,
                 caption_kind=found.caption_kind,
+                klass=job.get("klass", NORMAL),
+                yield_check=self._yield_to_prime(job),
             )
             return
         await self.pipeline.run(
@@ -645,6 +764,8 @@ class JobQueue:
             job["translate_to"],
             lambda f: self._set_progress(job["id"], f),
             priority,
+            klass=job.get("klass", NORMAL),
+            yield_check=self._yield_to_prime(job),
         )
 
     @staticmethod
@@ -747,6 +868,8 @@ class JobQueue:
             lambda f: self._set_progress(job["id"], f),
             priority=priority,
             language=hint,
+            klass=job.get("klass", NORMAL),
+            yield_check=self._yield_to_prime(job),
         )
         stored = self.transcripts.store_asr(
             video_id,
@@ -892,18 +1015,32 @@ class JobQueue:
     async def run_one(self) -> bool:
         job = self._claim()
         if job is None:
+            self._announce_waiting_for_prime()
             return False
         trace = events.JobTrace(job["id"], self.events)
         token = events.bind(trace)
         began = time.monotonic()
+        klass = normalize_class(job.get("klass"))
+        class_token = bind_class(klass)
         trace.emit(
             events.STARTED,
             events.OK,
             attempt=(job.get("attempts") or 0) + 1,
             waited_s=round(max(0.0, time.time() - (job.get("updated_at") or time.time())), 1),
             priority=events.priority_name(job["priority"]),
+            **{"class": klass},
         )
         try:
+
+            def start_wait() -> None:
+                trace.emit(
+                    events.IN_LINE,
+                    events.INFO,
+                    reason="priority",
+                    message="Waiting for a priority job.",
+                )
+
+            await self.class_gate.yield_if_prime(job["id"], klass, start_wait)
             if job["kind"] == KIND_TRANSCRIPT:
                 await self._run_transcript(job)
             else:
@@ -915,6 +1052,23 @@ class JobQueue:
                 [now, now, job["id"]],
             )
             trace.emit(events.FINISHED, events.OK, seconds=round(time.monotonic() - began, 2))
+        except JobYielded:
+            # A normal job yields to a prime job: put it back in the queue so the one worker can
+            # claim the prime job it yielded to, then re-claim this one once no prime demanding
+            # work is active. The job resumes from its saved state (its transcript and ASR cache
+            # are kept), so it is not lost, only paused after the safe point it reached.
+            trace.emit(
+                events.IN_LINE,
+                events.INFO,
+                reason="priority",
+                progress=round(float(job.get("progress") or 0.0), 3),
+                message="Waiting for a priority job.",
+            )
+            self.db.execute(
+                "UPDATE jobs SET status='queued', updated_at=? WHERE id=? AND status='running'",
+                [time.time(), job["id"]],
+            )
+            return True
         except asyncio.CancelledError:
             raise
         except YoutubeVideoError as exc:
@@ -933,6 +1087,7 @@ class JobQueue:
             log.warning("%s job %s failed: %s", job["kind"], job["id"], exc, exc_info=True)
             self._fail(job, MSG_TRANSCRIBE if job["kind"] == KIND_TRANSCRIPT else MSG_JOB, exc)
         finally:
+            unbind_class(class_token)
             events.unbind(token)
         return True
 

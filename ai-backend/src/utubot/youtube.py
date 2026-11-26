@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
+from .classes import NORMAL, class_rank, current_class, normalize_class
 from .config import YoutubeConfig
 from .db import Database
 from .llm import BACKGROUND, INTERACTIVE
@@ -313,6 +314,7 @@ class _Waiter:
     seq: int
     key: str | None
     classes: tuple[str, ...]
+    klass: str = NORMAL
 
 
 @dataclass
@@ -550,7 +552,7 @@ class YoutubeGate:
         runnable = [
             w for w in self._waiters if self._cooling(w)[0] <= 0 and not self._probe_busy(w)
         ]
-        return min(runnable, key=lambda w: (w.priority, w.seq), default=None)
+        return min(runnable, key=lambda w: (class_rank(w.klass), w.priority, w.seq), default=None)
 
     def _poke(self) -> None:
         fut, self._changed = self._changed, None
@@ -580,12 +582,18 @@ class YoutubeGate:
         return self.cfg.offline and any(name in MEDIA_CLASSES for name in classes)
 
     async def _acquire(
-        self, priority: int, key: str | None, classes: tuple[str, ...]
+        self,
+        priority: int,
+        key: str | None,
+        classes: tuple[str, ...],
+        klass: str | None = None,
     ) -> tuple[str, ...]:
         """Wait for a paced slot; returns the probe-only classes this request is the probe of."""
         if self._as_offline(classes):
             raise YoutubeOffline()
-        waiter = _Waiter(priority, next(self._seq), key, classes)
+        waiter = _Waiter(
+            priority, next(self._seq), key, classes, normalize_class(klass or current_class())
+        )
         self._waiters.append(waiter)
         try:
             while True:
@@ -635,8 +643,9 @@ class YoutubeGate:
         priority: int = INTERACTIVE,
         key: str | None = None,
         classes: Sequence[str] = FETCH_CLASSES,
+        klass: str | None = None,
     ):
-        probed = await self._acquire(priority, key, tuple(classes))
+        probed = await self._acquire(priority, key, tuple(classes), klass)
         try:
             yield
         finally:
@@ -648,6 +657,7 @@ class YoutubeGate:
         priority: int = INTERACTIVE,
         key: str | None = None,
         classes: Sequence[str] = FETCH_CLASSES,
+        klass: str | None = None,
     ) -> T:
         """Run one YouTube operation in a paced slot and feed its outcome to the breakers.
 
@@ -656,7 +666,7 @@ class YoutubeGate:
         success closes every class the result says it `answered` (else all of `classes`).
         """
         classes = tuple(classes)
-        async with self.slot(priority, key, classes):
+        async with self.slot(priority, key, classes, klass):
             try:
                 result = await fn()
             except YoutubeBlocked as exc:
@@ -674,6 +684,7 @@ class YoutubeGate:
         priority: int = BACKGROUND,
         key: str | None = None,
         classes: Sequence[str] = MEDIA_CLASSES,
+        klass: str | None = None,
     ) -> T:
         """Gate only the start of a long transfer.
 
@@ -701,7 +712,7 @@ class YoutubeGate:
             if task.done():
                 task.result()
 
-        await self.run(start_phase, priority, key, classes)
+        await self.run(start_phase, priority, key, classes, klass)
         task = tasks[0]
         try:
             return await task
