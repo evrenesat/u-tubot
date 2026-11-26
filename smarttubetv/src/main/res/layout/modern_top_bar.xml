@@ -42,6 +42,29 @@
             android:textSize="@dimen/modern_search_field_text"
             android:textStyle="bold" />
 
+        <!-- Manual refresh of the section shown now: the refresh icon, "Refreshing" while it runs -->
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/modern_top_bar_refresh"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/modern_search_box_height"
+            android:layout_marginStart="@dimen/modern_search_box_gap"
+            android:background="@drawable/modern_search_pill"
+            app:drawableStartCompat="@drawable/ic_refresh_white"
+            android:drawablePadding="8dp"
+            android:ellipsize="end"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:gravity="center_vertical"
+            android:includeFontPadding="false"
+            android:maxWidth="@dimen/modern_search_box_width"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:singleLine="true"
+            android:textColor="@color/modern_search_text"
+            android:textSize="@dimen/modern_search_field_text"
+            android:textStyle="bold"
+            android:contentDescription="@string/browse_refresh" />
+
         <!-- Optional (top buttons setting): language and country -->
         <androidx.appcompat.widget.AppCompatImageView
             android:id="@+id/modern_top_bar_language"

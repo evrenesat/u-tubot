@@ -158,6 +158,9 @@ public class ModernBrowseFragment extends Fragment implements BrowseView, Modern
             QuickTogglePresenter.instance(getContext()).onClick();
             updateQuickToggle();
         });
+        // A manual refresh of the section shown now (the cache keeps the cards and the focused item while it runs)
+        mTopBar.findViewById(R.id.modern_top_bar_refresh).setOnClickListener(v -> mPresenter.refreshCurrentSection());
+        updateRefreshButton(false);
         // The quick toggles are changed in the settings and in the panel of the button too
         OldVideosData.instance(getContext()).setOnChange(mOnQuickToggleChange);
         HideContentData.instance(getContext()).setOnChange(mOnQuickToggleChange);
@@ -391,6 +394,40 @@ public class ModernBrowseFragment extends Fragment implements BrowseView, Modern
     }
 
     @Override
+    public void showRefreshing(boolean show) {
+        if (mTopBar == null) {
+            return;
+        }
+        mHandler.post(() -> updateRefreshButton(show));
+    }
+
+    /**
+     * The refresh button: the refresh icon while idle, the "Refreshing" text while a manual refresh runs (no progress
+     * bar: the cards stay on screen while they're updated from the cache).
+     */
+    private void updateRefreshButton(boolean show) {
+        if (mTopBar == null || getContext() == null) {
+            return;
+        }
+
+        TextView refresh = mTopBar.findViewById(R.id.modern_top_bar_refresh);
+
+        if (show) {
+            refresh.setText(getString(R.string.refreshing));
+            refresh.setCompoundDrawable(null);
+            refresh.setContentDescription(getString(R.string.refreshing));
+        } else {
+            refresh.setText(null);
+            Drawable icon = ContextCompat.getDrawable(getContext(), R.drawable.ic_refresh_white);
+            if (icon != null) {
+                icon.setTint(ContextCompat.getColor(getContext(), R.color.modern_search_text));
+            }
+            refresh.setCompoundDrawable(icon);
+            refresh.setContentDescription(getString(R.string/browse_refresh));
+        }
+    }
+
+    @Override
     public void focusOnContent() {
         if (mErrorView != null) {
             ModernStatePage.focus(mErrorView);
@@ -444,8 +481,8 @@ public class ModernBrowseFragment extends Fragment implements BrowseView, Modern
             mFocusOnContent = true;
             onSectionFocused(sectionId);
         } else {
-            mPresenter.onSectionFocused(sectionId);
-            focusOnContent();
+            // Re-selecting the section shown now refreshes it; the cache keeps the cards and the focused item while it runs
+            mPresenter.refreshCurrentSection();
         }
     }
 

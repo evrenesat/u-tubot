@@ -1221,6 +1221,26 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         }
     }
 
+    /**
+     * A manual refresh of the section shown now (the refresh button of the modern skin, or its re-selection): from
+     * the cache while it keeps the cards and the focused item (like the automatic one), a full reload when there's
+     * nothing to show from it. The view's "Refreshing" indicator is on while the load runs.
+     */
+    public void refreshCurrentSection() {
+        if (getView() == null || mCurrentSection == null) {
+            return;
+        }
+
+        getView().showRefreshing(true);
+
+        if (isCacheableSection(mCurrentSection) && mBrowseCache != null
+                && mBrowseCache.groups(mCurrentSection, getBrowseCacheIdentity()) != null) {
+            refreshFromCache(mCurrentSection);
+        } else {
+            refresh(true);
+        }
+    }
+
     private void updateRefreshTime() {
         mLastUpdateTimeMs = System.currentTimeMillis();
     }
@@ -1396,6 +1416,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         }
 
         getView().showProgressBar(false);
+        getView().showRefreshing(false);
 
         // The cached cards are still on screen: the flag stays set, so they're protected as cached until the section is left
         // or loaded again. A multi-grid clears its other column as its refreshed column arrives, so the cached uploads are shown
@@ -1440,6 +1461,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         clearCachedLoadMarks(section.getId());
         discardCachedState();
+        if (getView() != null) {
+            getView().showRefreshing(false);
+        }
     }
 
     private void discardCachedState() {
@@ -1955,6 +1979,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                                 return;
                             }
                             getView().showProgressBar(false);
+                            getView().showRefreshing(false);
                             getView().showError(UtubotSectionError.failed(getContext(), error));
                         }, () -> {
                             finishCachedRefresh(section, -1);
@@ -2611,6 +2636,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         }
 
         getView().showProgressBar(false);
+        getView().showRefreshing(false);
 
         if (getView().isEmpty() || error != null) {
             ErrorFragmentData errorFragmentData;

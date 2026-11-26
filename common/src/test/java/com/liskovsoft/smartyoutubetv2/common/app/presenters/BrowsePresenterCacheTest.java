@@ -978,6 +978,7 @@ public class BrowsePresenterCacheTest {
         private final List<VideoGroup> mUpdates = new ArrayList<>();
         private final List<Video> mSelectedItems = new ArrayList<>();
         private boolean mProgressShowing;
+        private boolean mRefreshing;
         private int errors;
         private int refreshSubscriptions;
 
@@ -1035,6 +1036,11 @@ public class BrowsePresenterCacheTest {
         }
 
         @Override
+        public void showRefreshing(boolean show) {
+            mRefreshing = show;
+        }
+
+        @Override
         public void focusOnContent() {
         }
 
@@ -1053,6 +1059,10 @@ public class BrowsePresenterCacheTest {
 
         private int refreshSubscriptions() {
             return refreshSubscriptions;
+        }
+
+        private boolean isRefreshing() {
+            return mRefreshing;
         }
 
         private void countRefresh() {

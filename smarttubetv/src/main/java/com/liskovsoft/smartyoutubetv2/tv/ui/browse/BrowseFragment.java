@@ -537,6 +537,11 @@ public class BrowseFragment extends BrowseSupportFragment implements BrowseView 
     }
 
     @Override
+    public void showRefreshing(boolean show) {
+        // The classic screen has no refresh button
+    }
+
+    @Override
     public boolean isEmpty() {
         return mSectionFragmentFactory == null || mSectionFragmentFactory.isEmpty();
     }
