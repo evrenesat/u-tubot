@@ -15,9 +15,10 @@ from tests.test_job_report import event, wait_state
 from utubot.app import create_app
 from utubot.captions.asr import make_asr
 from utubot.config import LLMTask
-from utubot.cuts import CutService, transcript_hash
+from utubot.cuts import FORBIDDEN_CAPTIONS_MESSAGE, CutService, transcript_hash
 from utubot.prompts import CUT_PRESET_INSTRUCTIONS
-from utubot.youtube import YoutubeVideoError
+from utubot.usage import METRIC_YOUTUBE_FORBIDDEN
+from utubot.youtube import REASON_FORBIDDEN_MEDIA, YoutubeVideoError
 
 VID = "abcdefghijk"
 
@@ -1388,3 +1389,106 @@ class TestChannelModes:
             json={"await_prompt": True},
         )
         assert r.status_code in (400, 422)
+
+
+async def _waiting_for_captions(env, request_id: str, *, wait_s: float = 5.0) -> dict:
+    """Poll a cut until it is waiting for the TV's captions (or `wait_s` passes)."""
+    deadline = time.monotonic() + wait_s
+    doc = {"state": "building"}
+    while time.monotonic() < deadline:
+        doc = (await env.client.get(f"/v1/cuts/{request_id}", params={"wait_ms": 200})).json()
+        if doc["state"] == "needs_transcript":
+            return doc
+        await asyncio.sleep(env.cfg.cuts.poll_s)
+    return doc
+
+
+class TestForbiddenTranscriptFallback:
+    # A client (the TV) uploads timed captions for this video, like the client proxy path does.
+    CAPTIONS_URL = f"/v1/videos/{VID}/captions/client"
+    CLIENT_SEGMENTS = [
+        (i * 5.0, i * 5.0 + 4.0, f"Sentence number {i} is spoken here.") for i in range(12)
+    ]
+
+    async def _upload(self, env, *, kind="auto") -> httpx.Response:
+        events = [
+            {
+                "tStartMs": int(start * 1000),
+                "dDurationMs": int((end - start) * 1000),
+                "segs": [{"utf8": text, "tOffsetMs": 0}],
+            }
+            for start, end, text in self.CLIENT_SEGMENTS
+        ]
+        return await env.client.post(
+            self.CAPTIONS_URL,
+            json={
+                "tracks": [
+                    {
+                        "lang": "en",
+                        "kind": kind,
+                        "format": "json3",
+                        "body": json.dumps({"events": events}),
+                    }
+                ]
+            },
+        )
+
+    async def _forbidden(self, cuts_env) -> None:
+        # No captions to fetch; the audio download is refused by YouTube (HTTP 403).
+        cuts_env.fetcher.text = None
+
+        async def forbidden(video_id, out_dir, started=None):
+            raise YoutubeVideoError(REASON_FORBIDDEN_MEDIA)
+
+        cuts_env.svc.jobs.pipeline.downloader = forbidden
+
+    async def test_a_forbidden_download_waits_for_the_tv_captions_and_builds(self, cuts_env):
+        cuts_env.fetcher.meta_extra = {"duration_s": 60}
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 2, "to": 4, "label": "The demo"}],
+            "summary": "The demo part.",
+            "kept_s": 15,
+        }
+        await self._forbidden(cuts_env)
+        r = await post_cut(cuts_env, preset="cut-demo")
+        request_id = r.json()["request_id"]
+
+        # It cannot fetch the transcript, so it waits for the TV's captions and says what happens.
+        waiting = await _waiting_for_captions(cuts_env, request_id)
+        assert waiting["state"] == "needs_transcript"
+        assert waiting["error"] == FORBIDDEN_CAPTIONS_MESSAGE
+
+        # The TV uploads its captions mid-build; the cut proceeds from them and builds normally.
+        assert (await self._upload(cuts_env)).json()["stored"] is True
+        doc = await wait_ready(cuts_env, request_id, wait_ms=5000)
+        assert doc["state"] == "ready", doc.get("error")
+        assert doc["cut"]["parts"][0]["label"] == "The demo"
+        # The refusal was counted once for the day.
+        assert cuts_env.svc.llm.usage.today().get(METRIC_YOUTUBE_FORBIDDEN) == 1
+
+    async def test_a_forbidden_download_without_tv_captions_fails(self, cuts_env):
+        cuts_env.fetcher.meta_extra = {"duration_s": 60}
+        cuts_env.cfg.cuts.client_captions_wait_s = 0.2
+        await self._forbidden(cuts_env)
+        r = await post_cut(cuts_env, preset="cut-demo")
+        request_id = r.json()["request_id"]
+
+        # It waits briefly for the TV's captions, then fails the way a refused transcript fails.
+        doc = await wait_ready(cuts_env, request_id, wait_ms=5000)
+        assert doc["state"] == "failed"
+        assert "no captions" in doc["error"].lower()
+        assert cuts_env.svc.llm.usage.today().get(METRIC_YOUTUBE_FORBIDDEN) == 1
+
+    async def test_a_dismissed_cut_stops_waiting_for_the_tv_captions(self, cuts_env):
+        cuts_env.fetcher.meta_extra = {"duration_s": 60}
+        cuts_env.cfg.cuts.client_captions_wait_s = 30.0
+        await self._forbidden(cuts_env)
+        r = await post_cut(cuts_env, preset="cut-demo")
+        request_id = r.json()["request_id"]
+        await _waiting_for_captions(cuts_env, request_id)
+
+        # Dismissing the cut while it waits ends the wait without building.
+        r = await cuts_env.client.delete(f"/v1/cut-requests/{request_id}")
+        assert r.status_code == 200, r.text
+        doc = await wait_ready(cuts_env, request_id, wait_ms=2000)
+        assert doc["state"] == "dismissed"
