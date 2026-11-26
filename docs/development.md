@@ -116,6 +116,17 @@ automatic policy that starts a transcription itself (see the script's header).
 Unit tests cover the logic (`UtubotPanelModelTest`, `PanelCoordinatorTest`, `UtubotPanelControllerTest`, ...); the emulator shows what
 they can't: the real skins, focus and the framework's own refocusing.
 
+Run the emulator as a non-root user: it crashes (SIGSEGV) when started as root. Create the AVDs once with the installed system image
+and start one in the background:
+
+```sh
+avdmanager create avd -n tv -k "system-images;android-34;android-tv;x86" -b x86
+emulator -avd tv -port 5554 -no-window -no-audio -memory 2048 -cores 2 &
+```
+
+Wait for `Boot completed` in the emulator log and `adb -s emulator-5554 devices` to list `emulator-5554`; the first cold boot of a fresh
+AVD can crash after `Boot completed`, in which case start it again (the second boot succeeds). Then:
+
 ```sh
 python3 scripts/emulator_mock_backend.py --port 18790 --static temp/update &    # temp/ is ignored by git
 adb -s emulator-5554 install -r smarttubetv/build/outputs/apk/stutubot/debug/u-tubot_<ver>_x86.apk
@@ -129,6 +140,28 @@ on every `adb` call. Skins: *Settings, User interface, Skins*; check Classic and
 not visible to the user, which is how an invisible grid shows: `modern_browse_content` without children.
 For an update, serve an `update.json` with a higher version (`downloadUrlList_x86` next to `downloadUrlList`) and an APK built with
 `-PutubotVersionName=0.9.0`.
+
+A wider, denser screen checks the tablet layout the same way. Create the AVD, then set the display in its `config.ini`
+(`~/.android/avd/tablet.avd/config.ini`; `avdmanager` has no display options):
+
+```sh
+avdmanager create avd -n tablet -k "system-images;android-34;android-tv;x86" -b x86
+```
+
+```ini
+hw.lcd.width = 1920
+hw.lcd.height = 1200
+hw.lcd.density = 240
+hw.screen = multi-touch
+```
+
+Then start it on its own port and use `-s emulator-5556` on the `adb` calls above:
+
+```sh
+emulator -avd tablet -port 5556 -no-window -no-audio -memory 2048 -cores 2 &
+```
+
+That is a 10.1" tablet (1920×1200 at 240 dpi, multi-touch).
 
 ### Mock backend controls
 
