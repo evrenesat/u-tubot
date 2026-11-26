@@ -204,9 +204,10 @@ public final class UtubotMenu {
                     option -> onPresetPicked(context, video, shown, controller, mode, cuts, force)));
 
             // A ready cut shows its kept parts under the preset, so the owner can judge it on the
-            // TV before applying it (checkpoint 4; the phone sheet already does this).
+            // TV before applying it (checkpoint 4; the phone sheet already does this). Each part
+            // jumps the playing video to its start when pressed, keeping the cut active.
             if (shown.isReady() && !shown.cut.parts.isEmpty()) {
-                dialog.appendCategory(partsCategory(context, shown.cut));
+                dialog.appendCategory(partsCategory(context, shown.cut, controller));
             }
 
             // A failed Watched preset offers the same preset in Quick with one press.
@@ -346,10 +347,11 @@ public final class UtubotMenu {
     }
 
     /**
-     * The kept parts of a ready cut, as a read-only list: each part's times and label, with the
-     * one-line summary above them.
+     * The kept parts of a ready cut, as a list: each part's times and label, with the
+     * one-line summary above them. A part is pressed to jump the playing video to its start and
+     * keep the cut active (the picker closes first).
      */
-    private static OptionCategory partsCategory(Context context, Cut cut) {
+    private static OptionCategory partsCategory(Context context, Cut cut, @Nullable UtubotCutController controller) {
         List<OptionItem> parts = new ArrayList<>();
 
         if (cut.summary != null && !cut.summary.trim().isEmpty()) {
@@ -357,7 +359,13 @@ public final class UtubotMenu {
         }
 
         for (CutPart part : cut.parts) {
-            parts.add(UiOptionItem.from(UtubotCutController.formatPart(part)));
+            final CutPart partForCallback = part;
+            parts.add(UiOptionItem.from(UtubotCutController.formatPart(part), option -> {
+                AppDialogPresenter.instance(context).closeDialog();
+                if (controller != null) {
+                    controller.jumpToPart(partForCallback);
+                }
+            }));
         }
 
         return OptionCategory.stringList(context.getString(R.string.utubot_cut_parts, cut.label), parts);
