@@ -752,6 +752,26 @@ public class UtubotCutControllerTest {
         mController.onFinish();
     }
 
+    /**
+     * The last drop of a cut that ends before the video end is the end of the cut: the player says so and offers the rest, instead of
+     * reporting it as another middle skip
+     */
+    @Test
+    public void theTrailingDrop_isTheEndOfTheCut() {
+        Cut cut = cut(VIDEO);
+        cut.durationMs = 240_000;
+        cut.skipRangesMs = Arrays.asList(new long[]{60_000, 108_000}, new long[]{204_000, 240_000});
+
+        assertTrue(UtubotCutController.isCutEnd(cut, 205_000));
+        assertFalse(UtubotCutController.isCutEnd(cut, 107_000));
+        assertFalse(UtubotCutController.isCutEnd(cut, 203_000));
+
+        Cut keptToTheEnd = cut(VIDEO);
+        keptToTheEnd.durationMs = 240_000;
+        keptToTheEnd.skipRangesMs = Arrays.asList(new long[]{60_000, 108_000});
+        assertFalse(UtubotCutController.isCutEnd(keptToTheEnd, 205_000));
+    }
+
     @Test
     public void aKeptPart_isOneLineWithItsTimesAndLabel() {
         CutPart part = new CutPart();
