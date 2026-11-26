@@ -95,3 +95,38 @@ async def test_web_login_is_rate_limited_per_address(env):
         assert limited.status_code == 429 and limited.headers["retry-after"]
     finally:
         await client.aclose()
+
+
+async def test_a_browser_session_cannot_mint_a_link(env):
+    client = await device_client(env)
+    try:
+        token = (await client.post("/v1/web-login")).json()["token"]
+    finally:
+        await client.aclose()
+    browser = anon_client(env)
+    resp = await browser.get("/web-login/" + token)
+    assert resp.headers["cache-control"] == "no-store"
+    assert resp.headers["referrer-policy"] == "no-referrer"
+    assert (await browser.post("/v1/web-login")).status_code in (401, 403)
+
+
+async def test_opening_links_is_rate_limited_per_address(env):
+    env.cfg.security.web_login_attempts_per_ip_per_min = 3
+    browser = anon_client(env)
+    for _ in range(3):
+        assert (await browser.get("/web-login/wtl_nope")).status_code == 400
+    assert (await browser.get("/web-login/wtl_nope")).status_code == 429
+
+
+def test_web_logins_table_is_additive_on_an_old_database(tmp_path):
+    import sqlite3
+
+    from utubot.db import Database
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE pair_codes(id TEXT PRIMARY KEY)")
+    conn.commit()
+    conn.close()
+    db = Database(path)
+    assert db.one("SELECT COUNT(*) n FROM web_logins")["n"] == 0

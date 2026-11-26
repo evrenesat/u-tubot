@@ -12,6 +12,10 @@
 - Backend: `web_logins` table, `create_web_login`/`redeem_web_login` (`wtl_` tokens, ~60 s TTL, single use via an atomic claim),
   the two routes, and `SecurityConfig.web_login_ttl_s`/`web_login_attempts_per_ip_per_min`. Tests: `test_web_login.py` (requires auth,
   short-lived single-use link, signs the browser in and logs the device, refused when expired/unknown, rate-limited).
+- Review pass after the rebase onto main (the entry now lives in Settings, "Backend", `UtubotBackendSettingsPresenter`; a non built-in flavor keeps opening
+  the plain backend URL): duplicate string ids removed (the build failed on them); `GET /web-login/<token>` is rate limited per address and answers
+  `Cache-Control: no-store` and `Referrer-Policy: no-referrer`; a browser session cannot mint a link; issuing and redeeming are logged (user and
+  device, never the token). Tests added for each, plus an old-database open.
 - WebView evaluated: a `WebView` would cost a hand-rolled focus/keyboard layer, cookie/session plumbing and more attack surface for
   nothing the browser does not already give, so the system browser is the default and the only path (documented in APP_INTEGRATION.md).
 - The web admin pages already expose `:focus-visible` and 44px+ targets; `test_web_ui_is_remote_friendly` checks the CSS. Backend tests

@@ -698,14 +698,22 @@ def create_app(
         is sent to the control page. A one-time link from `POST /v1/web-login`; single use, short
         lived, so a copied link is useless after it expires or is opened once.
         """
+        svc.limiter.check(
+            f"weblogin-open:{ip_of(request)}", cfg.security.web_login_attempts_per_ip_per_min
+        )
         try:
             info = await run_in_threadpool(svc.webauth.redeem_web_login, token)
         except WebLoginError as exc:
+            log.warning("web sign-in link refused from %s", ip_of(request))
             raise HTTPException(400, "This sign-in link is invalid or expired") from exc
+        log.info("web sign-in link used: user=%s device=%s", info.user.name, info.device)
         session_token = await run_in_threadpool(
             svc.webauth.create_session, info.user.name, ip_of(request), info.device, VIA_WEB_LOGIN
         )
         resp = RedirectResponse("/#/home", status_code=302)
+        # The link carries the secret in its path: never cached, never leaked through a Referer.
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Referrer-Policy"] = "no-referrer"
         set_session_cookie(resp, request, session_token)
         return resp
 
@@ -762,8 +770,12 @@ def create_app(
         the same device and signs the browser in without a password. The device name is recorded on
         the session the link makes, and the request is rate limited per address.
         """
+        principal = getattr(request.state, "principal", None)
+        if principal is not None and principal.token_id == SESSION_TOKEN_ID:
+            raise Forbidden  # only a paired device or token mints a link, never a browser session
         ip = ip_of(request)
         svc.limiter.check(f"weblogin:{ip}", cfg.security.web_login_attempts_per_ip_per_min)
+        log.info("web sign-in link issued: user=%s device=%s", user.name, client_of(request))
         token, ttl = svc.webauth.create_web_login(user.name, client_of(request))
         return {"token": token, "expires_in_s": ttl}
 
