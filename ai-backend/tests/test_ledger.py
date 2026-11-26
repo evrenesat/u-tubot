@@ -210,3 +210,19 @@ async def _anon(env):
         transport=env.client._transport,
         base_url="http://utubot",
     )
+
+
+def test_day_is_utc_and_numbers_need_word_boundaries():
+    from utubot.ledger import _day, categorize
+
+    assert _day(1_700_000_000.0) == "2023-11-14"
+    assert categorize("read 4031 bytes")[1] is True
+    assert categorize("HTTP 403 from the player")[0] == "youtube-refused"
+
+
+async def test_admin_page_carries_the_youtube_forbidden_metric(env):
+    from utubot.usage import METRIC_YOUTUBE_FORBIDDEN, Usage
+
+    Usage(env.svc.db).add(METRIC_YOUTUBE_FORBIDDEN, 3)
+    page = (await env.client.get("/v1/admin/ledger", params={"period_days": 7})).json()
+    assert page["youtube_forbidden"][0]["count"] == 3

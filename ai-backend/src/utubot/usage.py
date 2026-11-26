@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from .db import Database
 
@@ -37,3 +37,14 @@ class Usage:
             return {}
         rows = self._db.all("SELECT metric, n FROM usage_daily WHERE day=?", [today()])
         return {r["metric"]: int(r["n"]) for r in rows}
+
+    def daily(self, metric: str, days: int) -> list[dict[str, int | str]]:
+        """One metric's per-day counts over the last ``days`` days, newest first."""
+        if self._db is None:
+            return []
+        first = (datetime.now(UTC) - timedelta(days=days)).strftime(DAY_FORMAT)
+        rows = self._db.all(
+            "SELECT day, n FROM usage_daily WHERE metric=? AND day>=? ORDER BY day DESC",
+            [metric, first],
+        )
+        return [{"day": r["day"], "count": int(r["n"])} for r in rows]

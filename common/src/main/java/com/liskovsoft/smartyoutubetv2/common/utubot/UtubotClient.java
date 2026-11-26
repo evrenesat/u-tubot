@@ -66,6 +66,9 @@ public class UtubotClient {
     private static final long MAX_SETUP_BYTES = 64 * 1024;
     private static final int DEFAULT_READ_TIMEOUT_SEC = 15;
     private static final int HTTP_UNAUTHORIZED = 401;
+    private static final int HTTP_SERVER_ERROR = 500;
+    private static final String LEDGER_PATH = "/ledger";
+    private static final UtubotFailureThrottle sThrottle = new UtubotFailureThrottle();
     private static final int HTTP_BAD_REQUEST = 400;
     private static final int HTTP_NOT_FOUND = 404;
     private static final int MAX_ASSESS_VIDEOS = 50;
@@ -831,15 +834,62 @@ public class UtubotClient {
         }
 
         try {
-            return execute(client, request);
-        } catch (IOException e) {
-            if (!isDroppedConnection(request, e)) {
-                throw e;
-            }
+            try {
+                return execute(client, request);
+            } catch (IOException e) {
+                if (!isDroppedConnection(request, e)) {
+                    throw e;
+                }
 
-            // The pool handed out an idle connection that the server had closed: the second try opens a fresh one
-            return execute(client, request);
+                // The pool handed out an idle connection that the server had closed: the second try opens a fresh one
+                return execute(client, request);
+            }
+        } catch (IOException e) {
+            reportFailure(request, e);
+            throw e;
         }
+    }
+
+    /**
+     * Tell the backend's error ledger about a failure of the app's own call (the backend unreachable, a timeout, a 5xx). Fire and
+     * forget on its own thread; a rejected, cancelled or unauthorized call is the user's or the setup's business, not a failure
+     * to count, and the report call itself is never reported.
+     */
+    private void reportFailure(Request request, IOException error) {
+        String path = request.url().encodedPath();
+        boolean clientSide = !(error instanceof HttpException) || ((HttpException) error).code >= HTTP_SERVER_ERROR;
+
+        if (mIsCancelled || mToken.isEmpty() || path.endsWith(LEDGER_PATH) || !clientSide) {
+            return;
+        }
+
+        String operation = request.method() + " " + path.replaceFirst("^" + API_PREFIX, "").replaceAll("[0-9A-Za-z_-]{11}", "{id}");
+        String message = abbreviate(error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
+
+        if (!sThrottle.shouldReport(operation, message, System.currentTimeMillis())) {
+            return;
+        }
+
+        Request.Builder report;
+
+        try {
+            JSONObject body = new JSONObject().put("component", "client").put("operation", operation).put("message", message)
+                    .put("detail", error.getClass().getSimpleName());
+            report = builder(LEDGER_PATH, true).post(json(body));
+        } catch (IOException | JSONException e) {
+            return;
+        }
+
+        Request built = report.build();
+        Thread thread = new Thread(() -> {
+            try (Response ignored = sBase.newCall(built).execute()) {
+                // The ledger is best effort
+            } catch (IOException e) {
+                // The backend is the thing that failed; nothing more to do
+            }
+        }, "utubot-ledger");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     /**

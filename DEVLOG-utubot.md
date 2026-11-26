@@ -1,3 +1,8 @@
+## 2026-11-26 (error ledger: the TV reports its own failures, issue #206)
+
+- `UtubotClient.send` reports a transport or 5xx failure of the app's own call to `POST /v1/ledger`, fire and forget, through
+  `UtubotFailureThrottle` (one per operation and message a minute, ten a minute). Details in `ai-backend/DEVLOG.md`.
+
 ## 2026-11-26 (refused server download falls back to TV captions, issue #205)
 
 - Backend retries a 403 with another yt-dlp player client, then a cut waits for the TV's own captions; `UtubotMenu.stateText` shows the

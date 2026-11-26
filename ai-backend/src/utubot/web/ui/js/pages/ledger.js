@@ -28,11 +28,12 @@ function categoryPill(entry) {
 
 function exampleRow(entry, reload) {
   const who = [entry.component, entry.operation].filter(Boolean).join(" · ");
+  const linkLabel = entry.job_id ? "job" : "video";
   const job = entry.job_id
     ? h("a", { class: "mono", href: "#/job/" + encodeURIComponent(entry.job_id), text: entry.job_id })
     : (entry.video_id ? h("a", { href: "https://www.youtube.com/watch?v=" + entry.video_id, target: "_blank", rel: "noopener noreferrer", class: "mono", text: entry.video_id }) : null);
   const body = h("div", { class: "mono wrap", text: entry.message });
-  const meta = h("small", { class: "muted", text: [who, entry.client ? "on " + entry.client : null, entry.video_id ? "video " + entry.video_id : null].filter(Boolean).join(" · ") });
+  const meta = h("small", { class: "muted", text: [who, entry.client ? "on " + entry.client : null].filter(Boolean).join(" · ") });
 
   let control = h("small", { class: "muted", text: entry.flagged ? "needs triage" : "" });
   if (entry.flagged) {
@@ -54,12 +55,12 @@ function exampleRow(entry, reload) {
   return h(
     "div",
     { class: "job" },
-    h("div", { class: "row between nowrap" },
+    h("div", { class: "row between" },
       h("div", { class: "row nowrap" }, categoryPill(entry), entry.flagged ? pill("flagged", "warn") : null, h("span", { class: "muted", text: fmtAgo(entry.ts) })),
       control,
     ),
-    h("div", { class: "row nowrap" }, job ? h("span", { class: "muted", text: "job" }) : null, job),
-    h("div", { class: "row between nowrap" }, h("strong", { text: entry.message }), h("span", { class: "muted", text: who })),
+    h("div", { class: "row nowrap" }, job ? h("span", { class: "muted", text: linkLabel }) : null, job),
+    h("strong", { class: "wrap", text: entry.message }),
     meta,
   );
 }
@@ -77,10 +78,9 @@ function countsTable(doc) {
     const total = doc.counts.filter((c) => c.category === cat).reduce((sum, c) => sum + c.count, 0);
     return h("tr", {}, h("td", {}, pill(CATEGORIES.find((c) => c.value === cat)?.label || cat)), ...cells, h("td", { class: "num", text: fmtNumber(total) }));
   });
-  const totalHeader = days.map((day) => {
-    const sum = days.reduce((s, d) => s + (byKey.get(d + "|__all__") || 0), 0);
-    return h("th", { class: "num", text: fmtNumber(doc.counts.filter((c) => c.day === d).reduce((s, c) => s + c.count, 0)) });
-  });
+  const totalHeader = days.map((day) =>
+    h("th", { class: "num", text: fmtNumber(doc.counts.filter((c) => c.day === day).reduce((sum, c) => sum + c.count, 0)) }),
+  );
   const totalRow = h("tr", {}, h("td", {}, h("strong", { text: "Total" })), ...totalHeader, h("th", { class: "num", text: fmtNumber(doc.counts.reduce((s, c) => s + c.count, 0)) }));
   return card(
     "Failures per category per day",
@@ -98,7 +98,7 @@ function summaryCard(doc) {
   const byCategory = new Map();
   for (const c of doc.counts) byCategory.set(c.category, (byCategory.get(c.category) || 0) + c.count);
   const tiles = [...byCategory.entries()].map(([cat, n]) =>
-    h("div", { class: "pill-tile" }, categoryPill({ category: cat, flagged: cat === "unknown" }), h("span", { class: "num strong", text: fmtNumber(n) })),
+    h("div", { class: "row nowrap" }, categoryPill({ category: cat, flagged: cat === "unknown" }), h("span", { class: "num strong", text: fmtNumber(n) })),
   );
   return card(
     "This period",
@@ -107,7 +107,18 @@ function summaryCard(doc) {
       statRow("Categories", String(byCategory.size)),
       statRow("Flagged", fmtNumber(flagged), flagged ? "warn" : ""),
     ),
-    h("div", { class: "pills", text: tiles.length ? tiles : empty("No failures yet.")     ),
+    tiles.length ? h("div", { class: "row" }, ...tiles) : empty("No failures yet."),
+  );
+}
+
+// The usage counter of YouTube refusing a cut's download with 403 (#226), shown beside the ledger and not duplicated in it.
+function forbiddenCard(doc) {
+  const rows = doc.youtube_forbidden || [];
+  if (!rows.length) return null;
+  return card(
+    "YouTube 403 on cut downloads",
+    h("div", { class: "stack" }, ...rows.map((r) => statRow(r.day, fmtNumber(r.count)))),
+    note("Counted by the usage meter, not by the ledger; the same refusals that open the YouTube gate appear above as YouTube refused."),
   );
 }
 
@@ -121,7 +132,7 @@ export async function render(view, { rest }) {
     mount(
       host,
       h("a", { class: "back", href: "#/admin", text: "Back to admin" }),
-      h("div", { class: "row between nowrap" },
+      h("div", { class: "row between" },
         h("h1", { class: "page-title", text: "Error ledger" }),
         h("div", { class: "row" },
           select(
@@ -135,6 +146,7 @@ export async function render(view, { rest }) {
       note("Every failure the backend knows about and every failure the TV and the extension report. Categories are mapped from the error text; the rest is flagged for triage."),
       summaryCard(doc),
       countsTable(doc),
+      forbiddenCard(doc),
       card(
         "Newest failures",
         doc.recent.length ? doc.recent.map((e) => exampleRow(e, load)) : empty("No failures in this period."),

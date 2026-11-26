@@ -384,6 +384,14 @@ Request `{"ids":[int]}`. `{"ok":true}`.
 `{"video_id":"...","kind":"clickbait|...","correct":false,"note":null}` → `{"ok":true}`.
 Stored for later threshold tuning.
 
+### `POST /v1/ledger`
+`{"operation":"GET /videos/{id}/insight","message":"HTTP 502: ...","video_id":null,"component":"client","category":null,"detail":null}` →
+`{"ok":true}`. A client (TV, extension) reports a failure of its own call to the backend's error ledger. `component` outside the known
+set becomes `client`; `category` is an optional hint from `youtube-refused|rate-limited|timeout|network|model-error|transcript|config|sync|bug|unknown`
+(anything else is a 422), else the backend maps it from `message`, and an unmapped one is flagged for triage on the admin page
+(`GET /v1/admin/ledger`, admin only). Clients report only their own transport and 5xx failures, at most one per distinct message a minute and
+ten a minute overall.
+
 ## App behaviour summary
 
 - Assess: one `POST /v1/assess` per row emission from `HiddenVideoResolver`.

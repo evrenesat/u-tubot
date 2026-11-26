@@ -67,15 +67,15 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         CATEGORY_RATE_LIMITED,
         re.compile(
-            r"429|rate[\s_-]?limit|too many requests|back off|slow down|cooldown|retry[\s_-]?after|quota exhausted",
+            r"\b429\b|rate[\s_-]?limit|too many requests|back off|slow down|cooldown|retry[\s_-]?after|quota exhausted",
             re.I,
         ),
     ),
     (
         CATEGORY_YOUTUBE_REFUSED,
         re.compile(
-            r"403|forbidden|bot check|unusual traffic|members?[\s_-]only|age[\s_-]restricted|this video is|video is unavailable|"
-            r"is private|is marked as removed|is not available|410|refused the (?:audio|download|stream|media)|player ?tests?|"
+            r"\b403\b|forbidden|bot check|unusual traffic|members?[\s_-]only|age[\s_-]restricted|this video is|video is unavailable|"
+            r"is private|is marked as removed|is not available|\b410\b|refused the (?:audio|download|stream|media)|player ?tests?|"
             r"verify (?:that )?you(?:'?s)? not a bot|requires authorization to view",
             re.I,
         ),
@@ -101,7 +101,7 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern[str]]] = [
         re.compile(
             r"\b(500|502|503)\b|model is busy|is busy|bad (?:response )?json|invalid json|no json found|empty (?:response|content|"
             r"body|answer|output)|completion (?:ended|streamed)|context length|maximum (?:token|length)|whisper|speech "
-            r"(?:recognition|to text)|openai|provider error|api error|api key|authorization|unauthorized|401",
+            r"(?:recognition|to text)|openai|provider error|api error|api key|authorization|unauthorized|\b401\b",
             re.I,
         ),
     ),
@@ -123,7 +123,7 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         CATEGORY_SYNC,
-        re.compile(r"\bsync\b|app update|release list|github|tag", re.I),
+        re.compile(r"\bsync\b|app update|release list|github|\btag\b", re.I),
     ),
 ]
 
@@ -148,9 +148,9 @@ def categorize(message: str | None, *, category: str | None = None) -> tuple[str
     return CATEGORY_UNKNOWN, True
 
 
-def _day(ts: float, at: datetime | None = None) -> str:
+def _day(ts: float) -> str:
     """The UTC calendar day one timestamp falls on, ``YYYY-MM-DD``."""
-    return (at or datetime.now(UTC)).fromtimestamp(ts).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%d")
 
 
 _JOB_ID_RE = re.compile(r"(?:job_id=)?([0-9a-fA-F]{8,})$")
@@ -259,7 +259,7 @@ class LedgerService:
             entry = {
                 "category": r["category"],
                 "flagged": bool(r["flagged"]),
-                "day": _day(float(r["day"]), now_dt),
+                "day": _day(float(r["day"])),
                 "count": int(r["n"]),
             }
             by_day[(r["category"], bool(r["flagged"]))].append(entry)

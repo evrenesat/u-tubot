@@ -94,6 +94,7 @@ from .speech import SpeechError, SpeechService
 from .status import StatusService, UpdatesStatus
 from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
+from .usage import METRIC_YOUTUBE_FORBIDDEN, Usage
 from .videoref import VIDEO_ID_RE
 from .voice import VoiceService, install_voice_routes
 from .webauth import SESSION_TOKEN_ID, VIA_TAILSCALE, WebAuth, csrf_valid, hash_session
@@ -262,7 +263,7 @@ def build_services(
         status=StatusService(cfg, db, gate, llm.usage, transcription.engines),
         updates=UpdatesStatus(cfg, github_transport),
         artifacts=ArtifactCache(db, transcripts, content, assessor, archive),
-        ledger=LedgerService(db, cfg.ledger.keep_days),
+        ledger=ledger,
     )
 
 
@@ -872,7 +873,11 @@ def create_app(
         admin: UserConfig = Depends(admin_user),
     ):
         """The error ledger: counts per category per day and the newest failures with job links."""
-        return svc.ledger.page(period_days, limit)
+        page = svc.ledger.page(period_days, limit)
+        page["youtube_forbidden"] = Usage(svc.db).daily(
+            METRIC_YOUTUBE_FORBIDDEN, page["period_days"]
+        )
+        return page
 
     @app.post("/v1/admin/ledger/{failure_id}/categorize")
     async def admin_ledger_categorize(
