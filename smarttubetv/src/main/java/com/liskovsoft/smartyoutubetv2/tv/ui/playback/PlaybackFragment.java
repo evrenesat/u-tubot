@@ -1486,6 +1486,13 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
     }
 
     @Override
+    public void setCutSkipActive(boolean active) {
+        if (mPlayerGlue != null) {
+            mPlayerGlue.setCutSkipActive(active);
+        }
+    }
+
+    @Override
     public void setChannelIcon(String iconUrl) {
         if (mPlayerGlue != null) {
             mPlayerGlue.setChannelIcon(iconUrl);

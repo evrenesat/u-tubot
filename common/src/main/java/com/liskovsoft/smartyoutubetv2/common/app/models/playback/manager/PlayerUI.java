@@ -32,6 +32,10 @@ public interface PlayerUI {
     int getButtonState(int buttonId);
     void setButtonState(int buttonId, int buttonState);
     void setButtonLabel(int buttonId, CharSequence label);
+    /**
+     * Whether the applied cut's toggle button is shown: only while a cut is applied.
+     */
+    void setCutSkipActive(boolean active);
     void setChannelIcon(String iconUrl);
     void setSeekPreviewTitle(String title);
     void setNextTitle(Video nextVideo);

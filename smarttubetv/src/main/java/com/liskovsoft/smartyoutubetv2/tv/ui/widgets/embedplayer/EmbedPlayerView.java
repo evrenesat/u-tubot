@@ -163,6 +163,11 @@ public class EmbedPlayerView extends PlayerView implements PlaybackView {
     }
 
     @Override
+    public void setCutSkipActive(boolean active) {
+
+    }
+
+    @Override
     public void setChannelIcon(String iconUrl) {
 
     }

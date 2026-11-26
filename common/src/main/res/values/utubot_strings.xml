@@ -136,6 +136,9 @@
     <string name="utubot_cut_end">End of cut</string>
     <string name="utubot_cut_watch_rest">Watch the rest</string>
     <string name="utubot_cut_other_length">This cut was built for a different length of the video</string>
+    <string name="utubot_cut_skip_show">Show cut-out parts</string>
+    <string name="utubot_cut_skip_skip">Skip cut-out parts</string>
+    <string name="utubot_cut_skip_hint">The cut skips its cut-out parts. Turn skipping off to watch them, and it resumes when you turn it back on. Seeking stays inside the kept parts.</string>
     <string name="utubot_cut_force_off">Transcribe with u·tubot</string>
     <string name="utubot_cut_force_on">Transcribe with u·tubot (on)</string>
     <string name="utubot_cut_describe_on_phone">Describe on phone…</string>

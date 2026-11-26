@@ -33,6 +33,20 @@
 
 # u·tubot devlog
 
+## 2026-11-26 (cuts: seek stays in the kept parts, and a toggle to watch them, issue 142)
+
+- While a cut is on, a forward/rewind seek moves in cut time and never lands in a cut-out part. The seek lands in
+  `UtubotCutController.onSeekEnd`, where the direction is taken from the position the seek started from (`mSeekFromPos`, tracked by
+  the watcher and refreshed on every seek) and `UtubotCutSkipper.snapToKept` snaps a landing inside a dropped range to the range's
+  edge — the end for a forward seek, the start for a backward one — so a seek within a kept part stays put and a longer press jumps
+  between part boundaries.
+- A new player toggle (`UtubotCutSkipAction`, the `action_utubot_cut_skip` button next to the cut button) flips `mSkipActive`. Off,
+  the cut's skipping stops and the seek no longer snaps, so the cut-out parts can be watched, but the cut stays selected and its skips
+  stay dimmed on the seek bar; on, it resumes and jumps out of any drop the playback sits in. The button shows only while a cut is
+  applied (`PlayerUI.setCutSkipActive`), and turning the cut off, a video change or a finish hide it.
+- Tests: the snap edges and the kept-part stay in `UtubotCutSkipperTest`, the forward/backward snap, the seek with skipping off and the
+  toggle resume in `UtubotCutControllerTest`.
+
 ## 2026-11-26 (frequent update checks, issue #200)
 
 - The update schedule now reads its interval from the settings after every check: "Update check interval" (5, 15, 60 or 360 min;
@@ -95,6 +109,20 @@
 - Tests: `UtubotCutTimeTest` (inside a part, first and last part, past the last, between parts, before the first, no parts,
   null cut) and `UtubotCutControllerTest` (the button shows the cut time and part number, the label follows the playback, a
   same position does not rewrite it). Harness `CutsHarnessActivity` shows the cut time and part number.
+
+## 2026-11-26 (cuts: seek stays in the kept parts, and a toggle to watch them, issue 142)
+
+- While a cut is on, a forward/rewind seek moves in cut time and never lands in a cut-out part. The seek lands in
+  `UtubotCutController.onSeekEnd`, where the direction is taken from the position the seek started from (`mSeekFromPos`, tracked by
+  the watcher and refreshed on every seek) and `UtubotCutSkipper.snapToKept` snaps a landing inside a dropped range to the range's
+  edge — the end for a forward seek, the start for a backward one — so a seek within a kept part stays put and a longer press jumps
+  between part boundaries.
+- A new player toggle (`UtubotCutSkipAction`, the `action_utubot_cut_skip` button next to the cut button) flips `mSkipActive`. Off,
+  the cut's skipping stops and the seek no longer snaps, so the cut-out parts can be watched, but the cut stays selected and its skips
+  stay dimmed on the seek bar; on, it resumes and jumps out of any drop the playback sits in. The button shows only while a cut is
+  applied (`PlayerUI.setCutSkipActive`), and turning the cut off, a video change or a finish hide it.
+- Tests: the snap edges and the kept-part stay in `UtubotCutSkipperTest`, the forward/backward snap, the seek with skipping off and the
+  toggle resume in `UtubotCutControllerTest`.
 
 ## 2026-11-26 (TV uploads its caption tracks to the backend, issue 149)
 

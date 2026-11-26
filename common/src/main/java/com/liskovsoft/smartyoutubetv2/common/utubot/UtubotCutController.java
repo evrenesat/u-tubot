@@ -18,6 +18,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.controllers.Spo
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
+import com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerUI;
 import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerTweaksData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SponsorBlockData;
@@ -71,6 +72,15 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     private Cut mOfferingCut;
     @Nullable
     private UtubotCutSkipper mSkipper;
+    /**
+     * Whether the applied cut's skipping is on: a cut can be selected with its skipping off, so the cut-out parts can be watched; the
+     * cut stays selected and the dimmed skips stay on the bar, and turning it back on resumes the cut. On by the time a cut applies.
+     */
+    private boolean mSkipActive = true;
+    /**
+     * The playback position the last seek started from, so a seek's landing can be snapped to a kept part in the direction of the move
+     */
+    private long mSeekFromPos = -1;
     @Nullable
     private Disposable mPoll;
     /** The last cut-time label written to the player button, so a tick that computes the same string does not rewrite it */
@@ -122,6 +132,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         mVideo = item;
         showMenuCutLabel();
+        updateCutSkipButton();
 
         if (item != null && item.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
             UtubotManager.instance(getContext()).followCuts(item.videoId, this);
@@ -160,12 +171,33 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
     @Override
     public void onSeekEnd() {
-        // A seek of the user is where the playback starts from: not a crossing into a drop, even when it lands a moment inside one
         if (mSkipper != null && getPlayer() != null) {
-            mSkipper.onSeek(getPlayer().getPositionMs());
+            seekEndInCut(getPlayer().getPositionMs());
         }
 
         updateBadge();
+    }
+
+    /**
+     * A seek of the user wins and plays, but stays in the kept parts: it moves in cut time and never lands in a cut-out part, so one
+     * inside a dropped range snaps to the range's edge in the direction of the move. With the skipping off the seek lands where the
+     * user put it, and the cut resumes on the next play.
+     */
+    private void seekEndInCut(long pos) {
+        if (!mSkipActive) {
+            mSkipper.onSeek(pos);
+            return;
+        }
+
+        boolean forward = pos >= mSeekFromPos;
+        long toPos = mSkipper.snapToKept(pos, forward);
+        mSeekFromPos = toPos;
+
+        if (toPos != pos) {
+            getPlayer().setPositionMs(toPos);
+        }
+
+        mSkipper.onSeek(toPos);
     }
 
     /**
@@ -259,6 +291,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     public void resetJumpGesture() {
         resetJumpPress();
     }
+    }
 
     @Override
     public void onEngineReleased() {
@@ -277,6 +310,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         mReadyCuts = null;
         destroyBadge();
         mCut = null; // the playback is gone: a picker of this video from a list starts it again, with its cut carried to the player
+        updateCutSkipButton();
 
         // A pick guarded this open only; an off still guards the next open until the viewer picks a cut here again
         if (mVideo != null) {
@@ -377,6 +411,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         if (buttonId == R.id.action_utubot_cut && video != null) {
             UtubotMenu.showCuts(getContext(), video);
+        } else if (buttonId == R.id.action_utubot_cut_skip) {
+            toggleSkipping();
         }
     }
 
@@ -421,6 +457,33 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         rememberCutChoice(cut);
         mPendingCut = null;
         apply(cut);
+        return true;
+    }
+
+    /**
+     * The player's toggle button: with a cut applied it turns the cut's skipping off — the cut stays selected and the cut-out parts
+     * can be watched, resuming the cut when toggled back on. No cut selected means nothing to toggle.
+     *
+     * @return true when a cut was applied and the toggle flipped it
+     */
+    public boolean toggleSkipping() {
+        if (mCut == null || mSkipper == null || getPlayer() == null) {
+            return false;
+        }
+
+        mSkipActive = !mSkipActive;
+
+        if (mSkipActive) {
+            // Resuming the cut: if the playback is inside a dropped range, jump out once, like applying a cut
+            long positionMs = getPlayer().getPositionMs();
+            UtubotCutSkipper.Decision decision = mSkipper.onAppliedAt(positionMs);
+
+            if (decision.isJump()) {
+                skipTo(decision.jumpToMs, positionMs);
+            }
+        }
+
+        updateCutSkipButton();
         return true;
     }
 
@@ -579,6 +642,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         UtubotCutSeekBar.paint(getPlayer());
         mCut = null;
         showMenuCutLabel();
+        updateCutSkipButton();
 
         if (mVideo != null && mVideo.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
             noteLocalOff(mVideo.videoId);
@@ -594,18 +658,21 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         }
 
         mCut = cut;
+        mSkipActive = true;
         mSkipper = new UtubotCutSkipper(cut, activeSponsorSegments(), this::isSponsorSegmentSkipped);
         resetJumpPress();
         UtubotCutSeekBar.setCut(cut.videoId, UtubotCutSeekBar.segmentsFor(cut, getPlayer().getDurationMs()));
         UtubotCutSeekBar.paint(getPlayer());
         mLastCutLabel = null;
         refreshCutLabel();
+        updateCutSkipButton();
         startPolling();
         showLegendOnce();
 
         // Applying a cut is an explicit act, not a seek: when the playback is already inside a dropped range (an intro drop the video
         // plays in, or a cut picked up mid-drop), it jumps once to the end of it, with the usual Skipped toast as the undo
         long positionMs = getPlayer().getPositionMs();
+        mSeekFromPos = positionMs;
         UtubotCutSkipper.Decision decision = mSkipper.onAppliedAt(positionMs);
 
         if (decision.isJump()) {
@@ -685,12 +752,14 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             tryApplyPending();
         }
 
+        mSeekFromPos = getPlayer().getPositionMs();
+
         if (mCut != null) {
             refreshCutLabel();
         }
         updateBadge(); // a paused playback inside a cut-out keeps the badge and its countdown
 
-        if (mSkipper == null || mCut == null || !getPlayer().isPlaying()) {
+        if (!mSkipActive || mSkipper == null || mCut == null || !getPlayer().isPlaying()) {
             return;
         }
 
@@ -1088,6 +1157,21 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         mLastCutLabel = null;
         player.setButtonLabel(R.id.action_utubot_cut, getContext().getString(R.string.utubot_cut_menu));
+    }
+
+    /**
+     * The player's toggle button reflects the cut's skipping: on while the cut skips, off while the cut-out parts are watchable, and
+     * hidden when no cut is applied.
+     */
+    private void updateCutSkipButton() {
+        PlaybackView player = getPlayer();
+
+        if (player == null) {
+            return;
+        }
+
+        player.setButtonState(R.id.action_utubot_cut_skip, mSkipActive ? PlayerUI.BUTTON_ON : PlayerUI.BUTTON_OFF);
+        player.setCutSkipActive(mCut != null);
     }
 
     /**

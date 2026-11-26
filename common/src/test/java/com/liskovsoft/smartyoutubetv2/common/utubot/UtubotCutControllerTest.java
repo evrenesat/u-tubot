@@ -8,6 +8,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCategory;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
+import com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerUI;
 import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerTweaksData;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
@@ -1117,6 +1118,148 @@ public class UtubotCutControllerTest {
         return part;
     }
 
+    /**
+     * A seek of the user into a dropped range does not land in the cut-out part: moving forward it snaps to the end of the range (the
+     * start of the kept part that follows)
+     */
+    @Test
+    public void aForwardSeekIntoADrop_snapsToTheEndOfTheRange() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        cut.keptMs = 210_000;
+        cut.skipRangesMs = Arrays.asList(new long[]{100_000, 150_000});
+
+        assertTrue(mController.toggle(cut));
+        assertTrue(mController.isApplied(cut));
+
+        mController.setPosition(125_000); // into the drop
+        mController.setSeekFrom(120_000); // the playback was here before the seek (a kept part)
+        mController.onSeekEnd();
+
+        assertEquals(150_000, mController.position());
+    }
+
+    /**
+     * A backward seek into a dropped range snaps to the start of the range (the end of the kept part that precedes)
+     */
+    @Test
+    public void aBackwardSeekIntoADrop_snapsToTheStartOfTheRange() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        cut.keptMs = 210_000;
+        cut.skipRangesMs = Arrays.asList(new long[]{100_000, 150_000});
+
+        assertTrue(mController.toggle(cut));
+
+        mController.setPosition(125_000);
+        mController.setSeekFrom(130_000); // the playback was past the drop before the backward seek
+        mController.onSeekEnd();
+
+        assertEquals(100_000, mController.position());
+    }
+
+    /**
+     * A seek of the user within a kept part lands where it landed: nothing to snap, so it moves in cut time unchanged
+     */
+    @Test
+    public void aSeekInAKeptPart_landsWhereItLanded() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        cut.keptMs = 210_000;
+        cut.skipRangesMs = Arrays.asList(new long[]{100_000, 150_000});
+
+        assertTrue(mController.toggle(cut));
+
+        mController.setPosition(70_000); // in the first kept part
+        mController.setSeekFrom(60_000);
+        mController.onSeekEnd();
+
+        assertEquals(70_000, mController.position());
+    }
+
+    /**
+     * The toggle button is hidden while no cut is applied
+     */
+    @Test
+    public void theToggleButton_HiddenWhenNoCut() {
+        mController.open(video(VIDEO), 240_000);
+
+        assertFalse(mController.cutSkipActive());
+    }
+
+    /**
+     * Turning the cut's skipping off keeps the cut selected and the button's state off: the cut-out parts can be watched
+     */
+    @Test
+    public void aToggleTurningSkippingOff_keepsTheCutSelected() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        cut.keptMs = 210_000;
+        cut.skipRangesMs = Arrays.asList(new long[]{100_000, 150_000});
+
+        assertTrue(mController.toggle(cut));
+        assertTrue(mController.isApplied(cut));
+        assertEquals(PlayerUI.BUTTON_ON, mController.getButtonState());
+
+        assertTrue(mController.toggleSkipping());
+        assertEquals(PlayerUI.BUTTON_OFF, mController.getButtonState());
+        assertTrue(mController.isApplied(cut)); // the cut stays selected
+    }
+
+    /**
+     * With the skipping off, a seek does not snap: the cut-out parts are watchable
+     */
+    @Test
+    public void aSeekWithSkippingOff_landsInADrop() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        cut.keptMs = 210_000;
+        cut.skipRangesMs = Arrays.asList(new long[]{100_000, 150_000});
+
+        assertTrue(mController.toggle(cut));
+        assertTrue(mController.toggleSkipping()); // skipping off
+
+        mController.setPosition(125_000); // into the drop
+        mController.setSeekFrom(120_000);
+        mController.onSeekEnd();
+
+        assertEquals(125_000, mController.position()); // lands in the drop, not snapped
+    }
+
+    /**
+     * Resuming the cut with the playback inside a drop jumps it out once, like applying a cut
+     */
+    @Test
+    public void aToggleTurningSkippingOn_jumpsOutOfADrop() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+        cut.keptMs = 210_000;
+        cut.skipRangesMs = Arrays.asList(new long[]{100_000, 150_000});
+
+        assertTrue(mController.toggle(cut));
+        assertTrue(mController.toggleSkipping()); // skipping off
+
+        mController.setPosition(125_000); // into the drop, watchable while skipping is off
+        mController.onSeekEnd();
+
+        assertTrue(mController.toggleSkipping()); // resume the cut
+
+        assertEquals(150_000, mController.position()); // jumped out of the drop
+        assertEquals(PlayerUI.BUTTON_ON, mController.getButtonState());
+    }
+
     private static final class TestCutController extends UtubotCutController {
         private Video mVideo;
         private PlaybackView mPlayer;
@@ -1125,6 +1268,8 @@ public class UtubotCutControllerTest {
         private long mPositionMs;
         private boolean mSeekCalled;
         private long mLastSeekMs;
+        private int mButtonState;
+        private boolean mCutSkipActive;
         private boolean mOverlayShown;
         private boolean mSuggestionsShown;
         private boolean mEngineInitialized;
@@ -1197,6 +1342,24 @@ public class UtubotCutControllerTest {
             mPlayer = null;
         }
 
+        void setSeekFrom(long posMs) {
+            try {
+                Field field = UtubotCutController.class.getDeclaredField("mSeekFromPos");
+                field.setAccessible(true);
+                field.set(this, posMs);
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError(e);
+            }
+        }
+
+        int getButtonState() {
+            return mButtonState;
+        }
+
+        boolean cutSkipActive() {
+            return mCutSkipActive;
+        }
+
         void setPosition(long positionMs) {
             mPositionMs = positionMs;
         }
@@ -1245,6 +1408,16 @@ public class UtubotCutControllerTest {
                             mPositionMs = (long) args[0];
                             mSeekCalled = true;
                             mLastSeekMs = mPositionMs;
+                            return null;
+                        }
+
+                        if ("setButtonState".equals(method.getName())) {
+                            mButtonState = (Integer) args[1];
+                            return null;
+                        }
+
+                        if ("setCutSkipActive".equals(method.getName())) {
+                            mCutSkipActive = (Boolean) args[0];
                             return null;
                         }
 
