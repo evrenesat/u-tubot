@@ -1169,21 +1169,22 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     /**
      * Seek the playing video to the start of a kept part, the way the cut picker jumps when a part is pressed. The cut stays applied
      * (this neither applies nor turns it off), so playback continues from there until the next dropped range: a seek of the user wins
-     * and is where the skipper starts again, like any other seek.
+     * and is where the skipper starts again, like any other seek. A part of a cut for another video (a list card's picker opened while
+     * that video plays) does not move the video that plays.
      *
-     * @return true when the live player of the video that plays took the seek
+     * @return true when the live player of the video that plays has the cut's video and took the seek
      */
-    public boolean jumpToPart(CutPart part) {
-        if (part == null || !isLivePlayer()) {
+    public boolean jumpToPart(Cut cut, CutPart part) {
+        if (part == null || !isPlayingVideo(cut)) {
             return false;
         }
 
         PlaybackView player = getPlayer();
         long durationMs = player.getDurationMs();
-        long toMs = part.startMs;
+        long toMs = Math.max(0L, part.startMs);
 
         if (durationMs > 0) {
-            toMs = Math.max(0L, Math.min(toMs, durationMs)); // a part never runs past the video it was built for, clamp anyway
+            toMs = Math.min(toMs, durationMs); // a part never runs past the video it was built for, clamp anyway
         }
 
         player.setPositionMs(toMs);

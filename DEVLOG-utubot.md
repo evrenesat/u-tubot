@@ -42,6 +42,14 @@
 - Tests: schedule re-reads the interval, settings defaults, development-mode flag. Gradle ran only the update/settings tests and the
   app compile.
 
+## 2026-11-26 (UTB-163 r1: the kept-part seek stays on its own video, parity row)
+
+- A part of another video's cut (a list card's picker open while another video plays) must not move the video that plays:
+  `jumpToPart` now takes the cut and checks `isPlayingVideo`, with a test for that case; the start is also clamped at 0.
+- The parity box failed because the fix touches `common/utubot/` without an extension file or the plan: row 22 of
+  `ai/BROWSER_EXTENSION_PLAN.md` now records the TV kept-part seek (the extension's clickable kept-part list is the same), so it passes.
+- Common unit tests green, app compile green.
+
 ## 2026-11-26 (clicking a kept part jumps the playing video to it, issue 140)
 
 - Pressing a kept part in the cut's parts list now seeks the playing video to that part's start (clamped to the video length) and

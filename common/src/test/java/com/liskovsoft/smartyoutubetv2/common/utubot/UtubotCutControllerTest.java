@@ -866,7 +866,7 @@ public class UtubotCutControllerTest {
         mController.onCutChosen(VIDEO, cut);
         assertTrue(mController.isApplied(cut));
 
-        assertTrue(mController.jumpToPart(cut.parts.get(0)));
+        assertTrue(mController.jumpToPart(cut, cut.parts.get(0)));
         assertEquals(130_000, mController.lastSeekMs());
         assertTrue(mController.isApplied(cut));
         mController.onFinish();
@@ -882,7 +882,7 @@ public class UtubotCutControllerTest {
         cut.parts = Collections.singletonList(cutPart(300_000, 400_000, "Later"));
         mController.onCutChosen(VIDEO, cut);
 
-        assertTrue(mController.jumpToPart(cut.parts.get(0)));
+        assertTrue(mController.jumpToPart(cut, cut.parts.get(0)));
         assertEquals(240_000, mController.lastSeekMs());
         mController.onFinish();
     }
@@ -895,8 +895,21 @@ public class UtubotCutControllerTest {
     public void aKeptPart_pickedWithNoLivePlayer_seeksNothing() {
         mController.open(video(VIDEO), 240_000);
         mController.releasePlayer(); // engine gone: the view is not a live player
+        Cut cut = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
 
-        assertFalse(mController.jumpToPart(cutPart(130_000, 185_000, "The demo")));
+        assertFalse(mController.jumpToPart(cut, cutPart(130_000, 185_000, "The demo")));
+        assertFalse(mController.seekCalled());
+    }
+
+    /**
+     * A part of another video's cut (a list card's picker open while another video plays) must not move the video that plays
+     */
+    @Test
+    public void aKeptPart_ofAnotherVideosCut_seeksNothing() {
+        mController.open(video(VIDEO), 240_000);
+        Cut other = cutWithPreset("othervideo00", "cut-demo", "Only the demo", 240_000);
+
+        assertFalse(mController.jumpToPart(other, cutPart(130_000, 185_000, "The demo")));
         assertFalse(mController.seekCalled());
     }
 

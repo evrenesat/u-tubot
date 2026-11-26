@@ -363,7 +363,7 @@ public final class UtubotMenu {
             parts.add(UiOptionItem.from(UtubotCutController.formatPart(part), option -> {
                 AppDialogPresenter.instance(context).closeDialog();
                 if (controller != null) {
-                    controller.jumpToPart(partForCallback);
+                    controller.jumpToPart(cut, partForCallback);
                 }
             }));
         }
