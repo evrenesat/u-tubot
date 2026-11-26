@@ -725,3 +725,33 @@ async def test_a_budget_skipped_result_is_cached(tmp_path):
         priority=1, want_words=True, optional_asr=False, audio_sha="sha", separation="off",
     )  # fmt: skip
     assert len(db.all("SELECT 1 FROM stage_cache WHERE stage='asr'")) == 1
+
+
+def test_v4_asr_cache_rows_are_carried_over_to_the_one_cache(tmp_path):
+    import json
+
+    from utubot.db import Database
+
+    db = Database(tmp_path / "m.db")
+    words = [[0.0, 0.4, "hi", 0.9, "real"]]
+    base = {"v": 4, "language": "en", "segments": [[0.0, 0.4, "hi"]], "engine": "e", "model": "m"}
+    rows = {
+        "v4:abc:0:auto:off": {**base, "words": [], "word_timing": None},
+        "v4:abc:1:auto:off": {**base, "words": words, "word_timing": "real"},
+        "v4:def:1:en:off:wm-x": {**base, "words": words, "word_timing": "interpolated"},
+    }
+    for key, payload in rows.items():
+        db.execute(
+            "INSERT INTO stage_cache(video_id,stage,cache_key,json,created_at) VALUES(?,?,?,?,?)",
+            ["vid", "asr", key, json.dumps(payload), 1.0],
+        )
+    db._migrate()
+    db._migrate()  # idempotent
+    got = {
+        r["cache_key"]: json.loads(r["json"])
+        for r in db.all("SELECT cache_key, json FROM stage_cache WHERE cache_key LIKE 'v5:%'")
+    }
+    assert set(got) == {"v5:abc:off:en", "v5:def:off:en"}
+    assert got["v5:abc:off:en"]["words"] == words  # the strongest row won
+    assert got["v5:abc:off:en"]["v"] == 5
+    assert db.one("SELECT COUNT(*) n FROM stage_cache WHERE cache_key LIKE 'v4:%'")["n"] == 3

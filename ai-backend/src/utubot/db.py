@@ -236,11 +236,57 @@ class Database:
         self._add_missing_columns("cut_requests", CUT_REQUEST_CLASS_COLUMNS)
         self._add_missing_columns("cut_requests", CUT_REQUEST_MODE_COLUMNS)
         # Rows written when a transcript could not be fetched: nothing may be built on a title alone.
+        self._migrate_asr_cache_v4()
         self._conn.execute("DELETE FROM transcripts WHERE source=?", [METADATA_ONLY])
         self._conn.execute("DELETE FROM summaries WHERE source=?", [METADATA_ONLY])
         self._conn.execute(
             "DELETE FROM insights WHERE json LIKE ?", [f'%"source": "{METADATA_ONLY}"%']
         )
+
+    def _migrate_asr_cache_v4(self) -> None:
+        """Carry the v4 ASR cache rows over to the v5 one-cache layout, so no speech recognition
+        already paid for is run again.
+
+        v4 keys were `v4:{audio}:{want_words}:{language}:{separation}[:wm-...]`; v5 keys are
+        `v5:{audio}:{separation}:{language}` with the strongest answer (words, real or mixed times)
+        per key. Old rows stay in place; an existing v5 row is never replaced. Idempotent."""
+        from .captions.asr import normalize_language
+
+        rows = self._conn.execute(
+            "SELECT video_id, cache_key, json, created_at FROM stage_cache"
+            " WHERE stage='asr' AND cache_key LIKE 'v4:%'"
+        ).fetchall()
+        best: dict[tuple[str, str], tuple[tuple[int, int, float], str, float]] = {}
+        for row in rows:
+            parts = row["cache_key"].split(":")
+            if len(parts) < 5:
+                continue
+            _, audio_sha, _, requested, separation = parts[:5]
+            try:
+                payload = json.loads(row["json"])
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            langclass = normalize_language(payload.get("language")) or (
+                None if requested == "auto" else requested
+            )
+            payload["v"] = 5
+            key = f"v5:{audio_sha}:{separation}:{langclass or 'auto'}"
+            rank = (
+                int(bool(payload.get("words"))),
+                int(payload.get("word_timing") in ("real", "mixed")),
+                row["created_at"],
+            )
+            slot = (row["video_id"], key)
+            if slot not in best or rank > best[slot][0]:
+                best[slot] = (rank, json.dumps(payload, ensure_ascii=False), row["created_at"])
+        for (video_id, key), (_, blob, created_at) in best.items():
+            self._conn.execute(
+                "INSERT OR IGNORE INTO stage_cache(video_id,stage,cache_key,json,created_at)"
+                " VALUES(?,?,?,?,?)",
+                [video_id, "asr", key, blob, created_at],
+            )
 
     def execute(self, sql: str, params: Iterable[Any] = ()) -> None:
         with self._lock:

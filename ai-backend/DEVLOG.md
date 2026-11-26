@@ -13,6 +13,7 @@
 - Tests: `test_caption_source.py` (transcript then HQ captions = one ASR call, `reused_from_job` set), `test_cuts_api.py` (cut then HQ
   captions reuse), `test_cuts_watched.py` (a second watched build reuses the archived video + grids, describing cached); existing
   `test_job_report.py` `StubAsr` now returns words, `test_asr_recheck.py` pins `ASR_CACHE_VERSION == 5`. Full suite green.
+- Data migration: `Database._migrate_asr_cache_v4` copies every `v4:` ASR row to its `v5:` key (strongest answer per audio/variant/language wins, old rows kept, never overwrites a v5 row, idempotent), so existing transcripts and cuts keep their recognition; test in `test_caption_source.py`.
 - Contract: `ai/CONTRACT.md` documents the transcript's word-time run, the shared cache, and the `asr` stage `cached`/`reused_from_job`/`saved_s`.
 
 ## 2026-11-26 (readable changelog)
