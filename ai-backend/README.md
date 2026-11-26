@@ -37,7 +37,8 @@ option. Highlights:
   summary in the background, off by default).
 - `[security]` rate limits, pairing limits, request size cap, web sign-in (sessions, password hashing, lockout), `trusted_proxies` for
   `X-Forwarded-For` and `X-Forwarded-Proto` (loopback only by default); `[auth]` optional passwordless sign-in from a Tailscale Serve
-  identity header (`tailscale_identity`, `tailscale_users`); `[models]` the cached model list.
+   identity header (`tailscale_identity`, `tailscale_users`); `[models]` the cached model list.
+- `[usage]` optional per-alias pricing (`price_usd_per_million`, dollars per 1M prompt+completion tokens) so the admin *Features* page can show an estimated cost per feature, with the look-back `window_days` (7) and how long per-call rows are kept (`keep_days`, 30); cost is null for an alias with no price. Admins pick the alias each feature runs on from the web UI (`GET/PUT/DELETE /v1/admin/features`); the override replaces the `[llm.<task>]` default for everyone and takes effect on the next call, with no restart.
 - `[default_policy]` and `[[users]] policy` hold the defaults of every per-user setting (filtering, models per task, transcript
   policy, TV settings); users override them in the web UI.
 - `[assess]` batch size, wait cap, tier-2 daily cap per user (30).

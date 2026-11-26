@@ -1253,6 +1253,7 @@ class CaptionPipeline:
             data = await self.llm.chat_json(
                 self.cfg.llm.captions,
                 [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                feature=self.cfg.llm.captions.feature,
             )
         except LLMBadJSONError:
             return None

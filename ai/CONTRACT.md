@@ -938,5 +938,36 @@ read from the archive first and download only when the media is missing, so a vi
   above.
 - `GET /v1/admin/status` also carries `"archive":{"files","usage_bytes","quota_bytes","state"}`.
 
+### Feature models (admin only)
+
+Each feature a pipeline runs through (`FEATURE_KEYS`: `glance`, `summary`, `answer`, `triage`, `analysis`, `captions`,
+`cuts`, `cuts_vision`; a feature with no `[llm.<task>]` table — `cuts`, `cuts_vision` — is listed once configured) runs on a
+modelgate alias. A call resolves the model as an explicit one (a per-user `models` entry or a prompt's `model`) first, else the
+admin's per-feature override, else the `[llm.<task>]` default in `config.toml`; the override only replaces the default, so a call
+that names a model is routed exactly as before. The choice is server-wide, stored in a `feature_models` row and effective on the
+next call (no restart); it is logged in `feature_audit`. Cost is not billed by this server — modelgate reports a real per-alias cost
+(EVR-560, modelgate#18/#20) and, without that gateway, cost is estimated from the call's tokens and an optional per-alias price
+(`[usage] price_usd_per_million`, dollars per 1M prompt+completion tokens; an alias with no price reports an unknown cost, never a
+guessed one). Every model call records its feature, alias, wall time and tokens in `feature_calls`.
+
+- `GET /v1/admin/features` -> `{"features":[...], "aliases":[...], "window_days":7}`. `aliases` is the list the switch is
+  validated against: the live model values `GET /v1/models` shows plus every alias this server already knows from its config
+  (each feature's model and fallback, and the speech alias), so a choice is offered even before the catalog is fetched.
+- Each feature row is `{"feature","alias","fallback":[...],"overridden":bool,"changes":[{"from","to","by","at"}],"usage":{...}}`:
+  the alias in force (override or default), its configured fallback, whether an admin override is set, the last 20 audit rows
+  (`from`/`to` may be null on a reset), and the `usage` for the alias in force over the last `window_days`
+  (`{"calls","prompt_tokens","completion_tokens","tokens","cost","median_ms","p90_ms","samples"}`; both time values null with no
+  sample, `cost` null without a price).
+- `PUT /v1/admin/features/{feature}` `{"alias"}` -> the feature row; `400` for an unknown `feature`, an empty alias, or an alias
+  not in the `aliases` list (refused, nothing applied).
+- `DELETE /v1/admin/features/{feature}` -> the feature row with `alias` back on the config default and `overridden` false; `404`
+  when there is no override to reset, `400` for an unknown `feature`.
+
+Per-feature runs also carry their cost and wall time on the result: the insight, summary, ask and cut answers gain `cost_usd`
+(rounded to 5 dp) and `elapsed_s`. The schema is additive — `feature_models(feature PK, alias, changed_at, changed_by)`,
+`feature_calls(id PK AUTOINCREMENT, feature, alias, ts, elapsed_ms, prompt_tokens, completion_tokens, cost)` with a
+`feature_calls_feature` index, and `feature_audit(id PK AUTOINCREMENT, feature, from_alias, to_alias, changed_by, at)` (both alias
+columns nullable: a fresh override has no `from`, a reset has no `to`).
+
 Every response carries `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and
 `Referrer-Policy: no-referrer`; `/v1/*` answers are `Cache-Control: no-store`.

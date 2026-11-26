@@ -1,7 +1,7 @@
 import { api, session } from "../api.js";
 import { h, mount } from "../dom.js";
 import { fmtBytes } from "../jobtext.js";
-import { bigCode, button, card, empty, errorText, field, fmtAgo, note, pill, switchRow, textInput, toast } from "../components.js";
+import { bigCode, button, card, empty, errorText, field, fmtAgo, fmtDuration, fmtNumber, note, pill, select, statRow, switchRow, textInput, toast } from "../components.js";
 import { filteringForm } from "./filtering.js";
 import { modelsForm } from "./models.js";
 import { transcriptPolicyForm } from "./transcripts.js";
@@ -122,6 +122,11 @@ async function usersPage(view) {
         "Media archive",
         h("div", { class: "row" }, h("a", { class: "btn sec", href: "#/admin/archive", text: "Open the media archive" })),
         note("Every downloaded audio or video file, kept for reuse. Removing entries is manual."),
+      ),
+      card(
+        "Feature models",
+        h("div", { class: "row" }, h("a", { class: "btn sec", href: "#/admin/features", text: "Choose the model each feature runs on" })),
+        note("Point each feature at a modelgate alias, with the last 7 days of calls, tokens, cost and time."),
       ),
       note("Users declared in config.toml keep their admin and prime flags there. Tokens are created with `utubot user add`."),
     );
@@ -255,8 +260,103 @@ async function archivePage(view) {
   await load();
 }
 
+const FEATURE_LABELS = {
+  glance: "Glance",
+  summary: "Summary",
+  answer: "Answer",
+  triage: "Triage",
+  analysis: "Analysis",
+  captions: "Captions",
+  cuts: "Cuts",
+  cuts_vision: "Watched cuts",
+};
+
+const FEATURE_HINTS = {
+  glance: "The short side-panel summary shown while you browse.",
+  summary: "The long summary view and prompt-set summaries.",
+  answer: "Questions you ask about a video.",
+  triage: "Batch title scoring behind hide and mark.",
+  analysis: "Insights and the deep inflation check.",
+  captions: "Automatic translation of caption tracks.",
+  cuts: "Building director's cuts from a chosen timeline.",
+  cuts_vision: "Watching the video frame by frame to build a cut.",
+};
+
+function fmtCost(cost) {
+  return cost == null ? "unknown" : "$" + Number(cost).toFixed(4);
+}
+
+function usageTime(ms) {
+  return ms == null ? "—" : fmtDuration(ms / 1000);
+}
+
+function featureCard(feature, aliases, windowDays, reload) {
+  const sel = select(
+    aliases.map((a) => ({ value: a, label: a })),
+    feature.alias,
+    async (next) => {
+      try {
+        await api("/v1/admin/features/" + encodeURIComponent(feature.feature), { method: "PUT", body: { alias: next } });
+        toast("Alias set for " + feature.feature);
+        await reload();
+      } catch (err) {
+        toast(errorText(err), "bad");
+        await reload();
+      }
+    },
+  );
+  const head = h(
+    "div",
+    { class: "row between nowrap" },
+    h(
+      "div",
+      {},
+      h("div", { class: "row between nowrap" }, h("strong", { class: "job-title", text: FEATURE_LABELS[feature.feature] || feature.feature }), feature.overridden ? pill("overridden", "warn") : null),
+      h("div", { class: "row" }, sel, feature.overridden ? button("Reset to default", async () => {
+        if (!window.confirm("Reset " + feature.feature + " to the server default?")) return;
+        try {
+          await api("/v1/admin/features/" + encodeURIComponent(feature.feature), { method: "DELETE" });
+          toast("Reset " + feature.feature + " to the server default");
+          await reload();
+        } catch (err) {
+          toast(errorText(err), "bad");
+          await reload();
+        }
+      }, { kind: "sec" }) : null),
+    ),
+  );
+  const stats = h("div", { class: "stack" }, statRow("Calls", fmtNumber(feature.usage.calls)), statRow("Tokens", fmtNumber(feature.usage.tokens)), statRow("Cost", fmtCost(feature.usage.cost)), statRow("Median time", usageTime(feature.usage.median_ms)), statRow("p90 time", usageTime(feature.usage.p90_ms)));
+  const since = note("Over the last " + Math.round(windowDays) + " days. Cost is estimated from tokens and [usage] price_usd_per_million; unknown for an alias with no price.");
+  const changes = feature.changes && feature.changes.length
+    ? note("History: " + feature.changes.map((c) => (c.from ? c.from : "default") + " → " + (c.to ? c.to : "default") + ", by " + c.by + " " + fmtAgo(c.at)).join("; "))
+    : null;
+  return card(FEATURE_LABELS[feature.feature] || feature.feature, head, stats, since, changes);
+}
+
+async function featuresPage(view) {
+  const host = h("div", { class: "stack" });
+  async function load() {
+    const doc = await api("/v1/admin/features");
+    mount(
+      host,
+      h("a", { class: "back", href: "#/admin", text: "Back to admin" }),
+      h("h1", { class: "page-title", text: "Feature models" }),
+      note("Choose the modelgate alias each feature runs on. A choice overrides the server's configured model for everyone and takes effect on the next call; the default stays in config.toml."),
+      card(
+        "Feature models",
+        doc.features.length
+          ? doc.features.map((f) => featureCard(f, doc.aliases, doc.window_days, load))
+          : empty("No feature is configured."),
+      ),
+    );
+  }
+  mount(view, host);
+  await load();
+}
+
 export async function render(view, { rest }) {
   if (rest[0] === "archive") return archivePage(view);
+  if (rest[0] === "features") return featuresPage(view);
   if (rest[0] === "user" && rest[1]) return userSettingsPage(view, rest[1]);
   return usersPage(view);
 }

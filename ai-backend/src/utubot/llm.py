@@ -15,8 +15,9 @@ from typing import Any
 import httpx
 
 from .classes import NORMAL, RANK, current_class, normalize_class
-from .config import Config, LLMTask
+from .config import DEFAULT_PROVIDER, Config, LLMTask
 from .db import Database
+from .feature import FeatureStore, cost_for, run_accumulate
 from .usage import (
     METRIC_LLM_CALLS,
     METRIC_LLM_COMPLETION_TOKENS,
@@ -199,6 +200,7 @@ class LLMClient:
     ):
         self.cfg = cfg
         self.usage = Usage(db)
+        self.features = FeatureStore(cfg, db)
         self._limiters: dict[str, PriorityLimiter] = {}
         self._http = httpx.AsyncClient(timeout=cfg.llm.timeout_s, transport=transport)
 
@@ -228,13 +230,33 @@ class LLMClient:
             raise LLMError(f"unknown llm provider {provider}")
         return provider, name
 
-    def chain(self, task: LLMTask, model: str | None) -> list[tuple[str, str]]:
+    def effective_model(self, task: LLMTask, model: str | None, feature: str | None) -> str:
+        """The model a run starts with: an explicit one (a prompt or per-user choice) wins, else the
+        admin's per-feature override, else the config.toml model. The override only replaces the
+        default, so a caller that names a model is routed exactly as before."""
+        if model:
+            return model
+        if feature:
+            override = self.features.override_for(feature)
+            if override:
+                return override
+        return task.model
+
+    def chain(
+        self, task: LLMTask, model: str | None, feature: str | None = None
+    ) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
-        for name in [model or task.model, *task.fallback]:
+        for name in [self.effective_model(task, model, feature), *task.fallback]:
             target = self.resolve(task, name)
             if target not in out:
                 out.append(target)
         return out
+
+    @staticmethod
+    def alias_value(provider: str, name: str) -> str:
+        """The alias the admin sees and picks (what `GET /v1/models` shows): the bare model on the
+        default provider, `provider:model` otherwise."""
+        return name if provider == DEFAULT_PROVIDER else f"{provider}:{name}"
 
     def headroom(self, task: LLMTask) -> int:
         override = task.reasoning_headroom_tokens
@@ -324,13 +346,15 @@ class LLMClient:
         deadline_s: float | None = None,
         deadline_at: float | None = None,
         klass: str | None = None,
+        feature: str | None = None,
     ) -> Completion:
         klass = normalize_class(klass if klass is not None else current_class())
         llm = self.cfg.llm
         loop = asyncio.get_running_loop()
+        started = loop.time()
         if deadline_at is None:
             deadline_at = loop.time() + self.deadline_for(priority, deadline_s)
-        chain = self.chain(task, model)
+        chain = self.chain(task, model, feature)
         last: LLMError | None = None
         for idx, (provider, name) in enumerate(chain):
             body: dict[str, Any] = {
@@ -353,18 +377,28 @@ class LLMClient:
                     raise
                 log.warning("llm %s:%s failed (%s), trying fallback", provider, name, exc)
                 continue
-            self._count(resp)
+            prompt_tokens, completion_tokens = self._count(resp)
+            alias = self.alias_value(provider, name)
+            elapsed_ms = max(0, int((loop.time() - started) * 1000))
+            cost = cost_for(self.cfg, alias, prompt_tokens, completion_tokens)
+            self.features.usage.record(
+                feature, alias, elapsed_ms, prompt_tokens, completion_tokens, cost
+            )
+            run_accumulate(cost)
             return self._parse(resp)
         raise last or LLMError("no llm model configured")
 
-    def _count(self, resp: httpx.Response) -> None:
+    def _count(self, resp: httpx.Response) -> tuple[int, int]:
         self.usage.add(METRIC_LLM_CALLS)
         try:
             usage = resp.json().get("usage") or {}
-            self.usage.add(METRIC_LLM_PROMPT_TOKENS, int(usage.get("prompt_tokens") or 0))
-            self.usage.add(METRIC_LLM_COMPLETION_TOKENS, int(usage.get("completion_tokens") or 0))
+            prompt = int(usage.get("prompt_tokens") or 0)
+            completion = int(usage.get("completion_tokens") or 0)
         except (ValueError, TypeError, AttributeError):
-            return
+            return 0, 0
+        self.usage.add(METRIC_LLM_PROMPT_TOKENS, prompt)
+        self.usage.add(METRIC_LLM_COMPLETION_TOKENS, completion)
+        return prompt, completion
 
     async def list_models(self, provider: str, timeout_s: float) -> list[str]:
         """Model ids a provider's `GET <base_url>/models` lists; errors carry no URL or key."""
@@ -405,6 +439,7 @@ class LLMClient:
         priority: int = BACKGROUND,
         deadline_s: float | None = None,
         klass: str | None = None,
+        feature: str | None = None,
     ) -> ChatResult:
         klass = normalize_class(klass if klass is not None else current_class())
         answer_budget = max_tokens or task.max_tokens
@@ -417,6 +452,7 @@ class LLMClient:
             priority=priority,
             deadline_at=deadline_at,
             klass=klass,
+            feature=feature,
         )
         if done.finish_reason == "length":
             log.warning("llm output kind=truncated retry=1 reasoning=%s", done.reasoning)
@@ -429,6 +465,7 @@ class LLMClient:
                     priority=priority,
                     deadline_at=deadline_at,
                     klass=klass,
+                    feature=feature,
                 )
             except LLMError as exc:
                 if not done.text:
@@ -453,6 +490,7 @@ class LLMClient:
         priority: int = BACKGROUND,
         deadline_s: float | None = None,
         klass: str | None = None,
+        feature: str | None = None,
     ) -> str:
         result = await self.chat_result(
             task,
@@ -462,6 +500,7 @@ class LLMClient:
             priority=priority,
             deadline_s=deadline_s,
             klass=klass,
+            feature=feature,
         )
         return result.text + CUT_MARK if result.truncated else result.text
 
@@ -474,6 +513,7 @@ class LLMClient:
         priority: int = BACKGROUND,
         deadline_s: float | None = None,
         klass: str | None = None,
+        feature: str | None = None,
     ) -> Any:
         klass = normalize_class(klass if klass is not None else current_class())
         llm = self.cfg.llm
@@ -492,6 +532,7 @@ class LLMClient:
                 json_mode=True,
                 deadline_at=deadline_at,
                 klass=klass,
+                feature=feature,
             )
             try:
                 return extract_json(done.text)

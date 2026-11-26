@@ -170,6 +170,7 @@ class ContentService:
                     ],
                     max_tokens=s.condensed_max_tokens,
                     priority=priority,
+                    feature=self.cfg.llm.analysis.feature,
                 )
                 for i, chunk in enumerate(chunks)
             )
@@ -233,6 +234,7 @@ class ContentService:
             model=prompt.model,
             max_tokens=prompt.max_tokens,
             priority=priority,
+            feature=task.feature,
         )
         return ChatResult(clean_text(result.text), result.truncated)
 
@@ -454,6 +456,7 @@ class ContentService:
                 ],
                 model=policy.models.get(TASK_ANALYSIS),
                 priority=INTERACTIVE,
+                feature=self.cfg.llm.analysis.feature,
             )
             if not isinstance(data, dict):
                 raise ValueError("insight output is not an object")
@@ -534,6 +537,7 @@ class ContentService:
                 ],
                 model=policy.models.get(TASK_ANSWER),
                 priority=INTERACTIVE,
+                feature=self.cfg.llm.answer.feature,
             )
             if answer.truncated:
                 expires = time.time() + self.cfg.summary.adhoc_ttl_s

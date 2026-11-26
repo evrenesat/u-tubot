@@ -205,16 +205,17 @@ async def test_adhoc_summary_and_ask_and_insight(env):
     )
     assert r.json()["status"] == "ready" and r.json()["prompt"] == "adhoc"
     a = await env.client.post(f"/v1/videos/{VID}/ask", json={"question": "Why?", "wait_ms": 5000})
-    assert a.json() == {
-        "answer": "ANSWER: forty-two",
-        "status": "ready",
-        "transcript_status": "ok",
-    }
+    a = a.json()
+    assert a["answer"] == "ANSWER: forty-two"
+    assert a["status"] == "ready"
+    assert a["transcript_status"] == "ok"
+    assert "cost_usd" in a and "elapsed_s" in a
     i = await env.client.get(f"/v1/videos/{VID}/insight", params={"wait_ms": 5000})
     body = i.json()
     assert body["status"] == "ready" and body["key_points"] == ["a", "b"]
     assert body["inflation"] == {"duration_s": 900, "essential_s": 100, "ratio": 0.111}
     assert body["source"] == "youtube_captions"
+    assert "cost_usd" in body and "elapsed_s" in body
 
 
 def make_store(env, handler, allow=()):

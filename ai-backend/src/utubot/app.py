@@ -44,6 +44,7 @@ from .config import (
 from .content import ContentService
 from .cuts import CutRefused, CutService
 from .db import MAX_CHANNEL_ID_CHARS, Database
+from .feature import feature_run
 from .llm import LLMClient
 from .media_archive import ENTRY_LIMIT, MediaArchive
 from .modelcatalog import ModelCatalog
@@ -509,6 +510,12 @@ def create_app(
             )
         return result
 
+    def attach_run_cost(result: Any, run: Any) -> None:
+        """Put the model cost and wall time of one feature call on its response, when tracked."""
+        if isinstance(result, dict) and run:
+            result["cost_usd"] = round(run.get("cost", 0.0), 5)
+            result["elapsed_s"] = run.get("elapsed_s")
+
     @app.middleware("http")
     async def edge(request: Request, call_next):
         try:
@@ -757,6 +764,43 @@ def create_app(
         except PairError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
 
+    @app.get("/v1/admin/features")
+    async def admin_features(admin: UserConfig = Depends(admin_user)):
+        """Every feature's alias in force, its fallback, the last 7 days of calls/tokens/cost and
+        median/p90 time, and the alias list the switch is validated against (`GET /v1/models`)."""
+        listing = await svc.catalog.refresh(force=False, admin=True)
+        values = [m["value"] for p in listing["providers"] for m in p["models"]]
+        return svc.llm.features.page(values)
+
+    @app.put("/v1/admin/features/{feature}")
+    async def admin_feature_alias(
+        feature: str, body: dict[str, Any], admin: UserConfig = Depends(admin_user)
+    ):
+        """Point one feature at a modelgate alias. The alias is validated against the model list;
+        an unknown one is refused. Applied at once, logged, effective on the next call."""
+        store = svc.llm.features
+        if feature not in store.feature_names():
+            raise HTTPException(400, f"unknown feature {feature!r}")
+        listing = await svc.catalog.refresh(force=False, admin=True)
+        values = [m["value"] for p in listing["providers"] for m in p["models"]]
+        alias = (body.get("alias") or "").strip()
+        if not alias:
+            raise HTTPException(400, "give an alias")
+        if alias not in store.alias_list(values):
+            raise HTTPException(400, f"unknown alias {alias!r}: not in the model list")
+        return store.set_alias(feature, alias, admin.name)
+
+    @app.delete("/v1/admin/features/{feature}")
+    async def admin_feature_reset(feature: str, admin: UserConfig = Depends(admin_user)):
+        """Drop the admin override so the feature follows config.toml again."""
+        store = svc.llm.features
+        if feature not in store.feature_names():
+            raise HTTPException(400, f"unknown feature {feature!r}")
+        result = store.reset(feature, admin.name)
+        if result is None:
+            raise HTTPException(404, "no override to reset")
+        return result
+
     @app.get("/app/update.json")
     async def app_update():
         path = cfg.app_dir / "update.json"
@@ -806,9 +850,11 @@ def create_app(
     ):
         check_video_id(video_id)
         mark_origin(request, user)
-        result = await svc.content.insight(
-            user.policy, video_id, meta.as_dict(), wait_ms, user=user.name
-        )
+        with feature_run() as run:
+            result = await svc.content.insight(
+                user.policy, video_id, meta.as_dict(), wait_ms, user=user.name
+            )
+        attach_run_cost(result, run)
         return note_transcript_use(request, user, video_id, result, "insight")
 
     @app.get("/v1/prompts")
@@ -904,16 +950,18 @@ def create_app(
         if resolved.task == TASK_CUTS:
             raise HTTPException(400, "a director's cut preset is not a summary prompt")
         resolved = svc.content.with_user_model(resolved, user.policy)
-        result = await svc.content.summary(
-            user.policy,
-            video_id,
-            resolved,
-            key,
-            meta.as_dict(),
-            wait_ms,
-            user=user.name,
-            passive=panel,
-        )
+        with feature_run() as run:
+            result = await svc.content.summary(
+                user.policy,
+                video_id,
+                resolved,
+                key,
+                meta.as_dict(),
+                wait_ms,
+                user=user.name,
+                passive=panel,
+            )
+        attach_run_cost(result, run)
         if panel and result["status"] == "ready":
             svc.content.schedule_long(user.name, user.policy, video_id, meta.as_dict(), key)
         return note_transcript_use(
@@ -941,16 +989,18 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         adhoc = svc.content.with_user_model(adhoc, user.policy)
-        result = await svc.content.summary(
-            user.policy,
-            video_id,
-            adhoc,
-            "adhoc",
-            meta.as_dict(),
-            body.wait_ms,
-            adhoc=True,
-            user=user.name,
-        )
+        with feature_run() as run:
+            result = await svc.content.summary(
+                user.policy,
+                video_id,
+                adhoc,
+                "adhoc",
+                meta.as_dict(),
+                body.wait_ms,
+                adhoc=True,
+                user=user.name,
+            )
+        attach_run_cost(result, run)
         return note_transcript_use(request, user, video_id, result, "summary")
 
     @app.post("/v1/videos/{video_id}/ask")
@@ -963,9 +1013,11 @@ def create_app(
     ):
         check_video_id(video_id)
         mark_origin(request, user)
-        result = await svc.content.ask(
-            user.policy, video_id, body.question, meta.as_dict(), body.wait_ms, user=user.name
-        )
+        with feature_run() as run:
+            result = await svc.content.ask(
+                user.policy, video_id, body.question, meta.as_dict(), body.wait_ms, user=user.name
+            )
+        attach_run_cost(result, run)
         return note_transcript_use(request, user, video_id, result, "answer")
 
     @app.post("/v1/videos/{video_id}/captions")

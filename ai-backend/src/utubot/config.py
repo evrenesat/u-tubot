@@ -35,6 +35,9 @@ class LLMTask(BaseModel):
     reasoning_headroom_tokens: int | None = None
     temperature: float = 0.2
     fallback: list[str] = Field(default_factory=list)
+    # The feature this task serves (assess, summaries, ...), so per-feature alias overrides and
+    # cost/time telemetry can be attributed. Left null for ad-hoc tasks a caller builds on the fly.
+    feature: str | None = None
 
 
 class GlanceTask(LLMTask):
@@ -97,13 +100,47 @@ class LLMConfig(BaseModel):
                 )
         return self
 
+    @model_validator(mode="after")
+    def _tag_features(self) -> LLMConfig:
+        """Every configured task carries the feature it serves, so overrides and telemetry know
+        which feature a call belongs to. A task loaded from config has no `feature`, so tag it with
+        its own key; `glance_task` tags the summary copy it falls back to."""
+        for key in ("summary", "answer", "triage", "analysis", "captions"):
+            task = getattr(self, key)
+            if task.feature is None:
+                setattr(self, key, task.model_copy(update={"feature": key}))
+        if self.glance is not None and self.glance.feature is None:
+            self.glance = self.glance.model_copy(update={"feature": "glance"})
+        if self.cuts is not None and self.cuts.feature is None:
+            self.cuts = self.cuts.model_copy(update={"feature": "cuts"})
+        if self.cuts_vision is not None and self.cuts_vision.feature is None:
+            self.cuts_vision = self.cuts_vision.model_copy(update={"feature": "cuts_vision"})
+        return self
+
     def glance_task(self) -> LLMTask:
         """`[llm.glance]` when configured, else `[llm.summary]` with reasoning off."""
         if self.glance is not None:
             return self.glance
         return self.summary.model_copy(
-            update={"reasoning_effort": GLANCE_REASONING_EFFORT, "max_tokens": GLANCE_MAX_TOKENS}
+            update={
+                "reasoning_effort": GLANCE_REASONING_EFFORT,
+                "max_tokens": GLANCE_MAX_TOKENS,
+                "feature": "glance",
+            }
         )
+
+    def feature_model(self, feature: str) -> str | None:
+        """The configured (config.toml) model a feature runs on, without an admin override. Null when
+        the feature has no table, e.g. `[llm.cuts]` is absent."""
+        task = getattr(self, feature, None) if feature in FEATURE_KEYS else None
+        return task.model if isinstance(task, LLMTask) else None
+
+    def feature_fallback(self, feature: str) -> list[str]:
+        task = getattr(self, feature, None) if feature in FEATURE_KEYS else None
+        return list(task.fallback) if isinstance(task, LLMTask) else []
+
+    def feature_configured(self, feature: str) -> bool:
+        return self.feature_model(feature) is not None
 
 
 class AssessConfig(BaseModel):
@@ -663,6 +700,18 @@ TASK_ANSWER = "answer"
 TASK_TRIAGE = "triage"
 TASK_ANALYSIS = "analysis"
 MODEL_TASKS = ("glance", "summary", TASK_ANSWER, TASK_TRIAGE, TASK_ANALYSIS)
+# Every feature the admin can point at a modelgate alias. These are the `[llm.<task>]` tables; a
+# feature with no table (cuts, cuts_vision) is only listed once configured (`feature_configured`).
+FEATURE_KEYS = (
+    "glance",
+    "summary",
+    "answer",
+    "triage",
+    "analysis",
+    "captions",
+    "cuts",
+    "cuts_vision",
+)
 MAX_TOPICS = 50
 MAX_TOPIC_CHARS = 80
 MAX_MODEL_CHARS = 200
@@ -884,6 +933,22 @@ class AppConfig(BaseModel):
     release_check_min_interval_s: int = 30
 
 
+class UsageConfig(BaseModel):
+    """Per-feature cost/time telemetry.
+
+    modelgate reports a real dollar cost per alias (EVR-560, modelgate#18/#20); this server has no
+    gateway, so cost is estimated from tokens and an optional per-alias price. `price_usd_per_million`
+    maps an alias (the value `GET /v1/models` shows, e.g. `worker` or `openai:gpt-5`) to its price in
+    US dollars per 1M prompt+completion tokens. An alias with no price reports an unknown cost rather
+    than a wrong one. The telemetry window is how many days the per-feature page looks back.
+    """
+
+    price_usd_per_million: dict[str, float] = Field(default_factory=dict)
+    window_days: int = Field(7, ge=1)
+    # how long per-call rows are kept before the sweep drops them (keeps the table from growing).
+    keep_days: int = Field(30, ge=1)
+
+
 class Config(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
@@ -901,6 +966,7 @@ class Config(BaseModel):
     setup: SetupConfig = Field(default_factory=SetupConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     app: AppConfig = Field(default_factory=AppConfig)
+    usage: UsageConfig = Field(default_factory=UsageConfig)
     default_policy: UserPolicy = Field(default_factory=UserPolicy)
     users: list[UserConfig] = Field(default_factory=list)
     config_path: str = ""

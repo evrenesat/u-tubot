@@ -348,6 +348,7 @@ class Assessor:
             self.cfg.llm.triage,
             [{"role": "system", "content": TRIAGE_SYSTEM}, {"role": "user", "content": user_msg}],
             model=model,
+            feature=self.cfg.llm.triage.feature,
         )
         items = data.get("results") if isinstance(data, dict) else data
         if not isinstance(items, list):
@@ -472,6 +473,7 @@ class Assessor:
                 self.cfg.llm.analysis,
                 [{"role": "system", "content": DEEP_SYSTEM}, {"role": "user", "content": user_msg}],
                 model=model,
+                feature=self.cfg.llm.analysis.feature,
             )
         if not isinstance(data, dict):
             raise ValueError("deep analysis is not an object")
