@@ -733,11 +733,11 @@ the route answers `503 {"error":"Speech is not configured on this server; type t
 and `GET /v1/me` features carries `"speech": false`.
 
 - `POST /v1/speech`: `multipart/form-data` with one recording in the field `audio` (the field
-  name `file` is accepted too). Authenticated like every `/v1` route. It has its own body cap,
-  `[speech] max_upload_bytes` (default 4 MiB) — `413 {"error":"request too large"}` before the
-  form is read; `security.max_body_bytes` (256 KiB) stays for every other route. A per-user
-  rate limit, `[speech] per_user_per_min` (default 10), answers `429 {"error":"rate limited"}`
-  with `Retry-After`.
+   name `file` is accepted too), and an optional `language` hint. Authenticated like every `/v1`
+   route. It has its own body cap, `[speech] max_upload_bytes` (default 4 MiB) — `413
+   {"error":"request too large"}` before the form is read; `security.max_body_bytes` (256 KiB)
+   stays for every other route. A per-user rate limit, `[speech] per_user_per_min` (default 10),
+   answers `429 {"error":"rate limited"}` with `Retry-After`.
 - `200 -> {"text":"<transcribed text>"}`. The text is returned as it came; the phone puts it in
   the description box and keeps it editable, never sending it itself.
 - Plain errors: `"Speech service is busy, try again or type it."` (`429`/`503`/`504` upstream,
@@ -746,7 +746,10 @@ and `GET /v1/me` features carries `"speech": false`.
   again or type it."` (empty upload, `400`), `"The recording is too long or too large; try again
   or type it."` (upstream `413`).
 - The forwarded file part keeps a decoder-friendly extension: the phone sends `recording.webm` or
-  `recording.m4a`, and a bare client filename gets an extension from the content type.
+   `recording.m4a`, and a bare client filename gets an extension from the content type.
+- The optional `language` field is the caller's hint (the TV's UI language): when set it overrides
+   the server's `[speech] language`, so one build serves any client's language; unset, the server
+   default rides along.
 - `GET /v1/me` features adds `"speech":bool` and `"speech_max_s":int` (default 50), the phone's
   recording limit. The modelgate route's engine refuses a chunk over about 55 s (EVR-524), so the
   default stays below it; a longer description takes several Speak taps, each appended to the

@@ -264,6 +264,8 @@ public final class UtubotMenu {
                 option -> showCutsDialog(context, video, cuts, !force)));
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_describe_on_phone),
                 option -> describeOnPhone(context, video, mode)));
+        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_describe_by_voice),
+                option -> describeByVoice(context, video, mode)));
         dialog.setOnFinish(() -> sOpenVideoId = null);
         dialog.showDialog(context.getString(R.string.utubot_cut));
     }
@@ -483,6 +485,30 @@ public final class UtubotMenu {
                     }
                 }, error -> MessageHelpers.showLongMessage(context,
                         context.getString(R.string.utubot_cut_describe_failed, describeError(context, error))));
+    }
+
+    /**
+     * "Describe by voice…": a mic over the video; the transcript the backend returns becomes the cut prompt. The video keeps playing.
+     */
+    private static void describeByVoice(Context context, Video video, String mode) {
+        RxHelper.disposeActions(sAction);
+        sAction = null;
+        AppDialogPresenter.instance(context).closeDialog();
+
+        UtubotClient client = UtubotManager.instance(context).newClient();
+        UtubotCutSpeechView.show(context, client, description -> requestVoiceCut(context, video, mode, description),
+                null, UtubotSpeechInput.DEFAULT_MAX_SECONDS);
+    }
+
+    private static void requestVoiceCut(Context context, Video video, String mode, String prompt) {
+        RxHelper.disposeActions(sAction);
+        sAction = UtubotManager.instance(context).requestCutObserve(video.videoId, null, prompt, false, UtubotMeta.from(video), mode)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(request -> {
+                    UtubotManager.instance(context).cutRequested(video.videoId, request.id, request.state);
+                    MessageHelpers.showMessage(context, context.getString(R.string.utubot_cut_state_building));
+                }, error -> MessageHelpers.showLongMessage(context,
+                        context.getString(R.string.utubot_cut_failed, describeError(context, error))));
     }
 
     /**

@@ -38,8 +38,10 @@ import javax.net.ssl.SSLException;
 import okhttp3.Call;
 import okhttp3.ConnectionPool;
 import okhttp3.Dns;
+import okhttp3.Headers;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
+import okhttp3.MultipartBody;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
@@ -65,6 +67,8 @@ public class UtubotClient {
     private static final int CHUNK_BYTES = 4096;
     private static final long MAX_SETUP_BYTES = 64 * 1024;
     private static final int DEFAULT_READ_TIMEOUT_SEC = 15;
+    /** A recording uploads fast, but the backend's speech-to-text can take a while (its own timeout) */
+    private static final int SPEECH_TIMEOUT_MS = 120_000;
     private static final int HTTP_UNAUTHORIZED = 401;
     private static final int HTTP_SERVER_ERROR = 500;
     private static final String LEDGER_PATH = "/ledger";
@@ -591,6 +595,42 @@ public class UtubotClient {
 
     //endregion
 
+    //region Voice
+
+    /**
+     * One recording's text through the backend's speech-to-text (`POST /v1/speech`): the audio is
+     * uploaded as multipart and only the text comes back, nothing is stored on the device. The
+     * `language` field, when set, is the caller's hint and overrides the server's default.
+     *
+     * @param audio the recorded bytes, a WAV file for the 16-bit PCM the recorder reads
+     * @param filename the recording's file name, so the STT server can pick a decoder
+     * @param contentType the recording's MIME type, e.g. "audio/wav"
+     * @param languageHint the caller's language, or null to follow the server's default
+     */
+    public String speech(byte[] audio, String filename, String contentType, @Nullable String languageHint) throws IOException {
+        MultipartBody.Builder builder = new MultipartBody.Builder().setType(MultipartBody.FORM);
+        builder.addPart(
+                new Headers.Builder().add("Content-Disposition", "form-data; name=\"audio\"; filename=\"" + filename + "\"").build(),
+                RequestBody.create(audio, MediaType.get(contentType)));
+
+        if (languageHint != null && !languageHint.isEmpty()) {
+            builder.addPart(
+                    new Headers.Builder().add("Content-Disposition", "form-data; name=\"language\"").build(),
+                    RequestBody.create(languageHint.getBytes(StandardCharsets.UTF_8), MediaType.get("text/plain; charset=utf-8")));
+        }
+
+        try {
+            String response = send(authorized(urlBuilder("/speech")).post(builder.build()), SPEECH_TIMEOUT_MS);
+            return new JSONObject(response).optString("text", "");
+        } catch (HttpException e) {
+            throw new IOException(speechError(e), e);
+        } catch (JSONException e) {
+            throw new IOException("Invalid speech response: " + e.getMessage(), e);
+        }
+    }
+
+    //endregion
+
     //region Processed videos
 
     /**
@@ -1017,5 +1057,22 @@ public class UtubotClient {
 
     private static String abbreviate(String text) {
         return text.length() > MAX_ERROR_CHARS ? text.substring(0, MAX_ERROR_CHARS) : text;
+    }
+
+    /**
+     * The backend's own error text for a failed speech upload (`{"error":"..."}`), stripped of the
+     * "HTTP <code>:" prefix, so the owner sees the plain reason instead of the JSON wrapper.
+     */
+    private static String speechError(HttpException error) {
+        String message = error.getMessage();
+        int start = message.indexOf('{');
+        String json = start >= 0 ? message.substring(start) : message;
+
+        try {
+            String speechError = new JSONObject(json).optString("error");
+            return !speechError.isEmpty() ? speechError : message;
+        } catch (JSONException e) {
+            return message;
+        }
     }
 }

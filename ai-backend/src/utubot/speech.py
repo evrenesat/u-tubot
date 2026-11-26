@@ -74,9 +74,15 @@ class SpeechService:
         audio: bytes,
         filename: str = "recording",
         content_type: str = "application/octet-stream",
+        language: str | None = None,
     ) -> str:
-        """The text of one recording; a plain error when modelgate cannot answer."""
+        """The text of one recording; a plain error when modelgate cannot answer.
+
+        `language` is the caller's hint (the TV's UI language); when set it overrides the
+        server's `[speech] language`, so the same build serves any client's language.
+        """
         speech = self.cfg.speech
+        hint = (language or "").strip() or speech.language
 
         if not self.configured:
             raise SpeechError(MSG_NOT_CONFIGURED, status=503)
@@ -95,8 +101,8 @@ class SpeechService:
         if key:
             headers["Authorization"] = f"Bearer {key}"
         data = {"model": speech.alias}
-        if speech.language:
-            data["language"] = speech.language
+        if hint:
+            data["language"] = hint
 
         started = time.monotonic()
         try:
