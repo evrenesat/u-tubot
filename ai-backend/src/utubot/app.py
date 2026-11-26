@@ -90,6 +90,8 @@ from .youtube import Clock, YoutubeGate
 from .youtube_fixtures import OfflineYoutubeFetcher
 
 log = logging.getLogger("utubot.app")
+# The shape of what the TV keeps on disk (verdicts, summaries): raise it only when that shape changes, never per deploy
+CACHE_SCHEMA = 1
 APK_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\.apk$")
 APK_MIME = "application/vnd.android.package-archive"
 LANG_RE = LANG_CODE_RE
@@ -579,7 +581,7 @@ def create_app(
 
     @app.get("/v1/health")
     async def health():
-        return {"ok": True, "version": svc.build.version, "commit": svc.build.commit[:7]}
+        return {"ok": True, "version": svc.build.version, "commit": svc.build.commit[:7], "cache_schema": CACHE_SCHEMA}
 
     @app.get("/setup.json")
     async def setup():

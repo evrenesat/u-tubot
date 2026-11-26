@@ -35,9 +35,9 @@ import java.util.Map;
  * stored: a failure, a pending job or a transcript state is never kept (see "Failure policy" in ai/CONTRACT.md), so a failure cannot
  * outlive the session it happened in.
  * <p>
- * Everything lives in one scope, the hash of the backend address, the token and the backend's version: another backend, another user or an
- * update of the backend (a new model or prompt may answer differently) starts empty, and the directories of other scopes are removed. An
- * entry also expires after {@link #TTL_MS}, because a change of the backend's settings does not change its version. Layout:
+ * Everything lives in one scope, the hash of the backend address, the token and the backend's data schema: another backend, another user or a
+ * change of the shape of the cached data starts empty (a deploy that keeps the shape keeps the cache, so the TV works offline), and the directories of other scopes are removed. An
+ * entry also expires after {@link #TTL_MS}, because a change of the backend's model or settings does not change the schema. Layout:
  * {@code <root>/<scope>/verdicts.json} and {@code <root>/<scope>/summaries/<video id>-<prompt hash>.json}. A damaged file is dropped.
  */
 public class UtubotDiskCache {
@@ -82,10 +82,10 @@ public class UtubotDiskCache {
     }
 
     /**
-     * The scope of an answer: the same backend, user and backend version
+     * The scope of an answer: the same backend, user and cache data schema (never the build version)
      */
-    public static String scopeOf(String baseUrl, String token, String serverVersion) {
-        return sha256(baseUrl + "\n" + token + "\n" + serverVersion).substring(0, SCOPE_LENGTH);
+    public static String scopeOf(String baseUrl, String token, String cacheSchema) {
+        return sha256(baseUrl + "\n" + token + "\n" + cacheSchema).substring(0, SCOPE_LENGTH);
     }
 
     /**

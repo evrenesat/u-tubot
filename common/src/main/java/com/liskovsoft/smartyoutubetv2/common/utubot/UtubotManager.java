@@ -76,7 +76,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     private long mConnectionGeneration;
     private final Object mConnectionLock = new Object();
-    /** The scope of the disk cache for the connection of the settings, null until the backend told its version */
+    /** The scope of the disk cache for the connection of the settings, null until the backend told its data schema */
     private volatile String mDiskScope;
     /**
      * How often an open disk cache asks the backend version again: an update in place keeps the address but not the answers.
@@ -238,7 +238,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     /**
-     * Opens the disk cache for the connection of the client, once per connection: it asks the backend for its version (a new version
+     * Opens the disk cache for the connection of the client, once per connection: it asks the backend for its version (a new data schema
      * starts with an empty cache) and puts the stored verdicts into the session's. Blocking: only on an io thread. A backend that does
      * not answer leaves the cache closed for now (the next call tries again) and the request goes on without it.
      *
@@ -254,7 +254,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
         }
 
         try {
-            String scope = UtubotDiskCache.scopeOf(mSettings.getUrl(), mSettings.getToken(), client.serverVersion());
+            String scope = UtubotDiskCache.scopeOf(mSettings.getUrl(), mSettings.getToken(), client.cacheSchema());
 
             if (!isCurrent(client)) {
                 return false;
@@ -300,7 +300,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     /**
-     * The backend may have restarted in place (a new version at the same address): its answers are not the old ones. Checked at
+     * The backend may have changed the shape of its data in place (a new schema at the same address): its answers are not the old ones. Checked at
      * most once per {@link #mVersionRecheckMs}, so a request does not pay an extra health call every time.
      */
     private boolean versionStillCurrent(UtubotClient client) {
@@ -323,10 +323,10 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             scope = mDiskScope;
         }
 
-        String version;
+        String schema;
 
         try {
-            version = client.serverVersion();
+            schema = client.cacheSchema();
         } catch (IOException | RuntimeException error) {
             // The request itself will report an unreachable backend; keep what is on disk for when it is back
             Log.d(TAG, "Can't check the backend version: %s", error.getMessage());
@@ -340,11 +340,11 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             }
         }
 
-        if (UtubotDiskCache.scopeOf(mSettings.getUrl(), mSettings.getToken(), version).equals(scope)) {
+        if (UtubotDiskCache.scopeOf(mSettings.getUrl(), mSettings.getToken(), schema).equals(scope)) {
             return true;
         }
 
-        Log.d(TAG, "The backend reports version %s: the caches of the old one start over", version);
+        Log.d(TAG, "The backend reports cache schema %s: the caches of the old one start over", schema);
         onConnectionChanged();
         useDiskCache(client);
 
