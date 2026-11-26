@@ -402,6 +402,10 @@ public class BrowsePresenterProcessedTest {
         public void updateBadge() {
         }
 
+        @Override
+        public void updateSectionTitle(int sectionId, String title) {
+        }
+
         private boolean hasTitle(String title, int size) {
             for (VideoGroup group : mUpdates) {
                 if (title.equals(group.getTitle()) && group.getVideos().size() == size) {

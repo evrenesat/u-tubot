@@ -45,6 +45,13 @@ from .content import ContentService
 from .cuts import CutRefused, CutService
 from .db import MAX_CHANNEL_ID_CHARS, Database
 from .feature import feature_run
+from .inbox import (
+    KIND_CAPTIONS,
+    KIND_RESEARCH,
+    KIND_SUMMARY,
+    InboxService,
+    thumbnail_for,
+)
 from .llm import LLMClient
 from .media_archive import ENTRY_LIMIT, MediaArchive
 from .modelcatalog import ModelCatalog
@@ -60,6 +67,7 @@ from .models import (
     DefaultRequest,
     FeedbackRequest,
     ImportRequest,
+    InboxIds,
     PairCodeRequest,
     PairRequest,
     PolicyPatch,
@@ -166,6 +174,7 @@ class Services:
     reports: JobReports
     cuts: CutService
     processed: ProcessedService
+    inbox: InboxService
     speech: SpeechService
     gate: YoutubeGate
     transcription: Transcription
@@ -198,6 +207,7 @@ def build_services(
         fetcher = OfflineYoutubeFetcher(cfg)
     transcripts = TranscriptService(cfg, db, fetcher, gate)
     prompts = PromptStore(cfg, db, prompt_transport)
+    inbox = InboxService(db)
     archive = MediaArchive(cfg, db)
     pipeline = CaptionPipeline(
         cfg,
@@ -226,8 +236,9 @@ def build_services(
         content=content,
         jobs=jobs,
         reports=reports,
-        cuts=CutService(cfg, db, llm, transcripts, prompts, jobs, auth, archive, gate),
+        cuts=CutService(cfg, db, llm, transcripts, prompts, jobs, auth, archive, gate, inbox),
         processed=ProcessedService(db, transcripts, prompts),
+        inbox=inbox,
         speech=SpeechService(cfg, transport=llm_transport),
         gate=gate,
         transcription=transcription,
@@ -855,6 +866,18 @@ def create_app(
                 user.policy, video_id, meta.as_dict(), wait_ms, user=user.name
             )
         attach_run_cost(result, run)
+        if result.get("status") == "ready":
+            # A ready research answer is an inbox result.
+            meta_dict = meta.as_dict()
+            svc.inbox.add(
+                user.name,
+                video_id,
+                KIND_RESEARCH,
+                user.policy.language,
+                title=meta_dict.get("title"),
+                length_s=meta_dict.get("duration_s"),
+                thumbnail=thumbnail_for(meta_dict, video_id),
+            )
         return note_transcript_use(request, user, video_id, result, "insight")
 
     @app.get("/v1/prompts")
@@ -964,6 +987,20 @@ def create_app(
         attach_run_cost(result, run)
         if panel and result["status"] == "ready":
             svc.content.schedule_long(user.name, user.policy, video_id, meta.as_dict(), key)
+        if not panel and result["status"] == "ready":
+            # A requested summary is an inbox result: the viewer can come back to it later.
+            meta_dict = meta.as_dict()
+            svc.inbox.add(
+                user.name,
+                video_id,
+                KIND_SUMMARY,
+                key,
+                prompt_key=key,
+                title=meta_dict.get("title"),
+                length_s=meta_dict.get("duration_s"),
+                label=resolved.label,
+                thumbnail=thumbnail_for(meta_dict, video_id),
+            )
         return note_transcript_use(
             request, user, video_id, result, "summary_panel" if panel else "summary"
         )
@@ -1072,6 +1109,20 @@ def create_app(
                 client_of(request),
                 user.name,
             )
+            if status.get("status") == "ready":
+                # Done HQ captions are an inbox result.
+                meta = svc.transcripts.cached_meta(video_id) or {}
+                for track in status["tracks"]:
+                    svc.inbox.add(
+                        user.name,
+                        video_id,
+                        KIND_CAPTIONS,
+                        track["lang"],
+                        title=meta.get("title"),
+                        length_s=meta.get("duration_s"),
+                        label=track.get("label"),
+                        thumbnail=thumbnail_for(meta, video_id),
+                    )
         return status
 
     @app.post("/v1/videos/{video_id}/transcribe")
@@ -1135,6 +1186,33 @@ def create_app(
     ):
         """The caller's recently processed videos, newest first: captions jobs and cuts per video."""
         return {"videos": svc.processed.recent(user.name, limit)}
+
+    @app.get("/v1/inbox")
+    async def inbox(
+        limit: int = Query(JOBS_LIMIT_DEFAULT, ge=1, le=JOBS_LIMIT_MAX),
+        user: UserConfig = Depends(current_user),
+    ):
+        """The caller's AI results, newest first, each with its unread flag and how many are unread."""
+        items, unread = svc.inbox.list(user.name, limit)
+        return {"items": items, "unread": unread}
+
+    @app.post("/v1/inbox/read")
+    async def inbox_read(body: InboxIds, user: UserConfig = Depends(current_user)):
+        """Mark the given results read (the viewer opened the inbox or picked one)."""
+        svc.inbox.mark_read(user.name, body.ids)
+        return {"ok": True}
+
+    @app.post("/v1/inbox/read-all")
+    async def inbox_read_all(user: UserConfig = Depends(current_user)):
+        """Mark every result read: the viewer opened the inbox."""
+        svc.inbox.mark_read_all(user.name)
+        return {"ok": True}
+
+    @app.post("/v1/inbox/dismiss")
+    async def inbox_dismiss(body: InboxIds, user: UserConfig = Depends(current_user)):
+        """Remove the given results from the inbox."""
+        svc.inbox.dismiss(user.name, body.ids)
+        return {"ok": True}
 
     @app.get("/v1/videos/{video_id}/captions/{lang}.vtt")
     async def captions_vtt(

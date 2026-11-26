@@ -136,6 +136,10 @@ class DefaultRequest(BaseModel):
     key: str
 
 
+class InboxIds(BaseModel):
+    ids: list[int] = Field(default_factory=list, max_length=200)
+
+
 class QueryMeta(BaseModel):
     title: str | None = None
     channel: str | None = None

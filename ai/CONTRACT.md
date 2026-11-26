@@ -367,6 +367,19 @@ with `[captions] timing_mode = "legacy"`); clients ignore it.
 `text/vtt`. Speaker turns are prefixed `[S1] `, `[S2] ` when diarized.
 Auth via header, or `?token=` for players that cannot set headers.
 
+### `GET /v1/inbox?limit=50`
+`{"items":[InboxItem],"unread":N}` (see [Inbox](#inbox-addendum-2026-11-26)); default `limit` 50,
+range 1..200, `400` outside the range.
+
+### `POST /v1/inbox/read`
+Request `{"ids":[int]}` (≤ 200). `{"ok":true}`.
+
+### `POST /v1/inbox/read-all`
+`{"ok":true}`.
+
+### `POST /v1/inbox/dismiss`
+Request `{"ids":[int]}`. `{"ok":true}`.
+
 ### `POST /v1/feedback`
 `{"video_id":"...","kind":"clickbait|...","correct":false,"note":null}` → `{"ok":true}`.
 Stored for later threshold tuning.
@@ -771,6 +784,42 @@ Captions and cuts are newest first. `state` for caption jobs is the client-facin
 by `GET /v1/jobs` (raw `queued` is `waiting`, `running` is `processing`). A cut's `preset_label`
 is the built-in or saved preset label; it is null for a prompt request, whose text rides in
 `prompt`. Empty history is `{"videos":[]}`.
+
+## Inbox (addendum, 2026-11-26)
+
+The TV's *Inbox* is one item per ready AI result: a ready cut, a requested summary/TL;DR, a
+research/insight answer, or a ready HQ caption. Unlike [Processed](#processed-videos-addendum),
+this is **new storage**: each result writes one row, so the viewer can come back to a result after
+leaving the video.
+
+`GET /v1/inbox?limit=50` (auth required; default 50, 1..200, `400` outside the range) returns
+`{"items":[...],"unread":N}` — newest first, unread count for the caller.
+
+```json
+{"items":[{"id":1,"video_id":"dQw4w9WgXcQ","kind":"cut|summary|research|captions",
+           "result_id":"...","prompt_key":"...",
+           "title":"...","length_s":754,"label":"Only the demo","created_at":1763900000.0,
+           "read":false}],
+ "unread":3}
+```
+
+- `kind` is one of `cut`, `summary`, `research`, `captions`.
+- `result_id` is the item's dedup identity with `kind`/`video_id`: the cut's `request_id`, the
+  summary's `prompt_key`, the research's language, the caption's `lang`. A result reported ready
+  again (a re-ready, or a client polling) does not make a second item, and the first `created_at`
+  is kept.
+- `prompt_key` is the summary's prompt key (null for other kinds).
+- `title`/`length_s`/`label` come from the result: a cut's title/length/label, a summary's prompt
+  title/length, the research's metadata title/length, the caption's label. `label` is null for
+  research and captions (the client derives it from `kind` + `result_id`).
+- `read` is derived from `read_at` (null = unread). Read state is **per user and global**: any
+  client (phone, extension, TV) for that user can mark an item read or unread, so the state is
+  shared across devices.
+
+`POST /v1/inbox/read` `{"ids":[...]}` (≤ 200) marks those items read (`{"ok":true}`); `POST
+/v1/inbox/read-all` marks all the caller's items read; `POST /v1/inbox/dismiss` `{"ids":[...]}`
+(`{"ok":true}`) hides them (a read-only flag — the item can be created again later). All three
+affect only the caller's items; another user's rows are untouched.
 
 ## Setup file (`GET /setup.json`)
 

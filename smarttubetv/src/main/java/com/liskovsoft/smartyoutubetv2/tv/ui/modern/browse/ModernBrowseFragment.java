@@ -284,6 +284,21 @@ public class ModernBrowseFragment extends Fragment implements BrowseView, Modern
     }
 
     @Override
+    public void updateSectionTitle(int sectionId, String title) {
+        if (mRail == null) {
+            return;
+        }
+
+        int index = mRailModel.indexOf(sectionId);
+
+        if (index != -1) {
+            mRailModel.get(index).setTitle(title);
+        }
+
+        mRail.setSectionTitle(sectionId, title);
+    }
+
+    @Override
     public void selectSection(int index, boolean focusOnContent) {
         if (index < 0 || mRailModel.size() == 0) {
             return;

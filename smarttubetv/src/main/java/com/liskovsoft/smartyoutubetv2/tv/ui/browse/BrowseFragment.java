@@ -560,4 +560,9 @@ public class BrowseFragment extends BrowseSupportFragment implements BrowseView 
         // Top right corner logo
         setBadgeDrawable(bridgeIcon != null ? bridgeIcon : appLogoRes > 0 ? ContextCompat.getDrawable(getContext(), appLogoRes) : null);
     }
+
+    @Override
+    public void updateSectionTitle(int sectionId, String title) {
+        // The classic (Leanback) sidebar has no per-section badge; the modern rail shows the unread count (see updateInboxBadge)
+    }
 }

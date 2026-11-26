@@ -18,6 +18,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Insight;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.InboxList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Summary;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Transcript;
@@ -1137,6 +1138,49 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     public Observable<ProcessedList> processedObserve(int limit) {
         return cancellable(client -> client.processed(limit));
+    }
+
+    //endregion
+
+    //region Inbox
+
+    /**
+     * The caller's results, for the Inbox section (see {@link UtubotInboxSection}). Cancelled with the section
+     *
+     * @param limit how many items, 1 to 200; 0 for the backend's default
+     */
+    public Observable<InboxList> inboxObserve(int limit) {
+        return cancellable(client -> client.inbox(limit));
+    }
+
+    /**
+     * Marks items read (`POST /v1/inbox/read`): best-effort, the state is on the server and shared across the user's clients
+     */
+    public Observable<Boolean> readInbox(List<Long> ids) {
+        return Observable.fromCallable(() -> {
+            newClient().readInbox(ids);
+            return true;
+        }).subscribeOn(Schedulers.io());
+    }
+
+    /**
+     * Marks every item of the caller read (`POST /v1/inbox/read-all`): best-effort
+     */
+    public Observable<Boolean> readAllInbox() {
+        return Observable.fromCallable(() -> {
+            newClient().readAllInbox();
+            return true;
+        }).subscribeOn(Schedulers.io());
+    }
+
+    /**
+     * Hides items (`POST /v1/inbox/dismiss`): best-effort, a read-only flag the item can be created again for
+     */
+    public Observable<Boolean> dismissInbox(List<Long> ids) {
+        return Observable.fromCallable(() -> {
+            newClient().dismissInbox(ids);
+            return true;
+        }).subscribeOn(Schedulers.io());
     }
 
     //endregion

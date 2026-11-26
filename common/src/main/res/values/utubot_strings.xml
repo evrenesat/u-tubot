@@ -79,6 +79,9 @@
     <string name="utubot_panel_pending">The backend is still working on it</string>
     <string name="utubot_panel_hint">Long-press OK or press Info for summary options</string>
     <string name="utubot_summary_item">u·tubot summary</string>
+    <string name="utubot_summary">Summary</string>
+    <string name="utubot_research">Research</string>
+    <string name="utubot_captions">HQ captions</string>
     <string name="utubot_view_retry">Retry</string>
     <string name="utubot_panel_no_captions">No captions — press Info to transcribe</string>
     <string name="utubot_panel_no_transcript">No captions are available for this video</string>
@@ -198,4 +201,11 @@
     <string name="utubot_whats_new_failed">Couldn\'t load the version history: %s</string>
     <string name="utubot_whats_new_none">No versions are recorded yet</string>
     <string name="utubot_release_page_on_phone">Open the release page on a phone (QR code)</string>
+    <string name="utubot_inbox_title">Inbox</string>
+    <string name="utubot_inbox_message">Your ready results: cuts, summaries, research and captions</string>
+    <string name="utubot_inbox_empty">No results yet</string>
+    <string name="utubot_inbox_failed">Can\'t load the results: %s</string>
+    <string name="utubot_inbox_badge">%d unread</string>
+    <string name="utubot_inbox_dismiss">Hide result</string>
+    <string name="utubot_inbox_dismiss_confirm">Hide this result from your Inbox? It stays in your results and can be added again.</string>
 </resources>

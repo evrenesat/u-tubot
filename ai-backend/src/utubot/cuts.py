@@ -37,6 +37,7 @@ from .db import (
     Database,
 )
 from .feature import feature_run
+from .inbox import KIND_CUT, InboxService, thumbnail_for
 from .llm import INTERACTIVE, LLMClient, LLMError
 from .media_archive import MediaArchive
 from .prompts import CUT_PRESET_INSTRUCTIONS, Prompt, PromptStore
@@ -1122,10 +1123,12 @@ class CutService:
         auth: Auth | None = None,
         archive: MediaArchive | None = None,
         gate: YoutubeGate | None = None,
+        inbox: InboxService | None = None,
     ):
         self.cfg, self.db, self.llm = cfg, db, llm
         self.transcripts, self.prompts, self.jobs = transcripts, prompts, jobs
         self.auth, self.archive, self.gate = auth, archive, gate
+        self.inbox = inbox
         self._watched_running = 0
         self._user_running: dict[str, int] = {}
         # Whether the build that holds the single watched slot for a request currently holds it:
@@ -2645,6 +2648,19 @@ class CutService:
         self, request_id: str, row: dict[str, Any], cache_key: str, doc: dict[str, Any]
     ) -> None:
         self._set_state(request_id, "ready", cut_key=cache_key, finished=True)
+        # A ready cut is an inbox result: the viewer can come back and start playing it.
+        if self.inbox is not None:
+            meta = self._meta(row["video_id"]) or {}
+            self.inbox.add(
+                row["user"],
+                row["video_id"],
+                KIND_CUT,
+                request_id,
+                title=meta.get("title"),
+                length_s=int(round(doc.get("duration_ms", 0) / 1000.0)) or None,
+                label=doc.get("label"),
+                thumbnail=thumbnail_for(meta, row["video_id"]),
+            )
         now = time.time()
         self.db.execute(
             "UPDATE jobs SET status='ready', progress=1, updated_at=?, finished_at=? WHERE id=?",

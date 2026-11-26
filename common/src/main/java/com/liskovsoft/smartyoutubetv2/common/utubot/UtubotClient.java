@@ -8,6 +8,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Me;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.InboxList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptSet;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Summary;
@@ -68,6 +69,7 @@ public class UtubotClient {
     private static final int HTTP_BAD_REQUEST = 400;
     private static final int HTTP_NOT_FOUND = 404;
     private static final int MAX_ASSESS_VIDEOS = 50;
+    private static final int MAX_INBOX_IDS = 200;
     private static final OkHttpClient sBase = new OkHttpClient.Builder()
             .proxy(Proxy.NO_PROXY)
             .dns(Dns.SYSTEM)
@@ -586,6 +588,68 @@ public class UtubotClient {
         url.addQueryParameter("kind", kind);
 
         return send(authorized(url), 0);
+    }
+
+    //endregion
+
+    //region Inbox
+
+    /**
+     * The caller's results (`GET /v1/inbox`): one item per ready result, newest first, with the unread count. Cheap, it starts nothing
+     *
+     * @param limit how many items, 1 to 200; 0 for the backend's default
+     */
+    public InboxList inbox(int limit) throws IOException {
+        HttpUrl.Builder url = urlBuilder("/inbox");
+
+        if (limit > 0) {
+            url.addQueryParameter("limit", String.valueOf(limit));
+        }
+
+        return parse(() -> UtubotParser.parseInbox(send(authorized(url), 0)));
+    }
+
+    /**
+     * Marks items read (`POST /v1/inbox/read`): the state is per user, so any client of the user can set it
+     *
+     * @param ids the item ids, at most {@link #MAX_INBOX_IDS}
+     */
+    public void readInbox(List<Long> ids) throws IOException {
+        send(builder("/inbox/read", true).post(json(body(ids))), 0);
+    }
+
+    /**
+     * Marks every item of the caller read (`POST /v1/inbox/read-all`)
+     */
+    public void readAllInbox() throws IOException {
+        send(builder("/inbox/read-all", true).post(json(new JSONObject())), 0);
+    }
+
+    /**
+     * Hides items (`POST /v1/inbox/dismiss`): a read-only flag, the item can be created again later
+     *
+     * @param ids the item ids, at most {@link #MAX_INBOX_IDS}
+     */
+    public void dismissInbox(List<Long> ids) throws IOException {
+        send(builder("/inbox/dismiss", true).post(json(body(ids))), 0);
+    }
+
+    private static JSONObject body(List<Long> ids) throws IOException {
+        if (ids.size() > MAX_INBOX_IDS) {
+            throw new IOException("Too many inbox ids in one call: " + ids.size());
+        }
+
+        try {
+            JSONArray array = new JSONArray();
+
+            for (Long id : ids) {
+                array.put(id);
+            }
+
+            return new JSONObject().put("ids", array);
+        } catch (JSONException e) {
+            throw new IOException(e);
+        }
     }
 
     //endregion
