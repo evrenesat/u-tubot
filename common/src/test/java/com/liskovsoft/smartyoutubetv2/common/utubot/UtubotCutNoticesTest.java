@@ -251,7 +251,7 @@ public class UtubotCutNoticesTest {
     }
 
     @Test
-    public void theOpenCutMenuReopensInsteadOfStartingTheVideo() {
+    public void theOpenCutMenuReopensInsteadOfStartingTheVideo() throws Exception {
         foreground();
         UtubotCutFocus.set(VIDEO);
         setStatic(UtubotMenu.class, "sOpenVideoId", VIDEO); // the cut picker is open for this video
