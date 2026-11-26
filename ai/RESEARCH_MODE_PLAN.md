@@ -127,7 +127,7 @@ recommended and changed later in the config.
   is `UtubotAnswerModel`; `UtubotCutFollower` long-polls a request and `UtubotCutController` announces a ready cut;
   `UtubotCutQrView` draws a QR code; `UtubotProcessedSection` builds the Processed tiles.
 - Extension: checkpoints 0 to 3 have landed (skeleton, background core, test harness). Its panel is not built yet; a new
-  AI feature is a row in the parity matrix of `ai/BROWSER_EXTENSION_PLAN.md` (section 3, last row today: 32).
+  AI feature is a row in the parity matrix of `ai/BROWSER_EXTENSION_PLAN.md` (section 3; rows are named by id, so the new row takes its own id).
 - #160 (Inbox), #158 (auto-scroll), #147 and #148 are open issues without a plan or code.
 
 ### 1.2 Search and the research browser (owner's infrastructure, read from its documentation)
@@ -437,7 +437,7 @@ ratings, clickable sources opened with `rel="noopener noreferrer"`, times as lin
 stats line, "Research again"), the progress view of a running request, and a "Research" entry on the home page list of
 recent requests. Source URLs are rendered only when their scheme is `http` or `https`.
 
-**Extension**: row 33 of the parity matrix, added in checkpoint 1: "Research: presets with state, typed question,
+**Extension**: the parity-matrix row `research`, added in checkpoint 1: "Research: presets with state, typed question,
 progress by stage, result with sources and times, ready notice" | the routes of 2.7 | panel tab "Research" on a watch
 page: preset buttons, a question field, stage and progress, the result with linked sources and times that seek the
 player, the toolbar badge count for unseen ready results, an extension-page list of recent requests | Android: the same
@@ -557,7 +557,7 @@ chosen; if none passes, checkpoint 4 stops and reports with the table.
   `app.py` and `webroutes.py` (routes), `processed.py`, `captions/events.py` and `captions/jobs.py` (stage names, job
   kind), `cli.py` (`research-record`, `research-probe`), `artifacts.py`, `web/ui/js/jobtext.js` and `main.js`,
   `pyproject.toml` (extra `research`), `THIRD_PARTY.md`, `scripts/emulator_mock_backend.py`.
-- Docs: `ai/CONTRACT.md` (section "Research", "Clients"), `ai/BROWSER_EXTENSION_PLAN.md` (row 33),
+- Docs: `ai/CONTRACT.md` (section "Research", "Clients"), `ai/BROWSER_EXTENSION_PLAN.md` (row `research`),
   `ai/APP_INTEGRATION.md`, `docs/server.md` (config, job stages, the owner commands), `ai-backend/AGENTS.md` (the rules
   of 2.9 in three lines), both devlogs.
 - TV: `UtubotResearchFollower`, `UtubotResearchModel`, additions to `UtubotMenu`, `UtubotClient`, `UtubotParser`,

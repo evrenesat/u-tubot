@@ -477,7 +477,7 @@ request document says so. A partial watched cut (`"partial": true`) is applied n
 
 The extension has no cut picker yet. Following the standing rule's transition clause, checkpoint 1 adds a parity-matrix row
 ("Cut mode: quick or watched, default marked, progress, Quick offer on failure") to `ai/BROWSER_EXTENSION_PLAN.md` and extends
-rows 18, 19 and 20; extension checkpoints 8 and 16 then build it. If those checkpoints have already landed when checkpoint 6
+the rows `cut-picker`, `cut-qr` and `cut-while-playing`; extension checkpoints 8 and 16 then build it. If those checkpoints have already landed when checkpoint 6
 of this plan runs, the extension change is part of checkpoint 6. No "Clients" exception is needed.
 
 `scripts/emulator_mock_backend.py`: `modes`, `by_mode`, `mode` on requests, `--cuts-watched-delay` (default 20 s) with the

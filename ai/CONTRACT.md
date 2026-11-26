@@ -424,7 +424,7 @@ contract is built for both. Exceptions, each with its reason:
   matrix; the extension sends the same body when it reads the page's own tracks.
 - `GET /app/update.json`: TV only. Firefox updates extensions itself.
 - "What's new" after an app update: TV only (the extension's own version history is the add-on's). The two lists of `GET /v1/changelog`
-  (app versions, backend deploys) are in the extension options page too; until the options page exists, that is row 35 of the
+  (app versions, backend deploys) are in the extension options page too; until the options page exists, that is row `whats-new` of the
   plan's parity matrix.
 
 The extension sends the bearer token from its background context only, to the backend's own origin, with no cookies

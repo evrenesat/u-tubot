@@ -1,3 +1,10 @@
+## 2026-11-26 (parity matrix row ids, issue #132)
+
+- `ai/BROWSER_EXTENSION_PLAN.md` section 3: the matrix's first column is a stable `id` (`cut-picker`, `whats-new`) instead of a running
+  number, so a row added by one pull request no longer collides with another on rebase. References in the plan, `ai/CONTRACT.md`,
+  `ai/CUT_MODES_PLAN.md` and `ai/RESEARCH_MODE_PLAN.md` name rows by id. The parity check reads no table, so it is unchanged.
+  `test_parity_matrix_rows_have_unique_stable_ids` guards uniqueness and rejects numeric ids.
+
 ## 2026-11-26 (What's new, issue #175)
 
 - Settings, Updates, "What's new": the app's versions and the backend's deploys (`GET /v1/changelog`) as rows, an entry opens its text in the
@@ -80,7 +87,7 @@
 - The player button shows the applied cut ("Cut: No filler · 12:40") through the new `PlayerUI.setButtonLabel` hook, and the video
   menu still switches it or turns it off.
 - Tests: backend `TestCutChoice` (chosen wins, last used, no ready for the last preset, several ready in any order, typed choice, off),
-  TV follower/controller/parser/client cases. Extension parity row 30.
+  TV follower/controller/parser/client cases. Extension parity row `cut-mode-watched`.
 
 ## 2026-11-25 (a failed cut retries; no-filler keeps nearly all, issue 99)
 

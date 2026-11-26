@@ -370,3 +370,16 @@ def test_a_failed_listing_fails_the_parity_check_closed(tmp_path):
     )
     assert result.returncode == 1
     assert "could not be listed" in result.stderr
+
+
+def test_parity_matrix_rows_have_unique_stable_ids():
+    lines = (REPO / "ai" / "BROWSER_EXTENSION_PLAN.md").read_text(encoding="utf-8").splitlines()
+    header = next(i for i, line in enumerate(lines) if line.startswith("| id | TV feature (code)"))
+    ids = []
+    for line in lines[header + 2 :]:
+        if not line.startswith("|"):
+            break
+        ids.append(line.split("|")[1].strip())
+    assert ids
+    assert len(ids) == len(set(ids))
+    assert not [row_id for row_id in ids if row_id.isdigit()]
