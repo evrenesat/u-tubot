@@ -291,7 +291,6 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     public void resetJumpGesture() {
         resetJumpPress();
     }
-    }
 
     @Override
     public void onEngineReleased() {
