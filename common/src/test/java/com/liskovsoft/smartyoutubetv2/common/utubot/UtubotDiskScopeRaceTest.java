@@ -45,7 +45,7 @@ public class UtubotDiskScopeRaceTest {
     @Before
     public void start() throws IOException {
         mServer = new TinyHttpServer();
-        mServer.on("/v1/health", request -> new TinyHttpServer.Response(200, "{\"ok\":true,\"version\":\"1.0\"}"));
+        mServer.on("/v1/health", request -> new TinyHttpServer.Response(200, "{\"ok\":true,\"version\":\"1.0\",\"cache_schema\":\"1.0\"}"));
         mActivity = Robolectric.buildActivity(Activity.class).setup().get();
         mSettings = UtubotSettings.instance(mActivity);
         mSettings.setUrl(backend());
