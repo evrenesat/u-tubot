@@ -328,6 +328,15 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
         setActionIndex(mActions.get(buttonId), buttonState);
     }
 
+    public void setButtonLabel(int buttonId, CharSequence label) {
+        Action action = mActions.get(buttonId);
+
+        if (action != null) {
+            action.setLabel1(label);
+            invalidateUi(action);
+        }
+    }
+
     public void setChannelIcon(String iconUrl) {
         ChannelAction channelAction = (ChannelAction) mActions.get(R.id.action_channel);
 

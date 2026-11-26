@@ -473,6 +473,12 @@ or describe the cut). Wire details: [../ai/CONTRACT.md](../ai/CONTRACT.md#direct
 - Requests are rows in `cut_requests` (`waiting` → `building`/`needs_transcript` → `ready`/
   `failed`, or `dismissed`); the phone queue is `GET /v1/cut-requests`, the TV long-polls
   `GET /v1/cuts/{id}`. The QR target `GET /cuts/{id}` redirects into the web UI's cut sheet.
+- The viewer's choice is kept per `(user, video)` in `cut_choices` (a preset, a typed request, or
+  `off`); the preset used last is kept per user in `cut_last_presets`. A video opens with the
+  choice, else with the last-used preset when it has a ready cut here; otherwise
+  `GET /v1/videos/{id}/cuts` returns no `selection` and the TV offers the ready cuts. A cut
+  request created or filled remembers its preset/request as the choice; the TV records a cut
+  applied from its player or picker with `PUT /v1/videos/{id}/cut-choice`.
 - Builds are their own async tasks (never the caption worker's queue) with a per-user cap
   (`[cuts] max_active_per_user`). A missing timed transcript queues a transcript job and the
   build shows `needs_transcript` until it lands (10 min, then it fails with a plain reason).
@@ -581,8 +587,9 @@ read-only view over rows it already has rather than a new history table. Wire de
 On the TV, a tile's second title says what is ready there ("HQ captions: ready • Cut ready: Only
 the demo • Summary ready") or where unfinished work stands. Opening a tile plays the video through
 the usual playback path, selects its HQ captions even when *Select HQ captions automatically* is
-off, and offers a ready director's cut with the same one-press Apply that any video start offers
-(the player's cut controller, as at any video start).
+off, and opens with the cut the viewer chose for that video (or the preset used last when it has a
+ready cut here); with no such cut it offers every ready director's cut with one Apply each (the
+player's cut controller, as at any video start).
 
 ## Voice prompts
 

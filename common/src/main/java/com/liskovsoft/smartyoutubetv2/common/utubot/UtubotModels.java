@@ -384,6 +384,11 @@ public final class UtubotModels {
         public String defaultMode = CutMode.QUICK;
         public List<CutMode> modes = Collections.emptyList();
         public List<CutPreset> presets = Collections.emptyList();
+        /**
+         * What the video opens with: the viewer's choice for it, else the preset used last. Null when there is none, so
+         * the ready cuts are offered instead of one being picked for the viewer.
+         */
+        @Nullable public CutSelection selection;
 
         public CutMode mode(String id) {
             for (CutMode mode : modes) {
@@ -392,6 +397,21 @@ public final class UtubotModels {
                 }
             }
             return null;
+        }
+    }
+
+    /** The backend's answer to "which cut does this video open with" (see ai/CONTRACT.md) */
+    public static final class CutSelection {
+        /** chosen, last or off */
+        public String source;
+        public boolean off;
+        @Nullable public String presetId;
+        @Nullable public String requestId;
+        public String state = CutState.NONE;
+        @Nullable public Cut cut;
+
+        public boolean isReady() {
+            return !off && CutState.READY.equals(state) && cut != null;
         }
     }
 

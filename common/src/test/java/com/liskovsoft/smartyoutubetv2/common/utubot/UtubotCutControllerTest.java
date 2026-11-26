@@ -13,6 +13,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPreset;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutSelection;
 
 import org.junit.After;
 import org.junit.Before;
@@ -27,10 +28,12 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Consumer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -91,6 +94,7 @@ public class UtubotCutControllerTest {
 
         mController = new TestCutController();
         mController.attach(mContext);
+        resetDialogBackup();
     }
 
     @After
@@ -245,19 +249,19 @@ public class UtubotCutControllerTest {
     }
 
     /**
-     * With "Apply ready cuts automatically" on, a cut that was already ready when the video opened is applied by itself
+     * The follower sends the ready list through {@code onCutsReady}, and "Apply ready cuts automatically" does not turn a ready
+     * cut that nobody chose into an applied one: every cut is offered with its own Apply.
      */
     @Test
-    public void aReadyCut_appliesAutomaticallyWithTheSettingOn() {
+    public void aReadyCutFromTheFollower_isOfferedEvenWithTheSettingOn() {
         UtubotSettings.instance(mContext).setApplyReadyCutsEnabled(true);
         mController.open(video(VIDEO), 240_000);
-        Cut cut = cut(VIDEO);
-        cut.label = "No filler";
-        cut.durationMs = 240_000;
+        Cut cut = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
 
-        mController.onCutReady(VIDEO, cut, false);
+        mController.onCutsReady(VIDEO, Collections.singletonList(cut));
 
-        assertTrue(mController.isApplied(cut));
+        assertEquals(155, readyOfferId());
+        assertFalse(mController.isApplied(cut));
         mController.onFinish();
     }
 
@@ -281,6 +285,94 @@ public class UtubotCutControllerTest {
 
         assertTrue(mController.isApplied(cut));
         assertNull(getPendingCut());
+    }
+
+    /**
+     * The cuts answer of the open can still carry the preset used last (or the old choice) because the choice write of the picker
+     * races it: it must not replace the cut the viewer just picked for this video.
+     */
+    @Test
+    public void aStaleLastCut_doesNotReplaceTheCutPickedBeforeTheOpen() {
+        Cut picked = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        Cut staleLast = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
+        mCutsAnswers.add(cutsEmpty());
+        mController.applyOnOpen(picked);
+        mController.open(video(VIDEO), 240_000);
+
+        mController.onNewVideo(video(VIDEO));
+        mController.onCutChosen(VIDEO, staleLast);
+        mController.onVideoLoaded(video(VIDEO));
+
+        assertTrue(mController.isApplied(picked));
+        assertFalse(mController.isApplied(staleLast));
+        assertNull(getPendingCut());
+        mController.onFinish();
+    }
+
+    /**
+     * Turning the cut off writes the choice asynchronously too: a cuts answer built before the off lands must not bring the old
+     * chosen/last cut back when the video reopens.
+     */
+    @Test
+    public void aStaleCut_doesNotOverrideTheOffJustChosen() {
+        mController.open(video(VIDEO), 240_000);
+        Cut old = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        assertTrue(mController.toggle(old));
+        assertTrue(mController.toggle(old)); // the applied cut again: off, and the off write goes out
+
+        mController.onFinish();
+        mController.open(video(VIDEO), 240_000);
+        mCutsAnswers.add(cutsEmpty());
+        mController.onNewVideo(video(VIDEO));
+
+        Cut staleLast = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
+        mController.onCutChosen(VIDEO, staleLast);
+        mController.onVideoLoaded(video(VIDEO));
+
+        assertFalse(mController.isApplied(staleLast));
+        assertNull(getPendingCut());
+        mController.onFinish();
+    }
+
+    /**
+     * A stale ready list must not offer cuts the viewer just turned off, while the off write is still in flight.
+     */
+    @Test
+    public void aStaleReadyList_doesNotOfferCutsAfterTheOff() {
+        mController.open(video(VIDEO), 240_000);
+        Cut old = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        assertTrue(mController.toggle(old));
+        assertTrue(mController.toggle(old));
+
+        mController.onFinish();
+        mController.open(video(VIDEO), 240_000);
+        mCutsAnswers.add(cutsEmpty());
+        mController.onNewVideo(video(VIDEO));
+
+        mController.onCutsReady(VIDEO, Collections.singletonList(
+                cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000)));
+
+        assertFalse(readyOfferId() == 155);
+        mController.onFinish();
+    }
+
+    /**
+     * A request followed from the list can finish after the viewer picked another cut here: it must neither replace that pick nor
+     * offer itself over it.
+     */
+    @Test
+    public void aReadyRequest_doesNotReplaceTheCutPickedAfterItStarted() {
+        mController.open(video(VIDEO), 240_000);
+        Cut picked = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
+        Cut olderRequest = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        assertTrue(mController.toggle(picked));
+
+        mController.onCutReady(VIDEO, olderRequest, false);
+
+        assertTrue(mController.isApplied(picked));
+        assertFalse(mController.isApplied(olderRequest));
+        assertFalse(readyOfferId() == 155);
+        mController.onFinish();
     }
 
     /**
@@ -433,6 +525,160 @@ public class UtubotCutControllerTest {
         assertNull(getPendingCut());
     }
 
+    /**
+     * The cut the viewer chose (or the preset used last) is what the video opens with, even when other cuts are ready and
+     * whatever "apply ready cuts automatically" says.
+     */
+    @Test
+    public void aChosenCut_isAppliedWhenTheVideoOpens() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+
+        mController.onCutChosen(VIDEO, cut);
+
+        assertTrue(mController.isApplied(cut));
+        assertNull(getPendingCut());
+        mController.onFinish();
+    }
+
+    /**
+     * The cuts answer can land before the player and its engine exist (the open runs before startView): the chosen cut is queued
+     * rather than dropped, and applies once the engine is initialized and the length is known.
+     */
+    @Test
+    public void aChosenCutArrivingBeforeTheEngine_isAppliedOnceItInitializes() {
+        CutList cuts = cutsWithSelection(
+                new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"}, "cut-demo",
+                UtubotModels.CutState.READY);
+        Cut chosen = cuts.presets.get(1).cut;
+        mCutsAnswers.add(cuts);
+
+        mController.onNewVideo(video(VIDEO)); // before startView: no player at all
+        assertNotNull(getPendingCut());
+
+        mController.open(video(VIDEO), 240_000);
+        mController.onEngineInitialized();
+
+        assertTrue(mController.isApplied(chosen));
+        assertNull(getPendingCut());
+        mController.onFinish();
+    }
+
+    /**
+     * The ready list can land before the engine exists too: the offer waits for the player instead of being lost, and the video
+     * still does not take a cut by itself.
+     */
+    @Test
+    public void readyCutsArrivingBeforeTheEngine_areOfferedOnceItInitializes() {
+        CutList cuts = cutsWithSelection(
+                new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"}, null,
+                UtubotModels.CutState.NONE);
+        mCutsAnswers.add(cuts);
+
+        mController.onNewVideo(video(VIDEO)); // before startView: no player at all
+        assertFalse(readyOfferId() == 155);
+
+        mController.open(video(VIDEO), 240_000);
+        mController.onEngineInitialized();
+
+        assertEquals(155, readyOfferId());
+        assertEquals(2, readyApplyButtons().size());
+        assertFalse(mController.isApplied(cuts.presets.get(0).cut));
+        assertFalse(mController.isApplied(cuts.presets.get(1).cut));
+        mController.onFinish();
+    }
+
+    /**
+     * A chosen request that is still building when the video opens is applied when it becomes ready, from the current position,
+     * rather than offered as an ordinary ready cut.
+     */
+    @Test
+    public void aChosenRequestThatBecomesReadyWhilePlaying_isApplied() {
+        mController.open(video(VIDEO), 240_000);
+
+        CutList cuts = cutsWithSelection(
+                new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"}, null,
+                UtubotModels.CutState.NONE);
+        cuts.selection = new CutSelection();
+        cuts.selection.source = "chosen";
+        cuts.selection.requestId = REQUEST;
+        cuts.selection.state = UtubotModels.CutState.BUILDING;
+        mCutsAnswers.add(cuts);
+
+        mController.onNewVideo(video(VIDEO));
+
+        CutRequest request = request(REQUEST, UtubotModels.CutState.READY);
+        request.cut = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+        mRequestAnswers.add(request);
+        mScheduler.advance(1_000);
+
+        assertTrue(mController.isApplied(request.cut));
+        assertNull(getPendingCut());
+        assertFalse(readyOfferId() == 155);
+        mController.onFinish();
+    }
+
+    /**
+     * No choice for this video and no ready cut for the last preset: every ready cut is offered, none applied by itself.
+     */
+    @Test
+    public void severalReadyCuts_areOfferedAndNoneApplied() {
+        mController.open(video(VIDEO), 240_000);
+        Cut first = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
+        Cut second = cutWithPreset(VIDEO, "cut-demo", "Only the demo", 240_000);
+
+        mController.onCutsReady(VIDEO, Arrays.asList(first, second));
+
+        assertEquals(155, readyOfferId()); // READY_DIALOG_ID
+        List<OptionItem> options = readyApplyButtons();
+        assertEquals(2, options.size());
+        assertEquals("No filler \u00b7 4:00", options.get(0).getTitle());
+        assertEquals("Only the demo \u00b7 4:00", options.get(1).getTitle());
+        assertFalse(mController.isApplied(first));
+        assertFalse(mController.isApplied(second));
+
+        options.get(1).onSelect(true);
+
+        assertTrue(mController.isApplied(second));
+        assertFalse(mController.isApplied(first));
+        mController.onFinish();
+    }
+
+    /**
+     * A cut that is already ready in the list but is not the viewer's choice is never applied silently, even with the setting on.
+     */
+    @Test
+    public void anUnchosenReadyCut_isNotAppliedEvenWithTheAutoSetting() {
+        UtubotSettings.instance(mContext).setApplyReadyCutsEnabled(true);
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-no-filler", "No filler", 240_000);
+
+        mController.onCutsReady(VIDEO, Collections.singletonList(cut));
+
+        assertEquals(155, readyOfferId());
+        assertFalse(mController.isApplied(cut));
+        mController.onFinish();
+    }
+
+    /**
+     * The player's cut button names the cut that is on, with its real length, and goes back to the menu label when it is off.
+     */
+    @Test
+    public void thePlayerButtonNamesTheAppliedCut() {
+        mController.open(video(VIDEO), 2_480_000);
+        Cut cut = cutWithPreset(VIDEO, "cut-half", "Half", 2_480_000);
+        cut.keptMs = 2_480_000;
+
+        mController.onCutChosen(VIDEO, cut);
+        assertTrue(mController.isApplied(cut));
+        assertEquals(mContext.getString(R.string.utubot_cut_player_label, "Half", "41:20"), mController.getButtonLabel());
+
+        assertTrue(mController.toggle(cut));
+        assertFalse(mController.isApplied(cut));
+        assertEquals(mContext.getString(R.string.utubot_cut_menu), mController.getButtonLabel());
+        mController.onFinish();
+    }
+
     @Test
     public void aKeptPart_isOneLineWithItsTimesAndLabel() {
         CutPart part = new CutPart();
@@ -464,6 +710,7 @@ public class UtubotCutControllerTest {
         private Video mVideo;
         private PlaybackView mPlayer;
         private long mDurationMs;
+        private String mButtonLabel;
 
         void attach(Context context) {
             setAltContext(context);
@@ -471,8 +718,12 @@ public class UtubotCutControllerTest {
 
         void open(Video video, long durationMs) {
             mVideo = video;
-            mPlayer = player(durationMs);
+            mPlayer = player(durationMs, true, label -> mButtonLabel = label);
             mDurationMs = durationMs;
+        }
+
+        String getButtonLabel() {
+            return mButtonLabel;
         }
 
         void releasePlayer() {
@@ -505,6 +756,10 @@ public class UtubotCutControllerTest {
     }
 
     private static PlaybackView player(long durationMs, boolean engineInitialized) {
+        return player(durationMs, engineInitialized, label -> { });
+    }
+
+    private static PlaybackView player(long durationMs, boolean engineInitialized, Consumer<String> onButtonLabel) {
         return (PlaybackView) Proxy.newProxyInstance(PlaybackView.class.getClassLoader(), new Class<?>[]{PlaybackView.class},
                 (proxy, method, args) -> {
                     if ("getDurationMs".equals(method.getName())) {
@@ -513,6 +768,11 @@ public class UtubotCutControllerTest {
 
                     if ("isEngineInitialized".equals(method.getName())) {
                         return engineInitialized;
+                    }
+
+                    if ("setButtonLabel".equals(method.getName())) {
+                        onButtonLabel.accept(String.valueOf(args[1]));
+                        return null;
                     }
 
                     Class<?> type = method.getReturnType();
@@ -536,6 +796,25 @@ public class UtubotCutControllerTest {
             Field field = AppDialogPresenter.class.getDeclaredField("mBackupId");
             field.setAccessible(true);
             return (int) field.get(AppDialogPresenter.instance(mContext));
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /**
+     * The dialog presenter is a singleton that outlives one test: a leftover offer's id would count as this test's
+     */
+    private void resetDialogBackup() {
+        try {
+            AppDialogPresenter dialog = AppDialogPresenter.instance(mContext);
+
+            Field id = AppDialogPresenter.class.getDeclaredField("mBackupId");
+            id.setAccessible(true);
+            id.set(dialog, 0);
+
+            Field categories = AppDialogPresenter.class.getDeclaredField("mBackupCategories");
+            categories.setAccessible(true);
+            categories.set(dialog, null);
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
         }
@@ -574,6 +853,33 @@ public class UtubotCutControllerTest {
         }
     }
 
+    private Cut cutWithPreset(String videoId, String presetId, String label, long durationMs) {
+        Cut cut = cut(videoId);
+        cut.presetId = presetId;
+        cut.label = label;
+        cut.durationMs = durationMs;
+        cut.keptMs = durationMs;
+        return cut;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<OptionItem> readyApplyButtons() {
+        try {
+            Field field = AppDialogPresenter.class.getDeclaredField("mBackupCategories");
+            field.setAccessible(true);
+            List<OptionCategory> categories = (List<OptionCategory>) field.get(AppDialogPresenter.instance(mContext));
+            List<OptionItem> options = new ArrayList<>();
+
+            for (OptionCategory category : categories) {
+                options.addAll(category.options);
+            }
+
+            return options;
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     private Video video(String id) {
         Video video = new Video();
         video.videoId = id;
@@ -601,6 +907,39 @@ public class UtubotCutControllerTest {
         preset.state = state;
         preset.requestId = requestId;
         cuts.presets = Collections.singletonList(preset);
+        return cuts;
+    }
+
+    private CutList cutsWithSelection(String[] presets, String chosenPresetId, String chosenState) {
+        CutList cuts = cutsEmpty();
+        List<CutPreset> list = new ArrayList<>();
+
+        for (int i = 0; i < presets.length; i += 2) {
+            CutPreset preset = new CutPreset();
+            preset.id = presets[i];
+            preset.label = presets[i + 1];
+            preset.state = UtubotModels.CutState.READY;
+            preset.cut = cutWithPreset(VIDEO, preset.id, preset.label, 240_000);
+            list.add(preset);
+        }
+
+        cuts.presets = list;
+
+        if (chosenPresetId != null) {
+            CutSelection selection = new CutSelection();
+            selection.source = "chosen";
+            selection.presetId = chosenPresetId;
+            selection.state = chosenState;
+
+            for (CutPreset preset : list) {
+                if (preset.id.equals(chosenPresetId)) {
+                    selection.cut = preset.cut;
+                }
+            }
+
+            cuts.selection = selection;
+        }
+
         return cuts;
     }
 

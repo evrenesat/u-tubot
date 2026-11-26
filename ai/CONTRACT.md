@@ -440,12 +440,19 @@ it the build routes (`POST /v1/videos/{id}/cuts`, `PUT /v1/cut-requests/{id}`) a
 routes answer `200` with `"configured": false`, and `GET /v1/me` features carries `"cuts": false`.
 
 - `GET /v1/videos/{id}/cuts` -> `{"configured":bool,"presets":[{"id","label","state",
-  "request_id"?,"error"?,"cut"?}]}`. State is `none` | `waiting` | `building` |
+  "request_id"?,"error"?,"cut"?}],"selection":{...}|null}`. State is `none` | `waiting` | `building` |
   `needs_transcript` | `ready` | `failed` for this video; `ready` carries the cut document.
+  `selection` is what the video opens with: the viewer's choice for this video (a preset, a typed
+  request, or `off`), else the preset they used last when it has a ready cut here; `null` when
+  neither does, so a client offers the ready cuts instead of picking one. Fields:
+  `{"source":"chosen"|"last"|"off","off":bool,"preset_id"?,"request_id"?,"state","cut"?}`;
+  `cut` rides once the selection is ready.
 - `POST /v1/videos/{id}/cuts` body `{"preset":"<preset id>"}` | `{"prompt":"<what to keep>"}` |
   `{"await_prompt":true}` -> `{"request_id","state"}`. `preset`/`prompt` are mutually exclusive
   (sending both answers `400`); `await_prompt` creates a `waiting` request the phone fills (the
   TV's "Describe on phone…").
+  A preset or a typed description is also remembered as the viewer's choice for the video (a
+  preset also becomes the preset used last for the user); filling a waiting request remembers it too.
   The caller's known video facts ride as query params (`title`, `channel`, `duration_s`,
   `is_live`) so the phone queue can show them before the backend learns them itself.
   Optional `"force":true` builds the transcript from the audio even when YouTube captions exist,
@@ -454,6 +461,10 @@ routes answer `200` with `"configured": false`, and `GET /v1/me` features carrie
   Duplicate active requests (same video + preset/prompt/waiting) return the existing row; a
   `failed` row never blocks a new request, so asking for the same preset again starts a fresh
   build and keeps the failure in the history. A per-user cap on concurrent builds answers `429`.
+- `PUT /v1/videos/{id}/cut-choice` body `{"preset":"<preset id>"}` | `{"request":"<request id>"}` |
+  `{"off":true}` -> `{"ok":true}`. Remembers what the viewer chose for the video; exactly one kind
+  (otherwise `400`). A preset also becomes the preset used last for the user. `off` is the
+  explicit choice to play uncut and is kept for that video.
 - `GET /v1/cuts/{request_id}?wait_ms=3000` long-polls (default `cuts.default_wait_ms` 3000 ms,
   cap 20000 ms, omit `wait_ms` to take the default) while `waiting`/`building` and returns the
   request document below.

@@ -557,6 +557,169 @@ class TestCreateAndBuild:
         assert r.status_code == 400
 
 
+class TestCutChoice:
+    async def ready_preset(self, cuts_env, video_id: str, preset: str) -> None:
+        r = await cuts_env.client.post(f"/v1/videos/{video_id}/cuts", json={"preset": preset})
+        assert r.status_code == 200, r.text
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "ready"
+
+    async def clear_choice(self, cuts_env, video_id: str) -> None:
+        cuts_env.svc.db.execute("DELETE FROM cut_choices WHERE video_id=?", [video_id])
+
+    async def test_chosen_cut_wins_over_the_first_ready_one(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Intro"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        await self.ready_preset(cuts_env, VID, "cut-no-filler")
+        await self.ready_preset(cuts_env, VID, "cut-demo")
+
+        r = await cuts_env.client.put(f"/v1/videos/{VID}/cut-choice", json={"preset": "cut-demo"})
+        assert r.status_code == 200, r.text
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+
+        assert [p["id"] for p in state["presets"]][0] == "cut-no-filler"
+        assert state["presets"][0]["state"] == "ready"
+        assert state["selection"]["source"] == "chosen"
+        assert state["selection"]["preset_id"] == "cut-demo"
+        assert state["selection"]["cut"]["label"] == "Only the demo"
+
+    async def test_last_used_preset_is_used_when_the_video_has_no_choice(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Intro"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        await self.ready_preset(cuts_env, VID, "cut-no-filler")
+        await self.ready_preset(cuts_env, VID, "cut-demo")
+        await self.clear_choice(cuts_env, VID)
+        other = "lmnopqrstuv"
+        r = await cuts_env.client.put(f"/v1/videos/{other}/cut-choice", json={"preset": "cut-demo"})
+        assert r.status_code == 200, r.text
+
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+
+        assert state["selection"]["source"] == "last"
+        assert state["selection"]["preset_id"] == "cut-demo"
+        assert state["selection"]["cut"]["label"] == "Only the demo"
+
+    async def test_no_ready_cut_for_the_last_preset_selects_nothing(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Intro"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        await self.ready_preset(cuts_env, VID, "cut-no-filler")
+        await self.clear_choice(cuts_env, VID)
+        other = "lmnopqrstuv"
+        await cuts_env.client.put(f"/v1/videos/{other}/cut-choice", json={"preset": "cut-demo"})
+
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+
+        assert state["selection"] is None
+        entry = {p["id"]: p for p in state["presets"]}
+        assert entry["cut-no-filler"]["state"] == "ready"
+        assert entry["cut-demo"]["state"] == "none"
+
+    async def test_several_ready_cuts_in_any_order_pick_by_id(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Intro"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        # Build the chosen preset first, so it is not the newest or the first in the list.
+        await self.ready_preset(cuts_env, VID, "cut-demo")
+        await self.ready_preset(cuts_env, VID, "cut-no-filler")
+        r = await cuts_env.client.put(f"/v1/videos/{VID}/cut-choice", json={"preset": "cut-demo"})
+        assert r.status_code == 200, r.text
+
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+
+        assert state["selection"]["preset_id"] == "cut-demo"
+        assert state["selection"]["cut"]["preset_id"] == "cut-demo"
+
+    async def test_a_typed_cut_can_be_the_choice(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Intro"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        r = await cuts_env.client.post(f"/v1/videos/{VID}/cuts", json={"prompt": "Only the demo"})
+        rid = r.json()["request_id"]
+        await wait_ready(cuts_env, rid)
+
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+
+        assert state["selection"]["source"] == "chosen"
+        assert state["selection"]["request_id"] == rid
+        assert state["selection"]["cut"]["label"].startswith("Only the demo")
+
+    async def test_dismissing_a_chosen_preset_request_clears_the_choice(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Intro"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        await self.ready_preset(cuts_env, VID, "cut-no-filler")
+
+        # A preset request records its choice by preset (request_id is NULL); dismissing it must clear that choice too.
+        cuts_env.llm.delay_s = 5.0
+        rid = (await post_cut(cuts_env, preset="cut-demo")).json()["request_id"]
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+        assert state["selection"]["source"] == "chosen"
+        assert state["selection"]["preset_id"] == "cut-demo"
+        assert state["selection"]["request_id"] == rid
+
+        await cuts_env.client.delete(f"/v1/cut-requests/{rid}")
+
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+        assert state["selection"] is None
+        entry = {p["id"]: p for p in state["presets"]}
+        assert entry["cut-no-filler"]["state"] == "ready"
+        assert entry["cut-demo"]["state"] == "none"
+
+    async def test_off_is_an_explicit_choice_without_a_cut(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 2, "label": "Intro"}],
+            "summary": "s",
+            "kept_s": 10,
+        }
+        await self.ready_preset(cuts_env, VID, "cut-no-filler")
+        r = await cuts_env.client.put(f"/v1/videos/{VID}/cut-choice", json={"off": True})
+        assert r.status_code == 200, r.text
+
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+
+        assert state["selection"]["source"] == "off"
+        assert state["selection"]["off"] is True
+        assert "cut" not in state["selection"]
+
+    async def test_a_choice_needs_exactly_one_kind(self, cuts_env):
+        r = await cuts_env.client.put(f"/v1/videos/{VID}/cut-choice", json={})
+        assert r.status_code == 400
+        r = await cuts_env.client.put(
+            f"/v1/videos/{VID}/cut-choice",
+            json={"preset": "cut-demo", "off": True},
+        )
+        assert r.status_code == 400
+        r = await cuts_env.client.put(
+            f"/v1/videos/{VID}/cut-choice",
+            json={"preset": "cut-demo", "request": "nope"},
+        )
+        assert r.status_code == 400
+        r = await cuts_env.client.put(f"/v1/videos/{VID}/cut-choice", json={"preset": "cut-nope"})
+        assert r.status_code == 409
+
+
 class TestAwaitPrompt:
     async def test_wait_then_fill_then_build(self, cuts_env):
         set_transcript(cuts_env.fetcher)

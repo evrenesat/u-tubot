@@ -82,6 +82,14 @@ class CutPromptBody(BaseModel):
     mode: str | None = Field(None, max_length=16)
 
 
+class CutChoiceRequest(BaseModel):
+    """What the viewer chose for a video: a preset, one of their requests, or no cut."""
+
+    preset: str | None = Field(None, max_length=64)
+    request: str | None = Field(None, max_length=64)
+    off: bool = False
+
+
 class CutPresetSave(BaseModel):
     """A description the owner saves as his own cut preset (phone only in v1)."""
 

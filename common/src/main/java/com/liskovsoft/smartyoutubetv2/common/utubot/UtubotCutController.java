@@ -24,8 +24,12 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import io.reactivex.disposables.Disposable;
@@ -51,6 +55,15 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     @Nullable
     private Cut mPendingCut;
     @Nullable
+    private List<Cut> mReadyCuts;
+    /**
+     * The explicit choices this TV made itself, per video: their writes reach the backend asynchronously, so a cuts answer that
+     * still carries the old choice must not undo them. A pick lasts until the backend confirms it or the video is left; an off
+     * lasts until the viewer picks a cut here again.
+     */
+    private final Map<String, String> mLocalPicks = new HashMap<>();
+    private final Set<String> mLocalOffs = new HashSet<>();
+    @Nullable
     private Cut mCut;
     @Nullable
     private UtubotCutSkipper mSkipper;
@@ -61,6 +74,12 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     public void onNewVideo(Video item) {
         // The Apply offer of the video that just ended is stale: its one press would apply the old video's cut
         dismissReadyOffer();
+        mReadyCuts = null;
+
+        // A pick that never got the backend's confirmation only guarded the open it was made for
+        if (mVideo != null && !Helpers.equals(mVideo.videoId, item != null ? item.videoId : null)) {
+            mLocalPicks.remove(mVideo.videoId);
+        }
 
         // A cut that waits to be applied is re-armed too: stopSkipping clears it, and a reload of the same video comes before the length
         // is known sometimes
@@ -90,6 +109,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         }
 
         mVideo = item;
+        setCutLabel(null);
 
         if (item != null && item.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
             UtubotManager.instance(getContext()).followCuts(item.videoId, this);
@@ -120,6 +140,10 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             startPolling();
             tryApplyPending();
         }
+
+        // A ready-cuts answer that arrived before the engine was initialized is offered now, so a video whose cuts are already
+        // built does not start uncut and lose the offer
+        showReadyOffers();
     }
 
     @Override
@@ -144,7 +168,14 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     @Override
     public void onFinish() {
         stopSkipping();
+        mReadyCuts = null;
         mCut = null; // the playback is gone: a picker of this video from a list starts it again, with its cut carried to the player
+
+        // A pick guarded this open only; an off still guards the next open until the viewer picks a cut here again
+        if (mVideo != null) {
+            mLocalPicks.remove(mVideo.videoId);
+        }
+
         stopFollowing();
     }
 
@@ -158,9 +189,13 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             return;
         }
 
-        String ready = getContext().getString(R.string.utubot_cut_ready,
-                cut.label != null ? cut.label : getContext().getString(R.string.utubot_cut),
-                formatLength(cut.keptMs));
+        // A request followed from the list can become ready after the viewer picked or turned off a cut here: that explicit choice
+        // wins over the older request, like it wins over a stale cuts answer
+        if (blocksSelection(videoId, cut)) {
+            return;
+        }
+
+        String ready = readyText(cut);
 
         // A cut this TV waited for is applied from the current position; a cut that was already there when the video opened
         // is offered with a one-press Apply, unless it was picked before the video opened (then it applies by itself).
@@ -175,6 +210,53 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
                 offerReadyCut(cut, ready);
             }
         }
+    }
+
+    @Override
+    public void onCutChosen(String videoId, Cut cut) {
+        if (!Helpers.equals(videoId, currentVideoId()) || isApplied(cut) || isQueued(cut)) {
+            return;
+        }
+
+        // The cuts answer can still carry the choice this TV just replaced or turned off: its write is asynchronous and the
+        // answer may have been built before it landed. The explicit local pick wins over that stale selection.
+        if (blocksSelection(videoId, cut)) {
+            return;
+        }
+
+        // The chosen cut is queued even before the player's engine is initialized (the cuts answer can land while the view
+        // starts): it applies once the engine is initialized and the length is known, like a cut carried from a list
+        applyCutWhenPossible(cut);
+    }
+
+    @Override
+    public void onCutsReady(String videoId, List<Cut> cuts) {
+        if (!Helpers.equals(videoId, currentVideoId()) || blocksOffer(videoId)) {
+            return;
+        }
+
+        List<Cut> offered = new ArrayList<>();
+
+        for (Cut cut : cuts) {
+            if (!isApplied(cut) && !isQueued(cut)) {
+                offered.add(cut);
+            }
+        }
+
+        if (offered.isEmpty()) {
+            mReadyCuts = null;
+            return;
+        }
+
+        if (!isLivePlayer()) {
+            // The cuts answer can land before the engine is initialized (the open runs before startView): the offer waits for
+            // the player instead of being dropped
+            mReadyCuts = offered;
+            return;
+        }
+
+        mReadyCuts = null;
+        offerReadyCuts(offered);
     }
 
     //endregion
@@ -216,6 +298,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         if (durationMs <= 0) {
             // Length not known yet: the cut waits for it, like a cut that came ready before the stream did
+            noteLocalPick(cut);
+            rememberCutChoice(cut);
             mPendingCut = cut;
             startPolling();
             return true;
@@ -226,6 +310,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             return true;
         }
 
+        noteLocalPick(cut);
+        rememberCutChoice(cut);
         mPendingCut = null;
         apply(cut);
         return true;
@@ -240,6 +326,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             return;
         }
 
+        noteLocalPick(cut);
+        rememberCutChoice(cut);
         mOpenCut = cut;
     }
 
@@ -266,9 +354,86 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         return player != null && player.isEngineInitialized();
     }
 
+    /**
+     * The video the follower is following: the open recorded it before the player existed, so a cuts answer that lands before
+     * startView still matches its video
+     */
+    private String currentVideoId() {
+        if (mVideo != null && mVideo.videoId != null) {
+            return mVideo.videoId;
+        }
+
+        Video video = getVideo();
+
+        return video != null ? video.videoId : null;
+    }
+
     private boolean isQueued(Cut cut) {
         return mPendingCut != null && Helpers.equals(mPendingCut.videoId, cut.videoId)
                 && Helpers.equals(mPendingCut.label, cut.label);
+    }
+
+    /**
+     * A selection of the follower that would undo an explicit local choice whose write may still be in flight: the local pick or
+     * off wins until the backend's answer carries it.
+     */
+    private boolean blocksSelection(String videoId, Cut cut) {
+        if (videoId == null) {
+            return false;
+        }
+
+        if (mLocalOffs.contains(videoId)) {
+            return true;
+        }
+
+        if (!mLocalPicks.containsKey(videoId)) {
+            return false;
+        }
+
+        if (choiceKey(cut).equals(mLocalPicks.get(videoId))) {
+            // The backend now carries the pick: the next answer can speak for it again
+            mLocalPicks.remove(videoId);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * No offer while this TV's own pick or off has not reached the backend: a stale ready list would offer cuts the viewer just
+     * replaced or turned off.
+     */
+    private boolean blocksOffer(String videoId) {
+        return videoId != null && (mLocalOffs.contains(videoId) || mLocalPicks.containsKey(videoId));
+    }
+
+    /**
+     * An explicit pick of this TV: it wins over a cuts answer that was built before the choice write landed.
+     */
+    private void noteLocalPick(Cut cut) {
+        if (cut == null || cut.videoId == null) {
+            return;
+        }
+
+        mLocalOffs.remove(cut.videoId);
+        mLocalPicks.put(cut.videoId, choiceKey(cut));
+    }
+
+    /**
+     * The viewer turned the cut off for this video on this TV: a stale answer must not bring a choice back while the off write is
+     * still on its way.
+     */
+    private void noteLocalOff(@Nullable String videoId) {
+        if (videoId == null) {
+            return;
+        }
+
+        mLocalPicks.remove(videoId);
+        mLocalOffs.add(videoId);
+    }
+
+    private static String choiceKey(Cut cut) {
+        return cut.presetId != null ? cut.presetId : (cut.label != null ? cut.label : "");
     }
 
     private void turnOff() {
@@ -276,6 +441,12 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         UtubotCutSeekBar.setCut(mVideo != null ? mVideo.videoId : null, null);
         UtubotCutSeekBar.paint(getPlayer());
         mCut = null;
+        setCutLabel(null);
+
+        if (mVideo != null && mVideo.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
+            noteLocalOff(mVideo.videoId);
+            UtubotManager.instance(getContext()).forgetCutChoice(mVideo.videoId);
+        }
     }
 
     //endregion
@@ -289,6 +460,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         mSkipper = new UtubotCutSkipper(cut, activeSponsorSegments(), this::isSponsorSegmentSkipped);
         UtubotCutSeekBar.setCut(cut.videoId, toSeekBarSegments(cut, getPlayer().getDurationMs()));
         UtubotCutSeekBar.paint(getPlayer());
+        setCutLabel(cut);
         startPolling();
 
         // Applying a cut is an explicit act, not a seek: when the playback is already inside a dropped range (an intro drop the video
@@ -425,6 +597,50 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         dialogPresenter.showDialog(getContext().getString(R.string.utubot_cut_skipped, formatLength(skippedMs)));
     }
 
+    private String readyText(Cut cut) {
+        return getContext().getString(R.string.utubot_cut_ready,
+                cut.label != null ? cut.label : getContext().getString(R.string.utubot_cut),
+                formatLength(cut.keptMs));
+    }
+
+    /**
+     * No cut was chosen and the last-used preset has none ready: every ready cut is offered, none applied for the viewer. The
+     * one cut is the usual one-press Apply; several are one button each, since silently picking the first is the bug.
+     */
+    private void offerReadyCuts(List<Cut> cuts) {
+        if (cuts.size() == 1) {
+            offerReadyCut(cuts.get(0), readyText(cuts.get(0)));
+            return;
+        }
+
+        AppDialogPresenter dialogPresenter = AppDialogPresenter.instance(getContext());
+        PlaybackView player = getPlayer();
+        String title = getContext().getString(R.string.utubot_cut_ready_choice);
+
+        if (player == null || dialogPresenter.isDialogShown() || player.isSuggestionsShown()) {
+            MessageHelpers.showMessage(getContext(), title);
+            return;
+        }
+
+        player.showControls(false);
+
+        for (Cut cut : cuts) {
+            OptionItem apply = UiOptionItem.from(presetTitle(cut.label != null ? cut.label : getContext().getString(R.string.utubot_cut),
+                    cut.keptMs), option -> {
+                dialogPresenter.goBack();
+                applyReadyCut(cut);
+            });
+            dialogPresenter.appendSingleButton(apply);
+        }
+
+        dialogPresenter.setCloseTimeoutMs(READY_OFFER_MS);
+        dialogPresenter.enableTransparent(true);
+        dialogPresenter.enableOverlay(true);
+        dialogPresenter.enableExpandable(false);
+        dialogPresenter.setId(READY_DIALOG_ID);
+        dialogPresenter.showDialog(title);
+    }
+
     /**
      * "Director's cut ready: No filler, 12:40" with a one-press Apply. The announcement goes with the offer; a dialog that is
      * already up or the suggestions leave only the plain message, since another UI must not be taken over.
@@ -455,6 +671,31 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     }
 
     /**
+     * A ready-cuts answer that waited for the engine is offered now: no cut of this video is applied or waiting, so every ready
+     * cut gets its one-press button. A chosen cut that took over clears the offer instead.
+     */
+    private void showReadyOffers() {
+        List<Cut> ready = mReadyCuts;
+        mReadyCuts = null;
+
+        if (ready == null || mCut != null || mPendingCut != null) {
+            return;
+        }
+
+        List<Cut> offered = new ArrayList<>();
+
+        for (Cut cut : ready) {
+            if (!isApplied(cut) && !isQueued(cut)) {
+                offered.add(cut);
+            }
+        }
+
+        if (!offered.isEmpty()) {
+            offerReadyCuts(offered);
+        }
+    }
+
+    /**
      * The Apply offer of the video that ended is closed at the next video: the cut it carries is not the new video's
      */
     private void dismissReadyOffer() {
@@ -476,9 +717,44 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             return;
         }
 
+        noteLocalPick(cut);
+        rememberCutChoice(cut);
+        applyCutWhenPossible(cut);
+    }
+
+    /**
+     * A cut the viewer already chose (the selection of the open): applied once the length is known, without writing the choice again.
+     */
+    private void applyCutWhenPossible(Cut cut) {
         mPendingCut = cut;
         startPolling();
         tryApplyPending();
+    }
+
+    private void rememberCutChoice(Cut cut) {
+        if (cut == null || cut.videoId == null || cut.presetId == null || getContext() == null) {
+            return;
+        }
+
+        if (UtubotSettings.instance(getContext()).isConfigured()) {
+            UtubotManager.instance(getContext()).rememberCutChoice(cut.videoId, cut.presetId);
+        }
+    }
+
+    /**
+     * The player's cut button says which cut is on: "Cut: Half · 41:20", or the plain menu label when none is.
+     */
+    private void setCutLabel(@Nullable Cut cut) {
+        PlaybackView player = getPlayer();
+
+        if (player == null) {
+            return;
+        }
+
+        String label = cut != null && cut.label != null
+                ? getContext().getString(R.string.utubot_cut_player_label, cut.label, formatLength(cut.keptMs))
+                : getContext().getString(R.string.utubot_cut_menu);
+        player.setButtonLabel(R.id.action_utubot_cut, label);
     }
 
     /**

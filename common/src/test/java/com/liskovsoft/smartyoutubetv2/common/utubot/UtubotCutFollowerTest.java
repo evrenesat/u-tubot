@@ -4,6 +4,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPreset;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutSelection;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -39,6 +40,31 @@ public class UtubotCutFollowerTest {
         mRequested.add(requested);
     };
     private final UtubotCutFollower.Listener mStranger = (videoId, cut, requested) -> { };
+    private final List<String> mChosen = new ArrayList<>();
+    private final List<List<String>> mOffered = new ArrayList<>();
+    private final List<String> mPlainReady = new ArrayList<>();
+    private final UtubotCutFollower.Listener mChoiceListener = new UtubotCutFollower.Listener() {
+        @Override
+        public void onCutReady(String videoId, Cut cut, boolean requested) {
+            mPlainReady.add(cut.label);
+        }
+
+        @Override
+        public void onCutChosen(String videoId, Cut cut) {
+            mChosen.add(cut.label);
+        }
+
+        @Override
+        public void onCutsReady(String videoId, List<Cut> cuts) {
+            List<String> labels = new ArrayList<>();
+
+            for (Cut cut : cuts) {
+                labels.add(cut.label);
+            }
+
+            mOffered.add(labels);
+        }
+    };
 
     @Before
     public void setUp() {
@@ -269,6 +295,144 @@ public class UtubotCutFollowerTest {
         assertEquals(1, mFetchedCuts.size());
         assertTrue(mFetchedRequests.isEmpty());
         assertTrue(mReady.isEmpty());
+    }
+
+    @Test
+    public void aChosenCutWins_evenWhenAnotherReadyCutComesFirst() {
+        CutList cuts = cutsWithSelection(
+                new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"},
+                "cut-demo", UtubotModels.CutState.READY);
+
+        mCutsAnswers.add(cuts);
+        mFollower.follow(VIDEO, mChoiceListener);
+
+        assertEquals(Collections.singletonList("Only the demo"), mChosen);
+        assertTrue(mOffered.isEmpty());
+        assertTrue(mPlainReady.isEmpty());
+    }
+
+    @Test
+    public void theLastUsedPreset_isTheChosenCutWhenTheVideoHasNone() {
+        CutList cuts = cutsWithSelection(
+                new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"},
+                "cut-demo", UtubotModels.CutState.READY);
+        cuts.selection.source = "last";
+
+        mCutsAnswers.add(cuts);
+        mFollower.follow(VIDEO, mChoiceListener);
+
+        assertEquals(Collections.singletonList("Only the demo"), mChosen);
+        assertTrue(mOffered.isEmpty());
+    }
+
+    @Test
+    public void noChosenCut_offersEveryReadyCut_andAppliesNone() {
+        CutList cuts = cutsWithSelection(
+                new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"},
+                null, UtubotModels.CutState.NONE);
+
+        mCutsAnswers.add(cuts);
+        mFollower.follow(VIDEO, mChoiceListener);
+
+        assertEquals(Collections.singletonList(Arrays.asList("No filler", "Only the demo")), mOffered);
+        assertTrue(mChosen.isEmpty());
+        assertTrue(mPlainReady.isEmpty());
+    }
+
+    @Test
+    public void anExplicitOffChoice_offersNothingAndAppliesNothing() {
+        CutList cuts = cutsWithSelection(
+                new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"},
+                null, UtubotModels.CutState.NONE);
+        cuts.selection = new CutSelection();
+        cuts.selection.source = "off";
+        cuts.selection.off = true;
+
+        mCutsAnswers.add(cuts);
+        mFollower.follow(VIDEO, mChoiceListener);
+
+        assertTrue(mOffered.isEmpty());
+        assertTrue(mChosen.isEmpty());
+        assertTrue(mPlainReady.isEmpty());
+    }
+
+    @Test
+    public void aChosenPresetWithNoReadyCut_offersTheOtherReadyCuts() {
+        CutList cuts = cutsWithSelection(
+                new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"},
+                "cut-demo", UtubotModels.CutState.FAILED);
+        cuts.selection.cut = null;
+
+        for (CutPreset preset : cuts.presets) {
+            if ("cut-demo".equals(preset.id)) {
+                preset.state = UtubotModels.CutState.FAILED;
+                preset.cut = null;
+            }
+        }
+
+        mCutsAnswers.add(cuts);
+        mFollower.follow(VIDEO, mChoiceListener);
+
+        assertEquals(Collections.singletonList(Collections.singletonList("No filler")), mOffered);
+        assertTrue(mChosen.isEmpty());
+        assertTrue(mPlainReady.isEmpty());
+    }
+
+    @Test
+    public void aChosenRequestStillBuilding_isFollowedAndAppliedAsChosen() {
+        CutList cuts = cutsWithSelection(
+                new String[]{"cut-no-filler", "No filler", "cut-demo", "Only the demo"},
+                null, UtubotModels.CutState.NONE);
+        cuts.selection = new CutSelection();
+        cuts.selection.source = "chosen";
+        cuts.selection.requestId = "chosen1";
+        cuts.selection.state = UtubotModels.CutState.BUILDING;
+        cuts.presets.get(0).state = UtubotModels.CutState.BUILDING;
+        cuts.presets.get(0).requestId = "other1";
+
+        mCutsAnswers.add(cuts);
+        mRequestAnswers.add(request("chosen1", UtubotModels.CutState.READY));
+        mFollower.follow(VIDEO, mChoiceListener);
+        mScheduler.advance(DRAIN_MS);
+
+        assertEquals(Collections.singletonList("chosen1"), mFetchedRequests);
+        assertEquals(Collections.singletonList("No filler"), mChosen);
+        assertTrue(mPlainReady.isEmpty());
+    }
+
+    private static CutList cutsWithSelection(String[] presets, String chosenId, String chosenState) {
+        CutList cuts = cutsEmpty();
+        List<CutPreset> list = new ArrayList<>();
+
+        for (int i = 0; i < presets.length; i += 2) {
+            CutPreset preset = new CutPreset();
+            preset.id = presets[i];
+            preset.label = presets[i + 1];
+            preset.state = UtubotModels.CutState.READY;
+            preset.cut = cut();
+            preset.cut.label = preset.label;
+            preset.cut.presetId = preset.id;
+            list.add(preset);
+        }
+
+        cuts.presets = list;
+
+        if (chosenId != null) {
+            CutSelection selection = new CutSelection();
+            selection.source = "chosen";
+            selection.presetId = chosenId;
+            selection.state = chosenState;
+
+            for (CutPreset preset : list) {
+                if (preset.id.equals(chosenId)) {
+                    selection.cut = preset.cut;
+                }
+            }
+
+            cuts.selection = selection;
+        }
+
+        return cuts;
     }
 
     private static CutList cutsEmpty() {

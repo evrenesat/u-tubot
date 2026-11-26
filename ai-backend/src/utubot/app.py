@@ -48,6 +48,7 @@ from .models import (
     AskRequest,
     AssessRequest,
     CaptionsRequest,
+    CutChoiceRequest,
     CutCreateRequest,
     CutPresetSave,
     CutPromptBody,
@@ -1063,6 +1064,23 @@ def create_app(
             force=body.force,
         )
         return {"request_id": row["id"], "state": row["state"]}
+
+    @app.put("/v1/videos/{video_id}/cut-choice")
+    async def cut_choice(
+        video_id: str,
+        body: CutChoiceRequest,
+        user: UserConfig = Depends(current_user),
+    ):
+        """Remember the cut the viewer chose for this video (a preset, a request, or off)."""
+        check_video_id(video_id)
+        svc.cuts.choose(
+            user.name,
+            video_id,
+            preset=body.preset,
+            request=body.request,
+            off=body.off,
+        )
+        return {"ok": True}
 
     @app.get("/v1/cuts/{request_id}")
     async def cuts_get(

@@ -49,6 +49,11 @@ public class UtubotCutsClientTest {
                     "{\"id\":\"cut-no-filler\",\"label\":\"No filler\",\"state\":\"ready\",\"request_id\":\"cut1\",\"cut\":" + CUT + "}," +
                     "{\"id\":\"cut-answer\",\"label\":\"Just the answer\",\"state\":\"none\"}]}");
         });
+        mServer.on("/v1/videos/abcdefghijk/cut-choice", request -> {
+            mAuth.set(request.headers.get("authorization"));
+            mBody.set(request.body);
+            return new TinyHttpServer.Response(200, "{\"ok\":true}");
+        });
         mServer.on("/v1/cuts/cut1", request -> {
             mAuth.set(request.headers.get("authorization"));
             mQuery.set(request.query);
@@ -124,6 +129,21 @@ public class UtubotCutsClientTest {
         new UtubotClient(base(), TOKEN).requestCut("abcdefghijk", null, "Keep the demo", false, null);
 
         assertEquals("{\"prompt\":\"Keep the demo\"}", mBody.get());
+    }
+
+    @Test
+    public void chooseCut_sendsThePresetChoice() throws IOException {
+        new UtubotClient(base(), TOKEN).chooseCut("abcdefghijk", "cut-demo", null, false);
+
+        assertEquals("{\"preset\":\"cut-demo\"}", mBody.get());
+        assertEquals("Bearer " + TOKEN, mAuth.get());
+    }
+
+    @Test
+    public void chooseCutCanTurnTheCutOff() throws IOException {
+        new UtubotClient(base(), TOKEN).chooseCut("abcdefghijk", null, null, true);
+
+        assertEquals("{\"off\":true}", mBody.get());
     }
 
     @Test
