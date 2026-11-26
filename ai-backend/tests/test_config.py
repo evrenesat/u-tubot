@@ -1,5 +1,3 @@
-
-
 def test_server_keep_alive_outlasts_the_tv_client_pool():
     from utubot.config import ServerConfig
 
