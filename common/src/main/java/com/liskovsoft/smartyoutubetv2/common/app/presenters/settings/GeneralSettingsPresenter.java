@@ -28,6 +28,8 @@ import com.liskovsoft.smartyoutubetv2.common.proxy.WebProxyDialog;
 import com.liskovsoft.smartyoutubetv2.common.utils.AppDialogUtil;
 import com.liskovsoft.smartyoutubetv2.common.utils.SimpleEditDialog;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
+import com.liskovsoft.smartyoutubetv2.common.utubot.BrowseCachePolicy;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.youtubeapi.service.internal.MediaServiceData;
 
 import java.util.ArrayList;
@@ -71,6 +73,17 @@ public class GeneralSettingsPresenter extends BasePresenter<Void> {
         appendBackgroundPlaybackCategory(settingsPresenter);
 
         settingsPresenter.showDialog(getContext().getString(R.string.category_background_playback), mOnFinish);
+    }
+
+    /**
+     * The Browse refresh card of the System settings, in General (was in the u·tubot panel)
+     */
+    public void showBrowseRefresh() {
+        AppDialogPresenter settingsPresenter = AppDialogPresenter.instance(getContext());
+
+        appendBrowseRefreshCategory(settingsPresenter);
+
+        settingsPresenter.showDialog(getContext().getString(R.string.utubot_browse_refresh), mOnFinish);
     }
 
     /**
@@ -309,6 +322,19 @@ public class GeneralSettingsPresenter extends BasePresenter<Void> {
     private void appendBackgroundPlaybackCategory(AppDialogPresenter settingsPresenter) {
         OptionCategory category = AppDialogUtil.createBackgroundPlaybackCategory(getContext(), mPlayerData, mGeneralData);
         settingsPresenter.appendRadioCategory(category.title, category.options);
+    }
+
+    private void appendBrowseRefreshCategory(AppDialogPresenter settingsPresenter) {
+        UtubotSettings settings = UtubotSettings.instance(getContext());
+        List<OptionItem> options = new ArrayList<>();
+
+        for (int minutes : BrowseCachePolicy.REFRESH_MINUTES_CHOICES) {
+            options.add(UiOptionItem.from(UtubotSettings.formatBrowseRefresh(getContext(), minutes),
+                    option -> settings.setBrowseRefreshMinutes(minutes),
+                    minutes == settings.getBrowseRefreshMinutes()));
+        }
+
+        settingsPresenter.appendRadioCategory(getContext().getString(R.string.utubot_browse_refresh), options);
     }
 
     private void appendKeyRemappingCategory(AppDialogPresenter settingsPresenter) {

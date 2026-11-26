@@ -115,7 +115,7 @@ public class UtubotSetupFlowTest {
     }
 
     @Test
-    public void settingsList_hasImportAndPairFirst_thenSwitches_promptsTestAdvanced() {
+    public void settingsList_hasTheAIFeaturesInOrder() {
         List<OptionCategory> categories = UtubotSettingsPresenter.instance(mActivity).buildCategories();
         List<String> titles = new ArrayList<>();
         List<Integer> types = new ArrayList<>();
@@ -126,26 +126,19 @@ public class UtubotSetupFlowTest {
         }
 
         assertEquals(Arrays.asList(
-                mActivity.getString(R.string.utubot_import_setup),
-                mActivity.getString(R.string.utubot_pair),
                 mActivity.getString(R.string.utubot_assess),
                 mActivity.getString(R.string.utubot_mark_only),
                 mActivity.getString(R.string.utubot_answer_in_menu),
                 mActivity.getString(R.string.utubot_summary_panel),
                 mActivity.getString(R.string.utubot_panel_delay),
                 mActivity.getString(R.string.utubot_auto_scroll),
-                mActivity.getString(R.string.utubot_browse_refresh),
-                mActivity.getString(R.string.utubot_update_interval),
-                mActivity.getString(R.string.utubot_development_mode),
                 mActivity.getString(R.string.utubot_auto_captions),
                 mActivity.getString(R.string.utubot_auto_cuts),
                 mActivity.getString(R.string.utubot_cut_jump),
-                mActivity.getString(R.string.utubot_prompts),
-                mActivity.getString(R.string.utubot_test_connection),
-                mActivity.getString(R.string.utubot_advanced)), titles);
-        assertEquals(OptionCategory.TYPE_SINGLE_BUTTON, (int) types.get(0));
-        assertEquals(OptionCategory.TYPE_SINGLE_BUTTON, (int) types.get(1));
-        assertEquals(OptionCategory.TYPE_SINGLE_SWITCH, (int) types.get(2));
+                mActivity.getString(R.string.utubot_prompts)), titles);
+        assertEquals(OptionCategory.TYPE_SINGLE_SWITCH, (int) types.get(0));
+        assertEquals(OptionCategory.TYPE_SINGLE_SWITCH, (int) types.get(1));
+        assertEquals(OptionCategory.TYPE_SINGLE_BUTTON, (int) types.get(4));
     }
 
     @Test
@@ -156,9 +149,9 @@ public class UtubotSetupFlowTest {
 
         List<OptionCategory> categories = UtubotSettingsPresenter.instance(mActivity).buildCategories();
 
-        assertEquals(17, categories.size());
-        assertEquals(mActivity.getString(R.string.utubot_import_setup), categories.get(0).options.get(0).getTitle().toString());
-        assertEquals(mActivity.getString(R.string.utubot_pair), categories.get(1).options.get(0).getTitle().toString());
+        assertEquals(10, categories.size());
+        assertEquals(mActivity.getString(R.string.utubot_assess), categories.get(0).options.get(0).getTitle().toString());
+        assertEquals(mActivity.getString(R.string.utubot_mark_only), categories.get(1).options.get(0).getTitle().toString());
     }
 
     @Test

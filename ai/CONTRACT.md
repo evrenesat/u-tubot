@@ -414,7 +414,7 @@ Stored for later threshold tuning.
   the same states for an insight, counts a delay down and follows a running transcription like the view does (the transcription the user
   starts is started from the Summary view of the video). `message` is shown as the server wrote it in the panel, the view and the answer;
   the app's own wording is only the fallback. Every `insight`, `summary` and `transcribe` call carries `title`, `channel` and `duration_s`.
-- Settings → u·tubot → Prompts: list sets, "Import from URL", "Refresh all",
+- Settings → AI features → Prompts: list sets, "Import from URL", "Refresh all",
   choose default.
 - Player: when `captions_ready`, offer the u·tubot track(s) in the subtitle
   picker ("u·tubot: <label>"); optionally auto-select. The app asks `GET /v1/videos/{id}/captions` when a video starts and, while the

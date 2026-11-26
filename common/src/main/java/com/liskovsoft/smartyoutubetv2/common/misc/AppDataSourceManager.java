@@ -1,5 +1,6 @@
 package com.liskovsoft.smartyoutubetv2.common.misc;
 
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBackendSettingsPresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettingsPresenter;
 import android.content.Context;
@@ -58,7 +59,9 @@ public class AppDataSourceManager {
 
         if (UtubotSettings.isBuiltIn()) {
             settingItems.add(new SettingsItem(
-                    context.getString(R.string.utubot_title), () -> UtubotSettingsPresenter.instance(context).show(), R.drawable.settings_utubot));
+                    context.getString(R.string.utubot_ai_features), () -> UtubotSettingsPresenter.instance(context).show(), R.drawable.settings_utubot));
+            settingItems.add(new SettingsItem(
+                    context.getString(R.string.utubot_backend), () -> UtubotBackendSettingsPresenter.instance(context).show(), R.drawable.settings_network));
         }
 
         settingItems.add(new SettingsItem(

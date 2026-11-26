@@ -48,7 +48,7 @@ installed copy was signed by another key: uninstall and install again (app data 
 ## 3. First run: Import setup and pair
 
 1. A few seconds after launch the app offers **Import setup**. Pick *Not now* to be asked again next time or *Don't ask again*; you
-   can always find it under *Settings, u·tubot, Import setup* (and *Pair with code* right below it).
+   can always find it under *Settings, Backend, Import setup* (and *Pair with code* right below it).
 2. Type your server's address, for example `utubot.example.com`. A bare host becomes `https://utubot.example.com/setup.json`.
    A full URL is fetched as typed. `http://` is accepted only for private addresses (LAN, loopback, tailnet, `.local`
    names, single-label names), so `10.0.0.20:8790` or `nas.local:8790` work for a server on your network.
@@ -60,7 +60,7 @@ installed copy was signed by another key: uninstall and install again (app data 
 Tip: some TV keyboards (for example TCL's T-IME) drop characters when text is sent in bulk with `adb shell input text`. Type
 the address character by character (or paste it with the dialog's *Paste* button).
 
-Pairing later or again: *Settings, u·tubot, Pair with code*. *Test connection* shows the server version and your user name.
+Pairing later or again: *Settings, Backend, Pair with code*. *Test connection* shows the server version and your user name.
 *Advanced* holds the backend address and the token for manual setup.
 
 Importing a setup from a different server replaces the stored address and drops the old token, so you pair again.

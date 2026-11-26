@@ -15,7 +15,7 @@ import io.reactivex.disposables.Disposable;
 import io.reactivex.schedulers.Schedulers;
 
 /**
- * Settings → u·tubot → Test connection: /v1/health, then /v1/me, the result shown as a message
+ * Settings → Backend → Test connection: /v1/health, then /v1/me, the result shown as a message
  */
 public final class UtubotConnectionTest {
     private UtubotConnectionTest() {

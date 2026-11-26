@@ -43,7 +43,7 @@ build needs one uninstall first.
 
 ## Quick start
 
-**TV:** install the APK, open *Settings, u·tubot, Import setup* (offered on first launch), type your server's address, then enter the
+**TV:** install the APK, open *Settings, Backend, Import setup* (offered on first launch), type your server's address, then enter the
 6-digit pairing code.
 
 **Server:** Python 3.12, uv and ffmpeg.

@@ -52,11 +52,13 @@ public class UpdatesSettingsPresenter extends BasePresenter<Void> {
      * Of the panel as the settings opened it, e.g. "Updates - Release notes": the same when it's opened again after the notes
      */
     private boolean mIsNestedTitles;
+    private final UtubotSettings mSettings;
 
     private UpdatesSettingsPresenter(Context context) {
         super(context);
 
         mUpdateChecker = new AppUpdateChecker(getContext(), null);
+        mSettings = UtubotSettings.instance(context);
     }
 
     public static UpdatesSettingsPresenter instance(Context context) {
@@ -82,6 +84,11 @@ public class UpdatesSettingsPresenter extends BasePresenter<Void> {
 
         if (UtubotSettings.isBuiltIn()) {
             settingsPresenter.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.utubot_whats_new), option -> loadChangelogs()));
+            settingsPresenter.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.utubot_update_interval),
+                    UtubotSettings.formatBrowseRefresh(getContext(), mSettings.getUpdateIntervalMinutes()), option -> showUpdateInterval()));
+            settingsPresenter.appendSingleSwitch(UiOptionItem.from(getContext().getString(R.string.utubot_development_mode),
+                    getContext().getString(R.string.utubot_development_mode_desc),
+                    option -> mSettings.setDevelopmentMode(option.isSelected()), mSettings.isDevelopmentMode()));
         }
 
         OptionItem releaseNotesItem = UiOptionItem.from(getContext().getString(R.string.release_notes), option -> loadReleases());
@@ -93,6 +100,19 @@ public class UpdatesSettingsPresenter extends BasePresenter<Void> {
 
         settingsPresenter.showDialog(getContext().getString(R.string.settings_updates));
         mIsNestedTitles = settingsPresenter.isNestedTitlesEnabled();
+    }
+
+    private void showUpdateInterval() {
+        AppDialogPresenter dialog = AppDialogPresenter.instance(getContext());
+        List<OptionItem> options = new ArrayList<>();
+
+        for (int minutes : UtubotSettings.UPDATE_INTERVAL_CHOICES_MINUTES) {
+            options.add(UiOptionItem.from(UtubotSettings.formatBrowseRefresh(getContext(), minutes), option -> mSettings.setUpdateIntervalMinutes(minutes),
+                    minutes == mSettings.getUpdateIntervalMinutes()));
+        }
+
+        dialog.appendRadioCategory(getContext().getString(R.string.utubot_update_interval), options);
+        dialog.showDialog(getContext().getString(R.string.utubot_update_interval));
     }
 
     private void loadReleases() {
