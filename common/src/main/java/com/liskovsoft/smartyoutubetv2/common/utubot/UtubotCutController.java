@@ -547,6 +547,15 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     }
 
     /**
+     * A video is live in this player: a cut ordered from a thumbnail screen must never be forced over a playing video, so the ready cut
+     * of another video is asked, not started. A destroyed view or a released engine carries no toggle and no length claim either
+     * ({@link #isLivePlayer}), so this stays false for them.
+     */
+    public boolean hasLivePlayer() {
+        return isLivePlayer() && getVideo() != null;
+    }
+
+    /**
      * The video that plays: a destroyed view returned by the presenter, or one whose engine is released, carries the last video but is
      * no playback (a list picker for that video must start it again through {@link #applyOnOpen(Cut)}, not toggle a cut here)
      */

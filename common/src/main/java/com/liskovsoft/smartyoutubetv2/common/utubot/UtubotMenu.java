@@ -37,6 +37,8 @@ public final class UtubotMenu {
     private static Disposable sAction;
     /** The mode picked in this picker session; null follows the cut list's default */
     @Nullable private static String sCutMode;
+    /** The video the cut picker is currently showing, so a ready cut refreshes the open menu instead of starting the video over */
+    @Nullable private static String sOpenVideoId;
 
     private UtubotMenu() {
     }
@@ -175,6 +177,14 @@ public final class UtubotMenu {
      */
     public static void showCuts(Context context, Video video) {
         sCutMode = null;
+        rebuildCuts(context, video);
+    }
+
+    /**
+     * Re-fetches the cuts and rebuilds the picker. Resetting the session's mode is the caller's call: {@link #showCuts} starts fresh,
+     * {@link #refresh} keeps it, so a building row can re-render as ready without losing the mode the owner picked.
+     */
+    static void rebuildCuts(Context context, Video video) {
         RxHelper.disposeActions(sAction);
         sAction = UtubotManager.instance(context).cutsObserve(video.videoId, UtubotMeta.from(video))
                 .observeOn(AndroidSchedulers.mainThread())
@@ -183,6 +193,21 @@ public final class UtubotMenu {
                         showCutsDialog(context, video, update.cuts, false, update.stale);
                     }
                 }, error -> MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_failed, error.getMessage())));
+    }
+
+    /**
+     * Rebuilds the picker of a video whose cut became ready while it was open (issue 197), keeping the session's mode. The app-wide
+     * notice calls it when a building cut is ready and its menu is still up, so the row stops saying "Building…" and shows the ready state.
+     */
+    public static void refresh(Context context, String videoId) {
+        rebuildCuts(context, Video.from(videoId));
+    }
+
+    /**
+     * The cut picker is open for this video, so a ready cut refreshes it instead of starting the video over
+     */
+    public static boolean isCutsMenuOpen(@Nullable String videoId) {
+        return videoId != null && videoId.equals(sOpenVideoId);
     }
 
     private static void showCutsDialog(Context context, Video video, CutList cuts, boolean force) {
@@ -197,6 +222,7 @@ public final class UtubotMenu {
 
         AppDialogPresenter dialog = AppDialogPresenter.instance(context);
         dialog.closeDialog();
+        sOpenVideoId = video.videoId; // set after the close: the row below re-renders as soon as this cut becomes ready
         UtubotCutController controller = PlaybackPresenter.instance(context).getController(UtubotCutController.class);
 
         // A refresh just failed: the cache is shown under a notice, so the viewer knows it is not the latest
@@ -238,6 +264,7 @@ public final class UtubotMenu {
                 option -> showCutsDialog(context, video, cuts, !force)));
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_describe_on_phone),
                 option -> describeOnPhone(context, video, mode)));
+        dialog.setOnFinish(() -> sOpenVideoId = null);
         dialog.showDialog(context.getString(R.string.utubot_cut));
     }
 
