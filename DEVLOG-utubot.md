@@ -1,3 +1,8 @@
+## 2026-11-26 (Android tablet: installs, step 1 of #201)
+
+- The merged manifest required `android.software.leanback`, `android.hardware.usb.host` (MediaServiceCore) and, through the leanbackassistant module, leanback again, so the Play-style feature filter and `pm install` refused the package on a tablet (`INSTALL_FAILED_MISSING_FEATURE`). `smarttubetv/src/main/AndroidManifest.xml` now declares leanback, USB host and Bluetooth as `required="false"` with `tools:node="replace"`. The LAUNCHER intent filter was already on `SplashActivity` (with LEANBACK_LAUNCHER), no orientation is locked (`unspecified`). `UtubotTabletManifestTest` guards both.
+- Emulator check not done: the p100 emulator (37.2.13) segfaults at start for every AVD, the TV one included, in and out of a network namespace; the tablet AVD (default android-34 image, 1920x1200 at 240 dpi) was created and removed again. Larger gaps are separate issues, linked from #201.
+
 ## 2026-11-26 (SponsorBlock off while a cut is applied, issue #145)
 
 - `SponsorBlockController.skipSegment` returns early while `UtubotCutController.isCutActive()` (a cut is applied to the video that plays), so the sponsor skip and prompt are off and cannot clash with the cut's own jump (`seekToKeptPart`, the cut's skips, the skip toggle). The cut's jump still goes past sponsor segments (one jump). Back on when the cut is taken off or the video has none. Tests: `SponsorBlockControllerTest` (inside, at the start of, straddling a cut-out part).
