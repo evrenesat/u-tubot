@@ -177,6 +177,8 @@
     <string name="utubot_cut_loading">Loading the cuts…</string>
     <string name="utubot_cut_failed">Director\'s cut failed: %s</string>
     <string name="utubot_cut_failed_plain">Director\'s cut failed</string>
+    <string name="utubot_cut_stale">List may be out of date</string>
+    <string name="utubot_cut_stale_hint">The server could not be reached, so this is the list saved earlier.</string>
     <string name="utubot_processed_title">Processed</string>
     <string name="utubot_processed_message">Videos you recently processed: HQ captions, director\'s cuts and summaries</string>
     <string name="utubot_processed_empty">No processed videos yet</string>

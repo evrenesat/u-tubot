@@ -1099,6 +1099,13 @@ def cut_document(
     return doc
 
 
+def list_etag(entries: list[dict[str, Any]]) -> str:
+    """A strong ETag for a cut list state: it changes whenever anything the menu shows changes (a preset's
+    state, a ready cut, the selection, the modes), so a re-validating client gets 304 only when nothing moved."""
+    blob = "|".join(json.dumps(entry, sort_keys=True, separators=(",", ":")) for entry in entries)
+    return '"' + hashlib.sha256(blob.encode()).hexdigest()[:32] + '"'
+
+
 class CutService:
     """The queue of cut requests and their builds: one async task per request, a per-user cap on
     concurrent builds, and one shared cut per (video, preset or prompt, model, transcript)."""
@@ -1984,7 +1991,7 @@ class CutService:
             }
             out.append(entry)
         by_id = {entry["id"]: entry for entry in out}
-        return {
+        state = {
             "configured": self.configured,
             "default_mode": default,
             "mode_rule": mode_rule,
@@ -1995,6 +2002,9 @@ class CutService:
             "presets": out,
             "selection": self._selection(user, video_id, by_id),
         }
+        # The validator covers everything the menu shows (selection, modes and channel mode too), not only the presets
+        state["etag"] = list_etag([state])
+        return state
 
     def _selection(
         self, user: str, video_id: str, presets: dict[str, dict[str, Any]]

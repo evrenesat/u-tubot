@@ -128,6 +128,24 @@
 - Tests: the snap edges and the kept-part stay in `UtubotCutSkipperTest`, the forward/backward snap, the seek with skipping off and the
   toggle resume in `UtubotCutControllerTest`.
 
+## 2026-11-26 (cuts: the menu is served from cache when the backend is slow, issue 146)
+
+- The TV now caches the cuts list per video and opens the menu instantly when the backend is slow or down: it serves the cached
+  list straight away, refreshes in the background, and keeps the cached copy when the backend answers 304 (If-None-Match). The
+  backend returns a strong ETag and `Cache-Control: max-age` on `GET /v1/videos/{id}/cuts` and answers 304 while nothing changed
+  (already in the backend checkpoint). The list is immutable once built, so the ETag is computed internally from the ready cuts and
+  is not put on the wire for individual cuts (backward with old rows).
+- Storage lives in `UtubotDiskCache` (one file per video, capped at `MAX_CUTS`, refreshed on expiry, deleted on a bad read); the
+  network layer is `UtubotClient.cutsCache`, which returns the cached copy on 304 instead of touching the body; the flow is in
+  `UtubotManager.cutsObserve`, which emits the cached list immediately (render), only a fresh list on first successful load (not when
+  a cache already existed), nothing on 304, and a stale notice on failure if a cache exists. The menu shows the cached cuts at once and,
+  when the backend has not answered, a "Refreshing…" category.
+- The emulator mock backend serves the same ETag/304 on the cuts list, so the offline path is exercisable without a real server.
+- Tests: disk cache (load/put/clear, expiry, cap, bad read), the client's 200-with-ETag and 304 paths, and the manager's full offline
+  flow (instant cache, no re-render of an existing cache, 304, stale on failure, cache survives a restart). All green.
+- Parity: the extension serves the cut menu from its own storage the same way and shows the cache under a notice on a failed refresh
+  (parity matrix row 33). The ETag/304 on the cuts list is in `ai/CONTRACT.md`.
+
 ## 2026-11-26 (TV uploads its caption tracks to the backend, issue 149)
 
 - `VideoLoaderController` calls `UtubotClientCaptions.onFormatInfo`: in the background, once per video per app session, the TV

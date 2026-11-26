@@ -46,6 +46,7 @@ document whose skips sit at 25-45% and 70-85% of the video:
                                            per-channel defaults; a request's channel_id resolves through them
 """
 import argparse
+import hashlib
 import json
 import re
 import threading
@@ -323,6 +324,28 @@ def cut_channel_rows():
     return sorted(rows.values(), key=lambda row: ((row.get("channel_name") or "").lower(), row["channel_id"]))
 
 
+def etag_matches(if_none_match, etag):
+    """Whether a client's If-None-Match equals this strong ETag: the emulator's stand-in for the
+    backend's conditional GET, so the menu's offline-first re-validation can be checked without a server."""
+    if if_none_match is None:
+        return False
+    wanted = {entry.strip() for entry in if_none_match.split(",")}
+    return etag in wanted or ("W/" + etag) in wanted
+
+
+def cuts_list_etag(presets):
+    """A strong ETag for the mock's cut list: stable while the preset states and the ready cuts' timing
+    tables are unchanged. `built_at` is wall-clock, not cut content, so it is dropped before hashing."""
+    def strip(value):
+        if isinstance(value, dict):
+            return {key: strip(v) for key, v in value.items() if key != "built_at"}
+        if isinstance(value, list):
+            return [strip(v) for v in value]
+        return value
+
+    return '"' + hashlib.sha256(json.dumps(strip(presets), sort_keys=True).encode()).hexdigest()[:32] + '"'
+
+
 def cut_request_doc(request, wait=False):
     """The request document; with wait=True the answer is held while the request waits or builds (the long poll)"""
     deadline = time.time() + wait / 1000.0 if wait else 0.0
@@ -431,10 +454,24 @@ class Handler(BaseHTTPRequestHandler):
         token = (self.headers.get("Authorization") or "").strip()
         return "prime" if token == "Bearer utb_emulator_prime" else "normal"
 
-    def send_json(self, obj, code=200):
+    def send_json(self, obj, code=200, etag=None, cache_control=None):
         body = json.dumps(obj).encode()
+
+        if etag is not None:
+            if etag_matches(self.headers.get("If-None-Match"), etag):
+                # Nothing changed: the client keeps its cached copy. A 304 carries no body.
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
+        if cache_control is not None:
+            self.send_header("Cache-Control", cache_control)
+        if etag is not None:
+            self.send_header("ETag", etag)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -819,7 +856,9 @@ class Handler(BaseHTTPRequestHandler):
                 answer["channel_id"] = cid
                 answer["channel_name"] = (CUT_CHANNEL_MODES.get(cid) or {}).get("channel_name")
                 answer["channel_mode"] = channel_mode
-            return self.send_json(answer)
+            # The list is immutable per cut, so it carries a strong ETag and a long cache lifetime and
+            # answers 304 when a re-validation finds nothing changed (offline-first, issue 146).
+            return self.send_json(answer, etag=cuts_list_etag(presets), cache_control="max-age=900")
         m = re.match(r"/v1/videos/([A-Za-z0-9_-]{11})/summary$", path)
         if m:
             prompt = (q.get("prompt") or ["builtin/tldr"])[0]

@@ -332,6 +332,10 @@ class CutsConfig(BaseModel):
     length_tolerance: float = 0.15  # accepted kept length: target +/- this fraction
     over_ask_frac: float = 0.2  # the model is asked for this much more than the target
     release_duration_tolerance_ms: int = 2000
+    # The cut list and each ready cut are immutable per cut key, so they carry a strong ETag and a
+    # long cache lifetime: the client serves the menu from them and re-validates with If-None-Match,
+    # which the list answers 304 for when nothing changed (offline-first, issue 146).
+    cache_max_age_s: int = 900
     watched: WatchedCutsConfig = Field(default_factory=WatchedCutsConfig)
 
 

@@ -31,6 +31,7 @@ public final class TinyHttpServer {
     public static final class Response {
         public final int code;
         public final String body;
+        public final Map<String, String> headers = new HashMap<>();
 
         public Response(int code, String body) {
             this.code = code;
@@ -121,8 +122,15 @@ public final class TinyHttpServer {
 
             byte[] bytes = response.body.getBytes(StandardCharsets.UTF_8);
             OutputStream out = s.getOutputStream();
-            out.write(("HTTP/1.1 " + response.code + " X\r\nContent-Type: application/json\r\nContent-Length: " + bytes.length
-                    + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            StringBuilder head = new StringBuilder("HTTP/1.1 ").append(response.code).append(" X\r\n");
+
+            for (Map.Entry<String, String> header : response.headers.entrySet()) {
+                head.append(header.getKey()).append(": ").append(header.getValue()).append("\r\n");
+            }
+
+            head.append("Content-Type: application/json\r\nContent-Length: ").append(bytes.length)
+                    .append("\r\nConnection: close\r\n\r\n");
+            out.write(head.toString().getBytes(StandardCharsets.UTF_8));
             out.write(bytes);
             out.flush();
         } catch (IOException | InterruptedException ignored) {

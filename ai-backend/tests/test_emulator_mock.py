@@ -288,6 +288,25 @@ def test_defaults_still_answer_as_before(mock):
     assert mock.get("/v1/videos/fffffffffff/cuts").json()["configured"] is True
 
 
+def test_cuts_list_carries_an_etag_and_answers_304_on_revalidation(mock):
+    video = "ggggggggggg"
+    first = mock.get(f"/v1/videos/{video}/cuts")
+
+    assert first.status_code == 200
+    etag = first.headers["etag"]
+    assert etag.startswith('"') and etag.endswith('"')
+    assert "max-age=" in first.headers["cache-control"]
+
+    # A re-validation with the stored ETag answers 304: the client keeps its cached list.
+    again = mock.get(f"/v1/videos/{video}/cuts", headers={"If-None-Match": etag})
+    assert again.status_code == 304
+    assert again.headers["etag"] == etag
+
+    # Without the conditional header the list is served again with the same (stable) ETag.
+    once_more = mock.get(f"/v1/videos/{video}/cuts")
+    assert once_more.status_code == 200 and once_more.headers["etag"] == etag
+
+
 ROOT = REPO
 SCRIPT = MOCK
 
