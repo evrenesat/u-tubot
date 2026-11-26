@@ -1,5 +1,6 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutMode;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedItem;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
@@ -18,7 +19,8 @@ import static org.junit.Assert.assertTrue;
 @Config(sdk = 28)
 public class UtubotProcessedParserTest {
     private static final String ITEM = "{\"video_id\":\"dQw4w9WgXcQ\",\"title\":\"A video\"," +
-            "\"thumbnail\":\"https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg\",\"updated_at\":1763900000.0,\"summary\":true," +
+            "\"thumbnail\":\"https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg\",\"duration_s\":633.0," +
+            "\"updated_at\":1763900000.0,\"summary\":true," +
             "\"captions\":[{\"job_id\":\"job1\",\"lang\":\"en\",\"translate_to\":\"de\",\"state\":\"ready\",\"progress\":1.0," +
             "\"error\":null,\"created_at\":1763899900.0,\"updated_at\":1763900000.0}," +
             "{\"job_id\":\"job2\",\"lang\":\"tr\",\"translate_to\":null,\"state\":\"processing\",\"progress\":0.5," +
@@ -46,6 +48,7 @@ public class UtubotProcessedParserTest {
         assertEquals("dQw4w9WgXcQ", first.videoId);
         assertEquals("A video", first.title);
         assertEquals("https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg", first.thumbnail);
+        assertEquals(633L, first.durationSec);
         assertEquals(1763900000.0, first.updatedAt, 0.0);
         assertTrue(first.summary);
 
@@ -102,6 +105,7 @@ public class UtubotProcessedParserTest {
         assertEquals("a", item.videoId);
         assertNull(item.title);
         assertNull(item.thumbnail);
+        assertEquals(UtubotModels.UNKNOWN, item.durationSec);
         assertEquals(0.0, item.updatedAt, 0.0);
         assertFalse(item.summary);
         assertTrue(item.captions.isEmpty());

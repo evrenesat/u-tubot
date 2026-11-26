@@ -728,6 +728,7 @@ Item:
 {"video_id":"dQw4w9WgXcQ",
  "title":"...",              // cached metadata title, else the newest caption job's title; null if neither
  "thumbnail":"https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg", // metadata thumbnail_url/thumbnail, else this standard URL
+ "duration_s":633.0,         // cached metadata duration in seconds; null when unknown
  "updated_at":1763900000.0,  // newest updated_at among the item's caption jobs and cut requests
  "summary":true,             // any stored summary for this video (summaries are shared per video)
  "captions":[{"job_id":"...","lang":"en","translate_to":"en",

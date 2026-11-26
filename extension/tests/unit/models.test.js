@@ -11,6 +11,7 @@ import {
   parseSummary,
   parseTranscript,
   revive,
+  UNKNOWN,
 } from "../../src/shared/models.js";
 
 function json(value) {
@@ -37,6 +38,17 @@ test("every parser returns plain data that survives a message or storage boundar
       cuts: [{ request_id: "r", state: "ready" }],
     }],
   }));
+});
+
+test("a processed item carries its duration in seconds, or UNKNOWN when unknown", () => {
+  const processed = parseProcessed({
+    videos: [
+      { video_id: "v", duration_s: 633.0, captions: [], cuts: [] },
+      { video_id: "w", captions: [], cuts: [] },
+    ],
+  });
+  assert.equal(processed.videos[0].durationSec, 633);
+  assert.equal(processed.videos[1].durationSec, UNKNOWN);
 });
 
 test("revive re-attaches the helpers on the receiving side", () => {

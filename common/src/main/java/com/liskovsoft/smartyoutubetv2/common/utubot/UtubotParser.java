@@ -490,6 +490,9 @@ public final class UtubotParser {
                 item.videoId = videoId;
                 item.title = optString(videoJson, "title");
                 item.thumbnail = optString(videoJson, "thumbnail");
+                item.durationSec = optSeconds(videoJson, "duration_s") == UtubotModels.UNKNOWN
+                        ? UtubotModels.UNKNOWN
+                        : videoJson.optLong("duration_s", UtubotModels.UNKNOWN);
                 item.updatedAt = videoJson.optDouble("updated_at", 0);
                 item.summary = videoJson.optBoolean("summary");
                 item.captions = parseProcessedCaptions(videoJson.optJSONArray("captions"));

@@ -4,10 +4,12 @@ import android.content.Context;
 
 import androidx.annotation.Nullable;
 
+import com.liskovsoft.googlecommon.common.helpers.ServiceHelper;
 import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.BrowseSection;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.VideoGroup;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutState;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.JobState;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedCaption;
@@ -68,6 +70,9 @@ public final class UtubotProcessedSection {
         video.title = item.title != null ? item.title : item.videoId;
         video.cardImageUrl = item.thumbnail;
         video.secondTitle = processedText(context, item);
+        if (item.durationSec != UtubotModels.UNKNOWN) {
+            video.badge = ServiceHelper.millisToTimeText(item.durationSec * 1000);
+        }
 
         return video;
     }
