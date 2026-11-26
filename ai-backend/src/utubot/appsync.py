@@ -522,7 +522,9 @@ def sync_github(
     pin = normalize_pin(cfg.app.signing_cert_sha256)
     state = SyncState.load(cfg)
     now = int(time.time())
-    if state.rate_limit_reset > now:
+    has_token = bool(cfg.app.github_token_env and os.environ.get(cfg.app.github_token_env))
+    # The backoff is for the anonymous quota; a token has its own, so it never waits on it.
+    if state.rate_limit_reset > now and not has_token:
         raise TransientError(
             "GitHub rate limit reached; not asking again until "
             f"{_reset_text(state.rate_limit_reset)}. "
