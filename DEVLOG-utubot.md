@@ -134,6 +134,31 @@
 - `ai-backend/tests/test_engine_claim_contract.py`: the contract keeps every config key, endpoint, state and reason, a
   sentence per reason, the plan's reason set and the D-P11 wording; it fails on drift.
 
+## 2026-11-25 (a cut that becomes ready while the viewer is elsewhere, issue 96)
+
+- A director's cut ordered on the TV while it is still waiting or building is kept in `UtubotCutWaitlist` (one row per request,
+  surviving a restart). `UtubotCutWatcher` follows each through `GET /v1/cuts/{id}` from the app-wide `UtubotAppHooks`, so the
+  follow no longer depends on the video being in the player. `UtubotCutNotices` asks "Director's cut ready: <title> (<real
+  length>). Play?" wherever the app is, one cut at a time: Yes carries the cut through the #64 path and opens the video, No (or
+  Back) only closes the question and leaves the screen and the playback position alone.
+- The first check after a start does not wait: a cut that became ready while the app was closed is left to the cut picker and the
+  Processed section, while a failed build reports its reason (at the next screen if there was none). Dismissed, ready and failed
+  requests leave the list, anything over 30 minutes is old, and a backend or token change clears it. A cut of the video that is
+  playing stays with the player's own follower once it has taken the cut over — applied, waiting for the length, or offered with
+  Apply — so the app-wide notice does not ask a second time after the follower's own ready-cut offer (the follower clears its
+  request the moment the cut is ready, so the offer itself is now read as the player handling it). A kept question the player
+  takes over before it is shown is dropped instead of reopening the same video. A request the follower never learned, like one
+  ordered from the cut sheet with no preset, still asks.
+- A network error no longer loses an order: the watcher retries (1 s, 2 s, 5 s, 10 s, then every 30 s) until the cut is ready,
+  failed or older than 30 minutes.
+- Tests: `UtubotCutWaitlistTest` (persistence, one row per request, cap, clear, bad stored rows), `UtubotCutWatcherTest` (ordered
+  or startup check, closed-app ready, failure reason, dismissed, old, errors kept until ready), `UtubotCutNoticesTest` (playing
+  video and follower ownership, a follower's ready-cut offer and a cut taken over after the question was kept are not asked twice,
+  the Yes path through the real open, popup text, Yes/No/Back, failure at the next screen), `UtubotScreenTest` (any
+  screen, dialog over player) and `UtubotCutPromptQueueTest` (Yes opens, No stays, several cuts one at a time, a blocked question
+  retried, no double answer). Browser extension: parity matrix row 34.
+- Verified with JDK 25: the new tests and `:common:testStutubotDebugUnitTest` (all u·tubot tests), plus the TV module build.
+
 ## 2026-11-24 (director's cuts for long videos, issue 95)
 
 - Cuts no longer refuse long videos: a transcript over `[cuts] max_input_tokens` is read in excerpts (chapter boundaries, small overlap),

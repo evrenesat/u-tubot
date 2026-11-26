@@ -125,6 +125,10 @@
     <string name="utubot_cut_player_label">Cut: %1$s \u00b7 %2$s</string>
     <string name="utubot_cut_player_time">%1$s / %2$s of %3$s</string>
     <string name="utubot_cut_player_part">part %1$d of %2$d</string>
+    <string name="utubot_cut_ready_play">Director\'s cut ready: %1$s (%2$s). Play?</string>
+    <string name="utubot_cut_ready_play_no_length">Director\'s cut ready: %s. Play?</string>
+    <string name="utubot_cut_play_yes">Yes</string>
+    <string name="utubot_cut_play_no">No</string>
     <string name="utubot_cut_apply">Apply</string>
     <string name="utubot_cut_ready_length">, %s</string>
     <string name="utubot_cut_skipped">Skipped %s</string>
@@ -160,6 +164,7 @@
     <string name="utubot_cut_not_configured">The server has no model for cuts</string>
     <string name="utubot_cut_loading">Loading the cuts…</string>
     <string name="utubot_cut_failed">Director\'s cut failed: %s</string>
+    <string name="utubot_cut_failed_plain">Director\'s cut failed</string>
     <string name="utubot_processed_title">Processed</string>
     <string name="utubot_processed_message">Videos you recently processed: HQ captions, director\'s cuts and summaries</string>
     <string name="utubot_processed_empty">No processed videos yet</string>

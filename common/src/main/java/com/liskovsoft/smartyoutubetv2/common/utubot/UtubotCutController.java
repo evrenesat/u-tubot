@@ -66,6 +66,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     @Nullable
     private Cut mCut;
     @Nullable
+    private Cut mOfferingCut;
+    @Nullable
     private UtubotCutSkipper mSkipper;
     @Nullable
     private Disposable mPoll;
@@ -82,6 +84,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         if (mVideo != null && !Helpers.equals(mVideo.videoId, item != null ? item.videoId : null)) {
             mLocalPicks.remove(mVideo.videoId);
         }
+        mOfferingCut = null;
 
         // A cut that waits to be applied is re-armed too: stopSkipping clears it, and a reload of the same video comes before the length
         // is known sometimes
@@ -338,6 +341,36 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
      */
     public boolean isApplied(Cut cut) {
         return mCut != null && Helpers.equals(mCut.videoId, cut.videoId) && Helpers.equals(mCut.label, cut.label);
+    }
+
+    /**
+     * Whether this cut is already applied or waiting for the length of the video that plays
+     */
+    public boolean hasCut(Cut cut) {
+        return isApplied(cut) || isQueued(cut);
+    }
+
+    /**
+     * The player has taken over this ready cut of the video that plays: applied, waiting for the length, or offered with Apply. The
+     * app-wide notice must not also ask "Play?" for a cut the player is already handling, even though the player's follower clears
+     * its request the moment the cut is ready.
+     */
+    public boolean isHandlingReadyCut(Cut cut) {
+        return isPlayingVideo(cut) && (hasCut(cut) || isOffered(cut));
+    }
+
+    private boolean isOffered(Cut cut) {
+        return mOfferingCut != null && Helpers.equals(mOfferingCut.videoId, cut.videoId)
+                && Helpers.equals(mOfferingCut.label, cut.label);
+    }
+
+    /**
+     * The video is the one this player really has started: a remembered video of a closed player or a released engine is not playing
+     */
+    public boolean isPlaying(@Nullable String videoId) {
+        Video video = getVideo();
+
+        return videoId != null && isLivePlayer() && video != null && Helpers.equals(video.videoId, videoId);
     }
 
     /**
@@ -691,7 +724,16 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         dialogPresenter.enableOverlay(true);
         dialogPresenter.enableExpandable(false);
         dialogPresenter.setId(READY_DIALOG_ID);
-        dialogPresenter.showDialog(text);
+        mOfferingCut = cut;
+        dialogPresenter.showDialog(text, this::clearReadyOffer);
+    }
+
+    /**
+     * The Apply offer of the video that plays is gone (pressed, dismissed, or timed out): stop claiming this cut, so the app-wide
+     * notice asks again instead of letting the cut fall through the gap between the player's follower and itself.
+     */
+    private void clearReadyOffer() {
+        mOfferingCut = null;
     }
 
     /**
@@ -750,6 +792,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
      * A cut the viewer already chose (the selection of the open): applied once the length is known, without writing the choice again.
      */
     private void applyCutWhenPossible(Cut cut) {
+        mOfferingCut = null;
         mPendingCut = cut;
         startPolling();
         tryApplyPending();

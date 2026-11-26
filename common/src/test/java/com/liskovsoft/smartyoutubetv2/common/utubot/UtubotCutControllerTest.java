@@ -394,6 +394,60 @@ public class UtubotCutControllerTest {
     }
 
     /**
+     * A cut the player has already applied or is waiting to apply belongs to the player: the app-wide notice must not ask again
+     */
+    @Test
+    public void hasCut_isTrueForAnAppliedOrWaitingCut() {
+        mController.open(video(VIDEO), 240_000);
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+
+        assertFalse(mController.hasCut(cut));
+
+        assertTrue(mController.toggle(cut));
+        assertTrue(mController.hasCut(cut));
+
+        assertTrue(mController.toggle(cut));
+        mController.open(video(VIDEO), 0);
+        assertTrue(mController.toggle(cut));
+        assertFalse(mController.isApplied(cut));
+        assertTrue(mController.hasCut(cut));
+    }
+
+    /**
+     * The player has taken over a ready cut three ways: applied, waiting for the length, or offered with Apply. The app-wide notice
+     * reads any of these as the player already handling the cut and does not ask "Play?" again. A cut of another video is not.
+     */
+    @Test
+    public void isHandlingReadyCut_coversAppliedQueuedAndOffered() throws Exception {
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = 240_000;
+
+        assertFalse(new TestCutController().isHandlingReadyCut(cut)); // no player of this video
+
+        mController.open(video(VIDEO), 240_000);
+        assertFalse(mController.isHandlingReadyCut(cut)); // playing, but the cut is not taken yet
+
+        mController.toggle(cut); // applied
+        assertTrue(mController.isHandlingReadyCut(cut));
+        mController.onFinish();
+
+        mController.open(video(VIDEO), 0);
+        mController.toggle(cut); // waiting for the length
+        assertTrue(mController.isHandlingReadyCut(cut));
+        mController.onFinish();
+
+        mController.open(video(VIDEO), 240_000);
+        setOfferingCut(cut); // offered with Apply
+        assertTrue(mController.isHandlingReadyCut(cut));
+        mController.onFinish();
+
+        assertFalse(mController.isHandlingReadyCut(cut("othervideo00"))); // a cut of another video
+    }
+
+    /**
      * A finished playback leaves no applied cut: a picker of the same video from a list carries it to the reopened video instead
      * of turning a cut off that isn't playing
      */
@@ -1012,6 +1066,16 @@ public class UtubotCutControllerTest {
             }
 
             return options;
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private void setOfferingCut(Cut cut) {
+        try {
+            Field field = UtubotCutController.class.getDeclaredField("mOfferingCut");
+            field.setAccessible(true);
+            field.set(mController, cut);
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
         }

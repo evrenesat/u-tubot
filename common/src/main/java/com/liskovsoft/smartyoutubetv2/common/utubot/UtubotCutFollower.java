@@ -152,6 +152,13 @@ public final class UtubotCutFollower {
     }
 
     /**
+     * Whether this player is following the request that is waiting or building for the video that plays
+     */
+    public boolean isFollowing(@Nullable String requestId) {
+        return requestId != null && requestId.equals(mRequestId);
+    }
+
+    /**
      * Nothing more to wait for, but the video still plays: the user may yet ask for a cut
      */
     private void stopPolling() {
