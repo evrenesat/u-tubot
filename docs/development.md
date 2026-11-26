@@ -130,6 +130,30 @@ not visible to the user, which is how an invisible grid shows: `modern_browse_co
 For an update, serve an `update.json` with a higher version (`downloadUrlList_x86` next to `downloadUrlList`) and an APK built with
 `-PutubotVersionName=0.9.0`.
 
+### Checking the app on a tablet emulator
+
+A 10-inch tablet is checked the same way, to confirm the same APK installs on a touch-only device and shows the touch-friendly screens
+instead of the TV (D-pad) layout. Make a large touch-screen AVD (for example `nexus_10`, 1280x800, `hw.screen = multi-touch`): the app's
+`Tablets.isLargeTouchScreen` sees a large touch screen and, on it, the app renders the modern screens (a navigation rail, a top bar,
+shelves) through the same activities. Boot it headless, run the mock backend, install the APK, point it at the backend and screenshot.
+
+```sh
+# a 10-inch touch device; the app then shows the touch layout, not the leanback one
+avdmanager create avd -n tablet -k "android-34/android-tv" -d nexus_10 ... hw.screen=multi-touch hw.lcd.width=1280 hw.lcd.height=800 hw.lcd.density=160
+emulator -avd tablet -port 5556 -no-window -no-audio -memory 2048 -cores 4 &
+python3 scripts/emulator_mock_backend.py --port 18790 --static temp/update &
+adb -s emulator-5556 install -r smarttubetv/build/outputs/apk/stutubot/debug/u-tubot_<ver>_x86.apk
+adb -s emulator-5556 shell run-as dev.utubot.tv sh -c 'cat > shared_prefs/utubot_settings.xml' < prefs.xml   # url, token, summary_panel
+adb -s emulator-5556 shell am start -W dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.ui.main.SplashActivity
+adb -s emulator-5556 exec-out screencap -p > temp/tablet/browse.png
+```
+
+The screenshots of this run (`nexus_10`, the app installed and on its browse screen) are in `temp/tablet/`. The default skin is the
+touch-friendly one, so the app shows it at once; to confirm the D-pad (classic) layout is swapped to the touch layout on a tablet, set
+the classic skin and check the browse screen still renders the modern screens. `prefs.xml` is the same as for the TV (url
+`http://10.0.2.2:18790`, `token`, `summary_panel` true). The emulator never reaches YouTube (see the network namespace rule at the top
+of this document).
+
 ### Mock backend controls
 
 `scripts/emulator_mock_backend.py` answers the extension's and the TV's calls from the same state. Beside the state URLs above, the

@@ -1,3 +1,18 @@
+## 2026-11-26 (Android tablet support, issue #201)
+
+- The same APK now installs on a tablet: `smarttubetv/src/main/AndroidManifest.xml` makes `android.software.leanback` `required="false"`
+  (`tools:node="replace"`, the leanback library still requires it) and keeps the plain `LAUNCHER` category beside `LEANBACK_LAUNCHER`, so
+  the store and the installer offer it on a touch-only device and the icon stays on a tablet's home screen.
+- On a large touch screen the app shows the touch-friendly screens instead of the TV (D-pad) layout, through the same activities:
+  `tv/ui/skin/Tablets.isLargeTouchScreen` (screen at least "large" with a touchscreen) and `SkinRegistry.getEffectiveSkin` return the
+  modern skin for the classic one there. The stored choice is kept, so a TV still gets classic and the Settings skin switch still works.
+- Development mode (auto-update, offers install when idle) is on by default for the flavor; docs/install.md documents an optional wireless
+  ADB push from the build host, off by default.
+- Tests: `TabletsTest` (normal/large/xlarge, with and without touch) and `TabletSkinTest` (classic becomes modern on a large touch screen,
+  a touch skin stays, picking classic later stays modern, classic stays on a normal touch screen). Full common + smarttubetv unit tests
+  green, lint clean, `assembleStutubotDebug` builds. The merged manifest resolves leanback to `required="false"`. Screenshots of the app
+  installed and on its browse screen on a `nexus_10` (1280x800, touch) emulator are in `temp/tablet/`.
+
 ## 2026-11-26 (SponsorBlock off while a cut is applied, issue #145)
 
 - `SponsorBlockController.skipSegment` returns early while `UtubotCutController.isCutActive()` (a cut is applied to the video that plays), so the sponsor skip and prompt are off and cannot clash with the cut's own jump (`seekToKeptPart`, the cut's skips, the skip toggle). The cut's jump still goes past sponsor segments (one jump). Back on when the cut is taken off or the video has none. Tests: `SponsorBlockControllerTest` (inside, at the start of, straddling a cut-out part).

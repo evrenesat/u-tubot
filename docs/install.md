@@ -1,8 +1,10 @@
 # Installing u·tubot on a TV
 
-u·tubot is an Android TV app (package `dev.utubot.tv`, it installs next to SmartTube or Electric Eel). The AI features need a
-u·tubot backend that you or someone you trust runs: see [server.md](server.md). Without one the app still works as a
-YouTube client, with no marks, summaries or HQ captions.
+u·tubot is an Android TV app (package `dev.utubot.tv`, it installs next to SmartTube or Electric Eel). The same APK also runs on a
+tablet: it is no longer marked as leanback-only, so the store and the installer offer it on a touch-only device too, and on a large
+touch screen the app shows the touch-friendly screens (a navigation rail, a top bar, shelves) instead of the TV (D-pad) layout,
+through the same code. The AI features need a u·tubot backend that you or someone you trust runs: see [server.md](server.md). Without
+one the app still works as a YouTube client, with no marks, summaries or HQ captions.
 
 ## 1. Pick the right APK
 
@@ -99,4 +101,23 @@ repository, and the credit to Electric Eel and SmartTube.
 - Director's cuts: order one from the video menu and keep browsing or watching something else while it is built. When it becomes
   ready while the app is open, the TV asks **"Director's cut ready: <video title> (<length>). Play?"** wherever you are: **Yes**
   opens that video with the cut on, **No** leaves the screen and the playback position as they were. A cut that finished while the
-  app was closed is waiting in the video's cut picker and the Processed section.
+   app was closed is waiting in the video's cut picker and the Processed section.
+
+## 6. Development installs (tablets and testing)
+
+Two ways to get a build onto your own device, both off by default for anyone who isn't developing the app.
+
+- **Development mode (auto-update).** For the u·tubot flavor this is on by default: the app checks for updates (Settings, u·tubot,
+  *Update check interval*, default 5 minutes) and, when no video is playing, offers the install with *Install* focused, exactly as on
+  the TV. A device on the same backend's update channel gets new builds without a manual install. Turn it off with *Settings, Updates,
+  Notify about updates*.
+- **Wireless ADB from the build host.** A one-off push over Wi-Fi, useful for a tablet. Enable wireless debugging on the device, then
+  from the host that built the APK:
+
+  ```sh
+  adb connect TABLET_IP:5555                       # the device shows its pairing address; `adb devices` lists it
+  adb install u-tubot_0.2.2_arm64-v8a.apk          # the per-ABI file from Pick the right APK
+  ```
+
+  It is manual and not baked into the build: nothing pushes to a device by itself. A USB connection works the same way (`adb install`
+  without the `connect`). On a tablet the app shows the touch-friendly screens; the APK is the same one shipped for the TV.
