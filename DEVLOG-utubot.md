@@ -50,6 +50,10 @@
   `ai/BROWSER_EXTENSION_PLAN.md` now records the TV kept-part seek (the extension's clickable kept-part list is the same), so it passes.
 - Common unit tests green, app compile green.
 
+## 2026-11-26 (rebase on #116: part jumps use seekToKeptPart)
+
+- `jumpToPart` now lands through `UtubotCutController.seekToKeptPart` (the one place for kept-part jumps, with the sponsor merge and the end clamp). `seekToKeptPart` also seeks when no cut is applied (no skipper), so a part picked before applying still jumps.
+
 ## 2026-11-26 (clicking a kept part jumps the playing video to it, issue 140)
 
 - Pressing a kept part in the cut's parts list now seeks the playing video to that part's start (clamped to the video length) and

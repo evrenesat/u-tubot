@@ -733,11 +733,12 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     void seekToKeptPart(long partStartMs, boolean forward) {
         PlaybackView player = getPlayer();
 
-        if (player == null || mSkipper == null) {
+        if (player == null) {
             return;
         }
 
-        long destinationMs = forward ? mSkipper.destination(partStartMs) : partStartMs;
+        // Without an applied cut (a part picked before applying it) there is no skipper: a plain seek to the part
+        long destinationMs = forward && mSkipper != null ? mSkipper.destination(partStartMs) : partStartMs;
         long durationMs = player.getDurationMs();
 
         if (durationMs > 0) {
@@ -1169,7 +1170,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     /**
      * Seek the playing video to the start of a kept part, the way the cut picker jumps when a part is pressed. The cut stays applied
      * (this neither applies nor turns it off), so playback continues from there until the next dropped range: a seek of the user wins
-     * and is where the skipper starts again, like any other seek. A part of a cut for another video (a list card's picker opened while
+     * and is where the skipper starts again, like any other seek. The seek goes through {@link #seekToKeptPart}, like the double press. A part of a cut for another video (a list card's picker opened while
      * that video plays) does not move the video that plays.
      *
      * @return true when the live player of the video that plays has the cut's video and took the seek
@@ -1179,15 +1180,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             return false;
         }
 
-        PlaybackView player = getPlayer();
-        long durationMs = player.getDurationMs();
-        long toMs = Math.max(0L, part.startMs);
-
-        if (durationMs > 0) {
-            toMs = Math.min(toMs, durationMs); // a part never runs past the video it was built for, clamp anyway
-        }
-
-        player.setPositionMs(toMs);
+        seekToKeptPart(Math.max(0L, part.startMs), true);
         return true;
     }
 }

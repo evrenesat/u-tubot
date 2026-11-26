@@ -1123,6 +1123,8 @@ public class UtubotCutControllerTest {
         private long mDurationMs;
         private String mButtonLabel;
         private long mPositionMs;
+        private boolean mSeekCalled;
+        private long mLastSeekMs;
         private boolean mOverlayShown;
         private boolean mSuggestionsShown;
         private boolean mEngineInitialized;
@@ -1241,6 +1243,8 @@ public class UtubotCutControllerTest {
 
                         if ("setPositionMs".equals(method.getName())) {
                             mPositionMs = (long) args[0];
+                            mSeekCalled = true;
+                            mLastSeekMs = mPositionMs;
                             return null;
                         }
 
