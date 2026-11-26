@@ -406,6 +406,38 @@ def cmd_cuts_repair(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_assess_fixup(args: argparse.Namespace) -> int:
+    """Re-run the clickbait triage on recent verdicts for subscribed channels.
+
+    After the clickbait prompt gained channel/video context, this re-triages the user's recent
+    clickbait verdicts whose channel is subscribed, so a wrong label from the old title-only prompt
+    disappears without the owner asking. Runs offline-friendly against the configured LLM.
+    """
+    import asyncio
+
+    from .app import build_services
+
+    cfg = load_config(args.config)
+    svc = build_services(cfg)
+    total = 0
+    for name in svc.auth.user_names():
+        user = svc.auth.user_config(name)
+        if user is None:
+            continue
+        try:
+            n = asyncio.run(svc.assessor.reassess_subscribed(name, user.policy, limit=args.limit))
+        except Exception as exc:  # noqa: BLE001 - CLI boundary
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if n:
+            total += n
+            print(f"{name}: re-assessed {n} clickbait verdict(s) on subscribed channels")
+    if not total:
+        print("no clickbait verdicts on subscribed channels to re-assess")
+    svc.db.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="utubot")
     parser.add_argument("--config", help="path to config TOML (default: $UTUBOT_CONFIG)")
@@ -569,6 +601,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     regen.add_argument("--dry-run", action="store_true", help="list the tracks, queue nothing")
     regen.set_defaults(func=cmd_captions_regen)
+    assess = sub.add_parser(
+        "assess-fixup",
+        help=(
+            "re-triage recent clickbait verdicts on subscribed channels so a wrong label from the"
+            " title-only prompt disappears (offline-friendly against the configured LLM)"
+        ),
+    )
+    assess.add_argument(
+        "--limit",
+        type=int,
+        help="at most this many verdicts per user (default: [assess] reassess_max_per_run)",
+    )
+    assess.set_defaults(func=cmd_assess_fixup)
     media = sub.add_parser("media", help="put a local file into the media archive").add_subparsers(
         dest="sub", required=True
     )

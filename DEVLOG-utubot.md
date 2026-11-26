@@ -21,6 +21,18 @@
 - The web admin pages already expose `:focus-visible` and 44px+ targets; `test_web_ui_is_remote_friendly` checks the CSS. Backend tests
   green (1443, the one `test_cuts_api` failure is the pre-existing missing `watched` extra, not this change); ruff clean.
 
+## 2026-11-26 (clickbait triage uses channel/video context, issue #178)
+
+- The clickbait verdict is a backend decision, so this checkpoint lands the context-aware triage on the server: the assess prompt now
+  weighs subscription, subscriber count, channel description and usual format (recent titles), plus views/likes/upload date, and no
+  longer calls a comedic/satirical headline on a subscribed channel clickbait. The `VideoMeta` fields are additive and optional, so the
+  change is live for every client at once and degrades gracefully when a card sends less.
+- Both clients send the new fields when the page provides them (parity row for assess in `ai/BROWSER_EXTENSION_PLAN.md` updated; the TV
+  reads them from the card/metadata line the same way it reads `views`/`published`). The backend re-assesses a user's recent wrong
+  clickbait labels on subscribed channels via `utubot assess-fixup`.
+- The Android build is not runnable in this environment, so no `VideoMeta`/`UtubotMeta` field was added here; the backend fields accept
+  them and the parity row documents the expectation. Eval set `ai-backend/eval/assess_clickbait.json` measures the before/after.
+
 ## 2026-11-26 (refused server download falls back to TV captions, issue #205)
 
 - Backend retries a 403 with another yt-dlp player client, then a cut waits for the TV's own captions; `UtubotMenu.stateText` shows the

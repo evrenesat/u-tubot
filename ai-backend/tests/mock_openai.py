@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -39,6 +40,9 @@ class MockOpenAI:
         self.delay_s = 0.0
         self.bad_json_first = 0
         self.mode = "plain"
+        # When true the triage answer is title/thumbnail text only (the pre-context prompt): used
+        # to seed a wrong clickbait label that `reassess_subscribed` then corrects.
+        self.legacy_clickbait = False
         self.fail_status: int | None = None
         self.busy_first = 0
         self.busy_status = 503
@@ -262,10 +266,63 @@ class MockOpenAI:
             results.append(
                 {
                     "id": v["id"],
-                    "clickbait": 0.95 if "SHOCKING" in title else (0.7 if "BIT" in title else 0.1),
-                    "low_quality": 0.8 if "slop" in title else 0.0,
+                    "clickbait": self._clickbait(v, title),
+                    "low_quality": 0.8 if "slop" in title.lower() else 0.0,
                     "topics": ["reaction videos"] if "reaction" in title.lower() else [],
                     "title_question": title if title.endswith("?") else None,
                 }
             )
         return json.dumps({"results": results})
+
+    def _title_clickbait(self, title: str) -> float:
+        if "SHOCKING" in title or "they hide" in title.lower():
+            return 0.95
+        if "BIT" in title or "weird trick" in title.lower():
+            return 0.7
+        return 0.1
+
+    def _legacy_clickbait(self, title: str) -> float:
+        """The old title/thumbnail-only prompt: sensational wording and all-caps hype flag clickbait,
+        with no channel, genre or subscription context."""
+        score = 0.1
+        for phrase in (
+            "shocking",
+            "they hide",
+            "weird trick",
+            "gone wrong",
+            "exposed",
+            "you won't believe",
+            "big reveal",
+        ):
+            if phrase in title.lower():
+                score = max(score, 0.85)
+        if re.findall(r"\b[A-Z]{3,}\b", title):
+            score = max(score, 0.7)
+        return score
+
+    def _genre(self, v: dict[str, Any]) -> str:
+        words = " ".join(v.get("channel_titles") or []).lower()
+        text = f"{v.get('channel_description') or ''} {words}"
+        for word in ("comedy", "stand-up", "standup", "satire", "sketch", "talk show"):
+            if word in text:
+                return word
+        return ""
+
+    # A punchy headline on a subscribed creator's regular comedy/satire show is not clickbait; a
+    # subscribed channel still gets some leniency, and any channel gets a touch for its reach.
+    COMEDY_SATIRE = {"comedy", "satire", "stand-up", "standup", "sketch"}
+
+    def _clickbait(self, v: dict[str, Any], title: str) -> float:
+        if self.legacy_clickbait:
+            return round(self._legacy_clickbait(title), 2)
+        cb = self._title_clickbait(title)
+        genre = self._genre(v)
+        if v.get("is_subscribed") and genre in self.COMEDY_SATIRE:
+            cb = min(cb, 0.3)
+        elif v.get("is_subscribed"):
+            cb -= 0.25
+        if genre in self.COMEDY_SATIRE:
+            cb -= 0.15
+        if (v.get("subscriber_count") or 0) > 5_000_000:
+            cb -= 0.05
+        return round(max(0.0, min(1.0, cb)), 2)

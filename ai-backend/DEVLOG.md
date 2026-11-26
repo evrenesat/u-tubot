@@ -88,6 +88,19 @@
   `rewrite-notes --repo R [--apply]` for existing release bodies.
 - `utubot changelog rebuild` (also run at start) rewrites stored entries in the short form; idempotent. `[llm.changelog]` (optional
   task, e.g. the `fast` alias) may reword a new deploy entry within a 2 s budget; any error keeps the deterministic lines.
+## 2026-11-26 (clickbait triage uses channel/video context, issue #178)
+
+- The assess triage prompt now judges clickbait from the title plus the channel/video context the app sends: `VideoMeta` gains
+  `upload_date`, `likes`/`dislikes`, `is_subscribed`, `subscriber_count`, `channel_description` and `channel_titles` (recent titles,
+  which describe the channel's usual format). The prompt says a comedic/satirical/hype-framed headline on a channel the viewer
+  subscribes to is not clickbait by itself, and only a clear, out-of-the-ordinary mismatch is. The fields are additive and optional,
+  so an older backend or a card missing some still triages.
+- `eval/assess_clickbait.json`: a labeled set of real verdicts (incl. the Jimmy Carr regular show from the report) with expected
+  labels. Tests measure before/after: the old title-only rule flags the subscribed comedy show, the context-aware one does not.
+- `Assessor.reassess_subscribed` (CLI `utubot assess-fixup [--limit]`): re-triages a user's recent clickbait verdicts whose channel is
+  subscribed, dropping the stale tier-2 deep analysis when the new triage no longer calls for it, so a wrong label disappears without
+  the owner asking.
+- Config: `assess.channel_description_max_chars` and `assess.reassess_max_per_run` (additive).
 
 - Review fix: `feature_calls` telemetry is swept once a day on record (it was never swept); the new tables are `CREATE IF NOT EXISTS`, so an existing DB opens with its transcripts and cuts untouched (test in `test_feature.py`).
 

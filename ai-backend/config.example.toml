@@ -309,6 +309,8 @@ tier2_clickbait_threshold = 0.6
 triage_cache_ttl_s = 604800
 title_max_chars = 200
 description_max_chars = 300
+channel_description_max_chars = 400
+reassess_max_per_run = 200          # recent clickbait verdicts on subscribed channels re-triaged by `utubot assess-fixup`
 
 # Everything that reaches YouTube (metadata, caption text, audio) goes through one gate: at most
 # `max_concurrent` requests, spaced `min_interval_s` + random(0, jitter_s) apart, interactive before
