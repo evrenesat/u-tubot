@@ -388,6 +388,9 @@ def create_app(
         """The mapped user when Tailscale Serve named one, from the loopback peer only."""
         if not is_loopback(request.client.host if request.client else None):
             return None
+        # Requests relayed by the public VPS carry the proxy marker: never a tailnet identity there.
+        if request.headers.get(PROXY_SECRET_HEADER):
+            return None
         name = cfg.auth.tailscale_user(request.headers.get(TAILSCALE_LOGIN_HEADER))
         return svc.auth.find_user(name) if name else None
 
