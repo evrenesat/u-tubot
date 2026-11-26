@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, RootModel, field_validator
 
 from .db import MAX_CHANNEL_ID_CHARS, MAX_CHANNEL_NAME_CHARS
+from .ledger import KNOWN_CATEGORIES
 
 
 class VideoMeta(BaseModel):
@@ -126,6 +127,24 @@ class FeedbackRequest(BaseModel):
     kind: str
     correct: bool
     note: str | None = None
+
+
+class LedgerReport(BaseModel):
+    """A client (TV, extension) reporting one of its own failures to the error ledger."""
+
+    operation: str
+    message: str
+    video_id: str | None = None
+    component: str | None = None  # "client" by default; "job"/"youtube"/... for server-side
+    category: str | None = None  # optional hint; the backend categorises when omitted
+    detail: str | None = None
+
+    @field_validator("category")
+    @classmethod
+    def _category(cls, value):
+        if value is not None and value not in KNOWN_CATEGORIES:
+            raise ValueError("category is not one of the known categories")
+        return value
 
 
 class ImportRequest(BaseModel):

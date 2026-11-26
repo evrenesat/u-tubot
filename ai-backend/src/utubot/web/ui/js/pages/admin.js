@@ -2,6 +2,7 @@ import { api, session } from "../api.js";
 import { h, mount } from "../dom.js";
 import { fmtBytes } from "../jobtext.js";
 import { bigCode, button, card, empty, errorText, field, fmtAgo, fmtDuration, fmtNumber, note, pill, select, statRow, switchRow, textInput, toast } from "../components.js";
+import * as ledger from "./ledger.js";
 import { filteringForm } from "./filtering.js";
 import { modelsForm } from "./models.js";
 import { transcriptPolicyForm } from "./transcripts.js";
@@ -127,6 +128,11 @@ async function usersPage(view) {
         "Feature models",
         h("div", { class: "row" }, h("a", { class: "btn sec", href: "#/admin/features", text: "Choose the model each feature runs on" })),
         note("Point each feature at a modelgate alias, with the last 7 days of calls, tokens, cost and time."),
+      ),
+      card(
+        "Error ledger",
+        h("div", { class: "row" }, h("a", { class: "btn sec", href: "#/admin/ledger", text: "See, count and triage every failure" })),
+        note("Every failure the backend and the clients report, counted per category per day, with the newest examples and a link to the job."),
       ),
       note("Users declared in config.toml keep their admin and prime flags there. Tokens are created with `utubot user add`."),
     );
@@ -357,6 +363,7 @@ async function featuresPage(view) {
 export async function render(view, { rest }) {
   if (rest[0] === "archive") return archivePage(view);
   if (rest[0] === "features") return featuresPage(view);
+  if (rest[0] === "ledger") return ledger.render(view, { rest });
   if (rest[0] === "user" && rest[1]) return userSettingsPage(view, rest[1]);
   return usersPage(view);
 }

@@ -990,6 +990,15 @@ class UsageConfig(BaseModel):
     keep_days: int = Field(30, ge=1)
 
 
+class LedgerConfig(BaseModel):
+    """The error ledger: how long recorded failures are kept before the sweep drops them.
+
+    The ledger itself is always on; there is nothing to switch off. `keep_days` only bounds the table.
+    """
+
+    keep_days: int = Field(90, ge=1)
+
+
 class Config(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
@@ -1009,6 +1018,7 @@ class Config(BaseModel):
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     app: AppConfig = Field(default_factory=AppConfig)
     usage: UsageConfig = Field(default_factory=UsageConfig)
+    ledger: LedgerConfig = Field(default_factory=LedgerConfig)
     default_policy: UserPolicy = Field(default_factory=UserPolicy)
     users: list[UserConfig] = Field(default_factory=list)
     config_path: str = ""

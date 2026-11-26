@@ -580,6 +580,12 @@ answer_in_menu = true
 summary_panel = false
 auto_captions = true
 
+# The error ledger: every failure the backend and the clients (TV, extension) report, so the admin
+# page can count them per category per day and triage the ones whose cause is not yet sorted.
+# The ledger is always on; `keep_days` only bounds the table (the sweep drops failures older than it).
+[ledger]
+keep_days = 90
+
 # The landing page "/" shows a public Download section from `utubot app publish`.
 # Downloader (AFTVnews) short codes, shown when non-empty; keys are ABIs.
 [app]
