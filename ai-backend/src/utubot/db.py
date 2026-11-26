@@ -104,7 +104,11 @@ CREATE TABLE IF NOT EXISTS cut_requests(
   mode TEXT NOT NULL DEFAULT 'quick', progress REAL,
   source_kind TEXT NOT NULL DEFAULT 'youtube', source_key TEXT, release_key TEXT,
   release_duration_ms INTEGER, force INTEGER NOT NULL DEFAULT 0,
-  klass TEXT NOT NULL DEFAULT 'normal');
+  klass TEXT NOT NULL DEFAULT 'normal',
+  mode_rule TEXT NOT NULL DEFAULT 'request', channel_id TEXT);
+CREATE TABLE IF NOT EXISTS cut_channel_modes(
+  user TEXT NOT NULL, channel_id TEXT NOT NULL, channel_name TEXT, mode TEXT NOT NULL,
+  updated_at REAL NOT NULL, PRIMARY KEY(user, channel_id));
 CREATE INDEX IF NOT EXISTS cut_requests_user ON cut_requests(user, created_at);
 CREATE INDEX IF NOT EXISTS cut_requests_video ON cut_requests(video_id);
 CREATE TABLE IF NOT EXISTS cuts(
@@ -182,6 +186,16 @@ CUTS_COLUMNS = {
     "release_duration_ms": "INTEGER",
 }
 CUT_REQUEST_CLASS_COLUMNS = {"klass": "TEXT NOT NULL DEFAULT 'normal'"}
+CUT_REQUEST_MODE_COLUMNS = {
+    "mode_rule": "TEXT NOT NULL DEFAULT 'request'",
+    "channel_id": "TEXT",
+}
+MODE_RULE_REQUEST = "request"
+MODE_RULE_CHANNEL = "channel"
+MODE_RULE_USER = "user"
+MODE_RULE_SERVER = "server"
+MAX_CHANNEL_ID_CHARS = 64
+MAX_CHANNEL_NAME_CHARS = 120
 METADATA_ONLY = "metadata_only"
 
 
@@ -214,6 +228,7 @@ class Database:
         self._add_missing_columns("cut_requests", CUT_REQUEST_COLUMNS)
         self._add_missing_columns("cuts", CUTS_COLUMNS)
         self._add_missing_columns("cut_requests", CUT_REQUEST_CLASS_COLUMNS)
+        self._add_missing_columns("cut_requests", CUT_REQUEST_MODE_COLUMNS)
         # Rows written when a transcript could not be fetched: nothing may be built on a title alone.
         self._conn.execute("DELETE FROM transcripts WHERE source=?", [METADATA_ONLY])
         self._conn.execute("DELETE FROM summaries WHERE source=?", [METADATA_ONLY])
