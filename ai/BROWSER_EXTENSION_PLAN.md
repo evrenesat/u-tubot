@@ -426,7 +426,6 @@ keeps the real per-preset length on screen) plus backend (`cuts.py`: cap no-targ
 the video and trim by rank, log kept/removed seconds per excerpt, supersede and requeue the near-full cuts made before the
 algorithm). This note is the extension's side of the parity box for that pull request.
 
-
 ## 4. Architecture
 
 ```
