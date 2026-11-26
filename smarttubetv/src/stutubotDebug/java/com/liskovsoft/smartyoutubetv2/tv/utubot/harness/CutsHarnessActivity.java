@@ -29,6 +29,7 @@ import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.renderer.CustomO
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.selector.RestoreTrackSelector;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutController;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutSkipper;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutTime;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotMeta;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
@@ -283,8 +284,15 @@ public class CutsHarnessActivity extends Activity {
         Cut cut = activeCut();
 
         if (cut != null) {
+            UtubotCutTime.CutPosition inCut = UtubotCutTime.of(cut, mController.getPositionMs());
+            long total = cut.keptMs > 0 ? cut.keptMs : inCut.totalKeptMs;
             text.append("\ncut applied: ").append(cut.skipRangesMs.size()).append(" skips, keeps ")
                     .append(UtubotCutController.formatLength(cut.keptMs));
+            text.append("\ncut time: ").append(UtubotCutController.formatLength(inCut.cutPositionMs)).append(" / ")
+                    .append(UtubotCutController.formatLength(total));
+            if (inCut.partIndex > 0 && inCut.partCount > 1) {
+                text.append("  part ").append(inCut.partIndex).append(" of ").append(inCut.partCount);
+            }
         } else {
             text.append("\ncut applied: none");
         }
