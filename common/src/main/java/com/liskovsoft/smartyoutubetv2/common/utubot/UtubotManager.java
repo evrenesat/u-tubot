@@ -7,6 +7,7 @@ import androidx.annotation.Nullable;
 
 import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItem;
+import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.BrowseSection;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
@@ -924,11 +925,6 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     /**
-     * A cut list to show the menu: the cache shown at once, refreshed in the background, and whether the
-     * dialog is to be rebuilt. A fresh list or a 304 do not rebuild an open menu (to keep its place on the
-     * TV), only the cache shown at once and a failure that shows it under a notice.
-     */
-    /**
      * The cached cut list of a video at once (shown immediately), refreshed in the background with
      * If-None-Match: a fresh list or a 304 does not rebuild an open menu, only a failure shows the cache
      * under a notice. The presets are cheap, so the cache is the menu's first frame when the server is slow.
@@ -987,13 +983,16 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
     private void refreshCuts(String videoId, @Nullable VideoMeta meta, ObservableEmitter<CutUpdate> emitter) {
         UtubotClient client = newClient();
+        emitter.setCancellable(client::cancel);
         String ifNoneMatch;
         boolean hadCache;
+        String cachedEtag;
 
         synchronized (mCuts) {
             CutEntry entry = mCuts.get(videoId);
             hadCache = entry != null;
             ifNoneMatch = entry != null ? entry.etag : null;
+            cachedEtag = ifNoneMatch;
         }
 
         Observable.<UtubotClient.CutCache>fromCallable(() -> client.cutsCache(videoId, ifNoneMatch, meta))
@@ -1004,7 +1003,10 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
                     }
 
                     if (cache.notModified) {
-                        return; // 304: the cache is current, keep it and the open menu's place
+                        // 304: the cache is current, keep it and the open menu's place
+                        mCutsLastFailed.remove(videoId);
+                        emitter.onComplete();
+                        return;
                     }
 
                     if (cache.cuts != null && cache.cuts.configured) {
@@ -1019,11 +1021,14 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
                             }
                         }
 
-                        // The first load with no cache shows the fresh list; a cache already shown is not rebuilt
-                        if (!hadCache && !emitter.isDisposed()) {
+                        // The first load with no cache shows the fresh list, and so does a list that differs from the cache
+                        // shown (a cut got ready, the selection moved); an identical one leaves the open menu alone
+                        if ((!hadCache || !Helpers.equals(cachedEtag, cache.etag)) && !emitter.isDisposed()) {
                             emitter.onNext(new CutUpdate(cache.cuts, false, true));
                         }
                     }
+
+                    emitter.onComplete();
                 }, error -> {
                     Log.d(TAG, "No cuts of %s: %s", videoId, error.getMessage());
 

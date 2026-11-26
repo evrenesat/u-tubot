@@ -1099,24 +1099,11 @@ def cut_document(
     return doc
 
 
-def cut_etag(cut: dict[str, Any]) -> str:
-    """A strong ETag for a cut document. A cut key never changes its content, so the content hash
-    is stable and is a valid strong validator (ai/CONTRACT.md, offline-first, issue 146)."""
-    blob = json.dumps(cut, sort_keys=True, separators=(",", ":"))
-    return '"' + hashlib.sha256(blob.encode()).hexdigest()[:32] + '"'
-
-
 def list_etag(entries: list[dict[str, Any]]) -> str:
-    """A strong ETag for a cut list. It changes only when a preset's state or one of its ready cuts
-    changes, so a client that re-validates with If-None-Match gets 304 when nothing moved."""
+    """A strong ETag for a cut list state: it changes whenever anything the menu shows changes (a preset's
+    state, a ready cut, the selection, the modes), so a re-validating client gets 304 only when nothing moved."""
     blob = "|".join(json.dumps(entry, sort_keys=True, separators=(",", ":")) for entry in entries)
     return '"' + hashlib.sha256(blob.encode()).hexdigest()[:32] + '"'
-
-
-def _state_with_etag(state: dict[str, Any]) -> dict[str, Any]:
-    """A preset state reduced to what moves the list ETag: its state and, when ready, the cut's own strong ETag."""
-    cut = state.get("cut")
-    return {"state": state.get("state"), "etag": cut_etag(cut) if isinstance(cut, dict) else None}
 
 
 class CutService:
@@ -1992,7 +1979,6 @@ class CutService:
             },
         ]
         out = []
-        etag_entries = []
         for prompt in self.presets(user):
             quick = self._preset_state(user, video_id, prompt, "quick")
             watched = self._preset_state(user, video_id, prompt, "watched")
@@ -2004,18 +1990,8 @@ class CutService:
                 "by_mode": {"quick": quick, "watched": watched},
             }
             out.append(entry)
-            # The list's validator changes only when a preset's state or a ready cut changes: each
-            # ready cut contributes its own strong ETag (cut_etag), so a re-validation is 304 until a
-            # cut moves. The cut document on the wire is left unchanged for earlier backends.
-            etag_entries.append(
-                {
-                    "id": prompt.id,
-                    "quick": _state_with_etag(quick),
-                    "watched": _state_with_etag(watched),
-                }
-            )
         by_id = {entry["id"]: entry for entry in out}
-        return {
+        state = {
             "configured": self.configured,
             "default_mode": default,
             "mode_rule": mode_rule,
@@ -2024,9 +2000,11 @@ class CutService:
             "channel_mode": self._channel_mode_value(user, channel_id),
             "modes": modes,
             "presets": out,
-            "etag": list_etag(etag_entries),
             "selection": self._selection(user, video_id, by_id),
         }
+        # The validator covers everything the menu shows (selection, modes and channel mode too), not only the presets
+        state["etag"] = list_etag([state])
+        return state
 
     def _selection(
         self, user: str, video_id: str, presets: dict[str, dict[str, Any]]

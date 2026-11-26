@@ -195,6 +195,23 @@ public class UtubotCutsOfflineTest {
     }
 
     @Test
+    public void aFreshListThatDiffersFromTheCacheRebuildsTheMenu() {
+        answerWithEtag(VIDEO);
+        seedCache(VIDEO);
+        mServer.on("/v1/videos/" + VIDEO + "/cuts", request -> {
+            TinyHttpServer.Response response = new TinyHttpServer.Response(200, BODY);
+            response.headers.put("etag", "\"changed\"");
+            return response;
+        });
+        Collector collector = observe(VIDEO);
+
+        List<CutUpdate> values = waitUntil(2, collector);
+
+        assertEquals(2, values.size());
+        assertFalse(values.get(1).stale);
+    }
+
+    @Test
     public void a304DoesNotRebuildTheOpenMenu() {
         answerWithEtag(VIDEO);
         seedCache(VIDEO);
