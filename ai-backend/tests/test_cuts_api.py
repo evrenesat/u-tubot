@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from tests.conftest import OTHER_TOKEN, TOKEN
+from tests.test_job_report import event, wait_state
 from utubot.app import create_app
 from utubot.captions.asr import make_asr
 from utubot.config import LLMTask
@@ -80,6 +81,24 @@ class TestCreateAndBuild:
         # The report carries the model answer and the job id.
         assert json.loads(doc["raw_answer"])["summary"] == "The demo part."
         assert doc["job_id"]
+
+    async def test_a_captions_job_reuses_a_cut_s_transcript_s_speech_recognition(self, cuts_env):
+        # a cut build first makes a transcript (speech recognition), then HQ captions reuse it
+        cuts_env.fetcher.text = None
+        before = len(cuts_env.llm.audio_calls)
+        r = await post_cut(cuts_env, preset="cut-demo")
+        cut_doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert cut_doc["state"] == "ready", cut_doc.get("error")
+        assert len(cuts_env.llm.audio_calls) == before + 1  # the cut's transcript ran ASR once
+        captions = (
+            await cuts_env.client.post(f"/v1/videos/{VID}/captions", json={"lang": "auto"})
+        ).json()
+        cap_doc = await wait_state(cuts_env.client, captions["job_id"])
+        assert cap_doc["state"] == "ready", cap_doc["events"]
+        asr = event(cuts_env, cap_doc["id"], "asr", "ok")["detail"]
+        assert asr["cached"] is True  # no second speech recognition
+        assert asr.get("reused_from_job")
+        assert len(cuts_env.llm.audio_calls) == before + 1  # the engine was not asked a second time
 
     async def test_queue_card_carries_video_facts_and_source(self, cuts_env):
         set_transcript(cuts_env.fetcher)

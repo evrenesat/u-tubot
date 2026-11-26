@@ -137,13 +137,19 @@ async def run_ffmpeg(*args: str) -> None:
 
 
 def wav_duration(path: Path, sample_rate: int = 16000) -> float:
-    """Seconds of audio in a PCM WAV file (from its header; by file size if the header is unreadable)."""
+    """Seconds of audio in a PCM WAV file (from its header; by file size if the header is unreadable).
+
+    A file that is not on disk (a direct ASR-stage call in a test, before the WAV is written) reads as
+    zero seconds: the caller only uses this for an estimate, never to fail on."""
     try:
         with wave.open(str(path), "rb") as fh:
             return fh.getnframes() / fh.getframerate()
-    except (wave.Error, EOFError):
-        bytes_per_sample = 2
-        return max(path.stat().st_size - 44, 0) / (sample_rate * bytes_per_sample)
+    except (wave.Error, EOFError, OSError):
+        try:
+            bytes_per_sample = 2
+            return max(path.stat().st_size - 44, 0) / (sample_rate * bytes_per_sample)
+        except OSError:
+            return 0.0
 
 
 async def audio_start_offset(path: Path) -> float:
