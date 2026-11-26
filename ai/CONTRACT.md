@@ -423,6 +423,7 @@ contract is built for both. Exceptions, each with its reason:
   the stream; the extension only draws HQ captions and reads no caption track of YouTube's page yet. Its row is in the plan's parity
   matrix; the extension sends the same body when it reads the page's own tracks.
 - `GET /app/update.json`: TV only. Firefox updates extensions itself.
+- Update interval and development mode (offering the install at once when idle): TV only, the extension is updated by Firefox.
 - "What's new" after an app update: TV only (the extension's own version history is the add-on's). The two lists of `GET /v1/changelog`
   (app versions, backend deploys) are in the extension options page too; until the options page exists, that is row `whats-new` of the
   plan's parity matrix.
