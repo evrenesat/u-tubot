@@ -20,6 +20,7 @@ so the other flavors behave as before.
 | `tv/ui/main/MainApplication.java` | `UtubotAppHooks.install` | busy badge on every screen but the player, which screen is up (video menu), the screen state of the cut-ready pop-up, and the cut watcher started |
 | `smarttubetv/src/stutubot/res/` | app label; icon, alternative icon, banner and the three header logos, rendered from `assets/brand/*.svg` by `assets/brand/render.py` | own identity, not Electric Eel's |
 | `smarttubetv/src/stutubot/AndroidManifest.xml` | literal `android:label="u·tubot"` on `<application>` (merged over main's `@string/app_name`; keep both the same) | the system installer's "App installed" screen read the label without resources and showed the class name |
+| `smarttubetv/src/main/AndroidManifest.xml` | `uses-feature` `leanback`, `usb.host` and `bluetooth` with `required="false"` and `tools:node="replace"` (a library's required feature wins the merge otherwise) | the package installs on a tablet; `UtubotTabletManifestTest` |
 | `common/src/stutubot/res/values/links.xml` | releases, sources, web site, feedback and About addresses of this repository, no donations, no Submit data server, the "Based on Electric Eel and SmartTube" credit | no upstream link is shown as ours |
 | `common/src/stutubot/res/values/release_notes.xml` | release notes URL of this repository, tag prefix `utubot-v` | Settings, Updates, Release notes lists our releases only |
 | `common/src/stutubot/res/values-da`, `values-fi` | the strings whose translation says "Electric Eel" | the app is called u·tubot |

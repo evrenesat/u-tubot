@@ -39,7 +39,18 @@
         android:required="false" />
     <uses-feature
         android:name="android.software.leanback"
-        android:required="true" />
+        android:required="false"
+        tools:node="replace" />
+    <!-- Not required, so the package also installs on tablets (no leanback system feature, maybe no USB host or Bluetooth).
+         tools:node="replace" because a library's required feature otherwise wins the merge. -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false"
+        tools:node="replace" />
+    <uses-feature
+        android:name="android.hardware.bluetooth"
+        android:required="false"
+        tools:node="replace" />
 
     <!-- android:usesCleartextTraffic - allow HTTP traffic -->
     <!-- Alt cleartext options: https://stackoverflow.com/questions/45940861/android-8-cleartext-http-traffic-not-permitted -->
