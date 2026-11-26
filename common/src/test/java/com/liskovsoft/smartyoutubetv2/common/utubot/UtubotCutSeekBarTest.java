@@ -5,6 +5,8 @@ import android.graphics.Color;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerUI;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.SeekBarSegment;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
 
 import org.junit.After;
 import org.junit.Test;
@@ -19,8 +21,10 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
@@ -151,6 +155,58 @@ public class UtubotCutSeekBarTest {
         UtubotCutSeekBar.paint(mPlayer);
 
         assertNull(mWritten.get(0));
+    }
+
+    @Test
+    public void theKeptPartsAreBrightAndTheCutOutsDarkAndHatched() {
+        Cut cut = new Cut();
+        cut.durationMs = 100_000;
+        cut.parts = Arrays.asList(part(10_000, 40_000), part(60_000, 90_000));
+        cut.skipRangesMs = Arrays.asList(new long[]{0, 10_000}, new long[]{40_000, 60_000}, new long[]{90_000, 100_000});
+
+        List<SeekBarSegment> segments = UtubotCutSeekBar.segmentsFor(cut, 100_000);
+
+        assertEquals(5, segments.size());
+        // kept parts come first: bright and plain
+        assertEquals(UtubotCutSeekBar.KEPT_COLOR, segments.get(0).color);
+        assertFalse(segments.get(0).hatched);
+        assertEquals(0.10f, segments.get(0).startProgress, 0.001f);
+        assertEquals(0.40f, segments.get(0).endProgress, 0.001f);
+        assertEquals(UtubotCutSeekBar.KEPT_COLOR, segments.get(1).color);
+        // then the cut-outs: dark and hatched
+        assertEquals(UtubotCutSeekBar.CUT_COLOR, segments.get(2).color);
+        assertTrue(segments.get(2).hatched);
+        assertEquals(0.40f, segments.get(3).startProgress, 0.001f);
+        assertEquals(0.60f, segments.get(3).endProgress, 0.001f);
+        assertTrue(segments.get(4).hatched);
+    }
+
+    @Test
+    public void aCutWithoutPartsStillDrawsItsKeptRanges() {
+        Cut cut = new Cut();
+        cut.durationMs = 100_000;
+        cut.skipRangesMs = Collections.singletonList(new long[]{20_000, 30_000});
+
+        List<SeekBarSegment> segments = UtubotCutSeekBar.segmentsFor(cut, 100_000);
+
+        assertEquals(3, segments.size()); // the two kept ranges and the cut-out between them
+        assertEquals(UtubotCutSeekBar.KEPT_COLOR, segments.get(0).color);
+        assertEquals(0f, segments.get(0).startProgress, 0.001f);
+        assertEquals(0.20f, segments.get(0).endProgress, 0.001f);
+        assertTrue(segments.get(2).hatched);
+    }
+
+    @Test
+    public void anUnknownDurationDrawsNoSegments() {
+        assertTrue(UtubotCutSeekBar.segmentsFor(new Cut(), 0).isEmpty());
+        assertTrue(UtubotCutSeekBar.segmentsFor(null, 100_000).isEmpty());
+    }
+
+    private static CutPart part(long startMs, long endMs) {
+        CutPart part = new CutPart();
+        part.startMs = startMs;
+        part.endMs = endMs;
+        return part;
     }
 
     private Video video(String id) {

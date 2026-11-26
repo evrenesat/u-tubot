@@ -1,6 +1,8 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import android.content.Context;
+import android.os.SystemClock;
+import android.view.KeyEvent;
 
 import androidx.annotation.Nullable;
 
@@ -14,10 +16,10 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.BasePlayerController;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.controllers.SponsorBlockController;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
-import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.SeekBarSegment;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
+import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerTweaksData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SponsorBlockData;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
@@ -46,8 +48,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     private static final long READY_OFFER_MS = 8_000;
     private static final int CUT_DIALOG_ID = 154;
     private static final int READY_DIALOG_ID = 155;
-    /** The colour of the skipped parts on the seek bar: dimmed, clearly not a sponsor block category */
-    private static final int SKIP_COLOR = 0x99607080;
+    /** Two presses of the same direction within this window are the jump gesture; a held key never sends a second one */
+    private static final long DOUBLE_PRESS_MS = 450;
     @Nullable
     private Video mVideo;
     @Nullable
@@ -73,6 +75,11 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     private Disposable mPoll;
     /** The last cut-time label written to the player button, so a tick that computes the same string does not rewrite it */
     private String mLastCutLabel;
+    @Nullable
+    private UtubotCutBadge mBadge;
+    private int mLastJumpKey;
+    private long mLastJumpKeyMs;
+    private long mLastJumpPositionMs;
 
     @Override
     public void onNewVideo(Video item) {
@@ -157,6 +164,100 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         if (mSkipper != null && getPlayer() != null) {
             mSkipper.onSeek(getPlayer().getPositionMs());
         }
+
+        updateBadge();
+    }
+
+    /**
+     * The double press of the configured direction jumps to the next or the previous kept part. The gesture is guarded: while the
+     * controls or the suggestions overlay owns the D-pad it never takes a press, and neither does it in a direction the player's
+     * quick skip would consume (that press loads another video). Any other key breaks the pair. A single press, a held key and a
+     * press without an applied cut all pass through and keep their meaning.
+     */
+    @Override
+    public boolean onKeyDown(int keyCode) {
+        if (mCut == null || mSkipper == null || getContext() == null) {
+            resetJumpPress();
+            return false;
+        }
+
+        int binding = UtubotSettings.instance(getContext()).getCutJumpBinding();
+
+        if (binding == UtubotSettings.CUT_JUMP_OFF) {
+            resetJumpPress();
+            return false;
+        }
+
+        boolean upDown = binding == UtubotSettings.CUT_JUMP_UP_DOWN;
+        int nextKey = upDown ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_RIGHT;
+        int previousKey = upDown ? KeyEvent.KEYCODE_DPAD_DOWN : KeyEvent.KEYCODE_DPAD_LEFT;
+
+        if (keyCode != nextKey && keyCode != previousKey) {
+            // Right, Up, Right must not be a double press: every other key breaks the pair
+            resetJumpPress();
+            return false;
+        }
+
+        if (!canJump(upDown)) {
+            resetJumpPress();
+            return false;
+        }
+
+        long now = SystemClock.uptimeMillis();
+        boolean isSecondPress = keyCode == mLastJumpKey && now - mLastJumpKeyMs <= DOUBLE_PRESS_MS;
+
+        if (!isSecondPress) {
+            mLastJumpKey = keyCode;
+            mLastJumpKeyMs = now;
+            // The first press still runs the player's normal seek, so the pair remembers where the gesture started: the jump is
+            // computed from that position, not from where the seek left the playback
+            mLastJumpPositionMs = getPlayer().getPositionMs();
+            return false; // the first press does what it always does
+        }
+
+        long fromMs = mLastJumpPositionMs;
+        resetJumpPress();
+        jumpToKeptPart(keyCode == nextKey, fromMs);
+
+        return true; // the gesture is consumed, also when no kept part is left: it must not fall through to a seek
+    }
+
+    /**
+     * The gesture does not take over a press the player's own controls need: the overlay (controls or suggestions) owns the D-pad,
+     * and a quick-skip direction would load the next or previous video instead
+     */
+    private boolean canJump(boolean upDown) {
+        PlaybackView player = getPlayer();
+        Video video = getVideo();
+
+        if (player == null || video == null) {
+            return false;
+        }
+
+        if (player.isOverlayShown() || player.isSuggestionsShown()) {
+            return false;
+        }
+
+        PlayerTweaksData tweaks = getPlayerTweaksData();
+        boolean quickSkip = upDown
+                ? (video.belongsToShortsGroup() ? tweaks.isQuickSkipShortsAltEnabled() : tweaks.isQuickSkipVideosAltEnabled())
+                : (video.belongsToShortsGroup() ? tweaks.isQuickSkipShortsEnabled() : tweaks.isQuickSkipVideosEnabled());
+
+        return !quickSkip;
+    }
+
+    private void resetJumpPress() {
+        mLastJumpKey = 0;
+        mLastJumpKeyMs = 0;
+        mLastJumpPositionMs = 0;
+    }
+
+    /**
+     * A key the player's own UI consumed before this controller (OK, Back, a menu or a number, a media key) breaks the pair too:
+     * those presses never reach {@link #onKeyDown}.
+     */
+    public void resetJumpGesture() {
+        resetJumpPress();
     }
 
     @Override
@@ -174,6 +275,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
     public void onFinish() {
         stopSkipping();
         mReadyCuts = null;
+        destroyBadge();
         mCut = null; // the playback is gone: a picker of this video from a list starts it again, with its cut carried to the player
 
         // A pick guarded this open only; an off still guards the next open until the viewer picks a cut here again
@@ -493,11 +595,13 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         mCut = cut;
         mSkipper = new UtubotCutSkipper(cut, activeSponsorSegments(), this::isSponsorSegmentSkipped);
-        UtubotCutSeekBar.setCut(cut.videoId, toSeekBarSegments(cut, getPlayer().getDurationMs()));
+        resetJumpPress();
+        UtubotCutSeekBar.setCut(cut.videoId, UtubotCutSeekBar.segmentsFor(cut, getPlayer().getDurationMs()));
         UtubotCutSeekBar.paint(getPlayer());
         mLastCutLabel = null;
         refreshCutLabel();
         startPolling();
+        showLegendOnce();
 
         // Applying a cut is an explicit act, not a seek: when the playback is already inside a dropped range (an intro drop the video
         // plays in, or a cut picked up mid-drop), it jumps once to the end of it, with the usual Skipped toast as the undo
@@ -507,6 +611,8 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         if (decision.isJump()) {
             skipTo(decision.jumpToMs, positionMs);
         }
+
+        updateBadge();
     }
 
     /**
@@ -582,6 +688,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         if (mCut != null) {
             refreshCutLabel();
         }
+        updateBadge(); // a paused playback inside a cut-out keeps the badge and its countdown
 
         if (mSkipper == null || mCut == null || !getPlayer().isPlaying()) {
             return;
@@ -593,6 +700,128 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         if (decision.isJump()) {
             skipTo(decision.jumpToMs, positionMs);
         }
+
+        updateBadge();
+    }
+
+    /**
+     * The next or the previous kept part of the applied cut, counted from where the gesture started (the first press still ran the
+     * player's normal seek in between). The next jump goes past the sponsor segments the destination touches, like every other cut
+     * jump. A direction with no part left moves nowhere (the second press is already consumed).
+     */
+    private void jumpToKeptPart(boolean next, long positionMs) {
+        PlaybackView player = getPlayer();
+
+        if (player == null || mCut == null || mSkipper == null) {
+            return;
+        }
+
+        long targetMs = next ? UtubotCutNavigator.nextPartStartMs(mCut, positionMs)
+                : UtubotCutNavigator.previousPartStartMs(mCut, positionMs);
+
+        if (targetMs == UtubotCutNavigator.NONE) {
+            return;
+        }
+
+        seekToKeptPart(targetMs, next);
+    }
+
+    /**
+     * The one place a jump to a kept part's start lands (the double press here, a part picked in the list): going forward it passes the
+     * sponsor segments the destination touches, like every other cut jump, and it never goes past the end of the video.
+     */
+    void seekToKeptPart(long partStartMs, boolean forward) {
+        PlaybackView player = getPlayer();
+
+        if (player == null || mSkipper == null) {
+            return;
+        }
+
+        long destinationMs = forward ? mSkipper.destination(partStartMs) : partStartMs;
+        long durationMs = player.getDurationMs();
+
+        if (durationMs > 0) {
+            destinationMs = Math.min(destinationMs, durationMs);
+        }
+
+        player.setPositionMs(destinationMs);
+        updateBadge();
+    }
+
+    private void updateBadge() {
+        Cut cut = mCut;
+        PlaybackView player = getPlayer();
+
+        if (cut == null || player == null || getContext() == null) {
+            hideBadge();
+            return;
+        }
+
+        UtubotCutNavigator.Badge state = UtubotCutNavigator.badgeAt(cut, player.getPositionMs());
+
+        if (!state.visible) {
+            hideBadge();
+            return;
+        }
+
+        if (mBadge == null) {
+            mBadge = UtubotCutBadge.attach(getContext());
+        }
+
+        if (mBadge == null) {
+            return;
+        }
+
+        if (state.hasNext()) {
+            long remainingMs = Math.max(0, state.remainingMs);
+            remainingMs = ((remainingMs + 999) / 1_000) * 1_000; // the countdown never shows 0:00 before the part starts
+            mBadge.show(getContext().getString(R.string.utubot_cut_outside, formatLength(remainingMs)));
+        } else {
+            mBadge.show(getContext().getString(R.string.utubot_cut_outside_last));
+        }
+    }
+
+    private void hideBadge() {
+        if (mBadge != null) {
+            mBadge.hide();
+        }
+    }
+
+    private void destroyBadge() {
+        if (mBadge != null) {
+            mBadge.destroy();
+            mBadge = null;
+        }
+    }
+
+    /**
+     * The colours and the jump gesture are new the first time a cut is applied: said once, then never again.
+     */
+    private void showLegendOnce() {
+        Context context = getContext();
+
+        if (context == null) {
+            return;
+        }
+
+        UtubotSettings settings = UtubotSettings.instance(context);
+
+        if (settings.isCutLegendShown()) {
+            return;
+        }
+
+        settings.setCutLegendShown(true);
+
+        String jump = "";
+        int binding = settings.getCutJumpBinding();
+
+        if (binding == UtubotSettings.CUT_JUMP_LEFT_RIGHT) {
+            jump = context.getString(R.string.utubot_cut_legend_jump_left_right);
+        } else if (binding == UtubotSettings.CUT_JUMP_UP_DOWN) {
+            jump = context.getString(R.string.utubot_cut_legend_jump_up_down);
+        }
+
+        MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_legend, jump));
     }
 
     private void skipTo(long toMs, long fromMs) {
@@ -876,28 +1105,12 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         return action == SponsorBlockData.ACTION_SKIP_ONLY || action == SponsorBlockData.ACTION_SKIP_WITH_TOAST;
     }
 
-    private List<SeekBarSegment> toSeekBarSegments(Cut cut, long durationMs) {
-        List<SeekBarSegment> segments = new ArrayList<>();
-
-        if (durationMs <= 0) {
-            return segments;
-        }
-
-        for (long[] range : cut.skipRangesMs) {
-            SeekBarSegment segment = new SeekBarSegment();
-            segment.startProgress = (float) range[0] / durationMs;
-            segment.endProgress = (float) range[1] / durationMs;
-            segment.color = SKIP_COLOR;
-            segments.add(segment);
-        }
-
-        return segments;
-    }
-
     private void stopSkipping() {
         stopPolling();
         mSkipper = null;
         mPendingCut = null;
+        resetJumpPress();
+        hideBadge();
     }
 
     /**

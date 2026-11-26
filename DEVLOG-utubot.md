@@ -159,6 +159,26 @@
   retried, no double answer). Browser extension: parity matrix row 34.
 - Verified with JDK 25: the new tests and `:common:testStutubotDebugUnitTest` (all u·tubot tests), plus the TV module build.
 
+## 2026-11-25 (kept-part jump, outside-the-cut badge, clear seek bar, issue 104)
+
+- Double-press Right/Left (or Up/Down; Off) jumps to the next or previous kept part of an applied cut (`UtubotCutNavigator`,
+  Settings, u·tubot, "Jump between kept parts"). The first press keeps its normal seek, a held key stays fast seek, any other key
+  breaks the pair, and the next jump goes past the sponsor segments at its destination like the cut's own skips. A direction
+  with no part left moves nowhere, and the second press is consumed there rather than falling through to a seek. The gesture is
+  guarded while the controls/suggestions overlay owns the D-pad and while a quick-skip direction would consume the press (that
+  direction loads another video), so it does not take Leanback or quick-skip presses. The controller keeps its place after
+  `SponsorBlockController`; `VideoPlayerGlue` already sends every key-down through the chain before the progress bar seek, and
+  the sponsor watcher's `onVideoLoaded` still starts the segment refresh the cut's skipper merges with before the cut applies.
+- Inside a cut-out range a small unfocused badge at the top left says "Outside the cut · ▶▶ next part in 2:10" (or that no kept
+  part follows) and goes away in a kept part (`UtubotCutBadge`).
+- The seek bar draws kept parts bright cyan and cut-out ranges dark with a diagonal hatch, the knob stays on top, and a new
+  segment list replaces the rectangles of the old one, so taking a cut off leaves only the sponsor colours (`SeekBar`). The
+  colours and gesture are explained once (`UtubotCutSeekBar.segmentsFor`). Unit tests: `UtubotCutNavigatorTest`,
+  `UtubotCutSeekBarTest`, `UtubotCutControllerTest` (state machine and guards) and the TV's `SeekBarSegmentsTest` (replacement).
+- Browser extension: parity matrix row `cut-jump-badge` (keyboard shortcut, touch button, badge), row `cut-seekbar` unchanged. The jump lands in
+  `UtubotCutController.seekToKeptPart` so a part picked from a list can reuse it. No extension
+  code yet.
+
 ## 2026-11-24 (director's cuts for long videos, issue 95)
 
 - Cuts no longer refuse long videos: a transcript over `[cuts] max_input_tokens` is read in excerpts (chapter boundaries, small overlap),

@@ -43,12 +43,14 @@ so the other flavors behave as before.
 | `app/presenters/service/SidebarService.java` | the Processed default section, past the other entries and before Settings, only when `UtubotSettings.isBuiltIn()`; the saved sidebar keeps the ids of the default sections it knew, and a restore adds a current default missing from them once (a section the user turned off stays off), so existing installs get the section | the built-in flavor's sidebar, no change in the other flavors |
 | `common/.../utubot/UtubotProcessedOpen.java` | new: `isProcessed` (the card's group carries the section, also on a cached replay), `open` requests the video's HQ captions and starts the normal playback path (`PlaybackPresenter.openVideo`); nothing carries or applies a cut | a Processed tile opens with its HQ captions; the #64 cut controller opens it with the chosen or last-used cut, else offers the ready ones, as at any video start (u-tubot#66, step 4) |
 | `common/.../utubot/UtubotCaptionsOpen.java` | new: one video's selection request, taken by the player (`take`) with a short expiry | the tile's caption request reaches the playback without changing the automatic setting |
-| `app/presenters/PlaybackPresenter.java` | `UtubotCutController` registered after `SponsorBlockController`, gated by `UtubotSettings.isBuiltIn()` | the director's cut of the video that plays: a player controller like the sponsor block's |
+| `app/presenters/PlaybackPresenter.java` | `UtubotCutController` registered after `SponsorBlockController`, gated by `UtubotSettings.isBuiltIn()` | the director's cut of the video that plays and its double-press kept-part jump. The order is not changed: `VideoPlayerGlue` sends every key-down through the chain before the progress bar's seek handler, the sponsor watcher's `onVideoLoaded` starts the segment refresh the cut's skipper merges with, and the gesture is guarded (the controls overlay and a quick-skip direction keep their press) |
 | `tv/ui/playback/other/VideoPlayerGlue.java` | `UtubotCutAction` put into the action map and added to the secondary row (`onCreateSecondaryActions`); `setButtonLabel` changes an action's label | the Director's cut picker of the playing video from the player controls, and its "Cut: Half · 41:20" label while a cut is on |
 | `app/models/playback/manager/PlayerUI.java`, `tv/ui/playback/PlaybackFragment.java`, `tv/ui/widgets/embedplayer/EmbedPlayerView.java` | `setButtonLabel(buttonId, label)` added to the player UI (the embed player has no controls and does nothing) | lets the cut controller show the applied cut on the player button |
+| `tv/ui/mod/leanback/misc/SeekBar.java` | a segment with `hatched` set is drawn with diagonal lines over its colour; a new segment list replaces the rectangles of the old one (a `null` or another list clears first) | the cut-out ranges of a director's cut are dimmed *and* hatched, not just another grey, and taking a cut off leaves no kept or cut-out rectangles underneath the sponsor colours |
+| `app/models/playback/ui/SeekBarSegment.java` | `hatched` flag (additive, default false) | the seek bar gets the cut-out pattern without a second segment type |
 | `smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/utubot/UtubotCutAction.java` | new: `Action` with the `action_utubot_cut` id, the u·tubot symbol and the label "Director's cut…"; `isAvailable` is the flavor and backend gate | the player's cut button |
 | `common/src/main/res/values/ids.xml` | `action_utubot_cut` id | the player button, whose click reaches `UtubotCutController.onButtonClicked` |
-| `app/models/playback/controllers/SponsorBlockController.java` | `onNewVideo` wipes through `UtubotCutSeekBar.wipe` and its own seek-bar segments go through `UtubotCutSeekBar.setSponsor`; `getActiveSegments()` exposes the segments of the video that plays | the cut's dimmed skips stay on the seek bar (its reset for a new video keeps a cut of the same video, its own markers are laid next to the cut's), and the cut's jump goes past the sponsor segments that would jump after it: one jump, not two. Without a cut both writes behave exactly as before. Known for the real-device pass (u-tubot#1): chapter markers still write straight to the seek bar, so their order against `onMetadata` can hide the dims on a chaptered video (recorded in the DEVLOG) |
+| `app/models/playback/controllers/SponsorBlockController.java` | `onNewVideo` wipes through `UtubotCutSeekBar.wipe` and its own seek-bar segments go through `UtubotCutSeekBar.setSponsor`; `getActiveSegments()` exposes the segments of the video that plays | the cut's bright kept parts and dark hatched cut-outs stay on the seek bar (its reset for a new video keeps a cut of the same video, its own markers are laid next to the cut's), and the cut's jump goes past the sponsor segments that would jump after it: one jump, not two. Without a cut both writes behave exactly as before. Known for the real-device pass (u-tubot#1): chapter markers still write straight to the seek bar, so their order against `onMetadata` can hide the cut's colours on a chaptered video (recorded in the DEVLOG) |
 | `misc/AppDataSourceManager.java` | Settings entry "u·tubot", with its own tile icon `R.drawable.settings_utubot` | settings screen; Content filtering keeps `settings_aislist` |
 | `common/src/main/res/drawable-nodpi/settings_utubot.png` | new: the symbol, white on transparent, 302x302 with the canvas and padding of `settings_about.png`; `assets/brand/render.py` draws it from `utubot-symbol-mono.svg` | tile of the u·tubot Settings entry |
 | `utils/SimpleEditDialog.java` | `showNumber` | numeric pairing code dialog |
@@ -57,7 +59,7 @@ so the other flavors behave as before.
 | `exoplayer/selector/TrackSelectorUtil.java` | track name lookup | "u·tubot: label" in the subtitle picker |
 | `exoplayer/selector/TrackSelectorManager.java` | `findUtubotCaptionTrack` first in `findBestMatch`, `invalidateSubtitles` | an HQ track is picked by its id, not by the language it shares with YouTube's track |
 | `app/models/playback/controllers/VideoStateController.java` | `restoreSubtitleFormat` leaves the HQ track of the video selected | the saved subtitle choice (usually none) is applied twice per video, the second time after the HQ track was picked (#31) |
-| `app/models/playback/controllers/PlayerUIController.java` | `onTrackSelected` refreshes the CC button | the button follows a track the app picked |
+| `app/models/playback/controllers/PlayerUIController.java` | `onTrackSelected` refreshes the CC button; a key it consumes calls `UtubotCutController.resetJumpGesture` | the button follows a track the app picked, and OK, Back, a menu or a number key breaks the cut's double press even though it never reaches the cut controller |
 | `tv/presenter/VideoCardPresenter.java` | mark with own colour, `addMark` overload, card tag | mark rendering, panel reads the focused card |
 | `tv/ui/modern/widgets/ModernVideoCard.java` | card tag | panel reads the focused card |
 | `tv/ui/common/LeanbackActivity.java` | `UtubotPanelController` (key dispatch, resume, pause) | passive Summary panel and the Summary view (not in the player activity) |
@@ -222,6 +224,25 @@ so the other flavors behave as before.
   a request the follower never learned, such as one ordered from the cut sheet with no preset id, still asks. Network errors do not
   lose an order: it is retried (1 s, 2 s, 5 s, 10 s, then every 30 s) until it is ready, failed or older than 30 minutes. Ready,
   failed and dismissed requests leave the list, and a backend or token change clears it.
+- Director's cuts, kept-part navigation and the outside-the-cut badge (issue 104): double-press Right/Left (or Up/Down, Settings,
+  u·tubot, "Jump between kept parts"; Off turns it off) jumps to the start of the next/previous kept part (`UtubotCutNavigator`).
+  The first press keeps its normal seek and the pair remembers the position it started from, so the jump is counted from there even
+  when that seek lands in another part (`mLastJumpPositionMs`). A held key is not a double press; any other key breaks the pair,
+  including the keys `PlayerUIController` consumes before the cut controller (they call `resetJumpGesture`). The next jump goes
+  past the sponsor segments the destination touches like every cut jump. The gesture is guarded: while the controls or suggestions
+  overlay owns the D-pad it never takes a press, and neither does it in a direction the player's quick skip would consume (that
+  press loads another video), so it coexists with the existing seek, SponsorBlock and Leanback controls. A direction with no part
+  left moves nowhere and the second press is consumed there instead of falling through to a seek. The controller keeps its place
+  after `SponsorBlockController`: `VideoPlayerGlue` already sends every key-down through the chain before the progress bar's seek
+  handler, the sponsor watcher's `onVideoLoaded` still starts the segment refresh the cut's skipper merges with first, and no reorder is
+  needed. While the playback is inside a cut-out range a small, unfocused badge at the top left says "Outside the cut · ▶▶ next
+  part in 2:10" (or that no kept part follows) and goes away in a kept part (`UtubotCutBadge`, fed by the existing 1 s cut tick).
+  The seek bar draws the kept parts bright cyan and the cut-outs dark with a diagonal hatch (`UtubotCutSeekBar.segmentsFor`), the
+  knob stays on top, a new segment list replaces the old rectangles, and the colours are explained once when a cut first applies.
+  Unit tests: `UtubotCutNavigatorTest` (next/previous: start, middle, last part, none left; badge state), `UtubotCutSeekBarTest`
+  (kept bright, cut-out dark and hatched) and `UtubotCutControllerTest` (the gesture's state machine, the overlay and quick-skip
+  guards, none left consumed, a jump from inside a cut-out counted from the first press, a key consumed by the player UI breaking
+  the pair), plus the TV's `SeekBarSegmentsTest` (a list replaces the rectangles).
 - With the Summary view open the focus never rests on the screen under it: the first D-pad key, OK or Enter after the grid took
   the focus back restores the view's focus and is used (`UtubotKeys.actsOnFocus`).
 

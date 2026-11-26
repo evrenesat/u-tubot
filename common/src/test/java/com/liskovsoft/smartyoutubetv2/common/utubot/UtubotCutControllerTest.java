@@ -1,6 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import android.content.Context;
+import android.view.KeyEvent;
 
 import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
@@ -8,6 +9,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCatego
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
+import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerTweaksData;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutPart;
@@ -22,6 +24,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowSystemClock;
 import org.robolectric.shadows.ShadowToast;
 
 import java.io.IOException;
@@ -34,7 +37,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.function.Consumer;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -51,6 +54,8 @@ import static org.junit.Assert.assertTrue;
 public class UtubotCutControllerTest {
     private static final String VIDEO = "Lqig_Ui9Hh0";
     private static final String REQUEST = "cut1";
+    private static final long NAV_CUT_DURATION_MS = 70_000;
+    private static final long DOUBLE_PRESS_GAP_MS = 451;
 
     private final FakeScheduler mScheduler = new FakeScheduler();
     private final Queue<Object> mCutsAnswers = new ConcurrentLinkedQueue<>();
@@ -102,6 +107,9 @@ public class UtubotCutControllerTest {
     public void tearDown() {
         UtubotCutSeekBar.setCut(null, null);
         UtubotSettings.instance(mContext).setApplyReadyCutsEnabled(false);
+        UtubotSettings.instance(mContext).setCutJumpBinding(UtubotSettings.CUT_JUMP_LEFT_RIGHT);
+        PlayerTweaksData.instance(mContext).setQuickSkipVideosEnabled(false);
+        PlayerTweaksData.instance(mContext).setQuickSkipVideosAltEnabled(false);
     }
 
     @Test
@@ -853,13 +861,212 @@ public class UtubotCutControllerTest {
         assertEquals("Highlights in 5 min", UtubotCutController.presetTitle("Highlights in 5 min", UtubotModels.UNKNOWN));
     }
 
+    /**
+     * The gesture of the double press: the next/previous part math is in UtubotCutNavigatorTest, this is the state machine and the
+     * guards that keep the press from the player's own controls and from a quick-skip direction.
+     */
+    private void applyNavigableCutAt(long positionMs) {
+        mController.open(video(VIDEO), NAV_CUT_DURATION_MS);
+        mController.setPosition(positionMs);
+        assertTrue(mController.toggle(navigableCut()));
+        assertEquals(positionMs, mController.position());
+    }
+
+    @Test
+    public void aSinglePress_keepsItsMeaning() {
+        applyNavigableCutAt(15_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        assertEquals(15_000, mController.position());
+    }
+
+    @Test
+    public void aDoublePressRight_jumpsToTheNextKeptPart() {
+        applyNavigableCutAt(15_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        assertTrue(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+
+        assertEquals(30_000, mController.position());
+    }
+
+    @Test
+    public void aDoublePressLeft_jumpsToThePreviousKeptPart() {
+        applyNavigableCutAt(35_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_LEFT));
+        assertTrue(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_LEFT));
+
+        assertEquals(10_000, mController.position());
+    }
+
+    /**
+     * The first press still runs the player's normal seek, so the jump must be counted from where the gesture started: from inside
+     * the cut-out 20-30 s, the next kept part is 30 s even though the seek already moved the playback into 30-40 s
+     */
+    @Test
+    public void aDoublePressRight_fromInsideACutOut_jumpsToThePartRightAfterIt() {
+        applyNavigableCutAt(15_000);
+        mController.setPosition(24_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        mController.setPosition(34_000); // the 10 s the player's first press seeks
+        assertTrue(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+
+        assertEquals(30_000, mController.position());
+    }
+
+    /**
+     * The same from the cut-out towards the start: the first press's 10 s seek lands in the kept 10-20 s, but the previous kept part of
+     * where the gesture started is still the one at 10 s
+     */
+    @Test
+    public void aDoublePressLeft_fromInsideACutOut_jumpsToThePartBeforeIt() {
+        applyNavigableCutAt(35_000);
+        mController.setPosition(24_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_LEFT));
+        mController.setPosition(14_000); // the 10 s the player's first press seeks
+        assertTrue(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_LEFT));
+
+        assertEquals(10_000, mController.position());
+    }
+
+    @Test
+    public void aKeyConsumedByThePlayerUI_breaksThePair() {
+        applyNavigableCutAt(15_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        mController.resetJumpGesture(); // OK, Back, a menu or a number key: consumed before the cut controller
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+
+        assertEquals(15_000, mController.position());
+    }
+
+    @Test
+    public void anOtherKeyBetweenThePresses_breaksThePair() {
+        applyNavigableCutAt(15_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_UP)); // not the bound direction: the pair is broken
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+
+        assertEquals(15_000, mController.position());
+    }
+
+    @Test
+    public void twoPressesOutsideTheWindow_areTwoSingles() {
+        applyNavigableCutAt(15_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        ShadowSystemClock.advanceBy(UtubotCutControllerTest.DOUBLE_PRESS_GAP_MS, TimeUnit.MILLISECONDS);
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+
+        assertEquals(15_000, mController.position());
+    }
+
+    @Test
+    public void aDoublePressWithTheControlsShown_doesNotJump() {
+        applyNavigableCutAt(15_000);
+        mController.showOverlay(true);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+
+        assertEquals(15_000, mController.position());
+    }
+
+    @Test
+    public void aDoublePressWithTheSuggestionsShown_doesNotJump() {
+        applyNavigableCutAt(15_000);
+        mController.showSuggestions(true);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+
+        assertEquals(15_000, mController.position());
+    }
+
+    @Test
+    public void aDoublePressWithQuickSkipVideos_doesNotJump() {
+        applyNavigableCutAt(15_000);
+        PlayerTweaksData.instance(mContext).setQuickSkipVideosEnabled(true);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+
+        assertEquals(15_000, mController.position());
+    }
+
+    @Test
+    public void aDoublePressUpDownWithTheAltQuickSkip_doesNotJump() {
+        UtubotSettings.instance(mContext).setCutJumpBinding(UtubotSettings.CUT_JUMP_UP_DOWN);
+        applyNavigableCutAt(15_000);
+        PlayerTweaksData.instance(mContext).setQuickSkipVideosAltEnabled(true);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_UP));
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_UP));
+
+        assertEquals(15_000, mController.position());
+    }
+
+    @Test
+    public void theLastKeptPart_hasNoNextAndTheSecondPressMovesNowhere() {
+        applyNavigableCutAt(55_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        assertTrue(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT)); // consumed, not an ordinary seek or quick skip
+
+        assertEquals(55_000, mController.position());
+    }
+
+    @Test
+    public void theFirstKeptPart_hasNoPreviousAndTheSecondPressMovesNowhere() {
+        applyNavigableCutAt(15_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_LEFT));
+        assertTrue(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_LEFT));
+
+        assertEquals(15_000, mController.position());
+    }
+
+    @Test
+    public void withTheJumpOff_thePressesPassThrough() {
+        UtubotSettings.instance(mContext).setCutJumpBinding(UtubotSettings.CUT_JUMP_OFF);
+        applyNavigableCutAt(15_000);
+
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+        assertFalse(mController.onKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT));
+
+        assertEquals(15_000, mController.position());
+    }
+
+    private Cut navigableCut() {
+        Cut cut = cut(VIDEO);
+        cut.label = "No filler";
+        cut.durationMs = NAV_CUT_DURATION_MS;
+        cut.parts = Arrays.asList(part(10_000, 20_000), part(30_000, 40_000), part(50_000, 60_000));
+        cut.skipRangesMs = Arrays.asList(new long[]{0, 10_000}, new long[]{20_000, 30_000},
+                new long[]{40_000, 50_000}, new long[]{60_000, 70_000});
+        return cut;
+    }
+
+    private static CutPart part(long startMs, long endMs) {
+        CutPart part = new CutPart();
+        part.startMs = startMs;
+        part.endMs = endMs;
+        return part;
+    }
+
     private static final class TestCutController extends UtubotCutController {
         private Video mVideo;
         private PlaybackView mPlayer;
         private long mDurationMs;
         private String mButtonLabel;
-        /** The proxy reads the current position from here, so a tick can move the playback into a kept part */
-        private final long[] mPosition = {0};
+        private long mPositionMs;
+        private boolean mOverlayShown;
+        private boolean mSuggestionsShown;
+        private boolean mEngineInitialized;
 
         void attach(Context context) {
             setAltContext(context);
@@ -868,8 +1075,12 @@ public class UtubotCutControllerTest {
         void open(Video video, long durationMs) {
             mVideo = video;
             setBaseControllerVideo(video);
-            mPlayer = player(durationMs, true, mPosition, label -> mButtonLabel = label);
             mDurationMs = durationMs;
+            mPositionMs = 0;
+            mOverlayShown = false;
+            mSuggestionsShown = false;
+            mEngineInitialized = true;
+            mPlayer = player();
         }
 
         /**
@@ -884,10 +1095,6 @@ public class UtubotCutControllerTest {
             } catch (ReflectiveOperationException e) {
                 throw new AssertionError(e);
             }
-        }
-
-        void setPosition(long ms) {
-            mPosition[0] = ms;
         }
 
         /**
@@ -911,13 +1118,30 @@ public class UtubotCutControllerTest {
         void releasePlayer() {
             // Like PlaybackFragment.releasePlayer: the view stays as the presenter's weak reference, its engine is gone (and the stale
             // length it reports must not count either)
-            mPlayer = player(mDurationMs, false, mPosition);
+            mEngineInitialized = false;
+            mPlayer = player();
         }
 
         void close() {
             mVideo = null;
             setBaseControllerVideo(null);
             mPlayer = null;
+        }
+
+        void setPosition(long positionMs) {
+            mPositionMs = positionMs;
+        }
+
+        long position() {
+            return mPositionMs;
+        }
+
+        void showOverlay(boolean shown) {
+            mOverlayShown = shown;
+        }
+
+        void showSuggestions(boolean shown) {
+            mSuggestionsShown = shown;
         }
 
         @Override
@@ -929,57 +1153,58 @@ public class UtubotCutControllerTest {
         public PlaybackView getPlayer() {
             return mPlayer;
         }
-    }
 
-    /**
-     * A player of a known length whose engine stands initialized: the defaults answer every other call
-     */
-    private static PlaybackView player(long durationMs) {
-        return player(durationMs, true, new long[]{0});
-    }
+        /**
+         * A player view of this controller's length and position: a setPositionMs is the move the gesture makes
+         */
+        private PlaybackView player() {
+            return (PlaybackView) Proxy.newProxyInstance(PlaybackView.class.getClassLoader(), new Class<?>[]{PlaybackView.class},
+                    (proxy, method, args) -> {
+                        if ("getDurationMs".equals(method.getName())) {
+                            return mDurationMs;
+                        }
 
-    private static PlaybackView player(long durationMs, boolean engineInitialized) {
-        return player(durationMs, engineInitialized, new long[]{0}, label -> { });
-    }
+                        if ("isEngineInitialized".equals(method.getName())) {
+                            return mEngineInitialized;
+                        }
 
-    private static PlaybackView player(long durationMs, boolean engineInitialized, long[] position) {
-        return player(durationMs, engineInitialized, position, label -> { });
-    }
+                        if ("getPositionMs".equals(method.getName())) {
+                            return mPositionMs;
+                        }
 
-    private static PlaybackView player(long durationMs, boolean engineInitialized, long[] position, Consumer<String> onButtonLabel) {
-        return (PlaybackView) Proxy.newProxyInstance(PlaybackView.class.getClassLoader(), new Class<?>[]{PlaybackView.class},
-                (proxy, method, args) -> {
-                    if ("getDurationMs".equals(method.getName())) {
-                        return durationMs;
-                    }
+                        if ("setPositionMs".equals(method.getName())) {
+                            mPositionMs = (long) args[0];
+                            return null;
+                        }
 
-                    if ("getPositionMs".equals(method.getName())) {
-                        return position[0];
-                    }
+                        if ("setButtonLabel".equals(method.getName())) {
+                            mButtonLabel = String.valueOf(args[1]);
+                            return null;
+                        }
 
-                    if ("isEngineInitialized".equals(method.getName())) {
-                        return engineInitialized;
-                    }
+                        if ("isOverlayShown".equals(method.getName())) {
+                            return mOverlayShown;
+                        }
 
-                    if ("setButtonLabel".equals(method.getName())) {
-                        onButtonLabel.accept(String.valueOf(args[1]));
+                        if ("isSuggestionsShown".equals(method.getName())) {
+                            return mSuggestionsShown;
+                        }
+
+                        Class<?> type = method.getReturnType();
+
+                        if (type == boolean.class) {
+                            return false;
+                        } else if (type == int.class) {
+                            return 0;
+                        } else if (type == long.class) {
+                            return 0L;
+                        } else if (type == float.class) {
+                            return 0f;
+                        }
+
                         return null;
-                    }
-
-                    Class<?> type = method.getReturnType();
-
-                    if (type == boolean.class) {
-                        return false;
-                    } else if (type == int.class) {
-                        return 0;
-                    } else if (type == long.class) {
-                        return 0L;
-                    } else if (type == float.class) {
-                        return 0f;
-                    }
-
-                    return null;
-                });
+                    });
+        }
     }
 
     private int readyOfferId() {
