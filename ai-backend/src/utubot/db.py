@@ -188,6 +188,12 @@ CREATE TABLE IF NOT EXISTS failures(
    detail TEXT, flagged INTEGER NOT NULL DEFAULT 0, client TEXT);
 CREATE INDEX IF NOT EXISTS failures_ts ON failures(ts DESC);
 CREATE INDEX IF NOT EXISTS failures_category ON failures(category, ts DESC);
+CREATE TABLE IF NOT EXISTS user_providers(
+   user TEXT PRIMARY KEY, base_url TEXT NOT NULL, api_key_hash TEXT NOT NULL, api_key TEXT NOT NULL,
+   updated_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS user_usage(
+   user TEXT NOT NULL, day TEXT NOT NULL, cost REAL NOT NULL DEFAULT 0, calls INTEGER NOT NULL DEFAULT 0,
+   PRIMARY KEY(user, day));
 """
 
 JOB_COLUMNS = {

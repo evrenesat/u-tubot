@@ -203,6 +203,14 @@ class NewUser(BaseModel):
     password: str | None = Field(default=None, max_length=512)
 
 
+class ProviderBody(BaseModel):
+    """One user's own upstream: an OpenAI-compatible base url and the key that authenticates there.
+    Sent by a user for themselves; the key is stored on the server, never returned."""
+
+    base_url: str = Field(min_length=1, max_length=512)
+    api_key: str = Field(min_length=1, max_length=4096)
+
+
 class UserPatch(BaseModel):
     admin: bool | None = None
     prime: bool | None = None

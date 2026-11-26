@@ -25,6 +25,13 @@ from .usage import (
     METRIC_LLM_PROMPT_TOKENS,
     Usage,
 )
+from .userproviders import (
+    USER_PROVIDER,
+    PerUserUsage,
+    UserBudgetError,
+    current_user,
+    current_user_provider,
+)
 
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 THINK_OPEN_RE = re.compile(r"^.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -201,6 +208,7 @@ class LLMClient:
         self.cfg = cfg
         self.usage = Usage(db)
         self.features = FeatureStore(cfg, db)
+        self.user_usage = PerUserUsage(db)
         self._limiters: dict[str, PriorityLimiter] = {}
         self._http = httpx.AsyncClient(timeout=cfg.llm.timeout_s, transport=transport)
 
@@ -210,16 +218,29 @@ class LLMClient:
     def limiter(self, provider: str) -> PriorityLimiter:
         lim = self._limiters.get(provider)
         if lim is None:
-            pc = self.cfg.llm.providers[provider]
-            # A slot kept for prime only makes sense with the class system; without `[classes]`
-            # the route model is used exactly as before, so no slot is reserved.
-            reserved_prime = pc.reserved_prime if self.cfg.classes_configured else 0
-            lim = self._limiters[provider] = PriorityLimiter(
-                pc.max_concurrent, pc.reserved_interactive, reserved_prime
-            )
+            pc = self.cfg.llm.providers.get(provider)
+            if pc is not None:
+                # A slot kept for prime only makes sense with the class system; without `[classes]`
+                # the route model is used exactly as before, so no slot is reserved.
+                reserved_prime = pc.reserved_prime if self.cfg.classes_configured else 0
+                lim = self._limiters[provider] = PriorityLimiter(
+                    pc.max_concurrent, pc.reserved_interactive, reserved_prime
+                )
+            else:
+                # A user's own upstream is not in `[llm.providers]` (or the active identity is the
+                # synthetic USER_PROVIDER key): a modest shared slot limit, no prime reservation.
+                lim = self._limiters[provider] = PriorityLimiter(2, 1, 0)
         return lim
 
     def resolve(self, task: LLMTask, model: str | None) -> tuple[str, str]:
+        up = current_user_provider()
+        if up is not None:
+            # The caller's own upstream is the endpoint (its base url and key are bound separately);
+            # the model is the requested one, with any `provider:` prefix dropped since the endpoint
+            # is fixed. Every fallback in the chain runs on the same upstream.
+            name = model or task.model
+            _, sep, rest = name.partition(":")
+            return USER_PROVIDER, (rest if sep else name)
         providers = self.cfg.llm.providers
         provider = task.provider or self.cfg.llm.default_provider
         name = model or task.model
@@ -268,9 +289,18 @@ class LLMClient:
         llm = self.cfg.llm
         return llm.deadline_interactive_s if priority == INTERACTIVE else llm.deadline_background_s
 
+    def _endpoint(self, provider: str) -> tuple[str, str | None]:
+        """Where one call goes and which key authenticates it: the caller's own upstream when one is
+        bound, else the configured provider's base url and its env-var key."""
+        up = current_user_provider()
+        if up is not None:
+            return up.base_url, up.api_key
+        pc = self.cfg.llm.providers[provider]
+        return pc.base_url, self.cfg.api_key(provider)
+
     def _headers(self, provider: str) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        key = self.cfg.api_key(provider)
+        key = self._endpoint(provider)[1]
         if key:
             headers["Authorization"] = f"Bearer {key}"
         return headers
@@ -292,7 +322,7 @@ class LLMClient:
         klass = normalize_class(klass if klass is not None else current_class())
         loop = asyncio.get_running_loop()
         llm = self.cfg.llm
-        url = llm.providers[provider].base_url.rstrip("/") + "/chat/completions"
+        url = self._endpoint(provider)[0].rstrip("/") + "/chat/completions"
         limiter = self.limiter(provider)
         attempt = 0
         while True:
@@ -349,13 +379,14 @@ class LLMClient:
         feature: str | None = None,
     ) -> Completion:
         klass = normalize_class(klass if klass is not None else current_class())
-        llm = self.cfg.llm
         loop = asyncio.get_running_loop()
         started = loop.time()
         if deadline_at is None:
             deadline_at = loop.time() + self.deadline_for(priority, deadline_s)
         chain = self.chain(task, model, feature)
         last: LLMError | None = None
+        caller = current_user()
+        budget = self.cfg.usage.user_budget_usd
         for idx, (provider, name) in enumerate(chain):
             body: dict[str, Any] = {
                 "model": name,
@@ -365,7 +396,13 @@ class LLMClient:
             }
             if task.reasoning_effort:
                 body["reasoning_effort"] = task.reasoning_effort
-            if json_mode and llm.providers[provider].json_mode:
+            # A user's own upstream runs on their daily budget: refuse before the send once it is hit.
+            if caller is not None and budget > 0:
+                spent, _ = self.user_usage.daily(caller)
+                if spent >= budget:
+                    raise UserBudgetError(f"{caller} reached their daily budget of ${budget:.2f}")
+            pc = self.cfg.llm.providers.get(provider)
+            if json_mode and pc is not None and pc.json_mode:
                 body["response_format"] = {"type": "json_object"}
             share = (deadline_at - loop.time()) / (len(chain) - idx)
             try:
@@ -385,6 +422,8 @@ class LLMClient:
                 feature, alias, elapsed_ms, prompt_tokens, completion_tokens, cost
             )
             run_accumulate(cost)
+            if caller is not None:
+                self.user_usage.add(caller, cost)
             return self._parse(resp)
         raise last or LLMError("no llm model configured")
 
