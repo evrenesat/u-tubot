@@ -62,6 +62,20 @@
 
 - The Settings section "u·tubot" is now "AI features" (switches, summary delay, reading pace, auto captions, auto cuts, cut jump, prompts) and a new "Backend" section (`UtubotBackendSettingsPresenter`: Import setup, Pair with code, Test connection, u·tubot web admin, Advanced with the address and token). Browse refresh moved to System, General; update check interval and development mode moved to Updates. Every option has a one-line description. Docs and string references follow the new names.
 
+## 2026-11-26 (UTB-226 r0: Real-Debrid film streams spike)
+
+- Spike to play Real-Debrid film streams in the u·tubot player (codec check + first playable slice). Added `ExoMediaSourceFactory.fromProgressiveUrl`
+  and `ExoPlayerController.openProgressiveUrl` next to the `urlList` path, a `UtubotRealDebridClient` that POSTs a Stremio addon's
+  `{addon}/Streams/{imdbId}` (Torrentio/Comet/MediaFusion) and parses the answer into `Stream`s (name/url/infoHash/resolution/sizeBytes; Real-Debrid
+  flagged by a `debrid` name hint or a `bd:` link; the Real-Debrid token is added only to Real-Debrid links), and `UtubotRealDebridSkips` that turns a
+  hand-written `start,end` spec into `SponsorSegment`s fed through the new `SponsorBlockController.applyHandWrittenSkips` so a cut-style skip plays without
+  a director's cut. A hidden `RealDebridHarnessActivity` (debug-only, `stutubotDebug`) reads `--es imdb_id/addon_url/rd_token/skips` to paste a title, list
+  the streams and play one, through the real engine and controller.
+- Tests: `UtubotRealDebridClientTest` (12) and `UtubotRealDebridSkipsTest` (5) all pass; `:common:testStutubotDebugUnitTest`,
+  `:smarttubetv:assembleStutubotDebug` and `:smarttubetv:testStutubotDebugUnitTest` are green. No codec check yet — the player plays whatever the media
+  source decodes, so confirming a Real-Debrid stream actually renders on the TCL and adding an explicit codec filter (when the owner wants one) are the next
+  steps. Documented in `ai/APP_INTEGRATION.md` and this log; no extension change (the film list is a TV-only spike, no parity row).
+
 ## 2026-11-26 (voice plan checkpoint 0: gates, issue #180)
 
 - `ai/VOICE_CONTROL_PLAN.md`: owner decisions recorded (all as recommended; R2T4 is MIT, evrenesat/r2t4#22). Measured on the owner's server, from the backend's container with its own gateway key, no config changed: speech-to-text `stt` 50th 0.34 s / 90th 0.43 s; intent `fast` 12.2 / 25.4 s and `coder` 3.0 / 5.4 s (both aliases think despite `reasoning_effort: none`, 3 of 20 calls hit the 120-token cap); no speech-out route on the gateway; backend loop on `/v1/health` 1.9 / 2.2 ms, worst 57 to 111 ms; WebSocket through the proxy chain not provable without a config change. Sections 2.5 and 5.2 carry the numbers and who must act; the infra task is evrenesat/evreniops#250.

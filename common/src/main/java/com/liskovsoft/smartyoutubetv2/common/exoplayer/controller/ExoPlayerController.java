@@ -456,6 +456,15 @@ public class ExoPlayerController implements Player.EventListener {
         openMediaSource(mediaSource);
     }
 
+    /**
+     * A single progressive stream (a Real-Debrid direct link, a muxed MP4/MKV): one extractor source, next to {@link #openUrlList}. The
+     * codec check reads what decoder ExoPlayer picks from it (FormatAttempts, PlaybackHealth).
+     */
+    public void openProgressiveUrl(String url) {
+        MediaSource mediaSource = mMediaSourceFactory.fromProgressiveUrl(url);
+        openMediaSource(mediaSource);
+    }
+
     public void openMerged(MediaItemFormatInfo formatInfo, String hlsPlaylistUrl) {
         MediaSource dashMediaSource = mMediaSourceFactory.fromDashFormatInfo(formatInfo);
         MediaSource hlsMediaSource = mMediaSourceFactory.fromHlsPlaylist(hlsPlaylistUrl);
