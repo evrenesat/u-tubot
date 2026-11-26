@@ -1,3 +1,24 @@
+## 2026-11-26 (director's cuts review r4: target cut stays in band, watch guards match)
+
+- **Target cut stays in band (r3 finding, MEDIUM).** `select_for_target` charged a part's own
+  padded length to the stop/trim decision, but a part landing under `merge_gap_s` of the kept chain
+  merges and pulls the sub-gap into the cut, so the merged cut could finish past `high` even though
+  `total + _padded_s(part) <= high`. The decision and `_trim_to` now charge the merged increase
+  (`_kept_total_s(chosen + [part]) - _kept_total_s(chosen)`, and the trim budget reduced by the
+  bridge gain), so a part that would merge past the band is trimmed at a unit boundary or skipped.
+  The docstring's "gaps under `merge_gap_s` cannot re-add filler and push the cut past the accepted
+  band" is now true. Test: `test_a_part_that_bridges_a_gap_does_not_push_the_cut_past_the_band`
+  (8 ~7 s parts merge to 57.7 s; a 10 s part 1.9 s later would make 69.6 s, over the 51-69 s band;
+  the selection keeps the cut at 57.7 s).
+- **Watch keep guards match the TV path (r3 minor).** `watch/service.py` still computed the guards
+  with the old inline expression, so `cut-answer`/`cut-demo` kept the lower guard while the TV path
+  let them be short. Extracted `keep_guards_for(preset_id, target_s)` (`keep_guards` plus "a
+  length-targeted cut defers to the band") and use it in both the TV and the Watched build, so the
+  two paths behave identically. Test: `test_a_targeted_cut_defers_to_the_band_not_the_keep_guard`.
+- Tests: backend `1226 passed`; `ruff check` and `ruff format --check` clean. `pillow` is the
+  optional `watched` extra, so the watch tests need it installed. No wire change: the contract
+   (`ai/CONTRACT.md`, target-length addendum) already stated the merged-length-band guarantee.
+
 ## 2026-11-24 (UTB-25 watched cuts, backend checkpoints 1-4)
 
 1. **Modes.** `[cuts] default_mode` / `UserPolicy.cut_mode` (per-user `cuts.cut_mode`, read-only on the TV, changed in the web
