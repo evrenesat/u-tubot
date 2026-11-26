@@ -178,6 +178,19 @@ public class ModernNavRail extends FrameLayout {
     }
 
     /**
+     * Update the label of an existing section in place, e.g. to show an unread count. The rail model holds the section by
+     * reference, so the title is updated there too; the focused item is re-applied so its label keeps its color.
+     */
+    public void setSectionTitle(int sectionId, String title) {
+        View item = findItem(TYPE_SECTION, sectionId);
+
+        if (item != null) {
+            ((TextView) item.findViewById(R.id.modern_rail_label)).setText(ModernText.sentenceCase(title));
+            applyState();
+        }
+    }
+
+    /**
      * The account item can be hidden (top buttons setting).
      */
     public void setAccountVisible(boolean visible) {

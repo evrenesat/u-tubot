@@ -123,6 +123,25 @@
 - Not ported from the closed PR: its `keep_guards`/`keep_guards_for` rework (lower guard for the no-filler preset only, none for a
    typed prompt) contradicts main's `short_presets` rule, and its `min_guard` parameter of `finalize_parts`.
 
+## 2026-11-26 (Inbox: one tile per ready result, issue 169)
+
+- The Inbox is a new section (sidebar id 27) with one tile per ready result — a director's cut, a summary, a research answer,
+  the HQ captions — newest first. Each tile shows what the result is (and its language for research and captions); opening it
+  plays the cut, opens the video and fetches the captions, shows the research in a dialog, or opens the video with the captions
+  on. A "N unread" badge marks the results the user hasn't opened yet. Read state is per user and global: any client (TV, phone,
+  extension) marks a result read, so the badge clears everywhere. A result is hidden ("Hide result") on long-press: it leaves
+  the Inbox and the grid but stays in the user's results and can be added again.
+- Backend: `GET /v1/inbox?limit` returns the caller's items (`KIND_CUT/SUMMARY/RESEARCH/CAPTIONS`), and `POST /v1/inbox/read`,
+  `/read-all` and `/dismiss` update the per-user state. The contract (`ai/CONTRACT.md`) carries the addendum and the endpoints.
+  This commit wires the TV side: opening the Inbox marks the caller's results read (`UtubotManager.readAllInbox`, best-effort)
+  and clears the badge locally while the section is open; long-press shows a "Hide result" entry (`UtubotInboxDismissProvider`,
+  gated to Inbox tiles) that hides the item on the server and removes it from the grid.
+- The Inbox item id is carried on the tile (`Video.inboxId`), so the tile can be marked read and dismissed. Tests: `UtubotInboxParserTest`
+  (parse, empty, failed), `UtubotInboxSectionTest` (tile details, detail/label, unread count, newest first, only Inbox tiles are
+  cards, the tile carries its id), `UtubotInboxOpenTest` (cut/summary/research/captions open, not-Inbox, failed, summary detail
+  from the result id), `UtubotInboxClientTest` (list, read, read-all, dismiss) and `UtubotInboxDismissProviderTest` (offered only
+  on Inbox tiles). The extension side is the parity matrix row `inbox` in `ai/BROWSER_EXTENSION_PLAN.md`.
+
 ## 2026-11-26 (cuts: the player shows cut time and part number, flow-80)
 
 - While a director's cut is applied, the player's cut button shows the cut's name and the position and length in cut time
@@ -250,7 +269,7 @@
   video and follower ownership, a follower's ready-cut offer and a cut taken over after the question was kept are not asked twice,
   the Yes path through the real open, popup text, Yes/No/Back, failure at the next screen), `UtubotScreenTest` (any
   screen, dialog over player) and `UtubotCutPromptQueueTest` (Yes opens, No stays, several cuts one at a time, a blocked question
-  retried, no double answer). Browser extension: parity matrix row 34.
+  retried, no double answer). Browser extension: parity matrix row `inbox`.
 - Verified with JDK 25: the new tests and `:common:testStutubotDebugUnitTest` (all u·tubot tests), plus the TV module build.
 
 ## 2026-11-25 (kept-part jump, outside-the-cut badge, clear seek bar, issue 104)

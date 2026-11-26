@@ -22,4 +22,5 @@ public interface BrowseView {
     void focusOnContent();
     boolean isEmpty();
     void updateBadge();
+    void updateSectionTitle(int sectionId, String title);
 }

@@ -1047,6 +1047,10 @@ public class BrowsePresenterCacheTest {
         public void updateBadge() {
         }
 
+        @Override
+        public void updateSectionTitle(int sectionId, String title) {
+        }
+
         private int refreshSubscriptions() {
             return refreshSubscriptions;
         }

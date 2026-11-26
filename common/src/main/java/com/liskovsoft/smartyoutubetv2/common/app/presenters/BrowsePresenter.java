@@ -60,7 +60,10 @@ import com.liskovsoft.smartyoutubetv2.common.prefs.MainUIData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SectionFilterData;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBrowseCache;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotInboxOpen;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotInboxSection;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.InboxList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotProcessedOpen;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotProcessedSection;
@@ -90,6 +93,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     private static final String TAG = BrowsePresenter.class.getSimpleName();
     // A row whose next pages have only videos the rows above have (see DuplicateFilter) stops looking after these
     private static final int MAX_DUPLICATE_PAGES = 5;
+    /**
+     * How often the Inbox's unread badge re-checks the backend while the browse UI is up: enough to show a result that became ready
+     * after the viewer left the Inbox, without a network call on every rail move. Package-private so a test can force a check.
+     */
+    static final long INBOX_BADGE_REFRESH_MS = 5_000;
     @SuppressLint("StaticFieldLeak")
     private static BrowsePresenter sInstance;
     private final List<BrowseSection> mSections;
@@ -99,6 +107,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     private final Map<Integer, Callable<List<SettingsItem>>> mSettingsGridMapping;
     private final Map<Integer, Callable<List<Video>>> mLocalGridMappings;
     private final Map<Integer, Observable<ProcessedList>> mProcessedMapping;
+    private final Map<Integer, Observable<InboxList>> mInboxMapping;
     private final Map<Integer, BrowseSection> mSectionsMapping;
     private final AppDataSourceManager mDataSourcePresenter;
     private final BrowseProcessorManager mBrowseProcessor;
@@ -119,6 +128,12 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     private BrowseSection mCurrentSection;
     private Video mCurrentVideo;
     private long mLastUpdateTimeMs = -1;
+    /** The caller's unread inbox count, last known from the backend: the Inbox rail's badge while the Inbox is not open */
+    private int mInboxUnread;
+    /** When the inbox unread badge last re-checked the backend, to avoid a call on every rail move (see INBOX_BADGE_REFRESH_MS) */
+    private long mInboxBadgeLastRefreshMs;
+    /** The inbox unread badge's refresh, tracked apart from the section loads (disposeActions would drop it): disposed before re-subscribing */
+    private Disposable mInboxBadgeAction;
     private int mBootSectionIndex;
     private int mBootstrapSectionId = -1;
     private Locale mSectionsLocale;
@@ -152,6 +167,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         mSettingsGridMapping = new HashMap<>();
         mLocalGridMappings = new HashMap<>();
         mProcessedMapping = new HashMap<>();
+        mInboxMapping = new HashMap<>();
         mSectionsMapping = new HashMap<>();
         MediaServiceManager.instance().addAccountListener(this);
 
@@ -224,6 +240,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     public void onViewResumed() {
         super.onViewResumed();
 
+        // The browse UI is back (the player just closed, the app returned to the foreground): a result that became ready while
+        // watching shows on the Inbox rail's badge, so the badge is fresh without opening the Inbox
+        refreshInboxBadge();
         refreshIfNeeded();
         MediaServiceManager.instance().warmUpPlaybackIfExpired();
     }
@@ -280,6 +299,7 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         initSettingsGridMapping();
         initLocalGridMapping();
         initProcessedMapping();
+        initInboxMapping();
     }
 
     /**
@@ -289,6 +309,16 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         if (UtubotSettings.isBuiltIn()) {
             mProcessedMapping.put(UtubotProcessedSection.ID,
                     UtubotManager.instance(getContext()).processedObserve(UtubotProcessedSection.LIMIT));
+        }
+    }
+
+    /**
+     * The u-tubot Inbox section (u-tubot #160): one tile per ready result, its content comes from the backend, not YouTube
+     */
+    private void initInboxMapping() {
+        if (UtubotSettings.isBuiltIn()) {
+            mInboxMapping.put(UtubotInboxSection.ID,
+                    UtubotManager.instance(getContext()).inboxObserve(UtubotInboxSection.LIMIT));
         }
     }
 
@@ -324,13 +354,18 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         mSectionsMapping.put(MediaGroup.TYPE_NOTIFICATIONS, new BrowseSection(MediaGroup.TYPE_NOTIFICATIONS, getContext().getString(R.string.header_notifications), BrowseSection.TYPE_GRID, R.drawable.icon_notification, false));
         mSectionsMapping.put(MediaGroup.TYPE_PLAYBACK_QUEUE, new BrowseSection(MediaGroup.TYPE_PLAYBACK_QUEUE, getContext().getString(R.string.playback_queue_category_title), BrowseSection.TYPE_GRID, R.drawable.icon_queue, false));
 
-        // Past the built-in entries. The flavor has the u-tubot layer built in: the section comes from the backend, not YouTube
-        if (UtubotSettings.isBuiltIn()) {
-            BrowseSection processed = new BrowseSection(UtubotProcessedSection.ID,
-                    getContext().getString(R.string.utubot_processed_title), BrowseSection.TYPE_GRID, R.drawable.icon_playlist);
-            processed.setMessage(getContext().getString(R.string.utubot_processed_message));
-            mSectionsMapping.put(UtubotProcessedSection.ID, processed);
-        }
+         // Past the built-in entries. The flavor has the u-tubot layer built in: the section comes from the backend, not YouTube
+         if (UtubotSettings.isBuiltIn()) {
+             BrowseSection processed = new BrowseSection(UtubotProcessedSection.ID,
+                     getContext().getString(R.string.utubot_processed_title), BrowseSection.TYPE_GRID, R.drawable.icon_playlist);
+             processed.setMessage(getContext().getString(R.string.utubot_processed_message));
+             mSectionsMapping.put(UtubotProcessedSection.ID, processed);
+
+             BrowseSection inbox = new BrowseSection(UtubotInboxSection.ID,
+                     getContext().getString(R.string.utubot_inbox_title), BrowseSection.TYPE_GRID, R.drawable.icon_playlist);
+             inbox.setMessage(getContext().getString(R.string.utubot_inbox_message));
+             mSectionsMapping.put(UtubotInboxSection.ID, inbox);
+         }
 
         if (getSidebarService().isSettingsSectionEnabled()) {
             mSectionsMapping.put(MediaGroup.TYPE_SETTINGS, new BrowseSection(MediaGroup.TYPE_SETTINGS, getContext().getString(R.string.header_settings), BrowseSection.TYPE_SETTINGS_GRID, R.drawable.icon_settings));
@@ -682,6 +717,12 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
             return;
         }
 
+        // An Inbox tile is a ready result already: open it where it stands (see UtubotInboxOpen)
+        if (UtubotInboxOpen.isInbox(item)) {
+            UtubotInboxOpen.open(getContext(), item);
+            return;
+        }
+
         // Check that channels new look enabled and we're on the first column
         if (belongsToChannelUploadsMultiGrid(item)) {
             if (getMainUIData().isUploadsAutoLoadEnabled()) {
@@ -979,6 +1020,16 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         saveSelectedItems(); // save previous state
         mCurrentSection = findSectionById(sectionId);
         mCurrentVideo = null; // fast scroll through the sections (fix empty selected item)
+
+        // Opening the Inbox marks the caller's results read: the state is on the server, shared across the user's clients,
+        // so the new-results badge clears here and on the phone and the extension (see updateInboxBadge)
+        if (mCurrentSection != null && mCurrentSection.getId() == UtubotInboxSection.ID) {
+            mActions.add(RxHelper.execute(UtubotManager.instance(getContext()).readAllInbox()));
+        } else {
+            // The Inbox is not open: refresh its unread badge, so a result that became ready while watching shows on the rail
+            refreshInboxBadge();
+        }
+
         updateCurrentSection();
         restoreSelectedItems(); // Don't place anywhere else
     }
@@ -1424,9 +1475,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                 if (mGridMapping.containsKey(section.getId())) {
                     Observable<MediaGroup> group = mGridMapping.get(section.getId());
                     updateVideoGrid(section, group, section.isAuthOnly());
-                } else if (mProcessedMapping.containsKey(section.getId())) {
-                    updateProcessedGrid(section);
-                } else if (mLocalGridMappings.containsKey(section.getId())) {
+                 } else if (mProcessedMapping.containsKey(section.getId())) {
+                     updateProcessedGrid(section);
+                 } else if (mInboxMapping.containsKey(section.getId())) {
+                     updateInboxGrid(section);
+                 } else if (mLocalGridMappings.containsKey(section.getId())) {
                     Callable<List<Video>> localVideos = mLocalGridMappings.get(section.getId());
                     updateLocalGrid(section, localVideos);
                 }
@@ -1908,6 +1961,160 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                         });
 
         mActions.add(updateAction);
+    }
+
+    /**
+     * The u-tubot Inbox section: its tiles from the backend answer, newest first as it lists them (see UtubotInboxSection). One tile
+     * per ready result, with its unread count in the section title (the badge, u-tubot #160). Empty and failed loads say so in a
+     * u-tubot message, and a cached section keeps its cards on a failed refresh.
+     */
+    private void updateInboxGrid(BrowseSection section) {
+        disposeActions();
+        mInvalidatedCachedSections.remove(section.getId());
+
+        if (getView() == null) {
+            Log.e(TAG, "Browse view has been unloaded from the memory. Low RAM?");
+            getViewManager().startView(BrowseView.class);
+            return;
+        }
+
+        // No backend yet: the section says how to set one instead of failing with "Bad backend address"
+        if (!UtubotSettings.instance(getContext()).isConfigured()) {
+            getView().showProgressBar(false);
+            getView().showError(UtubotSectionError.notConfigured(getContext()));
+            return;
+        }
+
+        Observable<InboxList> inbox = mInboxMapping.get(section.getId());
+
+        if (inbox == null) {
+            return;
+        }
+
+        Log.d(TAG, "updateInboxGrid: Start loading section: " + section.getTitle());
+
+        boolean cached = mCachedContentShown && mCachedShownGroups != null;
+
+        getView().showProgressBar(!cached);
+
+        if (!cached) {
+            VideoGroup clear = VideoGroup.from(section);
+            clear.setAction(VideoGroup.ACTION_REPLACE);
+            getView().updateSection(clear);
+        }
+
+        Disposable updateAction = inbox.observeOn(AndroidSchedulers.mainThread())
+                .subscribe(
+                        list -> {
+                            if (getView() == null) {
+                                Log.e(TAG, "Browse view has been unloaded from the memory. Low RAM?");
+                                getViewManager().startView(BrowseView.class);
+                                return;
+                            }
+
+                            getView().showProgressBar(false);
+
+                            updateInboxBadge(section, list);
+
+                            VideoGroup videoGroup = UtubotInboxSection.toGroup(getContext(), section, list);
+
+                            if (cached) {
+                                int oldId = findCachedGroupId(videoGroup.getPosition());
+
+                                if (oldId != -1) {
+                                    videoGroup.setId(oldId);
+                                }
+                            }
+
+                            Video focusedBefore = mCurrentVideo;
+                            getView().updateSection(videoGroup);
+
+                            if (cached) {
+                                restoreCachedFocusedItem(videoGroup, focusedBefore);
+                            }
+
+                            mBrowseProcessor.process(videoGroup);
+                            saveCachedGroup(section, videoGroup);
+
+                            if (videoGroup.isEmpty()) {
+                                getView().showError(UtubotSectionError.empty(getContext()));
+                            }
+                        },
+                        error -> {
+                            Log.e(TAG, "updateInboxGrid error: %s", error.getMessage());
+                            if (handleCachedRefreshError(error, section, -1)) {
+                                return;
+                            }
+                            if (getView() == null) {
+                                return;
+                            }
+                            getView().showProgressBar(false);
+                            getView().showError(UtubotSectionError.failed(getContext(), error));
+                        }, () -> {
+                            finishCachedRefresh(section, -1);
+                        });
+
+        mActions.add(updateAction);
+    }
+
+    /**
+     * The Inbox rail's badge: the unread count, so the rail shows new results without opening the section. The count is shared per
+     * user (the phone and the extension see the same), so it is the same everywhere. Set while the Inbox is not open, cleared while it
+     * is open (the results are on the screen the user is looking at). The old guard returned before setting the badge whenever the
+     * Inbox was open, which was the only time this ran, so the badge never showed.
+     */
+    private void updateInboxBadge(BrowseSection section, InboxList list) {
+        if (getView() == null || list == null || list.items == null) {
+            return;
+        }
+
+        mInboxUnread = list.unreadCount();
+        String baseTitle = getContext().getString(R.string.utubot_inbox_title);
+
+        // The Inbox is open: the results are on screen, so the badge clears (and on the phone and the extension)
+        if (mCurrentSection != null && mCurrentSection.getId() == UtubotInboxSection.ID) {
+            getView().updateSectionTitle(section.getId(), baseTitle);
+            return;
+        }
+
+        // The Inbox is not open (watching, another section): the unread count is the badge, refreshed when the browse UI returns
+        // (see refreshInboxBadge). Empty means none.
+        if (mInboxUnread <= 0) {
+            getView().updateSectionTitle(section.getId(), baseTitle);
+            return;
+        }
+
+        section.setTitle(getContext().getString(R.string.utubot_inbox_badge, mInboxUnread));
+        getView().updateSectionTitle(section.getId(), section.getTitle());
+    }
+
+    /**
+     * Re-check the Inbox's unread count so the rail shows a result that became ready after the viewer left the Inbox (a cut ready
+     * while watching). Best-effort: a backend that does not answer leaves the badge as it is. Called when the browse UI returns, so
+     * the badge is fresh without opening the Inbox (see onViewResumed and onSectionFocused).
+     */
+    private void refreshInboxBadge() {
+        if (System.currentTimeMillis() - mInboxBadgeLastRefreshMs < INBOX_BADGE_REFRESH_MS) {
+            return;
+        }
+        mInboxBadgeLastRefreshMs = System.currentTimeMillis();
+
+        BrowseSection inboxSection = findSectionById(UtubotInboxSection.ID);
+        Observable<InboxList> inbox = (inboxSection == null) ? null : mInboxMapping.get(UtubotInboxSection.ID);
+        if (getView() == null || inbox == null || inboxSection == null) {
+            return;
+        }
+
+        // Tracked apart from the section loads: a section load disposes the actions and would drop the badge refresh before it
+        // answers. Dispose the previous refresh so the latest one wins, then subscribe again.
+        if (mInboxBadgeAction != null) {
+            mInboxBadgeAction.dispose();
+        }
+
+        Log.d(TAG, "Refresh the Inbox unread badge");
+        mInboxBadgeAction = inbox.observeOn(AndroidSchedulers.mainThread())
+                .subscribe(item -> updateInboxBadge(inboxSection, item),
+                        error -> Log.d(TAG, "Can't refresh the Inbox badge: %s", error.getMessage()));
     }
 
     private int findCachedGroupId(int position) {

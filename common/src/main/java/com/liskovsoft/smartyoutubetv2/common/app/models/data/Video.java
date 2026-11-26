@@ -58,6 +58,8 @@ public final class Video {
     public int aiMarkList = -1; // AiSListFilterData.LIST_* the channel is marked for, or -1
     public boolean isCollaboration; // marked as a collaboration (see CollaborationManager)
     public String utubotMark; // the label of the u-tubot mark or null (see UtubotManager)
+    public String inboxKind; // the kind of an Inbox section tile (see UtubotInboxSection), or null for a normal card
+    public long inboxId; // the inbox item id, so a tile can be marked read or dismissed (see UtubotInboxSection)
     public boolean isInWatchLater; // marked as in Watch later (see WatchLaterManager)
     public boolean isShowMarked; // marked as a show (see ShowsData)
     public boolean isStreamedMarked; // marked as a live stream that ended (see StreamedData)

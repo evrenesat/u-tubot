@@ -160,6 +160,12 @@ CREATE INDEX IF NOT EXISTS feature_calls_feature ON feature_calls(feature, ts);
 CREATE TABLE IF NOT EXISTS feature_audit(
   id INTEGER PRIMARY KEY AUTOINCREMENT, feature TEXT NOT NULL, from_alias TEXT, to_alias TEXT,
   changed_by TEXT NOT NULL, at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS inbox(
+   id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT NOT NULL, video_id TEXT NOT NULL,
+   kind TEXT NOT NULL, result_id TEXT NOT NULL DEFAULT '', prompt_key TEXT, title TEXT,
+   length_s INTEGER, label TEXT, thumbnail TEXT, created_at REAL NOT NULL, read_at REAL, dismissed INTEGER
+   NOT NULL DEFAULT 0, dismissed_at REAL);
+CREATE INDEX IF NOT EXISTS inbox_user ON inbox(user, dismissed, created_at DESC);
 """
 
 JOB_COLUMNS = {

@@ -23,6 +23,8 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedCaptio
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedCut;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedItem;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.InboxItem;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.InboxList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptSet;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Summary;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Transcript;
@@ -575,6 +577,57 @@ public final class UtubotParser {
         }
 
         return cuts;
+    }
+
+    //endregion
+
+    //region Inbox
+
+    /**
+     * The caller's results (`GET /v1/inbox`): one item per result, newest first, with the unread count
+     */
+    public static InboxList parseInbox(String body) throws JSONException {
+        JSONObject json = new JSONObject(body);
+        InboxList list = new InboxList();
+        JSONArray items = json.optJSONArray("items");
+
+        if (items != null) {
+            List<InboxItem> parsed = new ArrayList<>();
+
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject itemJson = items.optJSONObject(i);
+
+                if (itemJson == null) {
+                    continue;
+                }
+
+                String videoId = itemJson.optString("video_id", null);
+
+                if (videoId == null) {
+                    continue;
+                }
+
+                InboxItem item = new InboxItem();
+                item.id = itemJson.optLong("id", 0);
+                item.videoId = videoId;
+                item.kind = itemJson.optString("kind", null);
+                item.resultId = optString(itemJson, "result_id");
+                item.promptKey = optString(itemJson, "prompt_key");
+                item.title = optString(itemJson, "title");
+                item.lengthS = itemJson.optInt("length_s", UtubotModels.UNKNOWN);
+                item.label = optString(itemJson, "label");
+                item.thumbnail = optString(itemJson, "thumbnail");
+                item.createdAt = itemJson.optDouble("created_at", 0);
+                item.read = itemJson.optBoolean("read", false);
+                parsed.add(item);
+            }
+
+            list.items = parsed;
+        }
+
+        list.unread = json.optInt("unread", 0);
+
+        return list;
     }
 
     //endregion

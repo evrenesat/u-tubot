@@ -12,6 +12,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs.ProfileChangeListener;
 import com.liskovsoft.smartyoutubetv2.common.prefs.GeneralData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotInboxSection;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotProcessedSection;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 
@@ -45,7 +46,7 @@ public class SidebarService implements ProfileChangeListener {
      * The default sections added since the saved state started keeping the known ids: a sidebar saved before them has no
      * record, so they are the only ones its restore can't tell from a section turned off. Append a new default section here.
      */
-    private static final int[] SECTIONS_ADDED_SINCE_KNOWN = {UtubotProcessedSection.ID};
+    private static final int[] SECTIONS_ADDED_SINCE_KNOWN = {UtubotProcessedSection.ID, UtubotInboxSection.ID};
     /**
      * Boot to the section at the top of the sidebar, whichever it is. Below RESERVED_ID, so no pinned item has it (see
      * cleanupPinnedItems), and past the ids of the sections (MediaGroup.TYPE_...).
@@ -349,9 +350,10 @@ public class SidebarService implements ProfileChangeListener {
         mDefaultSections.put(R.string.my_videos, MediaGroup.TYPE_MY_VIDEOS);
         mDefaultSections.put(R.string.playback_queue_category_title, MediaGroup.TYPE_PLAYBACK_QUEUE);
 
-        // Past the other entries: the built-in flavor only (u-tubot #66), next to Settings, which it keeps last
+        // Past the other entries: the built-in flavor only (u-tubot #66 and #160), next to Settings, which it keeps last
         if (UtubotSettings.isBuiltIn()) {
             mDefaultSections.put(R.string.utubot_processed_title, UtubotProcessedSection.ID);
+            mDefaultSections.put(R.string.utubot_inbox_title, UtubotInboxSection.ID);
         }
 
         mDefaultSections.put(R.string.header_settings, MediaGroup.TYPE_SETTINGS);

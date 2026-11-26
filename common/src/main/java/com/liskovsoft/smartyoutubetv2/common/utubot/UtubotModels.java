@@ -557,4 +557,55 @@ public final class UtubotModels {
     }
 
     //endregion
+
+    //region Inbox
+
+    /** The kind of an inbox result (`cut`, `summary`, `research`, `captions`) */
+    public static final class InboxKind {
+        public static final String CUT = "cut";
+        public static final String SUMMARY = "summary";
+        public static final String RESEARCH = "research";
+        public static final String CAPTIONS = "captions";
+
+        private InboxKind() {
+        }
+    }
+
+    /**
+     * One result of the inbox (`GET /v1/inbox`): a ready cut, a requested summary, a research answer or a ready HQ caption, newest first
+     */
+    public static final class InboxItem {
+        public long id;
+        public String videoId;
+        public String kind;
+        /** The item's identity with its kind and video: the cut's request id, the summary's prompt key, the research's language, the caption's lang */
+        public String resultId;
+        /** The summary's prompt key, else null */
+        @Nullable public String promptKey;
+        @Nullable public String title;
+        public int lengthS = UNKNOWN;
+        /** The preset/prompt label for a cut, else null (research and captions have none; the client derives it) */
+        @Nullable public String label;
+        /** The video's thumbnail for the tile, else null (see the backend's inbox thumbnail) */
+        @Nullable public String thumbnail;
+        /** Seconds since the epoch, like the contract's timestamps */
+        public double createdAt;
+        public boolean read;
+
+        public boolean isRead() {
+            return read;
+        }
+    }
+
+    /** The answer of `GET /v1/inbox`: the items newest first and the caller's unread count */
+    public static final class InboxList {
+        public List<InboxItem> items = Collections.emptyList();
+        public int unread;
+
+        public int unreadCount() {
+            return unread;
+        }
+    }
+
+    //endregion
 }
