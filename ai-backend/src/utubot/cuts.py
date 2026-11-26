@@ -663,13 +663,21 @@ def _kept_total_s(parts: list[Part], cfg, duration_s: float | None) -> float:
 
 
 def _trim_to(
-    part: Part, units: list[Unit], budget_s: float, cfg, duration_s: float | None = None
+    part: Part,
+    units: list[Unit],
+    budget_s: float,
+    cfg,
+    duration_s: float | None = None,
+    chosen: list[Part] | None = None,
 ) -> Part | None:
     """The leading units of `part` that fit `budget_s` (padding included), cut at a unit
     boundary; None when not even the first unit fits, the part has no unit ids, or the trim
-    would fall under `min_part_s` on its clamped boundaries."""
+    would fall under `min_part_s` on its clamped boundaries. `chosen` (parts already kept)
+    makes the budget the part's increase once merged with them, so a part that would bridge a
+    sub-gap past the budget is trimmed to fit instead of dropped whole."""
     if part.first is None or part.last is None:
         return None
+    base = _kept_total_s(chosen or [], cfg, duration_s)
     trimmed = None
     for n in range(part.first, part.last + 1):
         candidate = Part(
@@ -680,7 +688,7 @@ def _trim_to(
             part.first,
             n,
         )
-        if _padded_s(candidate, cfg, duration_s) > budget_s:
+        if _kept_total_s(chosen + [candidate], cfg, duration_s) - base > budget_s:
             break
         trimmed = candidate
     if trimmed is None or _clamped_s(trimmed, duration_s) < cfg.min_part_s:
@@ -701,10 +709,10 @@ def select_for_target(
     A part that would push the total past the band is trimmed at a unit boundary to fit; the
     selection stops once the merged, padded length reaches the target. Parts under `min_part_s`
     on their clamped boundaries are never selected (padding does not make them keepable), so the
-    same parts survive `finalize_parts`. The charged length applies the same merge, short-drop
-    and padding rules as `finalize_parts`, so gaps under `merge_gap_s` cannot re-add filler and
-    push the cut past the accepted band. A model answer shorter than the band returns its
-    keepable parts, so the caller can see the shortfall.
+    same parts survive `finalize_parts`. The stop and trim charge a part's increase once merged
+    with what is kept (the same merge, short-drop and padding rules as `finalize_parts`), so a
+    sub-gap cannot pull filler in and push the cut past the accepted band. A model answer shorter
+    than the band returns its keepable parts, so the caller can see the shortfall.
     """
     low, high = target_band(target_s, cfg.length_tolerance)
     eligible = [i for i, part in enumerate(parts) if _clamped_s(part, duration_s) >= cfg.min_part_s]
@@ -721,12 +729,11 @@ def select_for_target(
         if total >= target_s:
             break
         part = parts[i]
-        length = _padded_s(part, cfg, duration_s)
-        if total + length > high:
-            trimmed = _trim_to(part, units, high - total, cfg, duration_s)
+        if _kept_total_s(chosen + [part], cfg, duration_s) > high:
+            trimmed = _trim_to(part, units, high - total, cfg, duration_s, chosen)
             if trimmed is None:
                 continue
-            part, length = trimmed, _padded_s(trimmed, cfg, duration_s)
+            part = trimmed
         chosen.append(part)
         total = _kept_total_s(chosen, cfg, duration_s)
     chosen.sort(key=lambda p: p.start_ms)

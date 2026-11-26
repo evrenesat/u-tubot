@@ -584,6 +584,48 @@ class TestTargetLength:
         kept, kept_s = finalize_parts(chosen, CFG, guard=False, duration_s=200.0)
         assert len(kept) == 1 and round(total, 1) == kept_s
 
+    def test_a_part_that_bridges_a_gap_does_not_push_the_cut_past_the_band(self):
+        # Eight ~7 s kept parts merge into a 57.7 s chain; a 10 s part 1.9 s later lands under
+        # merge_gap_s and would bridge that gap. Charging it alone (10.8 s) still fits the 69 s
+        # ceiling from a 57.7 s total, so a per-part check keeps it and the merged cut is 69.6 s,
+        # over the band. The selection charges the merged increase, so the cut stays in band.
+        ends = []
+        at = 0.0
+        for _ in range(8):
+            at += 7.15
+            ends.append(at)
+        units = [
+            Unit(i, ends[i - 2] if i > 1 else 0.0, ends[i - 1], f"unit {i}") for i in range(1, 9)
+        ]
+        gap = ends[-1]
+        units.append(Unit(9, gap, gap + 1.9, "gap"))
+        units.append(Unit(10, gap + 1.9, gap + 1.9 + 10.0, "unit 10"))
+        parts = [
+            Part(
+                f"p{i}",
+                int(units[i - 1].start * 1000),
+                int(units[i - 1].end * 1000),
+                rank=1,
+                first=i,
+                last=i,
+            )
+            for i in range(1, 9)
+        ] + [
+            Part(
+                "payoff",
+                int(units[9].start * 1000),
+                int(units[9].end * 1000),
+                rank=2,
+                first=10,
+                last=10,
+            )
+        ]
+        chosen, total = select_for_target(parts, units, CFG, 60, duration_s=200.0)
+        low, high = target_band(60, CFG.length_tolerance)
+        assert low <= total <= high, total
+        kept, kept_s = finalize_parts(chosen, CFG, guard=False, duration_s=200.0)
+        assert round(total, 1) == kept_s
+
     def test_prompt_names_the_target_and_asks_for_ranks(self):
         units = eleven_minute_units()
         text = serialize_units(units, [], {"duration_s": 660}, "Highlights", 300, 0.2)
