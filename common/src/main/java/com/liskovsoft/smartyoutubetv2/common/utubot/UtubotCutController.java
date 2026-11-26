@@ -547,7 +547,6 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         }
 
         if (mCut != null) {
-            System.out.println("DEBUG tick: refreshCutLabel called, isLivePlayer=" + isLivePlayer());
             refreshCutLabel();
         }
 
@@ -764,7 +763,6 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         UtubotCutTime.CutPosition position = UtubotCutTime.of(cut, player.getPositionMs());
         String label = cutTimeLabel(cut, position);
-        System.out.println("DEBUG refreshCutLabel pos=" + player.getPositionMs() + " cutPos=" + position.cutPositionMs + " part=" + position.partIndex + "/" + position.partCount + " label=" + label);
 
         if (!label.equals(mLastCutLabel)) {
             mLastCutLabel = label;

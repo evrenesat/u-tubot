@@ -793,8 +793,23 @@ public class UtubotCutControllerTest {
 
         void open(Video video, long durationMs) {
             mVideo = video;
+            setBaseControllerVideo(video);
             mPlayer = player(durationMs, true, mPosition, label -> mButtonLabel = label);
             mDurationMs = durationMs;
+        }
+
+        /**
+         * The base controller keeps its own, private {@code mVideo} (used by its {@code tick}/{@code apply}); {@code getVideo()} is
+         * inherited and reads the real main controller instead. Set both so the playback tick and the video the picker answers to agree.
+         */
+        private void setBaseControllerVideo(Video video) {
+            try {
+                Field field = UtubotCutController.class.getDeclaredField("mVideo");
+                field.setAccessible(true);
+                field.set(this, video);
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError(e);
+            }
         }
 
         void setPosition(long ms) {
@@ -827,6 +842,7 @@ public class UtubotCutControllerTest {
 
         void close() {
             mVideo = null;
+            setBaseControllerVideo(null);
             mPlayer = null;
         }
 
