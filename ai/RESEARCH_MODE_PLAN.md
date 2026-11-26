@@ -127,7 +127,7 @@ recommended and changed later in the config.
   is `UtubotAnswerModel`; `UtubotCutFollower` long-polls a request and `UtubotCutController` announces a ready cut;
   `UtubotCutQrView` draws a QR code; `UtubotProcessedSection` builds the Processed tiles.
 - Extension: checkpoints 0 to 3 have landed (skeleton, background core, test harness). Its panel is not built yet; a new
-  AI feature is a row in the parity matrix of `ai/BROWSER_EXTENSION_PLAN.md` (section 3, last row today: 32).
+  AI feature is a row in the parity matrix of `ai/BROWSER_EXTENSION_PLAN.md` (section 3; rows are named by id, so the new row takes its own id).
 - #160 (Inbox), #158 (auto-scroll), #147 and #148 are open issues without a plan or code.
 
 ### 1.2 Search and the research browser (owner's infrastructure, read from its documentation)
@@ -437,7 +437,7 @@ ratings, clickable sources opened with `rel="noopener noreferrer"`, times as lin
 stats line, "Research again"), the progress view of a running request, and a "Research" entry on the home page list of
 recent requests. Source URLs are rendered only when their scheme is `http` or `https`.
 
-**Extension**: row 33 of the parity matrix, added in checkpoint 1: "Research: presets with state, typed question,
+**Extension**: the parity-matrix row `research`, added in checkpoint 1: "Research: presets with state, typed question,
 progress by stage, result with sources and times, ready notice" | the routes of 2.7 | panel tab "Research" on a watch
 page: preset buttons, a question field, stage and progress, the result with linked sources and times that seek the
 player, the toolbar badge count for unseen ready results, an extension-page list of recent requests | Android: the same
@@ -557,7 +557,7 @@ chosen; if none passes, checkpoint 4 stops and reports with the table.
   `app.py` and `webroutes.py` (routes), `processed.py`, `captions/events.py` and `captions/jobs.py` (stage names, job
   kind), `cli.py` (`research-record`, `research-probe`), `artifacts.py`, `web/ui/js/jobtext.js` and `main.js`,
   `pyproject.toml` (extra `research`), `THIRD_PARTY.md`, `scripts/emulator_mock_backend.py`.
-- Docs: `ai/CONTRACT.md` (section "Research", "Clients"), `ai/BROWSER_EXTENSION_PLAN.md` (row 33),
+- Docs: `ai/CONTRACT.md` (section "Research", "Clients"), `ai/BROWSER_EXTENSION_PLAN.md` (row `research`),
   `ai/APP_INTEGRATION.md`, `docs/server.md` (config, job stages, the owner commands), `ai-backend/AGENTS.md` (the rules
   of 2.9 in three lines), both devlogs.
 - TV: `UtubotResearchFollower`, `UtubotResearchModel`, additions to `UtubotMenu`, `UtubotClient`, `UtubotParser`,
@@ -573,7 +573,7 @@ with no database step.
 | # | Scope | Done when | Tests | Tier | Rollback |
 |---|---|---|---|---|---|
 | 0 | Gates, not code: owner decisions recorded in this plan; the gateway's live model list read with the backend's key (the three aliases, context windows, a JSON answer from each); SearXNG reachable from the backend's server; for checkpoint 5 only: firewall rule and token (infra tasks filed in the operations repository) | the names and numbers are in section 5.1; anything missing is named with who must act | none | n/a | n/a |
-| 1 | Contract and plumbing, no network: the `research` task and built-in prompts (first texts), tables, job kind, every route of 2.7 with a stub pipeline that answers a canned result after a delay when a test flag is set and `409` otherwise, `features.research`, Processed field, mock backend routes, contract text, parity row 33 | old clients see no change (prompt list and processed replayed in a test); the request lifecycle (create, long poll, seen, cancel, dismiss, caps) passes with the stub; an old database reads unchanged | `test_research_prompts.py`, `test_research_api.py`, `test_processed.py`, `test_db_migrations.py`, `test_emulator_mock.py` | Fast | switch off; revert |
+| 1 | Contract and plumbing, no network: the `research` task and built-in prompts (first texts), tables, job kind, every route of 2.7 with a stub pipeline that answers a canned result after a delay when a test flag is set and `409` otherwise, `features.research`, Processed field, mock backend routes, contract text, parity row `research` | old clients see no change (prompt list and processed replayed in a test); the request lifecycle (create, long poll, seen, cancel, dismiss, caps) passes with the stub; an old database reads unchanged | `test_research_prompts.py`, `test_research_api.py`, `test_processed.py`, `test_db_migrations.py`, `test_emulator_mock.py` | Fast | switch off; revert |
 | 2 | Search, fetch, extraction, caches, no model: `search.py`, `fetch.py`, `extract.py`, `store.py`, deny and allow lists, `robots.txt`, pacing, the network guard in `conftest.py`, the extra `research`, `utubot research-probe "<query>"` (owner command: one search and its top pages, printing hosts, sizes, times and cache state, no page text) | every case of the two test files; on the owner's server one probe recorded in the devlog: searches answered, pages read, refused and skipped, seconds, the second run fully cached | `test_research_search.py`, `test_research_fetch.py` | Heavy | the package is unused without checkpoint 3; revert |
 | 3 | The pipeline with mock models: plan, read, write, checker, renderer, budgets, round 2, events, stats, job tag and cost read, resume, result cache, `refresh`, the invented set and its runner, final texts of the three prompts | the invented set passes end to end in CI with scripted answers, including the injection, refused, oversize and deny cases; every row of 2.10 produces its document; the gateway's job-usage route and shape are recorded in 2.2 | `test_research_pipeline.py`, `test_job_report.py`, `test_config.py` | Heavy | switch off; revert |
 | 4 | Measurement and model choice (owner's server and engines): the invented set against the real models for the four combinations; `research-record` and the real set once decision 6 is answered; the support sample; the pick | `fixtures/research/CHOICE-<date>.md` holds the table (scores, time, tokens, dollars per combination) and the pick by the rule of 2.2; defaults and Part 1's table corrected to the numbers; if none passes the bar: stop and report | `test_research_bench.py` (the runner on scripted answers) | Heavy | nothing switched on yet |
