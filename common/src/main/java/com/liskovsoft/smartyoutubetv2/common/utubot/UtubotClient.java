@@ -111,6 +111,25 @@ public class UtubotClient {
         }
     }
 
+    /**
+     * The cut list of a video with what to cache for the next re-validation. On a 304 {@link #notModified}
+     * is true and the list is null (the client keeps its copy); {@link #body} is null then too. On a fresh
+     * list {@link #body} is the JSON to store on disk, {@link #etag} the one to send next time.
+     */
+    public static final class CutCache {
+        public final CutList cuts;
+        public final String body;
+        public final String etag;
+        public final boolean notModified;
+
+        public CutCache(@Nullable CutList cuts, @Nullable String body, @Nullable String etag, boolean notModified) {
+            this.cuts = cuts;
+            this.body = body;
+            this.etag = etag;
+            this.notModified = notModified;
+        }
+    }
+
     private final String mBaseUrl;
     private final String mToken;
     private final Set<Call> mCalls = ConcurrentHashMap.newKeySet();
@@ -369,6 +388,41 @@ public class UtubotClient {
      */
     public void clearChannelMode(String channelId) throws IOException {
         send(authorized(urlBuilder("/cut-channels/" + channelId)).delete(), 0);
+    }
+
+    /**
+     * The cut list with what to cache for the next re-validation (`GET /v1/videos/{id}/cuts`): a fresh list
+     * with its body and ETag, or a 304 (null list, {@code notModified} true) when the {@code ifNoneMatch}
+     * matched and the client keeps its cached copy. An error status becomes an {@link #send} exception. The
+     * video facts (the channel id) are forwarded, so the served list resolves the picker's default mode the
+     * same way the initial fetch does and the cached copy is the one the picker shows.
+     *
+     * @param ifNoneMatch the ETag of the cached list, or null to always fetch
+     * @param meta        the video facts to forward, or null for none
+     */
+    public CutCache cutsCache(String videoId, @Nullable String ifNoneMatch, @Nullable VideoMeta meta) throws IOException {
+        Request.Builder builder = authorized(cutUrl(videoId, meta));
+
+        if (ifNoneMatch != null) {
+            builder.header("If-None-Match", ifNoneMatch);
+        }
+
+        try (Response response = sendResponse(builder, 0)) {
+            String etag = response.header("ETag");
+
+            if (response.code() == 304) {
+                // Nothing changed: keep the cached list, the body to cache next time is the one already stored
+                return new CutCache(null, null, etag != null ? etag : ifNoneMatch, true);
+            }
+
+            String body = response.body() != null ? response.body().string() : "";
+
+            if (!response.isSuccessful()) {
+                throw new HttpException(response.code(), "HTTP " + response.code());
+            }
+
+            return new CutCache(parse(() -> UtubotParser.parseCuts(body)), body, etag, false);
+        }
     }
 
     /**
@@ -725,6 +779,33 @@ public class UtubotClient {
     }
 
     /**
+     * Like {@link #send} but returns the response itself, so a 304 (not an error status) can be read for its
+     * ETag instead of being turned into an {@link #send} exception. The caller owns the response and closes it.
+     */
+    private Response sendResponse(Request.Builder builder, int timeoutMs) throws IOException {
+        OkHttpClient client = timeoutMs > 0 ? sBase.newBuilder()
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .build() : sBase;
+        Request request = builder.build();
+
+        if (mIsCancelled) {
+            throw new IOException("Cancelled");
+        }
+
+        try {
+            return executeResponse(client, request);
+        } catch (IOException e) {
+            if (!isDroppedConnection(request, e)) {
+                throw e;
+            }
+
+            // The pool handed out an idle connection that the server had closed: the second try opens a fresh one
+            return executeResponse(client, request);
+        }
+    }
+
+    /**
      * A GET that failed for a reason a second try can cure: the server closed a kept-alive connection (the client doesn't retry
      * by itself, so no request is sent twice by accident). Timeouts, refused or unresolvable hosts, TLS and error statuses are not.
      */
@@ -752,6 +833,27 @@ public class UtubotClient {
 
                 return body;
             }
+        } finally {
+            mCalls.remove(call);
+            UtubotBusyTracker.instance().end();
+        }
+    }
+
+    /**
+     * Executes a request and returns it open, so a 304 can be read for its ETag without being an error status.
+     * The caller owns the response and closes it.
+     */
+    private Response executeResponse(OkHttpClient client, Request request) throws IOException {
+        Call call = client.newCall(request);
+        mCalls.add(call);
+        UtubotBusyTracker.instance().begin();
+
+        try {
+            if (mIsCancelled) {
+                call.cancel();
+            }
+
+            return call.execute();
         } finally {
             mCalls.remove(call);
             UtubotBusyTracker.instance().end();

@@ -45,8 +45,10 @@ public class UtubotDiskCache {
     public static final long TTL_MS = 3L * 24 * 60 * 60 * 1000;
     public static final int MAX_VERDICTS = VerdictCache.MAX_ENTRIES;
     public static final int MAX_SUMMARIES = 300;
+    public static final int MAX_CUTS = 200;
     private static final String VERDICTS_FILE = "verdicts.json";
     private static final String SUMMARIES_DIRECTORY = "summaries";
+    private static final String CUTS_DIRECTORY = "cuts";
     private static final String TEMP_EXTENSION = ".tmp";
     private static final int MAX_FILE_BYTES = 8 * 1024 * 1024;
     private static final int CHUNK_BYTES = 4096;
@@ -59,6 +61,22 @@ public class UtubotDiskCache {
     /** What time it is, so a test can age the entries */
     public interface Clock {
         long now();
+    }
+
+    /**
+     * A stored cut list with the video it is for and the ETag it was cached under, so the caller can
+     * re-validate it next time
+     */
+    public static final class CutListCache {
+        public final UtubotModels.CutList cuts;
+        public final String videoId;
+        public final String etag;
+
+        public CutListCache(UtubotModels.CutList cuts, String videoId, String etag) {
+            this.cuts = cuts;
+            this.videoId = videoId;
+            this.etag = etag;
+        }
     }
 
     private final File mRoot;
@@ -338,6 +356,156 @@ public class UtubotDiskCache {
         Arrays.sort(files, Comparator.comparingLong(File::lastModified));
 
         for (int i = 0; i < files.length - MAX_SUMMARIES; i++) {
+            files[i].delete();
+        }
+    }
+
+    //endregion
+
+    //region Cuts
+
+    /**
+     * The stored cut lists that have not expired, oldest first
+     */
+    public synchronized List<CutListCache> loadCuts() {
+        File directory = cutsDirectory();
+
+        if (directory == null) {
+            return new ArrayList<>();
+        }
+
+        File[] files = directory.listFiles((dir, name) -> name.endsWith(".json"));
+        List<CutListCache> result = new ArrayList<>();
+
+        if (files == null) {
+            return result;
+        }
+
+        Arrays.sort(files, Comparator.comparingLong(File::lastModified));
+
+        for (File file : files) {
+            CutListCache entry = readCut(file);
+
+            if (entry != null) {
+                result.add(entry);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * The stored cut list of a video, with the ETag it was cached under, or null when there is none (or it
+     * expired): a ready cut list is cheap to show at once when the backend is slow or down.
+     */
+    @Nullable
+    public synchronized CutListCache getCuts(String videoId) {
+        File file = cutsFile(videoId);
+
+        if (file == null) {
+            return null;
+        }
+
+        return readCut(file);
+    }
+
+    /**
+     * Reads one cut list file, or null when it is missing, expired, damaged or not the video's
+     */
+    @Nullable
+    private CutListCache readCut(File file) {
+        JSONObject json = readJson(file);
+
+        if (json == null || isExpired(json.optLong("at", 0))) {
+            return null;
+        }
+
+        if (json.isNull("body")) {
+            file.delete();
+            return null;
+        }
+
+        try {
+            return new CutListCache(UtubotParser.parseCuts(json.optString("body", null)),
+                    json.isNull("video_id") ? null : json.optString("video_id", null),
+                    json.isNull("etag") ? null : json.optString("etag", null));
+        } catch (JSONException e) {
+            Log.e(TAG, "Dropping the damaged cut list %s: %s", file.getName(), e.getMessage());
+            file.delete();
+            return null;
+        }
+    }
+
+    /**
+     * Stores a cut list with the ETag it came with; the oldest are dropped beyond {@link #MAX_CUTS}
+     */
+    public synchronized void putCuts(String videoId, @Nullable String etag, @Nullable String body) {
+        File file = cutsFile(videoId);
+
+        if (file == null || body == null) {
+            return;
+        }
+
+        try {
+            JSONObject json = new JSONObject();
+            json.put("at", mClock.now());
+            json.put("video_id", videoId);
+            json.put("etag", etag != null ? etag : "");
+            json.put("body", body);
+            writeJson(file, json);
+        } catch (JSONException | IOException e) {
+            Log.e(TAG, "Can't store the cut list of %s: %s", videoId, e.getMessage());
+            return;
+        }
+
+        trimCuts(file.getParentFile());
+    }
+
+    /**
+     * Forgets every cut list of every scope: a change of backend, token or version means the stored lists are
+     * not the answers of the new connection, and a scope opened later starts empty.
+     */
+    public synchronized void clearCuts() {
+        File[] scopes = mRoot.listFiles();
+
+        if (scopes == null) {
+            return;
+        }
+
+        for (File scope : scopes) {
+            deleteRecursively(new File(scope, CUTS_DIRECTORY));
+        }
+    }
+
+    @Nullable
+    private File cutsFile(@Nullable String videoId) {
+        // The id is part of a file name: only what a video id can be
+        if (mScope == null || videoId == null || !videoId.matches("[A-Za-z0-9_-]{1,32}")) {
+            return null;
+        }
+
+        return new File(new File(new File(mRoot, mScope), CUTS_DIRECTORY), videoId + ".json");
+    }
+
+    @Nullable
+    private File cutsDirectory() {
+        if (mScope == null) {
+            return null;
+        }
+
+        return new File(new File(mRoot, mScope), CUTS_DIRECTORY);
+    }
+
+    private static void trimCuts(File directory) {
+        File[] files = directory.listFiles((dir, name) -> name.endsWith(".json"));
+
+        if (files == null || files.length <= MAX_CUTS) {
+            return;
+        }
+
+        Arrays.sort(files, Comparator.comparingLong(File::lastModified));
+
+        for (int i = 0; i < files.length - MAX_CUTS; i++) {
             files[i].delete();
         }
     }

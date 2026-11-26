@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (
     FileResponse,
@@ -243,6 +243,15 @@ def build_services(
 
 def error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
+
+
+def etag_matches(if_none_match: str, etag: str) -> bool:
+    """Whether a client's If-None-Match equals this strong ETag. The list may hold several ETags or
+    the wildcard `*`; a weak validator (W/) never matches a strong one."""
+    if if_none_match.strip() == "*":
+        return True
+    wanted = {entry.strip() for entry in if_none_match.split(",")}
+    return etag in wanted or ("W/" + etag) in wanted
 
 
 CLIENT_CAPTIONS_PATH_RE = re.compile(r"^/v1/videos/[^/]+/captions/client$")
@@ -1103,17 +1112,28 @@ def create_app(
     async def cuts_presets(
         video_id: str,
         meta: QueryMeta = Depends(qmeta),
+        if_none_match: str | None = Header(None),
         user: UserConfig = Depends(current_user),
     ):
         """The cut presets and their state for this video: what the picker on the TV shows.
 
         The optional video facts (the TV knows the channel id) are stored; the channel's stored
-        default decides the picker's mode when the owner has one.
+        default decides the picker's mode when the owner has one. The list is immutable per cut key,
+        so it carries a strong ETag and a long cache lifetime; a client that serves the menu from it
+        and re-validates with If-None-Match gets 304 when nothing changed (offline-first, issue 146).
         """
         check_video_id(video_id)
         if meta.as_dict():
             svc.transcripts.store_meta(video_id, meta.as_dict())
-        return svc.cuts.presets_state(user.name, video_id, meta.channel_id)
+        state = svc.cuts.presets_state(user.name, video_id, meta.channel_id)
+        etag = state["etag"]
+
+        if if_none_match is not None and etag_matches(if_none_match, etag):
+            return Response(status_code=304, headers={"ETag": etag})
+
+        return JSONResponse(
+            state, headers={"Cache-Control": f"max-age={cfg.cuts.cache_max_age_s}", "ETag": etag}
+        )
 
     @app.get("/v1/cut-channels")
     async def cut_channels(user: UserConfig = Depends(current_user)):

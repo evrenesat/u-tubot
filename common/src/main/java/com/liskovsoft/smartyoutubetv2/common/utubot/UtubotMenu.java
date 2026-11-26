@@ -178,11 +178,18 @@ public final class UtubotMenu {
         RxHelper.disposeActions(sAction);
         sAction = UtubotManager.instance(context).cutsObserve(video.videoId, UtubotMeta.from(video))
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(cuts -> showCutsDialog(context, video, cuts, false),
-                        error -> MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_failed, error.getMessage())));
+                .subscribe(update -> {
+                    if (update.render) {
+                        showCutsDialog(context, video, update.cuts, false, update.stale);
+                    }
+                }, error -> MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_failed, error.getMessage())));
     }
 
     private static void showCutsDialog(Context context, Video video, CutList cuts, boolean force) {
+        showCutsDialog(context, video, cuts, force, false);
+    }
+
+    private static void showCutsDialog(Context context, Video video, CutList cuts, boolean force, boolean stale) {
         if (!cuts.configured) {
             MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_not_configured));
             return;
@@ -191,6 +198,14 @@ public final class UtubotMenu {
         AppDialogPresenter dialog = AppDialogPresenter.instance(context);
         dialog.closeDialog();
         UtubotCutController controller = PlaybackPresenter.instance(context).getController(UtubotCutController.class);
+
+        // A refresh just failed: the cache is shown under a notice, so the viewer knows it is not the latest
+        if (stale) {
+            List<OptionItem> hint = new ArrayList<>();
+            hint.add(UiOptionItem.from(context.getString(R.string.utubot_cut_stale_hint)));
+            dialog.appendCategory(OptionCategory.stringList(context.getString(R.string.utubot_cut_stale), hint));
+        }
+
         String mode = selectedMode(cuts);
         CutMode modeInfo = cuts.mode(mode);
 
