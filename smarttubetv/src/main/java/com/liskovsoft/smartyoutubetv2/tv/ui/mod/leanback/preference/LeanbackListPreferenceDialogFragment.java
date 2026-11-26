@@ -43,6 +43,8 @@ import com.liskovsoft.smartyoutubetv2.tv.ui.dialogs.other.StringListPreference;
 import com.liskovsoft.smartyoutubetv2.tv.ui.mod.clickable.LineMovementMethod;
 import com.liskovsoft.smartyoutubetv2.tv.ui.mod.clickable.LinkifyCompat;
 import com.liskovsoft.smartyoutubetv2.tv.ui.mod.clickable.LinkifyCompat.LinkifyClickHandler;
+import com.liskovsoft.smartyoutubetv2.tv.ui.widgets.layout.TabletTouch;
+import com.liskovsoft.smartyoutubetv2.tv.ui.widgets.layout.TouchTargets;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -485,6 +487,11 @@ public class LeanbackListPreferenceDialogFragment extends LeanbackPreferenceDial
             mWidgetView = (Checkable) view.findViewById(androidx.leanback.preference.R.id.button);
             mContainer = (ViewGroup) view.findViewById(androidx.leanback.preference.R.id.container);
             mTitleView = (TextView) view.findViewById(android.R.id.title);
+            // A leanback row is built for a D-pad and can be shorter than a finger. On a large touch screen grow the
+            // clickable row to the minimum tap target (see TabletTouch / TouchTargets).
+            if (TabletTouch.isLargeTouchScreen(view.getContext())) {
+                mContainer.setMinimumHeight(TouchTargets.minTargetPx(view.getContext()));
+            }
             mContainer.setOnClickListener(this);
             mListener = listener;
         }
