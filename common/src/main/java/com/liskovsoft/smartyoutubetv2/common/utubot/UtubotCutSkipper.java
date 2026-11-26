@@ -74,6 +74,29 @@ public final class UtubotCutSkipper {
     }
 
     /**
+     * Where a seek of the user lands: kept as is when it is already in a kept part, so a seek within a kept part moves in cut time
+     * unchanged; inside a dropped range it snaps to the range's edge — the end (the start of the kept part that follows) when moving
+     * forward, the start (the end of the kept part that precedes) when moving backward. Either way the landing is never in a cut-out part.
+     */
+    public long snapToKept(long videoPos, boolean forward) {
+        if (videoPos < 0) {
+            return videoPos;
+        }
+
+        for (long[] range : mCut.skipRangesMs) {
+            if (videoPos < range[0]) {
+                return videoPos; // in a kept part before this drop: keep the position
+            }
+
+            if (videoPos < range[1]) {
+                return forward ? range[1] : range[0]; // inside a drop: snap to the edge of the kept part ahead or behind
+            }
+        }
+
+        return videoPos; // past every drop
+    }
+
+    /**
      * One step of the playback: whether to jump, and where. Only a crossing that the playback made by itself skips: the previous
      * position was before the drop and the current one is inside it. A seek (backwards, or any move a tick of the current speed
      * cannot explain) lands wherever it landed and plays. The position of a jump this decision causes is remembered, so the next

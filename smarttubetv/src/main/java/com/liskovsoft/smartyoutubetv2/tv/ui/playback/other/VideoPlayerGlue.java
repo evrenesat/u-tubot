@@ -56,6 +56,7 @@ import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.VideoSpeedAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.VideoStatsAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.VideoZoomAction;
 import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotCutAction;
+import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotCutSkipAction;
 import com.liskovsoft.smartyoutubetv2.tv.util.ViewUtil;
 
 import java.util.HashMap;
@@ -141,6 +142,7 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
 
         if (UtubotCutAction.isAvailable(context)) {
             putAction(new UtubotCutAction(context));
+            putAction(new UtubotCutSkipAction(context));
         }
     }
 
@@ -335,6 +337,32 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
             action.setLabel1(label);
             invalidateUi(action);
         }
+    }
+
+    /**
+     * The cut's toggle button is shown only while a cut is applied: add it to the secondary row when a cut is applied, take it away
+     * when none is, keeping its on/off state (the cut stays selected either way)
+     */
+    public void setCutSkipActive(boolean active) {
+        Action action = mActions.get(R.id.action_utubot_cut_skip);
+
+        if (action == null) {
+            return;
+        }
+
+        ArrayObjectAdapter adapter = (ArrayObjectAdapter) getControlsRow().getSecondaryActionsAdapter();
+
+        if (adapter != null) {
+            int index = adapter.indexOf(action);
+
+            if (active && index < 0) {
+                adapter.add(action);
+            } else if (!active && index >= 0) {
+                adapter.remove(action);
+            }
+        }
+
+        invalidateUi(action);
     }
 
     public void setChannelIcon(String iconUrl) {

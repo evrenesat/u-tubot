@@ -328,4 +328,40 @@ public class UtubotCutSkipperTest {
 
         assertEquals(130_000, decision.jumpToMs);
     }
+
+    @Test
+    public void aSeekInAKeptPart_landsWhereItLanded() {
+        assertEquals(30_000, mSkipper.snapToKept(30_000, true));
+        assertEquals(30_000, mSkipper.snapToKept(30_000, false));
+    }
+
+    @Test
+    public void aForwardSeekIntoADrop_snapsToTheEndOfTheRange() {
+        assertEquals(SKIP_1_END, mSkipper.snapToKept(80_000, true));
+    }
+
+    @Test
+    public void aBackwardSeekIntoADrop_snapsToTheStartOfTheRange() {
+        assertEquals(SKIP_1_START, mSkipper.snapToKept(80_000, false));
+    }
+
+    @Test
+    public void aForwardSeekIntoTheSecondDrop_snapsToItsEnd() {
+        assertEquals(SKIP_2_END, mSkipper.snapToKept(180_000, true));
+    }
+
+    @Test
+    public void aSeekPastEveryDrop_landsWhereItLanded() {
+        assertEquals(220_000, mSkipper.snapToKept(220_000, true));
+    }
+
+    @Test
+    public void aSeekToADropStart_snapsForwardBecauseTheStartIsDropped() {
+        assertEquals(SKIP_1_END, mSkipper.snapToKept(SKIP_1_START, true));
+    }
+
+    @Test
+    public void aSeekToADropEnd_playsThere() {
+        assertEquals(SKIP_1_END, mSkipper.snapToKept(SKIP_1_END, false));
+    }
 }
