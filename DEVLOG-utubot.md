@@ -1,3 +1,8 @@
+## 2026-11-26 (refused server download falls back to TV captions, issue #205)
+
+- Backend retries a 403 with another yt-dlp player client, then a cut waits for the TV's own captions; `UtubotMenu.stateText` shows the
+  server's message for a cut in `needs_transcript` instead of "Needs a transcript". Details in `ai-backend/DEVLOG.md`.
+
 ## 2026-11-26 (the player's hourglass follows the director's cut, issue #209)
 
 - `UtubotCutTime.remainingKeptMs`: the kept time after a position, the rest of the kept part it is in plus every later part. A position in a

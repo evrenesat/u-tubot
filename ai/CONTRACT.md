@@ -495,6 +495,13 @@ it the build routes (`POST /v1/videos/{id}/cuts`, `PUT /v1/cut-requests/{id}`) a
 `409 {"error":"Cuts are not configured on this server (no [llm.cuts] model)."}`, the read
 routes answer `200` with `"configured": false`, and `GET /v1/me` features carries `"cuts": false`.
 
+Refused download (addendum, 2026-11-26, issue #205): when YouTube answers the server's download with HTTP 403 the server retries with
+the next `[youtube] player_clients` entry after `forbidden_backoff_s`. If that fails too, a cut waits up to `[cuts] client_captions_wait_s`
+for the TV to upload its captions (`POST /v1/videos/{id}/captions/client`) instead of failing: the request stays `needs_transcript` with
+`error` = "YouTube refused the server; using the TV's captions…" (the TV's cut picker shows it in place of "Needs a transcript"), then
+builds as soon as the captions arrive, or fails once the wait ends. Each such refusal adds one to the `youtube_forbidden` metric of the
+day (`usage_daily`). Only the TV uploads captions, so the extension's cut fails after the wait (see "Clients").
+
 Channel defaults (addendum, 2026-11-26): the owner can store a cut mode per channel, from the
 TV's cut sheet or the web UI. A channel is the YouTube `channel_id` the client sends with the video
 facts (at most 64 characters). An omitted mode resolves in order: the owner's default for the
