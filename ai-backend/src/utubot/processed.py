@@ -107,6 +107,7 @@ class ProcessedService:
                     "video_id": video_id,
                     "title": title,
                     "thumbnail": thumb or THUMBNAIL_URL.format(video_id=video_id),
+                    "duration_s": meta.get("duration_s"),
                     "updated_at": row["changed_at"],
                     "summary": video_id in summaries,
                     "captions": captions,

@@ -533,6 +533,8 @@ public final class UtubotModels {
         public String videoId;
         @Nullable public String title;
         @Nullable public String thumbnail;
+        /** The cached metadata duration in seconds, or UNKNOWN when unknown */
+        public long durationSec = UNKNOWN;
         /** The newest change of its caption jobs and cuts, in seconds since the epoch */
         public double updatedAt;
         public boolean summary;

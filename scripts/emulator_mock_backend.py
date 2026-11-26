@@ -152,6 +152,7 @@ def processed_items():
     thumbnail = f"http://127.0.0.1:{PORT}/__mock/thumb/{{}}.png"
     first = {
         "video_id": "dQw4w9WgXcQ", "title": "A processed video", "thumbnail": thumbnail.format("dQw4w9WgXcQ"),
+        "duration_s": 633.0,
         "updated_at": 1763900000.0, "summary": True,
         "captions": [{"job_id": "capA", "lang": "tr", "translate_to": "en", "state": "ready", "progress": 1.0,
                       "error": None, "created_at": 1763899900.0, "updated_at": 1763900000.0}],

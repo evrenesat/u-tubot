@@ -322,6 +322,7 @@ export function parseProcessed(json) {
       videoId: item.video_id,
       title: text(item, "title"),
       thumbnail: text(item, "thumbnail"),
+      durationSec: seconds(item.duration_s),
       updatedAt: Number(item.updated_at) || 0,
       summary: Boolean(item.summary),
       captions: parseProcessedCaptions(item.captions),

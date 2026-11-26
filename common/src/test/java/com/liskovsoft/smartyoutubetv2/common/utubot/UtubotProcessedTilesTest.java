@@ -41,6 +41,7 @@ public class UtubotProcessedTilesTest {
 
         ProcessedItem item = item("dQw4w9WgXcQ", "A video");
         item.thumbnail = "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg";
+        item.durationSec = 633;
         item.summary = true;
         item.captions = Collections.singletonList(caption(JobState.READY));
         item.cuts = Collections.singletonList(cut(CutState.READY, "Only the demo", null));
@@ -56,6 +57,7 @@ public class UtubotProcessedTilesTest {
         assertEquals("dQw4w9WgXcQ", video.videoId);
         assertEquals("A video", video.title);
         assertEquals(item.thumbnail, video.cardImageUrl);
+        assertEquals("10:33", video.badge);
         assertEquals("HQ captions: ready • Cut ready: Only the demo • Summary ready", video.secondTitle.toString());
         assertNull(video.channelId);
     }

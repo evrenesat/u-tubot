@@ -102,7 +102,8 @@ async def test_no_processed_videos_is_an_empty_list(env):
 async def test_mixed_items_are_one_per_video_newest_first(env):
     base = time.time()
     env.svc.transcripts.store_meta(
-        VID1, {"title": "First title", "thumbnail_url": "https://i.ytimg.com/vi/first.jpg"}
+        VID1,
+        {"title": "First title", "thumbnail_url": "https://i.ytimg.com/vi/first.jpg", "duration_s": 633.0},
     )
     add_caption(env, VID1, lang="en", translate_to="de", updated_at=base - 10)
     add_cut(env, VID1, preset="cut-demo", updated_at=base)
@@ -116,6 +117,7 @@ async def test_mixed_items_are_one_per_video_newest_first(env):
     first = videos[0]
     assert first["title"] == "First title"
     assert first["thumbnail"] == "https://i.ytimg.com/vi/first.jpg"
+    assert first["duration_s"] == 633.0
     assert first["updated_at"] == base
     assert first["summary"] is True
     assert len(first["captions"]) == 1
@@ -130,6 +132,7 @@ async def test_mixed_items_are_one_per_video_newest_first(env):
     second = videos[1]
     assert second["title"] == "Title from the job"
     assert second["thumbnail"] == f"https://i.ytimg.com/vi/{VID2}/mqdefault.jpg"
+    assert second["duration_s"] is None
     assert second["summary"] is False
     assert second["captions"][0]["state"] == "processing"
     assert second["cuts"] == []
