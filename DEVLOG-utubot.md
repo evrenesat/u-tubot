@@ -9,6 +9,11 @@
 - `ai/CONTRACT.md` keeps the phone's `recording.webm` / `.m4a` wording and adds the TV's `.wav` and the `language` field; whitespace damage in
   the docs and `config.example.toml` reverted. Tests: `UtubotSpeechInputTest` (fake capture, loopback backend), `UtubotSpeechProbeTest`.
 
+## 2026-11-26 (cut description on the tablet, issue #218)
+
+- The cut-request sheet (`UtubotCutQrView`) is on-device on touch devices: `Helpers.isTouchSupported` routes tablets to a text field for the description, an "Open cut sheet" button that opens the request's page (`cutRequestUrl`, `<base>/cuts/<id>`) in the browser and a "Build" button that sends the typed description (`UtubotClient.fillCutRequest` / `UtubotManager.fillCutRequestObserve`, `PUT /v1/cut-requests/{id}`, prompt plus the mode when chosen) and starts the build. The QR code and address stay on the non-touch TV.
+- `UtubotPairing.showDialog` adds an "Open in browser" option (`<base>/#/tvs`) when the backend URL is known, via new `SimpleEditDialog` overloads that take an action label and callback. `UtubotCutsClientTest` gains tests for the fill request (prompt and optional mode in the body).
+
 ## 2026-11-26 (error ledger: the TV reports its own failures, issue #206)
 
 - `UtubotClient.send` reports a transport or 5xx failure of the app's own call to `POST /v1/ledger`, fire and forget, through
