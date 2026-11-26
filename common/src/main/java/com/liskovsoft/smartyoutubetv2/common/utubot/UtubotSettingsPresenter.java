@@ -20,10 +20,9 @@ import java.util.List;
 
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.Disposable;
-import io.reactivex.schedulers.Schedulers;
 
 /**
- * Settings → u-tubot: the backend, the switches, the connection test and the prompt sets
+ * Settings → AI features: the AI feature switches and the prompt sets
  */
 public class UtubotSettingsPresenter extends BasePresenter<Void> {
     private static final int MS_PER_SECOND = 1000;
@@ -49,26 +48,16 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
             dialog.appendCategory(category);
         }
 
-        dialog.showDialog(context.getString(R.string.utubot_title));
+        dialog.showDialog(context.getString(R.string.utubot_ai_features));
     }
 
     /**
-     * The main page, always in this order: Import setup, Pair with code, the switches (Summary panel and its delay), Prompts, Test connection, Advanced
+     * The AI features, always in this order: the switches, Summary delay, Auto captions, Auto cuts, Cut jump, Prompts
      */
     List<OptionCategory> buildCategories() {
         Context context = getContext();
         List<OptionCategory> categories = new ArrayList<>();
 
-        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_import_setup),
-                context.getString(R.string.utubot_import_setup_desc), option -> {
-                    AppDialogPresenter.instance(context).closeDialog();
-                    UtubotSetupFlow.showImportDialog(context);
-                })));
-        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_pair), context.getString(R.string.utubot_pair_desc),
-                option -> {
-                    AppDialogPresenter.instance(context).closeDialog();
-                    UtubotPairing.showDialog(context);
-                })));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_assess), context.getString(R.string.utubot_assess_desc),
                 option -> mSettings.setAssessEnabled(option.isSelected()), mSettings.isAssessEnabled())));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_mark_only), context.getString(R.string.utubot_mark_only_desc),
@@ -81,22 +70,14 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
                 formatDelay(context, mSettings.getPanelDelayMs()), option -> showPanelDelays())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_auto_scroll),
                 formatAutoScroll(context, mSettings.getAutoScrollSpeedPxPerSec()), option -> showAutoScrollSpeeds())));
-        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_browse_refresh),
-                formatBrowseRefresh(context, mSettings.getBrowseRefreshMinutes()), option -> showBrowseRefresh())));
-        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_update_interval),
-                formatBrowseRefresh(context, mSettings.getUpdateIntervalMinutes()), option -> showUpdateInterval())));
-        categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_development_mode), context.getString(R.string.utubot_development_mode_desc),
-                option -> mSettings.setDevelopmentMode(option.isSelected()), mSettings.isDevelopmentMode())));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_captions), context.getString(R.string.utubot_auto_captions_desc),
                 option -> mSettings.setAutoCaptionsEnabled(option.isSelected()), mSettings.isAutoCaptionsEnabled())));
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_auto_cuts), context.getString(R.string.utubot_auto_cuts_desc),
                 option -> mSettings.setApplyReadyCutsEnabled(option.isSelected()), mSettings.isApplyReadyCutsEnabled())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_jump),
                 formatCutJump(context, mSettings.getCutJumpBinding()), option -> showCutJump())));
-        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_prompts), option -> showPrompts())));
-        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_test_connection), option -> testConnection())));
-        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_advanced), context.getString(R.string.utubot_advanced_desc),
-                option -> showAdvanced())));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_prompts), context.getString(R.string.utubot_prompts_desc),
+                option -> showPrompts())));
 
         return categories;
     }
@@ -144,34 +125,6 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
         return context.getString(R.string.utubot_cut_jump_value_left_right);
     }
 
-    private void showBrowseRefresh() {
-        Context context = getContext();
-        AppDialogPresenter dialog = AppDialogPresenter.instance(context);
-        List<OptionItem> options = new ArrayList<>();
-
-        for (int minutes : BrowseCachePolicy.REFRESH_MINUTES_CHOICES) {
-            options.add(UiOptionItem.from(formatBrowseRefresh(context, minutes), option -> mSettings.setBrowseRefreshMinutes(minutes),
-                    minutes == mSettings.getBrowseRefreshMinutes()));
-        }
-
-        dialog.appendRadioCategory(context.getString(R.string.utubot_browse_refresh), options);
-        dialog.showDialog(context.getString(R.string.utubot_browse_refresh));
-    }
-
-    private void showUpdateInterval() {
-        Context context = getContext();
-        AppDialogPresenter dialog = AppDialogPresenter.instance(context);
-        List<OptionItem> options = new ArrayList<>();
-
-        for (int minutes : UtubotSettings.UPDATE_INTERVAL_CHOICES_MINUTES) {
-            options.add(UiOptionItem.from(formatBrowseRefresh(context, minutes), option -> mSettings.setUpdateIntervalMinutes(minutes),
-                    minutes == mSettings.getUpdateIntervalMinutes()));
-        }
-
-        dialog.appendRadioCategory(context.getString(R.string.utubot_update_interval), options);
-        dialog.showDialog(context.getString(R.string.utubot_update_interval));
-    }
-
     /**
      * The reading pace of the self-scrolling summary/answer text: one of {@link UtubotSettings#AUTO_SCROLL_SPEEDS_PX_PER_SEC}
      */
@@ -204,53 +157,6 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
         String text = seconds == Math.floor(seconds) ? String.valueOf((int) seconds) : String.valueOf(seconds);
 
         return context.getString(R.string.utubot_panel_delay_value, text);
-    }
-
-    /**
-     * "10 min"
-     */
-    static String formatBrowseRefresh(Context context, int minutes) {
-        return context.getString(R.string.utubot_browse_refresh_value, String.valueOf(minutes));
-    }
-
-    private void showAdvanced() {
-        Context context = getContext();
-        AppDialogPresenter dialog = AppDialogPresenter.instance(context);
-
-        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_backend_url), emptyToDash(mSettings.getUrl()),
-                option -> enterUrl()));
-        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_token),
-                context.getString(mSettings.getToken().isEmpty() ? R.string.utubot_token_unset : R.string.utubot_token_set),
-                option -> enterToken()));
-        dialog.showDialog(context.getString(R.string.utubot_advanced));
-    }
-
-    private void enterUrl() {
-        Context context = getContext();
-        AppDialogPresenter.instance(context).closeDialog();
-        SimpleEditDialog.showUrl(context, context.getString(R.string.utubot_backend_url), context.getString(R.string.utubot_backend_url_hint),
-                mSettings.getUrl(), newValue -> {
-                    try {
-                        mSettings.setUrlManually(newValue);
-                    } catch (UtubotSetup.SetupException e) {
-                        MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_import_failed, e.getMessage()));
-                        return false;
-                    }
-                    return true;
-                });
-    }
-
-    private void enterToken() {
-        Context context = getContext();
-        AppDialogPresenter.instance(context).closeDialog();
-        SimpleEditDialog.showPassword(context, context.getString(R.string.utubot_token), mSettings.getToken(), newValue -> {
-            mSettings.setToken(newValue);
-            return true;
-        });
-    }
-
-    private void testConnection() {
-        mAction = UtubotConnectionTest.run(getContext(), mAction);
     }
 
     private void showPrompts() {
@@ -330,9 +236,5 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(done -> MessageHelpers.showMessage(context, context.getString(R.string.utubot_prompts_refreshed)),
                         error -> MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_prompts_failed, error.getMessage())));
-    }
-
-    private static String emptyToDash(String text) {
-        return text.isEmpty() ? "-" : text;
     }
 }

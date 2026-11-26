@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="utubot_title" translatable="false">u·tubot</string>
+    <string name="utubot_ai_features">AI features</string>
+    <string name="utubot_backend">Backend</string>
     <string name="utubot_import_setup">Import setup</string>
     <string name="utubot_import_setup_desc">Type your server\'s address (for example utubot.example.com) to configure the app</string>
     <string name="utubot_import_setup_hint">utubot.example.com</string>
@@ -42,12 +44,16 @@
     <string name="utubot_auto_cuts">Apply ready cuts automatically</string>
     <string name="utubot_auto_cuts_desc">Turns on a director\'s cut that is already ready when the video opens</string>
     <string name="utubot_test_connection">Test connection</string>
+    <string name="utubot_test_connection_desc">Check that the backend answers with the token</string>
+    <string name="utubot_web_admin">u·tubot web admin</string>
+    <string name="utubot_web_admin_desc">Open the web admin of the backend</string>
     <string name="utubot_testing">Testing the connection…</string>
     <string name="utubot_test_ok">Connected: backend %1$s, user %2$s</string>
     <string name="utubot_test_unauthorized">The backend is up, but the token is wrong</string>
     <string name="utubot_test_failed">Can\'t reach the backend: %s</string>
     <string name="utubot_not_configured">Set the u·tubot backend address in the settings first</string>
     <string name="utubot_prompts">Prompts</string>
+    <string name="utubot_prompts_desc">The prompts for the summary panel</string>
     <string name="utubot_prompts_loading">Loading the prompts…</string>
     <string name="utubot_prompts_failed">Can\'t load the prompts: %s</string>
     <string name="utubot_prompts_default">Default prompt</string>
@@ -120,7 +126,7 @@
     <string name="utubot_not_now">Not now</string>
     <string name="utubot_not_now_desc">Ask again the next time the app starts</string>
     <string name="utubot_dont_ask">Don\'t ask again</string>
-    <string name="utubot_dont_ask_desc">You can still use Settings → u·tubot</string>
+    <string name="utubot_dont_ask_desc">You can still use Settings → Backend</string>
     <string name="utubot_pair_wrong_code">the code is wrong, used or expired</string>
     <string name="utubot_pair_failed">Pairing failed: %s</string>
     <string name="utubot_cut">Director\'s cut</string>

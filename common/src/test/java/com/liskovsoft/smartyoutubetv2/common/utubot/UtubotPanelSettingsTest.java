@@ -3,14 +3,19 @@ package com.liskovsoft.smartyoutubetv2.common.utubot;
 import android.app.Activity;
 
 import com.liskovsoft.smartyoutubetv2.common.R;
+import com.liskovsoft.smartyoutubetv2.common.app.models.data.SettingsItem;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCategory;
+import com.liskovsoft.smartyoutubetv2.common.app.presenters.settings.SystemGeneralSettingsPresenter;
 
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 
@@ -91,28 +96,23 @@ public class UtubotPanelSettingsTest {
 
     @Test
     public void browseRefreshReadsAsMinutes() {
-        assertEquals("10 min", UtubotSettingsPresenter.formatBrowseRefresh(mActivity, 10));
-        assertEquals("30 min", UtubotSettingsPresenter.formatBrowseRefresh(mActivity, 30));
+        assertEquals("10 min", UtubotSettings.formatBrowseRefresh(mActivity, 10));
+        assertEquals("30 min", UtubotSettings.formatBrowseRefresh(mActivity, 30));
     }
 
     @Test
-    public void theSettingsListShowsBrowseRefreshAfterTheSummaryDelay() {
-        // Summary delay, then the reading pace of the self-scrolling answer, then Browse refresh
-        OptionCategory reading = UtubotSettingsPresenter.instance(mActivity).buildCategories().get(7);
-        OptionCategory refresh = UtubotSettingsPresenter.instance(mActivity).buildCategories().get(8);
+    public void theSettingsListShowsTheReadingPaceAfterTheSummaryDelay() {
+        OptionCategory reading = UtubotSettingsPresenter.instance(mActivity).buildCategories().get(5);
 
         assertEquals(mActivity.getString(R.string.utubot_auto_scroll), reading.options.get(0).getTitle().toString());
         assertEquals("45 px/s", reading.options.get(0).getDescription().toString());
-
-        assertEquals(mActivity.getString(R.string.utubot_browse_refresh), refresh.options.get(0).getTitle().toString());
-        assertEquals("10 min", refresh.options.get(0).getDescription().toString());
     }
 
     @Test
     public void theSettingsListShowsTheCurrentDelayRightAfterTheSummaryPanel() {
         mSettings.setPanelDelayMs(3000);
 
-        OptionCategory delay = UtubotSettingsPresenter.instance(mActivity).buildCategories().get(6);
+        OptionCategory delay = UtubotSettingsPresenter.instance(mActivity).buildCategories().get(4);
 
         assertEquals(mActivity.getString(R.string.utubot_panel_delay), delay.options.get(0).getTitle().toString());
         assertEquals("3 s", delay.options.get(0).getDescription().toString());
@@ -135,5 +135,16 @@ public class UtubotPanelSettingsTest {
 
         mSettings.setDevelopmentMode(false);
         assertEquals(false, mSettings.isDevelopmentMode());
+    }
+
+    @Test
+    public void theBrowseRefreshCardIsInTheSystemGeneral() {
+        Assume.assumeTrue(UtubotSettings.isBuiltIn());
+        List<SettingsItem> items = SystemGeneralSettingsPresenter.instance(mActivity).getItems(mActivity);
+
+        assertEquals(mActivity.getString(R.string.category_background_playback), items.get(1).title.toString());
+        assertEquals(mActivity.getString(R.string.utubot_browse_refresh), items.get(2).title.toString());
+        assertEquals(mActivity.getString(R.string.child_mode), items.get(3).title.toString());
+        assertEquals(R.drawable.settings_home_rows, items.get(2).imageResId);
     }
 }

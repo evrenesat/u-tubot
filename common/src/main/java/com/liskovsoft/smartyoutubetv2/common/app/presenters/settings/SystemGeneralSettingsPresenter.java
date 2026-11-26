@@ -6,6 +6,7 @@ import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.SettingsItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.SettingsCardsPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.base.BasePresenter;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +40,10 @@ public class SystemGeneralSettingsPresenter extends BasePresenter<Void> implemen
                 () -> GeneralSettingsPresenter.instance(context).showApiKeys(), R.drawable.settings_api_keys));
         items.add(new SettingsItem(context.getString(R.string.category_background_playback),
                 () -> GeneralSettingsPresenter.instance(context).showBackgroundPlayback(), R.drawable.settings_background_playback));
+        if (UtubotSettings.isBuiltIn()) {
+            items.add(new SettingsItem(context.getString(R.string.utubot_browse_refresh),
+                    () -> GeneralSettingsPresenter.instance(context).showBrowseRefresh(), R.drawable.settings_home_rows));
+        }
         items.add(new SettingsItem(context.getString(R.string.child_mode),
                 () -> GeneralSettingsPresenter.instance(context).showChildMode(), R.drawable.settings_child_mode));
         items.add(new SettingsItem(context.getString(R.string.settings_disable_options),

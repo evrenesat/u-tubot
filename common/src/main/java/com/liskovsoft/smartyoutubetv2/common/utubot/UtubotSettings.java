@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.liskovsoft.smartyoutubetv2.common.BuildConfig;
+import com.liskovsoft.smartyoutubetv2.common.R;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -533,6 +534,13 @@ public class UtubotSettings {
         }
 
         return false;
+    }
+
+    /**
+     * "10 min"
+     */
+    public static String formatBrowseRefresh(Context context, int minutes) {
+        return context.getString(R.string.utubot_browse_refresh_value, String.valueOf(minutes));
     }
 
     private static boolean isPanelDelayChoice(int delayMs) {

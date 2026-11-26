@@ -29,7 +29,7 @@ so the other flavors behave as before.
 | `common/src/main/res/values/about_links.xml` | addresses and credit of the short About, defaults are Electric Eel's | flavors override them |
 | `misc/GitHubReleases.java` | `parse(json, tagPrefix)` keeps only the tags that start with the prefix; the changelog of the update channel (`update.json`) stands in when GitHub fails; `isInstalled` | one repository holds more than app releases; Settings, Updates, Release notes is the one place for them |
 | `app/presenters/settings/AboutSimpleSettingsPresenter.java` | addresses from the resources above, no row without an address, Server row (built-in flavor), credit row | per-flavor About |
-| `app/presenters/settings/UpdatesSettingsPresenter.java` | the release list marks the installed version; the update channel as fallback | release notes of the flavor only |
+| `app/presenters/settings/UpdatesSettingsPresenter.java` | update check interval and development mode (moved from the u·tubot panel); the release list marks the installed version; the update channel as fallback | release notes of the flavor only |
 | `misc/AppDataSourceManager.java` | Settings, Debugging only with a Submit data server (`DataSubmitter.isConfigured`) | diagnostics must not go to Electric Eel's server |
 | `diagnostics/DataSubmitter.java` | `isConfigured`, `autoSubmit` does nothing without it | same |
 | `.gitignore` | `utubot.properties`, `temp/` | local secrets and scratch |
@@ -56,7 +56,7 @@ so the other flavors behave as before.
 | `app/models/playback/controllers/SponsorBlockController.java` | `skipSegment` returns early while a director's cut is applied to the video that plays (`UtubotCutController.isCutActive`), so the sponsor block is fully off (no skip, no prompt) over the same section and the two do not clash; it comes back the moment the cut is taken off or the video has no active cut | SponsorBlock and a director's cut fight an overlapping sponsor segment (u·tubot#145) |
 | `common/.../utubot/UtubotCutController.java` | `isCutActive()` is public: true while a cut is applied to the video that plays; `getPlayingCut()` is the applied cut while its skipping is on (`null` with skipping off); `updateEndingTime()` asks the player to refresh the hourglass after a cut, skip or position change | the sponsor block reads `isCutActive()` to stay off over the same section (u·tubot#145); the player's hourglass follows the cut that plays (u·tubot#209) |
 | `tv/ui/widgets/time/EndingTimeView.java` | while a cut plays (`UtubotCutController.getPlayingCut`) the hourglass adds the cut's remaining kept time and appends `✂`; otherwise it keeps the full-video end | the player's end time follows the director's cut, and goes back to the full video when the cut is off or the playback is past its last kept part (u·tubot#209) |
-| `misc/AppDataSourceManager.java` | Settings entry "u·tubot", with its own tile icon `R.drawable.settings_utubot` | settings screen; Content filtering keeps `settings_aislist` |
+| `misc/AppDataSourceManager.java` | Settings entries "AI features" and "Backend", with its own tile icon `R.drawable.settings_utubot` | settings screen; Content filtering keeps `settings_aislist` |
 | `common/src/main/res/drawable-nodpi/settings_utubot.png` | new: the symbol, white on transparent, 302x302 with the canvas and padding of `settings_about.png`; `assets/brand/render.py` draws it from `utubot-symbol-mono.svg` | tile of the u·tubot Settings entry |
 | `utils/SimpleEditDialog.java` | `showNumber` | numeric pairing code dialog |
 | `exoplayer/controller/ExoPlayerController.java` | `followCaptions` in `setVideo` (stopped in `release`), `attachUtubotCaptions` on source change (keeps the source it merged into), `onUtubotCaptionsReady` (opens the source again with a track that came while playing, toast), `selectUtubotCaptions` (after the tracks changed), `isSelected` (an HQ track and a YouTube track in one language are two picks); `setVideo` takes a `UtubotCaptionsOpen` request for the video and keeps it for the playback, so `attachUtubotCaptions` and `onUtubotCaptionsReady` select the HQ track whatever the automatic setting says | HQ caption tracks, live add, auto-select, the Processed tile's open (u-tubot#66, step 4) |
@@ -71,11 +71,12 @@ so the other flavors behave as before.
 
 ## Behaviour
 
-- Settings, always in this order: Import setup, Pair with code (6 digits, `POST /v1/pair`, token stored, connection tested,
-  then "Paired as <user>"), assess switch, mark only, answer in menu, Summary panel, Summary delay, Reading pace (the self-scroll of
-  the long answer and Summary text, 30, 45 or 60 px/s), auto-select HQ captions, apply ready cuts
-  automatically, Prompts (list, choose default, Import from URL, Refresh all), Test connection, Advanced (backend URL and token by hand; a typed backend
-  also sets `<backend>/app/update.json` when no update URL is stored). `UtubotSettingsPresenter.buildCategories` is the list.
+- Settings, two sections. "Backend" (`UtubotBackendSettingsPresenter`), in this order: Import setup, Pair with code (6 digits, `POST /v1/pair`, token stored,
+  connection tested, then "Paired as <user>"), Test connection, u·tubot web admin, Advanced (backend URL and token by hand; a typed backend
+  also sets `<backend>/app/update.json` when no update URL is stored). "AI features" (`UtubotSettingsPresenter.buildCategories`), in this order: assess switch,
+  mark only, answer in menu, Summary panel, Summary delay, Reading pace (the self-scroll of the long answer and Summary text, 30, 45 or 60 px/s),
+  auto-select HQ captions, apply ready cuts automatically, Cut jump, Prompts (list, choose default, Import from URL, Refresh all). Browse refresh is in System,
+  General; update check interval and development mode are in Updates.
 - Import setup (`UtubotSetup`, `UtubotSetupFlow`): the user types a bare host or a URL, the app fetches `/setup.json`
   (`ai/CONTRACT.md`), stores backend URL, update URL and switch defaults, then opens the pairing dialog.
 - Every launch without a backend offers Import setup (Not now / Don't ask again); pairing follows. With a backend but no

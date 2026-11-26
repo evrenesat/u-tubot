@@ -129,7 +129,7 @@ public class UtubotBrandingTest {
         SettingsItem tile = null;
 
         for (SettingsItem item : AppDataSourceManager.instance().getSettingItems(context)) {
-            if (context.getString(com.liskovsoft.smartyoutubetv2.common.R.string.utubot_title).equals(item.title)) {
+            if (context.getString(com.liskovsoft.smartyoutubetv2.common.R.string.utubot_ai_features).equals(item.title)) {
                 tile = item;
             }
         }
