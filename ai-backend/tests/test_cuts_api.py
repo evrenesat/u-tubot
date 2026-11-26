@@ -1348,7 +1348,8 @@ class TestChannelModes:
         assert state["default_mode"] == "quick"
         assert state["mode_rule"] == "channel" and state["channel_mode"] == "watched"
 
-    async def test_watched_cannot_be_stored_while_it_is_not_configured(self, cuts_env):
+    async def test_watched_cannot_be_stored_while_it_is_not_configured(self, cuts_env, monkeypatch):
+        monkeypatch.setattr("utubot.watch.watched_not_configured", lambda cfg: "not configured")
         r = await cuts_env.client.put(f"/v1/cut-channels/{self.CHANNEL}", json={"mode": "watched"})
         assert r.status_code == 409 and "not configured" in r.json()["error"]
 
