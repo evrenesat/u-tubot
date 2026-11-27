@@ -1,0 +1,73 @@
+{
+ "video_id": "evqNEHYAfDE",
+ "source": "ai/FILM_CUTS_PLAN.md 1.3 (agent reading, replaced by the owner's marks)",
+ "duration_s": 4889,
+ "pairs": [
+  {
+   "id": "P1",
+   "cause": [
+    1509,
+    1659
+   ],
+   "result": [
+    1805,
+    1942
+   ]
+  },
+  {
+   "id": "P2",
+   "cause": [
+    2020,
+    2074
+   ],
+   "result": [
+    2103,
+    2295
+   ]
+  },
+  {
+   "id": "P3",
+   "cause": [
+    2291,
+    2462
+   ],
+   "result": [
+    2462,
+    2642
+   ]
+  },
+  {
+   "id": "P4",
+   "cause": [
+    2650,
+    2796
+   ],
+   "result": [
+    2855,
+    3185
+   ]
+  },
+  {
+   "id": "P5",
+   "cause": [
+    3194,
+    4108
+   ],
+   "result": [
+    4764,
+    4824
+   ]
+  },
+  {
+   "id": "P6",
+   "cause": [
+    4117,
+    4663
+   ],
+   "result": [
+    4692,
+    4722
+   ]
+  }
+ ]
+}

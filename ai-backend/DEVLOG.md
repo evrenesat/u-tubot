@@ -1,3 +1,12 @@
+## 2026-11-27 (film cuts: checkpoint 0 and paper cuts of one film, ai/FILM_CUTS_PLAN.md)
+
+- Checkpoint 0. `feature_calls` was added by #167 (deployed 26 Nov 17:38 UTC, first row at that time); the film's cut calls ran at 13:05 UTC, before the table existed, and no cut has built since (the only later request failed with "no transcript"). `[llm.cuts]` is tagged `feature = "cuts"` and `CutEngine` passes it, so nothing is missing in the code; issue #256 stays open until a cut build after the deploy is seen to write a row. Gateway general aliases listed (context 100k to 1M): utubot, heavy, light, fast, smart, reviewer, worker, glm-5.3-flash, qwen3.x, openrouter/* references.
+- The film's stored captions were gone (forced rebuild, #261): no `transcripts`, `captions` or `stage_cache` row for the video. Auto captions fetched once with yt-dlp from the server CT (no cookies), kept only on the work host outside the repository.
+- New `utubot/story.py` (pure code: step 0 marks, read, link, closure, selection, checks A1 to A8, critic repair, text and HTML paper cuts), `STORY_*` prompts in `prompts.py`, `scripts/story_cut_bench.py` (runs the steps per candidate model, writes paper cuts and measurements outside the repository), `fixtures/cuts/story/evqNEHYAfDE.pairs.json` (time ranges of the six cause/result pairs only), tests `test_story_*.py` on an invented 12-minute story. No server change; the tunables live in `StoryParams` until checkpoint 2 moves them to config.
+- Measured on the film (888 units): the first link prompt let the model chain every beat to its neighbour, so the ending's closure was 58 of 83 beats (3553 s) and no half cut was possible. The link prompt now asks for sparse needs; closure then holds a half cut with A1 = 0.
+- Candidates (same alias for all steps, thinking low from link on): utubot, heavy, glm-5.3-flash; `light` failed at read (8000 answer tokens, no JSON). Thinking models need answer headroom: with 3000 tokens for select the answer was empty (finish=length), so the bench adds 16000.
+- Deviations from the plan: ids of scenes and beats are assigned by code, not the model; a read answer that still has gaps after the repair round is snapped by code and noted; captions come from yt-dlp auto VTT (888 units) instead of the TV's json3.
+
 ## 2026-11-27 (tests never reach YouTube: refusals are recorded and fail the test, issue #35)
 
 - The no-YouTube guard in `tests/conftest.py` already refused yt-dlp, httpx and DNS lookups, but a refusal the code under test caught

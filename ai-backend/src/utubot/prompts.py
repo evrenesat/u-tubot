@@ -71,6 +71,65 @@ CUT_SYSTEM = (
     "content and never add commentary."
 )
 
+STORY_READ_SYSTEM = (
+    "You read a film or story from its numbered transcript units and build a story map. Lines "
+    "starting with '---' (pauses, music) are not units and are never referred to. Reply ONLY with "
+    'JSON: {"kind":"story|talk|other","language":"<code>","synopsis":"<at most 600 characters>",'
+    '"cast":[{"id":"c1","name":"<main spelling>","aliases":["<other spellings>"],'
+    '"role":"<at most 80 characters>"}],'
+    '"scenes":[{"from":<unit id>,"to":<unit id>,"where":"<at most 40 characters>",'
+    '"who":["c1"],"beats":[{"from":<unit id>,"to":<unit id>,"what":"<what happens, at most 160 '
+    'characters>"}]}]}. '
+    "Automatic captions have no speakers and spell names inconsistently: merge the spellings of "
+    "one person into one cast entry. Scenes cover every unit you were asked to cover, in order, "
+    "with no gap and no overlap; the beats of a scene cover that scene the same way. A beat is "
+    "one event or exchange (usually 20 seconds to 3 minutes). Describe what happens and why it "
+    "matters, in English, naming people by their cast name. Never invent events."
+)
+
+STORY_LINK_SYSTEM = (
+    "You link the beats of a film or story by cause and effect. You get the synopsis, the cast and "
+    "numbered beat cards, no transcript. Reply ONLY with JSON: "
+    '{"threads":[{"id":"t1","title":"<at most 60 characters>","beats":[<beat ids>]}],'
+    '"beats":[{"id":<beat id>,"kind":"setup|payoff|turn|reveal|gag|connective","weight":<1-5>,'
+    '"needs":[<earlier beat ids>],"why":"<at most 100 characters>"}],"ending":[<beat ids>]}. '
+    '"needs" lists the EARLIER beats a viewer would be lost without when this beat is shown '
+    "but those beats are not: the plan or setup that explains a payoff, the scene that "
+    "introduces a person or object it relies on, the decision behind a result (at most 4, only "
+    "earlier ids). Be sparse: a viewer follows a story in order, so a beat that simply continues "
+    "the previous beats needs nothing, and you never list the previous beat just because it "
+    "comes before. About two beats in three have empty needs; a chain of beats each needing its "
+    "neighbour is wrong. Every payoff and reveal needs at least one beat. "
+    '"weight" is how much the beat matters to the story (5 = the story fails without it). '
+    '"ending" lists the beats that make up the ending (the last resolution, never empty). '
+    "Answer for every beat."
+)
+
+STORY_SELECT_SYSTEM = (
+    "You choose which beats of a film stay in a shorter cut. You get the purpose, the synopsis, "
+    "the threads and numbered beat cards with duration, kind, weight and the earlier beats each "
+    "one needs. Reply ONLY with JSON: "
+    '{"threads":[{"id":"t1","decision":"keep|compress|drop","reason":"<at most 100 characters>"}],'
+    '"beats":[{"id":<beat id>,"keep":<0-3>}]}. '
+    "keep: 3 = must stay, 2 = good, 1 = fine if there is room, 0 = drop. You score; you do not "
+    "add up durations, the server builds the cut to the length and adds every beat a kept beat "
+    "needs. Prefer dropping a whole thread to keeping only its ending. Answer for every beat."
+)
+
+STORY_CRITIC_SYSTEM = (
+    "You are a strict viewer who has not seen the film. You get the purpose and the cut as the "
+    "viewer gets it: the kept text in order, with a line '--- skipped m:ss ---' at each cut. "
+    "Below the line '=== skipped beats ===' are the cards of the skipped beats, for naming fixes "
+    "only. Reply ONLY with JSON: "
+    '{"consistency":<0-10>,"density":<0-10>,"goal":<0-10>,'
+    '"problems":[{"at_beat":<beat id>,"type":"missing_cause|unknown_person|dangling_setup|'
+    'filler|abrupt|goal","note":"<at most 120 characters>","add":[<skipped beat ids>],'
+    '"drop":[<kept beat ids>]}]}. '
+    "consistency: can a first-time viewer follow every kept event; density: the share of kept "
+    "time that carries story, character or a joke; goal: purpose and length. Name at most 8 "
+    "problems, the worst first."
+)
+
 # The built-in director's-cut presets. The instruction is sent to the cut model as the task; a
 # cut preset is never offered as a summary prompt (`PromptStore.describe` filters task=cut out).
 PRETTY_CUT_LABELS = {
