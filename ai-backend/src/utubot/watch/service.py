@@ -42,7 +42,7 @@ from ..db import Database
 from ..llm import INTERACTIVE, LLMClient, LLMError
 from ..media_archive import MediaArchive
 from ..prompts import PromptStore
-from ..transcripts import TranscriptService
+from ..transcripts import Transcript, TranscriptService
 from ..youtube import YoutubeError, YoutubeGate
 from .describe import describe_scenes, is_watched_installed, tdt_cache_key, tdt_from_json
 from .grids import GridPlan, build_grid_plan, clean_grid_dirs, settings_key
@@ -368,15 +368,46 @@ class WatchedBuilder:
 
     # ---- the whole build -----------------------------------------------------------------------
 
+    async def prepare(
+        self, cuts: CutService, request_id: str, row: dict[str, Any]
+    ) -> tuple[Transcript, list[Any], str, dict[str, Any]]:
+        """The transcript side of a build: its length, a timed transcript (waiting for the refresh
+        job when there is none) and the limits. It runs before the watched slot is taken, so a
+        transcript that takes minutes never holds the one slot a prime cut needs."""
+        video_id = row["video_id"]
+        watched = self.cfg.cuts.watched
+        if not (cuts._meta(video_id).get("duration_s")):
+            await self.transcripts.ensure_length(video_id, wait_s=15.0)
+        with events.stage(STAGE_TRANSCRIPT, video_id=video_id) as stage_holder:
+            transcript = await cuts._ensure_transcript(request_id, row)
+            meta = {**transcript.meta, **cuts._meta(video_id)}
+            if not meta.get("duration_s"):
+                await self.transcripts.ensure_length(video_id, wait_s=15.0)
+                meta = {**meta, **cuts._meta(video_id)}
+            duration = meta.get("duration_s")
+            if duration and float(duration) > watched.max_video_minutes * 60:
+                raise CutRefused(TOO_LONG, status=409)
+            if meta.get("is_live"):
+                raise CutRefused(LIVE, status=409)
+            thash = transcript_hash(transcript.segments or [])
+            stage_holder.set(
+                source=transcript.source,
+                lang=transcript.lang,
+                units=len(transcript.segments or []),
+            )
+        return transcript, transcript.segments or [], thash, meta
+
     async def build(
         self,
         cuts: CutService,
         request_id: str,
         row: dict[str, Any],
         trace: events.JobTrace,
+        prepared: tuple[Transcript, list[Any], str, dict[str, Any]],
         yield_check: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[dict[str, Any], str]:
-        """The Watched request from video to cached cut; returns (cut document, cache key)."""
+        """The Watched request from video to cached cut, after `prepare`; returns (cut document,
+        cache key). Holds the watched slot: everything here is video, grids, descriptions, model."""
         video_id = row["video_id"]
         instruction, preset_id, source = cuts._instruction(row)
         work = self.cfg.media_dir / "watched" / request_id
@@ -385,32 +416,7 @@ class WatchedBuilder:
         work.mkdir(parents=True, exist_ok=True)
         watched = self.cfg.cuts.watched
 
-        async def transcript_part() -> tuple[Any, list[Any], str, dict[str, Any]]:
-            with events.stage(STAGE_TRANSCRIPT, video_id=video_id) as stage_holder:
-                transcript = await cuts._ensure_transcript(request_id, row)
-                meta = {**transcript.meta, **cuts._meta(video_id)}
-                if not meta.get("duration_s"):
-                    await self.transcripts.ensure_length(video_id, wait_s=15.0)
-                    meta = {**meta, **cuts._meta(video_id)}
-                duration = meta.get("duration_s")
-                if duration and float(duration) > watched.max_video_minutes * 60:
-                    raise CutRefused(TOO_LONG, status=409)
-                if meta.get("is_live"):
-                    raise CutRefused(LIVE, status=409)
-                thash = transcript_hash(transcript.segments or [])
-                stage_holder.set(
-                    source=transcript.source,
-                    lang=transcript.lang,
-                    units=len(transcript.segments or []),
-                )
-                return transcript, transcript.segments or [], thash, meta
-
-        async def length_part() -> None:
-            if not (cuts._meta(video_id).get("duration_s")):
-                await self.transcripts.ensure_length(video_id, wait_s=15.0)
-
-        await length_part()
-        transcript, segments, thash, meta = await transcript_part()
+        transcript, segments, thash, meta = prepared
         duration_s = float(meta["duration_s"]) if meta.get("duration_s") else None
 
         entry, plan = await self._video_and_grids(

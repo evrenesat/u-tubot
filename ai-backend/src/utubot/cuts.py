@@ -2506,15 +2506,6 @@ class CutService:
             self._release_user(user)
 
     async def _build_slot(self, request_id: str, row: dict[str, Any]) -> None:
-        watched_slot = False
-        if (row["mode"] or "quick") == "watched":
-            trace = events.JobTrace(row["job_id"], self.jobs.events)
-            # Wait before taking the one slot: a normal build holding it would block the prime
-            # build it is waiting for.
-            await self._wait_for_prime(row, trace, row.get("klass") or NORMAL)
-            watched_slot = await self._acquire_watched(request_id, trace)
-            if not watched_slot:
-                return
         self.db.execute(
             "UPDATE jobs SET status='running', updated_at=? WHERE id=? AND status='queued'",
             [time.time(), row["job_id"]],
@@ -2580,6 +2571,14 @@ class CutService:
                 self.archive,
                 self.gate,
             )
+            # The transcript comes first and holds no watched slot: it can wait minutes for its
+            # refresh job, and a prime cut must not queue behind a build that is only waiting.
+            prepared = await builder.prepare(self, request_id, row)
+            # Wait before taking the one slot: a normal build holding it would block the prime
+            # build it is waiting for.
+            await self._wait_for_prime(row, trace, row.get("klass") or NORMAL)
+            if not await self._acquire_watched(request_id, trace):
+                return
 
             # A watched build yields at the next grid while a prime demanding job waits; the
             # yield drives the describing loop, so the build stops after the grid it is on. It
@@ -2591,7 +2590,7 @@ class CutService:
                 )
 
             doc, cache_key = await builder.build(
-                self, request_id, row, trace, yield_check=yield_check
+                self, request_id, row, trace, prepared, yield_check=yield_check
             )
             if not self._dismissed(request_id):
                 self._finish(request_id, row, cache_key, doc)

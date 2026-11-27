@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
@@ -189,8 +190,13 @@ class TestWatchedBuild:
         assert first_doc["state"] == "ready", first_doc.get("error")
         second_doc = await wait_ready(watched_env, second.json()["request_id"])
         assert second_doc["state"] == "ready"
-        job = (await watched_env.client.get(f"/v1/jobs/{second_doc['job_id']}")).json()
-        assert "in_line" in {event["stage"] for event in job["events"]}
+        # Both cuts wait for the same transcript and become ready together, so either may take the
+        # slot first; the other one waits in line.
+        stages = []
+        for jid in (first_doc["job_id"], second_doc["job_id"]):
+            job = (await watched_env.client.get(f"/v1/jobs/{jid}")).json()
+            stages.append({event["stage"] for event in job["events"]})
+        assert any("in_line" in s for s in stages), stages
 
     async def test_failure_offers_quick_instead(self, watched_env, tmp_path):
         await store_video(watched_env, tmp_path)
@@ -289,3 +295,100 @@ class TestWatchedBuild:
         assert state["default_mode"] == "watched"
         watched = next(mode for mode in state["modes"] if mode["id"] == "watched")
         assert watched["default"] is True
+
+
+OTHER_VID = "bbbbbbbbbbb"
+PRIME_DEADLINE_S = 30
+
+
+async def store_video_as(env, tmp_path, video_id: str):
+    video = make_video(tmp_path / video_id)
+    env.svc.archive.store(video_id, video, kind="video")
+
+
+async def post_watched_for(env, video_id: str, preset: str):
+    return await env.client.post(
+        f"/v1/videos/{video_id}/cuts", json={"preset": preset, "mode": "watched"}
+    )
+
+
+async def wait_until(env, request_id: str, states, deadline_s: float):
+    """Long-poll until the request reaches one of `states` (or the deadline); returns the last doc.
+    A one-second long poll keeps the calls under the per-token request limit."""
+    deadline = time.monotonic() + deadline_s
+    doc: dict = {}
+    while time.monotonic() < deadline:
+        doc = (await env.client.get(f"/v1/cuts/{request_id}", params={"wait_ms": 1000})).json()
+        if doc.get("state") in states:
+            return doc
+    return doc
+
+
+class HeldTranscript:
+    """Stands in for the YouTube fetcher: the caption fetch of one video waits until `release`."""
+
+    def __init__(self, inner, video_id: str):
+        self.inner, self.video_id = inner, video_id
+        self.release = asyncio.Event()
+
+    async def meta(self, video_id: str):
+        return await self.inner.meta(video_id)
+
+    async def __call__(self, video_id: str):
+        if video_id == self.video_id:
+            await self.release.wait()
+        return await self.inner(video_id)
+
+
+class TestTranscriptWaitHoldsNoSlot:
+    async def test_a_prime_cut_builds_while_a_normal_one_waits_for_its_transcript(
+        self, watched_env, tmp_path
+    ):
+        # #165: a normal watched cut waiting for its transcript must not hold the one watched slot,
+        # or a prime watched cut waits behind it for the whole transcript wait.
+        await store_video(watched_env, tmp_path)
+        await store_video_as(watched_env, tmp_path, OTHER_VID)
+        set_transcript(watched_env.fetcher)
+        watched_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 3, "label": "Start"}],
+            "summary": "s",
+            "kept_s": 15,
+        }
+        held = HeldTranscript(watched_env.svc.transcripts.fetcher, VID)
+        watched_env.svc.transcripts.fetcher = held
+        # The held fetch must not also hold the only transcript worker and the one YouTube gate
+        # slot (the defaults), or the prime video's transcript would queue behind it for reasons
+        # that have nothing to do with the watched slot.
+        watched_env.cfg.captions.job_concurrency = 2
+        await watched_env.svc.jobs.stop()
+        watched_env.svc.jobs.start()
+        watched_env.svc.gate._limit = 2
+        try:
+            normal = (await post_watched(watched_env, preset="cut-demo")).json()["request_id"]
+            waiting = await wait_until(watched_env, normal, ("needs_transcript",), WAIT_DEADLINE_S)
+            assert waiting["state"] == "needs_transcript", waiting
+            assert watched_env.svc.cuts._watched_running == 0, "the transcript wait holds the slot"
+
+            owner = watched_env.cfg.users[0]
+            owner.prime = True
+            try:
+                prime = (await post_watched_for(watched_env, OTHER_VID, "cut-highlights-5")).json()[
+                    "request_id"
+                ]
+            finally:
+                owner.prime = False
+            assert (
+                watched_env.svc.db.one("SELECT klass FROM cut_requests WHERE id=?", [prime])[
+                    "klass"
+                ]
+                == "prime"
+            )
+            prime_doc = await wait_until(watched_env, prime, FINAL_STATES, PRIME_DEADLINE_S)
+            assert prime_doc.get("state") == "ready", prime_doc.get("error")
+            still = (await watched_env.client.get(f"/v1/cuts/{normal}")).json()
+            assert still["state"] == "needs_transcript", still
+        finally:
+            held.release.set()
+        doc = await wait_ready(watched_env, normal)
+        assert doc["state"] == "ready", doc.get("error")
+        assert watched_env.svc.cuts._watched_running == 0

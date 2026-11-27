@@ -730,7 +730,7 @@ video exceeds 90 minutes or 1 GiB, free disk falls below the configured floor, a
 estimate exceeds `describe_s_per_grid_max` per grid, or the 1-hour build deadline passes, the
 request goes `failed` with a plain reason and the Quick `fallback`. One Watched build runs at a
 time per server (`[cuts.watched] max_concurrent`, default 1): a second request emits `in_line`
-and waits its turn. The video copy and scene/grid caches are per video and video description;
+and waits its turn. A request waiting for its transcript holds no slot: the transcript comes first, then the slot. The video copy and scene/grid caches are per video and video description;
 grids are per preset's description and removed after the build unless `keep_grids`.
 
 Admin: `GET /v1/admin/videos/{id}/tdt` returns the newest stored TDT for debugging a watched

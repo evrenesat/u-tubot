@@ -12,6 +12,13 @@
 - Docs: `docs/development.md` "Tests without YouTube" (what the guard covers and does not, how to write a fake fetcher, downloader or
   cassette test). Not covered: raw IP literals, subprocess URLs, a test-installed `yt_dlp.YoutubeDL` stand-in.
 - Follow-up: full record/replay proxy for the emulator/E2E path is not in this change (issue #35 remains open for it).
+## 2026-11-27 (watched cut waits for its transcript before taking the slot, issue #165)
+
+- Cause: `_build_slot` took the single watched slot before `_run_build`, and the watched build then waited for its transcript (`_ensure_transcript`, up to `transcript_wait_s`) while holding it. A prime watched cut arriving meanwhile could not get the slot.
+- `WatchedBuilder.prepare` now runs the transcript phase (length, timed transcript, duration and live limits) before the slot is acquired. `_run_build` then waits for prime, takes the slot and calls `build(prepared)`, which holds the slot only for video, grids, descriptions and the model. The transcript stage is still recorded once, by `prepare`.
+- Not changed: `WatchedBuilder.prepare` still calls `ensure_length` (up to 15 s, metadata only) before the slot is taken; the transcript job itself still queues behind other transcript work (`captions.job_concurrency`, default 1), which is a separate wait.
+- Ordering changed: the slot is now taken after the transcript, so cuts for one video (which become ready together) no longer take the slot in request order; the first posted may wait in line behind the second. `test_a_second_watched_build_waits_in_line` asserts that one of the two waits, not which one.
+- Tests: `TestTranscriptWaitHoldsNoSlot` in `tests/test_cuts_watched.py` holds one video's caption fetch and checks the slot is free while that cut waits, and that a prime watched cut on another video builds meanwhile. It fails on the previous code (slot held, `1 == 0`).
 
 ## 2026-11-27 (TV captions kept, refusals fall back, issue #261)
 

@@ -569,7 +569,8 @@ the video facts). `GET|PUT|DELETE /v1/cut-channels` edit them.
   description; a later preset for the same video reuses them, but each preset's editor prompt is
   built again. A silent stretch over 4 s becomes a `(no speech)` unit, so a silent demo can be
   kept by id. Boundaries may move outward up to 1 s to a real shot cut, never across a speech
-  unit. One Watched build runs at a time per server; a second request shows `in_line` and waits.
+  unit. One Watched build runs at a time per server; a second request shows `in_line` and waits. A request
+  waiting for its transcript does not hold that slot: the transcript comes first, then the slot is taken.
   A grid/video cache is invalidated by a new video file or a transcript change, not by a preset.
   The watched editor reuses the target-length rank selection of Quick (the model is asked for a
   target and the server drops the lowest-ranked parts until it fits).
