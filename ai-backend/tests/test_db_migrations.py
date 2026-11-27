@@ -45,3 +45,20 @@ def test_caption_tracks_gain_the_timing_columns_additively():
     )
     assert database.one("SELECT timing_version FROM captions")["timing_version"] is None
     database.close()
+
+
+def test_an_old_cut_requests_table_gains_refetch_additively(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE cut_requests(id TEXT PRIMARY KEY, user TEXT NOT NULL, video_id TEXT NOT NULL,"
+        " state TEXT NOT NULL DEFAULT 'building', created_at REAL NOT NULL DEFAULT 0)"
+    )
+    conn.execute("INSERT INTO cut_requests(id,user,video_id) VALUES('r','u','v')")
+    conn.commit()
+    conn.close()
+    database = db.Database(str(path))
+    assert database.one("SELECT refetch FROM cut_requests WHERE id='r'")["refetch"] == 0
+    database.close()

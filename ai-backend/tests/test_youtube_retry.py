@@ -73,3 +73,45 @@ def test_only_a_forbidden_error_is_retryable() -> None:
     assert is_forbidden_error(forbidden())
     assert not is_forbidden_error(network())
     assert not is_forbidden_error(ValueError("this video is private"))
+
+
+def test_a_client_specific_refusal_is_retried_with_another_player_client():
+    for text in (
+        "ERROR: [youtube] abc: Requested format is not available. Use --list-formats",
+        "ERROR: [youtube] abc: Video unavailable. This content isn't available, try again later.",
+    ):
+        calls: list[str] = []
+
+        def run(player, text=text, calls=calls):
+            calls.append(player)
+            if player == "web":
+                raise yt_dlp.utils.DownloadError(text)
+            return "ok"
+
+        assert is_forbidden_error(yt_dlp.utils.DownloadError(text))
+        assert retry_forbidden(run, ["web", "android"], 0.0) == "ok"
+        assert calls == ["web", "android"]
+
+
+def test_a_removed_or_private_video_is_never_retried():
+    for text in (
+        "ERROR: Private video. Sign in if you've been granted access",
+        "ERROR: Video unavailable. This video has been removed by the uploader",
+        "ERROR: This video is no longer available, try again later is not offered",
+    ):
+        assert not is_forbidden_error(yt_dlp.utils.DownloadError(text))
+
+
+def test_refusals_of_a_download_classify_as_a_refusal_and_gone_ones_as_unavailable():
+    from utubot.youtube import REASON_FORBIDDEN_MEDIA, REASON_UNAVAILABLE, classify_failure
+
+    refused = classify_failure(
+        yt_dlp.utils.DownloadError("Requested format is not available"), 60.0, media=True
+    )
+    assert refused.reason == REASON_FORBIDDEN_MEDIA and refused.can_transcribe
+    gone = classify_failure(
+        yt_dlp.utils.DownloadError("Video unavailable. This video has been removed"),
+        60.0,
+        media=True,
+    )
+    assert gone.reason == REASON_UNAVAILABLE

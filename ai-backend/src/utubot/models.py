@@ -87,6 +87,7 @@ class CutCreateRequest(BaseModel):
     await_prompt: bool = False
     mode: str | None = Field(None, max_length=16)
     force: bool = False
+    refetch: bool = False  # also drop the stored transcript and build it again from the audio
 
 
 class CutPromptBody(BaseModel):

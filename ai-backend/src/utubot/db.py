@@ -226,6 +226,7 @@ CUT_REQUEST_COLUMNS = {
     "release_key": "TEXT",
     "release_duration_ms": "INTEGER",
     "force": "INTEGER NOT NULL DEFAULT 0",
+    "refetch": "INTEGER NOT NULL DEFAULT 0",
 }
 CUTS_COLUMNS = {
     "mode": "TEXT NOT NULL DEFAULT 'quick'",

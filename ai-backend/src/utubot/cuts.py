@@ -63,7 +63,10 @@ STAGE_REDUCE = "reduce"  # long videos: the final choice over the candidates (de
 
 # Shown on the TV when a cut cannot fetch the transcript because YouTube refused the download: the
 # server waits for the TV's own captions (the client proxy path) instead of failing the cut.
-FORBIDDEN_CAPTIONS_MESSAGE = "YouTube refused the server; using the TV's captions…"
+FORBIDDEN_CAPTIONS_MESSAGE = (
+    "YouTube refused the server and no captions are stored for this video. "
+    "Play the video on the TV for a few seconds so it can send its captions; this cut then builds."
+)
 
 REQUEST_STATES = ("waiting", "building", "needs_transcript", "ready", "failed", "dismissed")
 BUILDING_STATES = ("building", "needs_transcript")
@@ -1650,6 +1653,7 @@ class CutService:
         await_prompt: bool = False,
         mode: str | None = None,
         force: bool = False,
+        refetch: bool = False,
         channel_id: str | None = None,
     ) -> dict[str, Any]:
         """Queue a cut. Exactly one of `preset` / `prompt`; `await_prompt` creates an empty
@@ -1669,7 +1673,7 @@ class CutService:
         if await_prompt and preset is not None:
             raise CutRefused("A request that waits for a description cannot name a preset.")
         existing = self._active_same(
-            user, video_id, preset, prompt, await_prompt, chosen_mode, force
+            user, video_id, preset, prompt, await_prompt, chosen_mode, force, refetch
         )
         if existing is not None:
             if not await_prompt:
@@ -1687,6 +1691,7 @@ class CutService:
             await_prompt=await_prompt,
             mode=mode,
             force=force,
+            refetch=refetch,
             klass=klass,
             channel_id=channel_id,
         )
@@ -1708,6 +1713,7 @@ class CutService:
         await_prompt: bool = False,
         mode: str | None = None,
         force: bool = False,
+        refetch: bool = False,
         klass: str | None = None,
         message: str | None = None,
         channel_id: str | None = None,
@@ -1728,8 +1734,8 @@ class CutService:
         )
         self.db.execute(
             "INSERT INTO cut_requests(id,user,video_id,source,preset_id,prompt,state,job_id,"
-            "created_at,updated_at,mode,source_kind,source_key,force,klass,mode_rule,channel_id)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "created_at,updated_at,mode,source_kind,source_key,force,klass,mode_rule,channel_id,refetch)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 request_id,
                 user,
@@ -1748,6 +1754,7 @@ class CutService:
                 klass,
                 mode_rule,
                 channel_id,
+                1 if refetch else 0,
             ],
         )
         origin = events.current_origin()
@@ -1784,11 +1791,15 @@ class CutService:
         await_prompt: bool,
         mode: str = "quick",
         force: bool = False,
+        refetch: bool = False,
     ) -> dict[str, Any] | None:
-        """An active request for the same cut: a forced one never joins an unforced one."""
+        """An active request for the same cut: a forced or refetching one never joins another kind."""
         states = (*BUILDING_STATES, "waiting")
         marks = ",".join("?" * len(states))
-        where = f"user=? AND video_id=? AND force=? AND mode=? AND state IN ({marks})"
+        where = (
+            f"user=? AND video_id=? AND force=? AND mode=? AND state IN ({marks})"
+            f" AND refetch={1 if refetch else 0}"
+        )
         if await_prompt:
             row = self.db.one(
                 f"SELECT * FROM cut_requests WHERE {where} AND preset_id IS NULL"
@@ -2849,9 +2860,9 @@ class CutService:
         summaries lose that cached text too and must refetch it themselves — accepted, because
         a transcript without timings is useless for cuts."""
         video_id = row["video_id"]
-        forced = bool(row.get("force"))
+        forced = bool(row.get("refetch"))
         cached = self.transcripts.cached(video_id)
-        if cached is not None and cached.segments and (not forced or cached.source == SOURCE_ASR):
+        if cached is not None and cached.segments and not forced:
             return cached
         if self._meta(video_id).get("is_live"):
             raise CutRefused("This is a live stream; live videos cannot be cut.")

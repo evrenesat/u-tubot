@@ -1494,6 +1494,7 @@ def create_app(
             await_prompt=body.await_prompt,
             mode=body.mode,
             force=body.force,
+            refetch=body.refetch,
             channel_id=meta.channel_id,
         )
         return {"request_id": row["id"], "state": row["state"]}
