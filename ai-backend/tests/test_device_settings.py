@@ -384,3 +384,20 @@ def test_a_database_from_before_opens_with_its_data(tmp_path):
     again = dbmod.Database(path)  # a second open changes nothing
     assert again.one("SELECT COUNT(*) n FROM policy_overrides")["n"] == 1
     again.close()
+
+
+async def test_a_web_change_does_not_touch_a_tv_that_holds_its_own_value(env):
+    device_id, tv = await setup_tv(env)
+    await tv.post(
+        "/v1/device/settings", json={"initial": True, "changes": [change("ai.wait_ms", 1500, 0)]}
+    )
+    doc = (await tv.get("/v1/device/settings")).json()
+    await tv.get("/v1/device/settings", params={"have": doc["version"]})
+    await web_put(env, {"ai.wait_ms": 900})  # the user's value; this TV keeps 1500
+    status = (await env.client.get("/v1/me/settings/status")).json()["devices"][0]
+    assert "ai.wait_ms" not in status["pending"]
+    r = await tv.post(
+        "/v1/device/settings",
+        json={"changes": [change("ai.wait_ms", 1700, doc["settings"]["ai.wait_ms"]["rev"])]},
+    )
+    assert r.json()["results"][0]["outcome"] == "applied"

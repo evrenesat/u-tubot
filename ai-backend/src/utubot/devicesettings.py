@@ -106,11 +106,13 @@ class DeviceSettings:
         out: dict[str, dict[str, Any]] = {}
         for s in self.schema.synced(schema_version):
             key = s["key"]
-            rev = max(layer[key]["rev"], int(own_rev[key]["rev"]) if key in own_rev else 0)
+            tomb = int(own_rev[key]["rev"]) if key in own_rev else 0
             if key in own:
-                out[key] = {"v": json.loads(own[key]["json"]), "rev": rev, "from": "device"}
+                # its own value: the user's later changes do not touch this TV
+                value = json.loads(own[key]["json"])
+                out[key] = {"v": value, "rev": tomb or int(own[key]["rev"]), "from": "device"}
             else:
-                out[key] = {**layer[key], "rev": rev}
+                out[key] = {**layer[key], "rev": max(layer[key]["rev"], tomb)}
         return out
 
     # ---- audit and revisions ------------------------------------------------------------
