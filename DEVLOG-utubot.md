@@ -1,3 +1,14 @@
+## 2026-11-27 (cut-ready question shows its text over a playing video, issue #274)
+
+- The "Director's cut ready" question is the first row of the dialog: a disabled button carrying the whole question, then "Play the cut now" and "Not now".
+  It is also passed as the dialog title for skins that show one. Focus lands on "Play the cut now". (The title alone is hidden over a playing video, and the old
+  long-text row only showed its text after opening it.)
+- While a video plays, the question is a long toast ("Open the video menu to play it.") instead of a modal; the cut stays in the picker and Processed.
+  The modal stays for browsing. Strings in `utubot_strings.xml` (only the values/ locale has these keys, so no translation update).
+- Tests: `UtubotCutNoticesTest` checks the question is the first, disabled row, the Yes/No order, the toast while playing and the Yes path while browsing.
+  `UtubotCutQuestionRowTest` (smarttubetv) runs the real `AppPreferenceManager.createButtonPreference` on a disabled question row. TV-only; the
+  extension's cut notice (`cut-ready-elsewhere` in `ai/BROWSER_EXTENSION_PLAN.md`) already shows its own text.
+
 ## 2026-11-27 (TV Inbox next and previous, issue #223)
 
 - From an opened Inbox result on the TV, media next/previous or channel down/up opens the neighbouring result in the Inbox's order (newest

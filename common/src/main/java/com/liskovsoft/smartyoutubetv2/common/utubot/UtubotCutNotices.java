@@ -205,6 +205,17 @@ public final class UtubotCutNotices {
             return true;
         }
 
+        String text = promptText(screen, item.entry, item.cut);
+        UtubotCutController controller = cutController(screen);
+
+        if (controller != null && controller.hasLivePlayer()) {
+            // A video plays: the question is a notice that does not take the focus or cover the picture. The cut stays in the
+            // Director's cut picker and the Processed section, where the owner plays it (issue 274).
+            MessageHelpers.showLongMessage(screen, promptLaterText(screen, item.entry, item.cut));
+            answer.stay();
+            return true;
+        }
+
         AppDialogPresenter dialog = AppDialogPresenter.instance(screen);
 
         if (mPromptShown || dialog.isDialogShown()) {
@@ -212,9 +223,11 @@ public final class UtubotCutNotices {
             return false;
         }
 
-        String text = promptText(screen, item.entry, item.cut);
-
         final boolean[] answered = {false};
+        // The question is the first row: a disabled button, so it is read and the focus lands on the first answer. Skins that
+        // show the title (the classic list) get the same text as the title.
+        OptionItem question = UiOptionItem.from(text);
+        question.setEnabled(false);
         OptionItem yes = UiOptionItem.from(screen.getString(R.string.utubot_cut_play_yes), option -> {
             answered[0] = true;
             dialog.closeDialog();
@@ -226,6 +239,7 @@ public final class UtubotCutNotices {
             answer.stay();
         });
 
+        dialog.appendSingleButton(question);
         dialog.appendSingleButton(yes);
         dialog.appendSingleButton(no);
         dialog.setId(PROMPT_DIALOG_ID);
@@ -247,13 +261,27 @@ public final class UtubotCutNotices {
     }
 
     static String promptText(Context screen, Entry entry, Cut cut) {
-        String title = entry.title != null && !entry.title.trim().isEmpty()
-                ? entry.title.trim() : screen.getString(R.string.utubot_cut);
+        String title = promptTitle(screen, entry);
         String length = UtubotCutController.formatLength(cut.keptMs);
 
         return length.isEmpty()
                 ? screen.getString(R.string.utubot_cut_ready_play_no_length, title)
                 : screen.getString(R.string.utubot_cut_ready_play, title, length);
+    }
+
+    /** The same question for a video that plays: where to play the cut instead of asking it. */
+    static String promptLaterText(Context screen, Entry entry, Cut cut) {
+        String title = promptTitle(screen, entry);
+        String length = UtubotCutController.formatLength(cut.keptMs);
+
+        return length.isEmpty()
+                ? screen.getString(R.string.utubot_cut_ready_later_no_length, title)
+                : screen.getString(R.string.utubot_cut_ready_later, title, length);
+    }
+
+    private static String promptTitle(Context screen, Entry entry) {
+        return entry.title != null && !entry.title.trim().isEmpty()
+                ? entry.title.trim() : screen.getString(R.string.utubot_cut);
     }
 
     private void openWithCut(UtubotCutPromptQueue.Item item) {
