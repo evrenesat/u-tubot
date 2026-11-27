@@ -3518,5 +3518,5 @@ class CutEngine:
                 }
             )
         return await self.llm.chat_json(
-            task, messages, priority=INTERACTIVE, klass=klass, feature=task.feature
+            task, messages, priority=INTERACTIVE, klass=klass, feature=task.feature or "cuts"
         )

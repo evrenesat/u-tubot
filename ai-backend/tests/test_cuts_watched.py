@@ -102,6 +102,27 @@ class TestWatchedBuild:
         stages = {event["stage"] for event in job["events"]}
         assert {"transcript", "video", "grids", "describing", "model", "checking"} <= stages
 
+    async def test_watched_build_records_its_feature_calls(self, watched_env, tmp_path):
+        await store_video(watched_env, tmp_path)
+        set_transcript(watched_env.fetcher)
+        watched_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 4, "label": "The demo"}],
+            "summary": "The demo.",
+            "kept_s": 20,
+        }
+        r = await post_watched(watched_env)
+        assert r.status_code == 200, r.text
+        doc = await wait_ready(watched_env, r.json()["request_id"])
+        assert doc["state"] == "ready", doc.get("error")
+        vision_rows = watched_env.svc.db.all(
+            "SELECT feature, alias FROM feature_calls WHERE feature=?", ["cuts_vision"]
+        )
+        assert vision_rows, "the watched vision calls should record feature_calls rows"
+        assert vision_rows[0]["alias"] == "visionmodel"
+        cut_rows = watched_env.svc.db.all("SELECT feature, alias FROM feature_calls WHERE feature=?", ["cuts"])
+        assert cut_rows, "the watched text cut should record a feature_calls row"
+        assert cut_rows[0]["alias"] == "cutmodel"
+
     async def test_other_preset_reuses_the_descriptions_and_grids(self, watched_env, tmp_path):
         await store_video(watched_env, tmp_path)
         set_transcript(watched_env.fetcher)
