@@ -6,6 +6,14 @@
 - The summary delay accepts any value from 0 to 10000 ms (the web page can set one that is not among the four choices; the screen shows "Custom (700 ms)").
 - Tests: `UtubotSettingsSyncTest` (T3, fake server: first sync N of N values, copy and restore, pull to getter and panel listener, local change before any network call, 50 offline changes make one upload, outbox after restart, superseded, down/404/401/500/bad JSON, wrong type and range ignored), `UtubotSettingsSchemaTest` (T1: every `KEY_*` is a schema `tv_pref` or on the device-only list; the synced table equals the schema), `UtubotPanelSettingsTest` (any delay in range).
 - Not done: the emulator run against the mock backend (the mock has no settings route yet), the schema as an app asset (a table in code, checked against the file by a test), phase 2 keys.
+
+## 2026-11-27 (web settings: the Settings page, plan checkpoint 4)
+
+- New page `#/settings` (`web/ui/js/pages/settings.js`), drawn from `GET /v1/settings/schema`: groups, search by title, description or key, a control per type, "Default: ..." with Reset, staged changes with a "Review N changes" bar (old -> new, Save, Discard, a spoken confirmation for keys with `confirm`), a tab per TV (own values marked, "Use my default", "Use for all my TVs", app version, last sync) and a History tab. A 409 reloads and keeps the staged changes that still differ. Chips per TV ("Applied on ..., 12 s ago", "Waiting for ...", "... has its own value", "cannot sync yet (update the app)") move without a reload (status poll every 5 s while the page is shown). Rows have stable links (`#/settings/ai.summary_panel`).
+- Shown only when the server has `features.settings_sync`; the old "TV settings" card on TVs becomes a link to the page (it stays when the switch is off, and on the admin user page). Models and prompts link to their own pages.
+- Fix found while building it: a TV's own value keeps its own revision, so a later web change of the default no longer shows as waiting on that TV or supersedes its change.
+- Tests: `tests/js/settings.test.mjs` (search, staging, review, discard, 409, chips, History, tabs); `webui_demo.py` seeds two TVs (one in step, one off for 3 days with an own value and waiting changes) and about 13 history rows; `capture.cjs` gains the two pages.
+- Not done: the per-TV "Copy all settings from another TV", the long poll (checkpoint 5), the MVP acceptance on the owner's TV.
 ## 2026-11-27 (web settings review fixes)
 
 - Status, history, a TV's document and its `PUT` answer 403 to a paired TV's token (they are browser routes; a TV could read and change its siblings).

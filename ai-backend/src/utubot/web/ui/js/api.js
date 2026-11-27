@@ -9,7 +9,7 @@ export class ApiError extends Error {
   }
 }
 
-export const session = { user: null, admin: false, klass: "normal", csrf: null, via: null, hasPassword: false, voice: null };
+export const session = { user: null, admin: false, klass: "normal", csrf: null, via: null, hasPassword: false, voice: null, settingsSync: false };
 
 const SAFE = new Set(["GET", "HEAD"]);
 
@@ -71,8 +71,10 @@ export async function loadFeatures() {
   try {
     const me = await api("/v1/me");
     session.voice = !!(me.features && me.features.voice);
+    session.settingsSync = !!(me.features && me.features.settings_sync);
   } catch {
     session.voice = false;
+    session.settingsSync = false;
   }
   return session;
 }
@@ -82,7 +84,7 @@ export function adoptLogin(info) {
 }
 
 export function forgetSession() {
-  Object.assign(session, { user: null, admin: false, klass: "normal", csrf: null, via: null, hasPassword: false, voice: null });
+  Object.assign(session, { user: null, admin: false, klass: "normal", csrf: null, via: null, hasPassword: false, voice: null, settingsSync: false });
 }
 
 export async function upload(path, form) {

@@ -204,6 +204,7 @@ export async function render(view) {
                 await loadDevices();
               }, { kind: "danger" })),
               h("small", { class: "muted", text: "Linked " + fmtAgo(d.created_at) + ", last used " + fmtAgo(d.last_used) }),
+              session.settingsSync ? h("a", { href: "#/settings/tv/" + encodeURIComponent(d.id), text: "Settings of this TV" }) : null,
             ),
           )
         : empty("No TV is linked yet."),
@@ -248,10 +249,12 @@ export async function render(view) {
       ),
       card("Linked TVs", devicesHost),
       session.voice ? voiceForm() : null,
-      tvSettingsForm("/v1/me/settings", doc, (next) => {
-        doc = next;
-        draw();
-      }),
+      session.settingsSync
+        ? card("TV settings", note("Every TV setting is on the Settings page, with a tab for each TV."), h("a", { class: "btn sec", href: "#/settings", text: "Open Settings" }))
+        : tvSettingsForm("/v1/me/settings", doc, (next) => {
+            doc = next;
+            draw();
+          }),
       cutModeForm("/v1/me/settings", doc, (next) => {
         doc = next;
         draw();

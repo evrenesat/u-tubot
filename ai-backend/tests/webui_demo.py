@@ -118,6 +118,7 @@ def build(data: Path):
     cfg.speech.max_record_s = 50
     cfg.speech.per_user_per_min = 20
     cfg.voice.enabled = True
+    cfg.settings_sync.enabled = True
     cfg.security.scrypt_n = 2**12
     # The seeded "running" job parks its worker on the never-downloading fake; a second worker
     # keeps the queue alive for the cut builds the pages show live.
@@ -257,6 +258,60 @@ def seed_voice(db, now: float) -> None:
         db.execute(
             "INSERT INTO voice_commands(user,device_id,at,text,tool,args,outcome,marks) VALUES(?,?,?,?,?,?,?,?)",
             ["owner", tv, now - age, text, tool, json.dumps(args), outcome, json.dumps(marks)],
+        )
+
+
+def seed_settings(svc, now: float) -> None:
+    """Two TVs on the Settings page: one in step with the server and one that has been off for days,
+    with its own values, waiting changes and a history of ten rows."""
+    sync = svc.device_settings
+    ids = {
+        r["device"]: r["id"]
+        for r in svc.db.all("SELECT id, device FROM device_tokens WHERE user='owner'")
+    }
+    living, bedroom = ids["Living room TV"], ids["Bedroom Fire Stick"]
+
+    def change(key, value, base=0):
+        return {"key": key, "value": value, "base_rev": base}
+
+    first = {
+        "schema_version": 1,
+        "app_version": "0.9.12",
+        "initial": True,
+        "changes": [change("ai.mark_only", True), change("ai.panel_delay_ms", 3000)],
+    }
+    sync.push("owner", living, first)
+    sync.push(
+        "owner", bedroom, {**first, "app_version": "0.9.12", "changes": [change("ai.wait_ms", 800)]}
+    )
+    steps = [
+        {"ai.summary_panel": True},
+        {"ai.auto_cuts": True},
+        {"ai.assess": False},
+        {"ai.assess": True},
+        {"ai.wait_ms": 1500},
+        {"ai.answer_in_menu": False},
+        {"ai.auto_captions": False},
+        {"ai.auto_captions": True},
+    ]
+    for step in steps:
+        asyncio.run(svc.settings.update("owner", {"settings": step}, by="owner"))
+    doc = sync.pull("owner", living, None, 1)
+    sync.pull("owner", living, doc["version"], 1)
+    asyncio.run(svc.settings.update("owner", {"settings": {"ai.panel_delay_ms": 2400}}, by="owner"))
+    sync.pull("owner", living, None, 1)
+    sync.pull("owner", living, svc.auth.settings_version("owner")[0], 1)
+    svc.db.execute(
+        "UPDATE device_settings_state SET last_sync_at=?, applied_at=? WHERE device_id=?",
+        [now - 3 * 86400 + 60, now - 3 * 86400, bedroom],
+    )
+    svc.db.execute(
+        "UPDATE device_settings_state SET applied_version=4 WHERE device_id=?", [bedroom]
+    )
+    rows = svc.db.all("SELECT id FROM settings_audit ORDER BY id")
+    for i, row in enumerate(rows):
+        svc.db.execute(
+            "UPDATE settings_audit SET at=? WHERE id=?", [now - (len(rows) - i) * 5400, row["id"]]
         )
 
 
@@ -1049,6 +1104,7 @@ def seed(cfg: Config, app, mock: MockOpenAI) -> None:
             [uuid.uuid4().hex[:12], "owner", uuid.uuid4().hex, name, now - 20 * 86400, used],
         )
     seed_voice(db, now)
+    seed_settings(svc, now)
     jobs = [
         (
             "transcript",

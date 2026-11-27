@@ -1,6 +1,7 @@
 import { h, icon, mount } from "../dom.js";
 
 const DESCRIPTIONS = {
+  settings: "Every setting in one place, per TV, with history",
   tvs: "Link a TV, revoke devices, TV settings",
   history: "What you said to the TV and what it did, delete it",
   updates: "App version on this server and on GitHub",

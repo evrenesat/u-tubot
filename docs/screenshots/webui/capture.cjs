@@ -17,7 +17,7 @@ const base = process.argv[2] || "http://127.0.0.1:8791";
 const out = path.resolve(process.argv[3] || "docs/screenshots/webui");
 const BUDGET_MS = Number(process.env.BROWSER_BUDGET_MS) || 90000;
 const WAIT_MS = 10000;
-const PAGES = ["home", "models", "prompts", "filters", "captions", "tvs", "updates", "account", "admin", "more"];
+const PAGES = ["home", "models", "prompts", "filters", "captions", "tvs", "settings", "settings/history", "updates", "account", "admin", "more"];
 const problems = [];
 let browser = null;
 let reported = false;
@@ -187,6 +187,11 @@ async function checkOverflow(browser) {
     await shot(page, "14-tv-link");
     await scrollTo(page, page.getByRole("heading", { name: "Linked TVs" }));
     await shot(page, "15-tv-devices");
+
+    await go(page, "settings");
+    await shot(page, "25-settings");
+    await go(page, "settings/history");
+    await shot(page, "26-settings-history");
 
     await go(page, "updates");
     await shot(page, "16-updates");
