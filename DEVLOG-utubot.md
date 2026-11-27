@@ -1,3 +1,14 @@
+## 2026-11-27 (describe by voice on the TV, issue #176, takeover fixes)
+
+- The capture asked the recorder for 50 milliseconds (seconds passed as milliseconds), ran on the main thread (UI freeze, network on the main
+  thread) and could not be stopped early. `UtubotSpeechInput` now runs the capture and the upload on a worker thread, passes milliseconds, and the
+  sheet has a Stop tap that keeps what was heard; a silent recording says "no speech" instead of falling back to the system recogniser.
+- The RECORD_AUDIO result comes through `MotherActivity.addOnPermissions` (it never reached `onActivityResult`); the view re-registers its
+  activity-result hook posted, since re-adding inside the activity's loop threw a ConcurrentModificationException.
+- Dropped the per-device 3 s probe (the owner had to speak through a dozen silent probes before the real recording).
+- `ai/CONTRACT.md` keeps the phone's `recording.webm` / `.m4a` wording and adds the TV's `.wav` and the `language` field; whitespace damage in
+  the docs and `config.example.toml` reverted. Tests: `UtubotSpeechInputTest` (fake capture, loopback backend), `UtubotSpeechProbeTest`.
+
 ## 2026-11-26 (error ledger: the TV reports its own failures, issue #206)
 
 - `UtubotClient.send` reports a transport or 5xx failure of the app's own call to `POST /v1/ledger`, fire and forget, through

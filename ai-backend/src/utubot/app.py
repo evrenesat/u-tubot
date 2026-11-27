@@ -1547,12 +1547,14 @@ def create_app(
             if not isinstance(upload, UploadFile):
                 raise HTTPException(400, "no recording in the request")
             audio = await upload.read()
+            language = form.get("language")
         finally:
             await form.close()
         text = await svc.speech.transcribe(
             audio,
             filename=upload.filename or "recording",
             content_type=upload.content_type or "application/octet-stream",
+            language=language if isinstance(language, str) else None,
         )
         return {"text": text}
 

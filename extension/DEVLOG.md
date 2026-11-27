@@ -4,6 +4,16 @@
 
 - `createClient(..., { reportFailures: true })` (the router) reports the extension's own transport and 5xx failures to `POST /v1/ledger`, throttled to one per message a minute and ten a minute (`createFailureThrottle`). Unit tests in `tests/unit/client.test.js`.
 
+## 2026-11-26 (round 1 fix: the spoken cut description parity box)
+
+- The spoken cut description (the TV's "Describe by voice…") is TV only: the extension has a keyboard and takes the description
+  itself (`POST .../cuts {"prompt"}`), exactly as the `cut-qr` row's "Describe here". Its row in the plan's parity matrix (row `cut-speech`) says so
+  and points at `POST /v1/speech`, so a change to the TV-side speech feature needs no PR parity box.
+- Evidence: `scripts/utubot_ci_changes.py parity` passes with the plan touched and fails without it; backend `ruff check`/`format
+  --check` clean and `pytest -q` (1403 pass); `./gradlew :common:testStutubotDebugUnitTest` (the speech client, probe and WAV
+  tests) and `:smarttubetv:compileStutubotDebugJavaWithJavac`; extension `npm run lint`, `npm test` (56 pass), the five builds,
+  `web-ext lint` on the three Firefox variants (0 errors) and the e2e suite (4 pass) on loopback behind the refusing proxy.
+
 ## 2026-11-25 (checkpoints 0-3: third fix round, the red CI)
 
 - Both `Install ffmpeg` steps of `.github/workflows/utubot-ci.yml` (`backend` and `extension`) skip when the runner already has

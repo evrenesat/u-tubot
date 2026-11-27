@@ -49,6 +49,30 @@ async def test_the_file_field_name_is_also_accepted(env):
     assert env.llm.audio_calls[-1]["model"] == "stt"
 
 
+async def test_the_client_language_hint_overrides_the_server_language(env):
+    speech = speech_cfg(env)
+    speech.language = "tr"  # the server default, sent when the client hints nothing
+
+    r = await env.client.post(
+        "/v1/speech",
+        files={"audio": ("clip.webm", b"bytes", "audio/webm")},
+        data={"language": "en"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert env.llm.audio_calls[-1] == {"model": "stt", "language": "en"}
+
+
+async def test_without_a_hint_the_server_language_still_rides(env):
+    speech = speech_cfg(env)
+    speech.language = "de"
+
+    r = await env.client.post("/v1/speech", files={"audio": ("clip.webm", b"bytes", "audio/webm")})
+
+    assert r.status_code == 200, r.text
+    assert env.llm.audio_calls[-1] == {"model": "stt", "language": "de"}
+
+
 async def test_without_an_alias_it_says_not_configured_and_calls_nothing(env):
     env.cfg.speech.alias = ""
 
