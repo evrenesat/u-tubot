@@ -14,6 +14,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.ByteArrayOutputStream;
+import java.io.FileFilter;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -26,14 +27,16 @@ import java.util.regex.Pattern;
 
 /**
  * The HQ caption files the TV downloaded, kept in its own storage: they survive a restart and an update of the app, are played without
- * the backend, and the subtitle menu offers them for their video from then on. Nothing is ever removed or replaced here: a track that is
- * stored stays as it was first stored. Layout: {@code <root>/<video id>/<lang>.vtt} plus {@code index.json} with the labels. The files
+ * the backend, and the subtitle menu offers them for their video from then on. A track that is stored is never replaced; removal is only
+ * what the user asks for in the settings. Layout: {@code <root>/<video id>/<lang>.vtt} plus {@code index.json} with the labels. The files
  * are the truth: a lost or damaged index only costs the labels.
  */
 public final class UtubotCaptionStore {
     public static final String DIRECTORY = "utubot_captions";
     /** A caption file is a few hundred KB at most; a larger answer is not one */
     public static final int MAX_FILE_BYTES = 4 * 1024 * 1024;
+    /** Past this the settings show a warning; the store never evicts by itself */
+    public static final long WARN_BYTES = 200L * 1024 * 1024;
     private static final String INDEX_FILE = "index.json";
     private static final String FILE_EXTENSION = ".vtt";
     private static final String TEMP_EXTENSION = ".tmp";
@@ -62,6 +65,18 @@ public final class UtubotCaptionStore {
             this.label = label;
             this.speakers = speakers;
             this.file = file;
+        }
+    }
+
+    public static final class Usage {
+        public final int videos;
+        public final int tracks;
+        public final long bytes;
+
+        Usage(int videos, int tracks, long bytes) {
+            this.videos = videos;
+            this.tracks = tracks;
+            this.bytes = bytes;
         }
     }
 
@@ -123,6 +138,70 @@ public final class UtubotCaptionStore {
     }
 
     /**
+     * What is stored: the valid caption files, their total size, and the videos that have at least one. Index and temporary files are
+     * not counted.
+     */
+    public synchronized Usage usage() {
+        File[] dirs = mRoot.listFiles(File::isDirectory);
+
+        if (dirs == null) {
+            return new Usage(0, 0, 0);
+        }
+
+        int videos = 0;
+        int tracks = 0;
+        long bytes = 0;
+
+        for (File dir : dirs) {
+            if (!VIDEO_ID.matcher(dir.getName()).matches()) {
+                continue;
+            }
+
+            int inVideo = 0;
+            File[] files = captionFiles(dir);
+
+            if (files == null) {
+                continue;
+            }
+
+            for (File file : files) {
+                String lang = languageOf(file);
+
+                if (isStoredFile(file, lang)) {
+                    inVideo++;
+                    bytes += file.length();
+                }
+            }
+
+            if (inVideo > 0) {
+                videos++;
+                tracks += inVideo;
+            }
+        }
+
+        return new Usage(videos, tracks, bytes);
+    }
+
+    /**
+     * Deletes the tracks last changed before the moment, removes them from their labels and removes a video folder that no longer has
+     * a track.
+     *
+     * @return the number of caption tracks deleted
+     */
+    public synchronized int deleteOlderThan(long cutoffMs) {
+        return delete(file -> file.lastModified() < cutoffMs);
+    }
+
+    /**
+     * Deletes every stored caption track, plus the labels and video folders left empty.
+     *
+     * @return the number of caption tracks deleted
+     */
+    public synchronized int deleteAll() {
+        return delete(file -> true);
+    }
+
+    /**
      * Keeps the file of a track. A track of that video and language that is stored already is left as it is.
      *
      * @return the stored track, null when nothing was stored: a video id or language that can't be a file name, a file that isn't WebVTT or
@@ -160,6 +239,141 @@ public final class UtubotCaptionStore {
         }
 
         return describe(readIndex(dir), track.lang, file);
+    }
+
+    private int delete(FileFilter filter) {
+        File[] dirs = mRoot.listFiles(File::isDirectory);
+
+        if (dirs == null) {
+            return 0;
+        }
+
+        int deleted = 0;
+
+        for (File dir : dirs) {
+            if (VIDEO_ID.matcher(dir.getName()).matches()) {
+                deleted += deleteFrom(dir, filter);
+            }
+        }
+
+        return deleted;
+    }
+
+    private int deleteFrom(File dir, FileFilter filter) {
+        File[] files = captionFiles(dir);
+
+        if (files == null) {
+            return 0;
+        }
+
+        List<String> languages = new ArrayList<>();
+        int deleted = 0;
+
+        for (File file : files) {
+            String lang = languageOf(file);
+
+            if (!isStoredFile(file, lang) || !filter.accept(file)) {
+                continue;
+            }
+
+            if (file.delete()) {
+                languages.add(lang);
+                deleted++;
+            } else {
+                Log.e(TAG, "Can't delete %s", file);
+            }
+        }
+
+        if (!languages.isEmpty()) {
+            removeFromIndex(dir, languages);
+        }
+
+        if (!hasStoredFile(dir)) {
+            new File(dir, INDEX_FILE).delete();
+            deleteTemporaryFiles(dir);
+
+            if (!dir.delete() && dir.exists()) {
+                Log.e(TAG, "Can't remove the empty caption folder %s", dir);
+            }
+        }
+
+        return deleted;
+    }
+
+    /**
+     * Drops the deleted languages from the labels. A damaged index stays as it is; the files are the truth.
+     */
+    private static void removeFromIndex(File dir, List<String> languages) {
+        JSONArray index = readIndex(dir);
+
+        if (index == null) {
+            return;
+        }
+
+        JSONArray tracks = new JSONArray();
+
+        try {
+            for (int i = 0; i < index.length(); i++) {
+                JSONObject entry = index.optJSONObject(i);
+
+                if (entry != null && !languages.contains(entry.optString(KEY_LANG))) {
+                    tracks.put(entry);
+                }
+            }
+
+            if (tracks.length() == 0) {
+                new File(dir, INDEX_FILE).delete();
+                return;
+            }
+
+            writeAtomically(new File(dir, INDEX_FILE),
+                    new JSONObject().put(KEY_TRACKS, tracks).toString().getBytes(StandardCharsets.UTF_8));
+        } catch (JSONException | IOException e) {
+            Log.e(TAG, "Can't update the index of %s: %s", dir.getName(), e.getMessage());
+        }
+    }
+
+    private static void deleteTemporaryFiles(File dir) {
+        File[] files = dir.listFiles((parent, name) -> name.endsWith(TEMP_EXTENSION));
+
+        if (files == null) {
+            return;
+        }
+
+        for (File file : files) {
+            file.delete();
+        }
+    }
+
+    /**
+     * The files that could be caption tracks, whatever their content
+     */
+    private static File[] captionFiles(File dir) {
+        return dir.listFiles((parent, name) -> name.endsWith(FILE_EXTENSION));
+    }
+
+    private static String languageOf(File file) {
+        return file.getName().substring(0, file.getName().length() - FILE_EXTENSION.length());
+    }
+
+    private static boolean isStoredFile(File file, String lang) {
+        return file.isFile() && file.length() > 0 && LANGUAGE.matcher(lang).matches();
+    }
+
+    private static boolean hasStoredFile(File dir) {
+        File[] files = captionFiles(dir);
+
+        if (files == null) {
+            return false;
+        }
+
+        for (File file : files) {
+            if (isStoredFile(file, languageOf(file))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static boolean isWebVtt(byte[] vtt) {

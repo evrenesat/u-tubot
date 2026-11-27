@@ -1,6 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptionStore.StoredTrack;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptionStore.Usage;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CaptionTrack;
 
 import org.junit.Before;
@@ -16,6 +17,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -25,8 +27,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * The caption files the TV keeps: they survive a restart (a second store over the same folder), are never replaced or lost, and only real
- * WebVTT is stored.
+ * The caption files the TV keeps: they survive a restart (a second store over the same folder), are never replaced, and are lost only
+ * when deletion is asked for; only real WebVTT is stored.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
@@ -180,6 +182,84 @@ public class UtubotCaptionStoreTest {
         assertTrue(mStore.tracks("../../evil").isEmpty());
         assertTrue(mStore.tracks(null).isEmpty());
         assertFalse(mRoot.exists());
+    }
+
+    @Test
+    public void usage_countsTheStoredTracksOnly() throws IOException {
+        mStore.save(VIDEO, track("tr", "Turkish (u·tubot)", 0), TURKISH);
+        mStore.save(VIDEO, track("en", "English (u·tubot)", 0), ENGLISH);
+        mStore.save(OTHER_VIDEO, track("tr", "Turkish (u·tubot)", 0), TURKISH);
+
+        File dir = new File(mRoot, VIDEO);
+        Files.write(new File(dir, "de.vtt.tmp").toPath(), TURKISH);
+        assertTrue(new File(dir, "de.vtt").createNewFile());
+        File unknownVideo = new File(mRoot, "not-a-video!");
+        assertTrue(unknownVideo.mkdirs());
+        Files.write(new File(unknownVideo, "tr.vtt").toPath(), TURKISH);
+
+        Usage usage = mStore.usage();
+
+        assertEquals(2, usage.videos);
+        assertEquals(3, usage.tracks);
+        assertEquals(TURKISH.length * 2L + ENGLISH.length, usage.bytes);
+    }
+
+    @Test
+    public void deleteOlderThan_removesOnlyTheOldTracksAndTheirLabels() throws IOException {
+        long now = System.currentTimeMillis();
+        mStore.save(VIDEO, track("tr", "Turkish (u·tubot)", 0), TURKISH);
+        mStore.save(VIDEO, track("en", "English (u·tubot)", 0), ENGLISH);
+        File old = new File(new File(mRoot, VIDEO), "tr.vtt");
+        File recent = new File(new File(mRoot, VIDEO), "en.vtt");
+        assertTrue(old.setLastModified(now - TimeUnit.DAYS.toMillis(40)));
+        assertTrue(recent.setLastModified(now - TimeUnit.DAYS.toMillis(10)));
+
+        int deleted = mStore.deleteOlderThan(now - TimeUnit.DAYS.toMillis(30));
+
+        assertEquals(1, deleted);
+        assertFalse(old.exists());
+        assertTrue(recent.exists());
+        List<StoredTrack> tracks = new UtubotCaptionStore(mRoot).tracks(VIDEO);
+        assertEquals(1, tracks.size());
+        assertEquals("en", tracks.get(0).lang);
+        assertEquals("English (u·tubot)", tracks.get(0).label);
+        assertEquals(1, mStore.usage().tracks);
+    }
+
+    @Test
+    public void deletingTheLastTrack_removesTheVideoFolder() throws IOException {
+        long now = System.currentTimeMillis();
+        mStore.save(VIDEO, track("tr", "Turkish (u·tubot)", 0), TURKISH);
+        File dir = new File(mRoot, VIDEO);
+        assertTrue(new File(dir, "tr.vtt").setLastModified(now - TimeUnit.DAYS.toMillis(40)));
+
+        assertEquals(1, mStore.deleteOlderThan(now));
+
+        assertFalse(dir.exists());
+        assertFalse(mStore.has(VIDEO));
+        assertEquals(0, mStore.usage().tracks);
+    }
+
+    @Test
+    public void deleteAll_removesEveryTrackAndLabels() throws IOException {
+        mStore.save(VIDEO, track("tr", "Turkish (u·tubot)", 0), TURKISH);
+        mStore.save(VIDEO, track("en", "English (u·tubot)", 0), ENGLISH);
+        mStore.save(OTHER_VIDEO, track("tr", "Turkish (u·tubot)", 0), TURKISH);
+        File unknownVideo = new File(mRoot, "not-a-video!");
+        assertTrue(unknownVideo.mkdirs());
+        File unknownTrack = new File(unknownVideo, "tr.vtt");
+        Files.write(unknownTrack.toPath(), TURKISH);
+
+        assertEquals(3, mStore.deleteAll());
+
+        assertFalse(new File(mRoot, VIDEO).exists());
+        assertFalse(new File(mRoot, OTHER_VIDEO).exists());
+        assertTrue(unknownTrack.exists());
+        assertFalse(mStore.has(VIDEO));
+        assertFalse(mStore.has(OTHER_VIDEO));
+        assertEquals(0, mStore.usage().videos);
+        assertEquals(0, mStore.usage().tracks);
+        assertEquals(0, mStore.usage().bytes);
     }
 
     @Test

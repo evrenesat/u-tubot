@@ -135,7 +135,8 @@ public class UtubotSetupFlowTest {
                 mActivity.getString(R.string.utubot_auto_captions),
                 mActivity.getString(R.string.utubot_auto_cuts),
                 mActivity.getString(R.string.utubot_cut_jump),
-                mActivity.getString(R.string.utubot_prompts)), titles);
+                mActivity.getString(R.string.utubot_prompts),
+                mActivity.getString(R.string.utubot_caption_storage)), titles);
         assertEquals(OptionCategory.TYPE_SINGLE_SWITCH, (int) types.get(0));
         assertEquals(OptionCategory.TYPE_SINGLE_SWITCH, (int) types.get(1));
         assertEquals(OptionCategory.TYPE_SINGLE_BUTTON, (int) types.get(4));
@@ -149,7 +150,7 @@ public class UtubotSetupFlowTest {
 
         List<OptionCategory> categories = UtubotSettingsPresenter.instance(mActivity).buildCategories();
 
-        assertEquals(10, categories.size());
+        assertEquals(11, categories.size());
         assertEquals(mActivity.getString(R.string.utubot_assess), categories.get(0).options.get(0).getTitle().toString());
         assertEquals(mActivity.getString(R.string.utubot_mark_only), categories.get(1).options.get(0).getTitle().toString());
     }

@@ -1,3 +1,11 @@
+## 2026-11-27 (caption storage in Settings, issue #39)
+
+- Settings, u·tubot gains "Caption storage": size, videos and tracks, a warning past 200 MiB, and Delete old captions (30 days, 90 days,
+  1 year, all) behind a confirmation. This is the only place captions are removed; the store still never evicts or replaces a track by itself.
+- `UtubotCaptionStore` gains `usage()`, `deleteOlderThan(cutoff)` and `deleteAll()`: they count only valid non-empty `.vtt` files, drop the
+  deleted languages from `index.json`, and remove a video folder once it has no track. Tests cover the counts, the age cutoff, the index
+  update and the empty folder.
+
 ## 2026-11-27 (live server without models, voice plan checkpoint 2, issue #181)
 
 - New `realtime/` (Go, `utubot-rt`): the control channel of `ai/VOICE_CONTROL_PLAN.md` 2.3 with the backend check, focus store, target choice, typed

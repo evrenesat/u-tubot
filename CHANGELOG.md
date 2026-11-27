@@ -7,6 +7,9 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 ## Unreleased
 
+- Caption storage in Settings, u·tubot: the HQ captions kept on the TV now show their size, videos and tracks, with a warning past
+  200 MiB. "Delete old captions" removes tracks older than 30 days, 90 days or 1 year, or all of them, after a confirmation and reports
+  how many went. The store still never deletes or replaces a track by itself.
 - New: a "Skim the film" cut keeps the story beat by beat — the scene's best moments, in order, no cut mid-shot or mid-sentence — to
   about half a film's length. It runs from the timed transcript, or from a picture pass when you pick "Watched" for it, and falls back
   to speech recognition when the film has poor or no captions.
@@ -45,7 +48,8 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
   whether the captions are turned on; they are always in the subtitle menu as "u·tubot: <label>".
 - HQ captions are kept on the TV: the first time they are ready the file is downloaded into the app's storage, and from then on the
   subtitle menu offers them for that video after a restart or an update of the app, with another backend, or with the backend off the
-  air. Nothing is ever deleted or replaced; the backend is not asked for a video whose captions are stored.
+  air. Nothing is deleted or replaced on its own; Settings, u·tubot, Caption storage is where to remove them; the backend is not asked
+  for a video whose captions are stored.
 - Fixed: signing in to the web UI from a phone failed with "invalid username or password" when the keyboard capitalised the user name. User names now match regardless of case and surrounding spaces, failed attempts count under one name whatever the case, new users cannot differ from an existing one only by case, and the input fields turn off auto-capitalisation and auto-correction.
 - App releases are numbered and published automatically (0.3.x onwards).
 - Fixed: the Modern skin could show an empty screen (no grid, the sidebar and the top bar only) after the app started or a section

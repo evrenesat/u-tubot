@@ -6,6 +6,7 @@ import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.SettingsItem;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCategory;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.settings.SystemGeneralSettingsPresenter;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptionStore.Usage;
 
 import org.junit.Assume;
 import org.junit.Before;
@@ -18,6 +19,8 @@ import org.robolectric.annotation.Config;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
@@ -116,6 +119,31 @@ public class UtubotPanelSettingsTest {
 
         assertEquals(mActivity.getString(R.string.utubot_panel_delay), delay.options.get(0).getTitle().toString());
         assertEquals("3 s", delay.options.get(0).getDescription().toString());
+    }
+
+    @Test
+    public void captionStorageShowsSizeVideosAndTracks() {
+        String text = UtubotSettingsPresenter.formatCaptionStorage(mActivity, new Usage(2, 3, 13L * 1024 * 1024));
+
+        assertTrue(text.contains("13.0 MB"));
+        assertTrue(text.contains("2 videos"));
+        assertTrue(text.contains("3 tracks"));
+        assertFalse(text.contains("Caption storage is large"));
+    }
+
+    @Test
+    public void captionStorageWarnsAtTheThreshold() {
+        String text = UtubotSettingsPresenter.formatCaptionStorage(mActivity,
+                new Usage(10, 20, UtubotCaptionStore.WARN_BYTES));
+
+        assertEquals(mActivity.getString(R.string.utubot_caption_storage_warning,
+                UtubotSettingsPresenter.formatBytes(UtubotCaptionStore.WARN_BYTES)), text.substring(text.indexOf('\n') + 1));
+    }
+
+    @Test
+    public void anEmptyCaptionStoreSaysSo() {
+        assertEquals(mActivity.getString(R.string.utubot_caption_storage_empty),
+                UtubotSettingsPresenter.formatCaptionStorage(mActivity, new Usage(0, 0, 0)));
     }
 
     @Test
