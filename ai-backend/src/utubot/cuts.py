@@ -749,6 +749,94 @@ def _rank_order(parts: list[Part]) -> list[int]:
     )
 
 
+def ranked_tail_in_time_order(parts: list[Part]) -> int:
+    """How many of the lowest-ranked parts follow video order (the model numbered them as it
+    read, instead of judging them); 0 or 1 for an answer that really ranks."""
+    order = _rank_order(parts)
+    count = 1 if order else 0
+    for k in range(len(order) - 1, 0, -1):
+        before, after = parts[order[k - 1]], parts[order[k]]
+        if before.rank is None or after.rank is None or before.rank >= after.rank:
+            break  # tied or missing ranks are not a judgement either way
+        if before.start_ms < after.start_ms:
+            count += 1
+        else:
+            break
+    return count
+
+
+def is_non_selection(parts: list[Part], cfg, budget_s: float, duration_s: float | None) -> bool:
+    """Whether the answer ranks (almost) everything instead of choosing: it keeps far more than
+    the target or maximum, or its ranks follow video order over a long tail while it is over the
+    asked amount plus the band. A normal answer (a little over the target, really ranked) is neither."""
+    if not parts or budget_s <= 0:
+        return False
+    total = _kept_total_s(parts, cfg, duration_s)
+    if total > budget_s * cfg.non_selection_factor:
+        return True
+    asked_s = budget_s * (1 + cfg.over_ask_frac + cfg.length_tolerance)
+    return total > asked_s and ranked_tail_in_time_order(parts) >= cfg.rank_tail_min
+
+
+def choose_problem(parts: list[Part], cfg, budget_s: int, duration_s: float | None) -> str | None:
+    """The re-ask text for a non-selection answer, or None when the answer chose."""
+    if not is_non_selection(parts, cfg, budget_s, duration_s):
+        return None
+    total = int(_kept_total_s(parts, cfg, duration_s))
+    return (
+        f"it keeps {total} s, nearly the whole video, and its ranks follow video order, so "
+        f"nothing was chosen. Choose about {budget_s} s ({max(1, round(budget_s / 60))} min) of "
+        "the best parts from everything shown, leave everything else out, and rank only the parts "
+        "you keep by importance (rank 1 = the most important, not the earliest)."
+    )
+
+
+def spread_select(
+    parts: list[Part],
+    units: list[Unit],
+    cfg,
+    budget_s: float,
+    duration_s: float | None = None,
+) -> list[Part]:
+    """The parts of a non-selection answer that fit `budget_s`, spread over the video.
+
+    The video is split into windows of half `max_skip_s`; each window keeps its share of the
+    budget (its share of the answer's own length, carrying what earlier windows left unspent),
+    taking its parts by rank and trimming the one that crosses its share. So no stretch this trim
+    removes is longer than `max_skip_s`, whatever order the ranks have."""
+    eligible = [p for p in parts if _clamped_s(p, duration_s) >= cfg.min_part_s]
+    if not eligible:
+        return []
+    width_ms = max(1, int(cfg.max_skip_s * 500))
+    windows: dict[int, list[Part]] = {}
+    for part in eligible:
+        windows.setdefault(part.start_ms // width_ms, []).append(part)
+    pool_left = sum(_padded_s(p, cfg, duration_s) for p in eligible)
+    floor_s = cfg.min_part_s + cfg.pad_before_s + cfg.pad_after_s
+    chosen: list[Part] = []
+    spent = 0.0
+    for key in sorted(windows):
+        members = windows[key]
+        pool_s = sum(_padded_s(p, cfg, duration_s) for p in members)
+        quota = max(floor_s, (budget_s - spent) * pool_s / pool_left) if pool_left else 0.0
+        pool_left -= pool_s
+        mine: list[Part] = []
+        taken = 0.0
+        for i in _rank_order(members):
+            if taken >= quota:
+                break
+            part = members[i]
+            if _kept_total_s(mine + [part], cfg, duration_s) > quota:
+                part = _trim_to(part, units, quota - taken, cfg, duration_s, mine)
+                if part is None:
+                    continue
+            mine.append(part)
+            taken = _kept_total_s(mine, cfg, duration_s)
+        chosen.extend(mine)
+        spent += taken
+    return chosen
+
+
 def select_for_target(
     parts: list[Part],
     units: list[Unit],
@@ -772,6 +860,11 @@ def select_for_target(
     pool_s = _kept_total_s([parts[i] for i in eligible], cfg, duration_s)
     if pool_s < low:
         return [parts[i] for i in eligible], pool_s
+    if is_non_selection(parts, cfg, target_s, duration_s):
+        chosen = sorted(
+            spread_select(parts, units, cfg, target_s, duration_s), key=lambda p: p.start_ms
+        )
+        return chosen, _kept_total_s(chosen, cfg, duration_s)
     order = [i for i in _rank_order(parts) if i in set(eligible)]
     chosen: list[Part] = []
     total = 0.0
@@ -801,6 +894,10 @@ def trim_to_cap(
     """
     if sum(_padded_s(p, cfg, duration_s) for p in parts) <= cap_s or not parts:
         return list(parts)
+    if is_non_selection(parts, cfg, cap_s, duration_s):
+        spread = spread_select(parts, units, cfg, cap_s, duration_s)
+        if spread:
+            return sorted(spread, key=lambda p: p.start_ms)
     chosen: list[Part] = []
     spent = 0.0
     for i in _rank_order(parts):
@@ -2917,7 +3014,10 @@ class CutEngine:
         if candidates is not None:
             shown = candidate_units(candidates, units, cfg.reduce_excerpt_chars)
             style = {"system": REDUCE_SYSTEM, "note": REDUCE_NOTE, "mark": CANDIDATES_MARK}
-        for attempt in range(2 if target_s else 1):
+        budget_s = target_s or cap_s
+        duration_s = meta.get("duration_s")
+        choose_asked = below_asked = False
+        while True:
             data, parts = await self._ask_parsed(
                 shown,
                 chapters,
@@ -2931,20 +3031,28 @@ class CutEngine:
             )
             if candidates is not None:
                 parts = expand_candidate_parts(parts, candidates, units)
+            if budget_s and not choose_asked:
+                problem = choose_problem(parts, cfg, budget_s, duration_s)
+                if problem:
+                    choose_asked = True
+                    events.emit(STAGE_MODEL, events.WARN, problem="ranked everything", retry=1)
+                    continue
             if not target_s:
                 if cap_s:
                     parts = trim_to_cap(parts, units, cfg, cap_s)
                 return data, parts
-            chosen, total_s = select_for_target(parts, units, cfg, target_s, meta.get("duration_s"))
+            chosen, total_s = select_for_target(parts, units, cfg, target_s, duration_s)
             low, high = target_band(target_s, cfg.length_tolerance)
             if total_s >= low:
                 return data, chosen
-            if attempt == 0:
-                events.emit(STAGE_MODEL, events.WARN, problem="below target length", retry=1)
-                problem = (
-                    f"it keeps only {int(total_s)} s in total but the task needs about "
-                    f"{target_s} s (between {int(low)} and {int(high)} s); keep more parts."
-                )
+            if below_asked:
+                break
+            below_asked = True
+            events.emit(STAGE_MODEL, events.WARN, problem="below target length", retry=1)
+            problem = (
+                f"it keeps only {int(total_s)} s in total but the task needs about "
+                f"{target_s} s (between {int(low)} and {int(high)} s); keep more parts."
+            )
         raise CutRefused(
             f"The model kept only {int(total_s)} s of the {target_s} s this cut aims for, "
             "so no cut was built. Try again."
@@ -3172,20 +3280,33 @@ class CutEngine:
         note = MAP_NOTE.format(i=chunk.index + 1, n=n)
         span = chapters_between(chapters, chunk.units[0].start, chunk.units[-1].end)
         problem = ""
+        share_s = share_target or share_cap
+        duration_s = meta.get("duration_s")
         for attempt in range(MAP_RETRIES + 1):
             try:
-                _data, parts = await self._ask_parsed(
-                    chunk.units,
-                    span,
-                    meta,
-                    instruction,
-                    share_target,
-                    cap_s=share_cap,
-                    allow_empty=True,
-                    note=note,
-                    scope="from this excerpt",
-                    klass=klass,
-                )
+                choose: str | None = None
+                for _ in range(2):
+                    _data, parts = await self._ask_parsed(
+                        chunk.units,
+                        span,
+                        meta,
+                        instruction,
+                        share_target,
+                        cap_s=share_cap,
+                        allow_empty=True,
+                        note=note,
+                        scope="from this excerpt",
+                        problem=choose,
+                        klass=klass,
+                    )
+                    choose = (
+                        choose_problem(parts, self.cfg, share_s, duration_s) if share_s else None
+                    )
+                    if choose is None:
+                        break
+                    events.emit(
+                        STAGE_MAP, events.WARN, excerpt=chunk.index + 1, problem="ranked everything"
+                    )
                 if share_cap:
                     parts = trim_to_cap(parts, units, self.cfg, share_cap)
                 return parts

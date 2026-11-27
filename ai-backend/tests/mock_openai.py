@@ -61,6 +61,7 @@ class MockOpenAI:
         self.cut_answer: Any = None
         self.cut_answers: list[Any] = []
         self.cut_calls: list[str] = []
+        self.cut_followups: list[str] = []  # per cut call: the appended rejection text, or ""
         # Watched describe answers: one per grid in order; a callable gets (user text, images).
         self.describe_answer: Any = None
         self.describe_answers: list[Any] = []
@@ -195,6 +196,8 @@ class MockOpenAI:
         if "director's cut" in system:
             # The question is the first user message; a repair round only appends to it.
             first_user = next(m["content"] for m in body["messages"] if m["role"] == "user")
+            users = [m["content"] for m in body["messages"] if m["role"] == "user"]
+            self.cut_followups.append(users[-1] if len(users) > 1 else "")
             return self._wrap(json.dumps(self.cut_respond(system, first_user)))
         return f"SUMMARY[{body['model']}] " + user[-60:].replace("\n", " ")
 

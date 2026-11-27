@@ -86,6 +86,10 @@ def three_hours(env, *, chunk_tokens: int = 3000, max_tokens: int = 6000):
     cuts.map_chunk_tokens = chunk_tokens
     cuts.map_overlap_units = 3
     cuts.reduce_excerpt_chars = 40
+    # This stand-in ranks every candidate it sees; its answers are not about the choose re-ask
+    # (tests/test_cuts_rank_trim.py), so that check is off here.
+    cuts.non_selection_factor = 1e9
+    cuts.rank_tail_min = 10**6
     model = LongVideoModel()
     env.llm.cut_answer = model
     return model
