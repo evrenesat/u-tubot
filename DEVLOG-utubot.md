@@ -1,3 +1,15 @@
+## 2026-11-27 (Real-Debrid films: per-user token and addon entry, issue #248)
+
+- The Real-Debrid films feature leaves the spike's hidden developer entry (issue 211) and gains a user-facing entry (issue 248, aligned with #231):
+  Settings, "Films" (always available in the built-in flavor) with the stream addon address, the Real-Debrid token (a password field) and an IMDb id,
+  "List streams" opening the film screen. The address and token are entered on the TV, kept in the private `UtubotSettings` prefs and never logged or
+  sent to the backend, so each user keeps their own on the device. The film screen now opens when the address and the IMDb id are set; the
+  `isFilmsDeveloperEnabled()` gate is gone.
+- The "Films developer entry" switch in Updates (off by default) keeps only the hand-written skip list; the address, token and IMDb id moved to the new
+  `UtubotFilmsPresenter`. `RealDebridFilmsActivity` reads the constants from `UtubotFilmsPresenter`.
+- Tests: `UtubotFilmsPresenterTest` (opens without the developer toggle, carries the IMDb id and skips, the token never rides the intent),
+  `UtubotFilmsDeveloperPresenterTest` (skip list). `:common:testStutubotDebugUnitTest` and `:smarttubetv:assembleStutubotDebug` green.
+
 ## 2026-11-27 (tablet on-device flow, takeover of #237, issue #218)
 
 - Rebase onto main was already clean (#225 web admin and #196 voice are in the base). The tablet menu entry now reads "Describe the cut…" (the TV keeps "Describe on phone…"); "Describe by voice…" is the same on both.

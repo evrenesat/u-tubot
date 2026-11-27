@@ -1,7 +1,6 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import android.content.Context;
-import android.content.Intent;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -11,12 +10,10 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 
 /**
- * The Real-Debrid films developer entry: off by default, and the film screen opens only with the entry on and an address and an IMDb id set.
+ * The Real-Debrid films developer entry: off by default, and its only row is the hand-written skip list (issue 211). The addon address, the token
+ * and the IMDb id are in the user-facing "Films" entry (issue 248).
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
@@ -31,32 +28,15 @@ public class UtubotFilmsDeveloperPresenterTest {
     }
 
     @Test
-    public void theEntryIsOffByDefault() {
-        assertFalse(mSettings.isFilmsDeveloperEnabled());
-        assertNull(UtubotFilmsDeveloperPresenter.instance(mContext).filmsIntent());
-    }
+    public void theDeveloperEntryShowsTheSkipList() {
+        mSettings.setFilmsSkips("30,90;600,720");
 
-    @Test
-    public void theIntentNeedsTheEntryAnAddressAndAnId() {
-        if (!UtubotSettings.isBuiltIn()) {
-            return;
-        }
+        // Opening the entry does not crash and the skip list round-trips through the private prefs.
+        UtubotFilmsDeveloperPresenter.instance(mContext).show();
+        assertEquals("30,90;600,720", mSettings.getFilmsSkips());
 
-        mSettings.setFilmsDeveloperEnabled(true);
-        assertNull(UtubotFilmsDeveloperPresenter.instance(mContext).filmsIntent());
-
-        mSettings.setFilmsAddonUrl("https://addon.example/realdebrid={token}");
-        mSettings.setFilmsImdbId(" tt0944947 ");
-        mSettings.setFilmsSkips("30,90");
-        Intent intent = UtubotFilmsDeveloperPresenter.instance(mContext).filmsIntent();
-
-        assertNotNull(intent);
-        assertEquals(UtubotFilmsDeveloperPresenter.FILMS_ACTIVITY, intent.getComponent().getClassName());
-        assertEquals("tt0944947", intent.getStringExtra(UtubotFilmsDeveloperPresenter.EXTRA_IMDB_ID));
-        assertEquals("30,90", intent.getStringExtra(UtubotFilmsDeveloperPresenter.EXTRA_SKIPS));
-        assertFalse("the token never rides the intent", intent.getExtras().toString().contains("token"));
-
-        mSettings.setFilmsDeveloperEnabled(false);
-        assertNull(UtubotFilmsDeveloperPresenter.instance(mContext).filmsIntent());
+        mSettings.setFilmsSkips("");
+        UtubotFilmsDeveloperPresenter.instance(mContext).show();
+        assertEquals("", mSettings.getFilmsSkips());
     }
 }

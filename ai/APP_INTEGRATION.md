@@ -71,7 +71,10 @@ so the other flavors behave as before.
 | `app/models/playback/controllers/ExoPlayerController.java` | `openProgressiveUrl(url)` next to `openUrlList`, builds a single progressive source and plays it | the spike plays one Real-Debrid stream through the same path as `urlList` |
 | `exoplayer/ExoMediaSourceFactory.java` | `fromProgressiveUrl(url)` next to `fromUrlList` | the single-source media source for one stream |
 | `app/models/playback/controllers/SponsorBlockController.java` | `applyHandWrittenSkips(List<SponsorSegment>)` (and `@Nullable` import): feeds the hand-written ranges to the sponsor block (`Observable.just(...).flatMap(this::startSponsorWatcher)`); the caller enables and skips the `real-debrid` category first | cut-style skips for a Real-Debrid stream, through the existing sponsor watcher |
-| `common/.../utubot/UtubotFilmsDeveloperPresenter.java`, `UtubotSettings.java`, `UpdatesSettingsPresenter.java`, `smarttubetv/src/stutubot/.../films/RealDebridFilmsActivity.java` | new: Settings, Updates, switch "Films developer entry" (off by default, built-in flavor only; its address, token, IMDb id and skip list live in the private `UtubotSettings` prefs, never logged) shows "Films (developer)": address, token, IMDb id, skip list, "List streams" which opens the film screen (stutubot flavor, not exported, closes itself when the switch is off) | the hidden developer entry of the spike; the codec checklist is `docs/films-codec-checklist.md` |
+| `common/.../utubot/UtubotFilmsPresenter.java` | new: Settings, "Films" (issue 248), always available in the built-in flavor: the stream addon address, the Real-Debrid token (password field), an IMDb id and "List streams" which opens the film screen. The address and token can be keys, so they are entered on the TV, kept in the private `UtubotSettings` prefs and never logged; the token never rides the intent. `filmsIntent()` opens the screen when the address and the IMDb id are set, not behind the developer toggle | the user-facing Real-Debrid films entry (issue 248); the codec checklist is `docs/films-codec-checklist.md` |
+| `common/.../utubot/UtubotFilmsDeveloperPresenter.java` | trimmed to the hand-written skip list only (issue 248 moved the address, token and IMDb id to the user-facing "Films" entry) | the developer entry now exposes only the skip list, behind the toggle |
+| `smarttubetv/src/stutubot/.../films/RealDebridFilmsActivity.java` | opens when the addon address and the IMDb id are both set; the `isFilmsDeveloperEnabled()` gate is gone (issue 248) | the film screen opens from the user-facing entry, not only behind the developer switch |
+| `UpdatesSettingsPresenter.java` | a "Films" button (opens `UtubotFilmsPresenter`) before the "Films developer entry" switch; the switch still reveals the developer skip-list entry | the films entry is user-facing; the developer toggle keeps the skip list |
 | `tv/presenter/VideoCardPresenter.java` | mark with own colour, `addMark` overload, card tag | mark rendering, panel reads the focused card |
 | `tv/ui/modern/widgets/ModernVideoCard.java` | card tag | panel reads the focused card |
 | `smarttubetv/src/main/res/layout/modern_video_card.xml` | `modern_card_utubot_summary` in the thumb frame, top-end, gone by default, own focus background and the `settings_utubot` symbol, clickable but not focusable | the card's visible touch entry to the Summary view on a tablet |
@@ -191,7 +194,12 @@ so the other flavors behave as before.
   (a job finished while playing, or a late answer) open the source again with the track at the same position; the user-requested
   ones are selected whatever the setting says and announced ("u·tubot captions ready"). `VideoStateController.restoreSubtitleFormat`
   does not replace an HQ track of the playing video with the saved choice; the user's own pick in the subtitle menu always wins.
-  Not for the merged live sources (`openMerged`).
+   Not for the merged live sources (`openMerged`).
+- Films (issue 248, aligned with #231). Settings, "Films" (always available in the built-in flavor, behind the "AI features"/"Backend" tile): the
+  stream addon address, the Real-Debrid token (a password field) and an IMDb id, entered on the TV and kept in the private `UtubotSettings` prefs,
+  never logged or sent to the backend (so each user keeps their own on the device). "List streams" opens the film screen (`RealDebridFilmsActivity`)
+  when the address and the IMDb id are set; the screen is not exported and no longer requires the developer switch. The "Films developer entry" switch
+  in Updates, off by default, still reveals the hand-written skip list (the advanced row).
 - Processed section (u-tubot#66, step 4). A tile of the section opens through `UtubotProcessedOpen.open`: its card is recognized by
   the section of its group (`isProcessed`), the open requests the video's HQ captions (`UtubotCaptionsOpen.request`) and starts the
   normal playback path (`PlaybackPresenter.openVideo`). The player takes the request in `setVideo` and keeps it for that playback, so

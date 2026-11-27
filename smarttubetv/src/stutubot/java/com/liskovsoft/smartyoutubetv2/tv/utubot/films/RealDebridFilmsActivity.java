@@ -30,7 +30,7 @@ import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.renderer.CustomO
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.selector.RestoreTrackSelector;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SponsorBlockData;
 import com.liskovsoft.smartyoutubetv2.common.R;
-import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsDeveloperPresenter;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsPresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient.Stream;
@@ -49,13 +49,13 @@ import io.reactivex.disposables.Disposable;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 
 /**
- * The film screen of the Real-Debrid spike (issue 211), reached from Settings, Updates, "Films (developer)" once the developer entry is on.
- * It lists the streams the configured Stremio addon returns for the IMDb id and plays the chosen one through the app's real player on the
- * progressive path, next to {@link ExoPlayerController#openUrlList}. A hand-written skip list, when set, is fed through the sponsor block so
- * cut-style playback is proven without building a director's cut.
+ * The film screen of the Real-Debrid feature (issue 211), reached from Settings, "Films" (issue 248). It lists the streams the configured Stremio
+ * addon returns for the IMDb id and plays the chosen one through the app's real player on the progressive path, next to
+ * {@link ExoPlayerController#openUrlList}. A hand-written skip list, when set, is fed through the sponsor block so cut-style playback is proven
+ * without building a director's cut.
  *
  * <p>The addon address and the Real-Debrid token come from {@link UtubotSettings}; stream addresses can carry a key, so neither they nor the
- * addon address are shown or logged. The screen closes at once when the developer entry is off.
+ * addon address are shown or logged. The screen closes at once when the addon address or the IMDb id is missing (no developer toggle, issue 248).
  */
 public class RealDebridFilmsActivity extends Activity {
     private static final String TAG = "UtubotRealDebridFilms";
@@ -87,7 +87,10 @@ public class RealDebridFilmsActivity extends Activity {
 
         mSettings = UtubotSettings.instance(this);
 
-        if (!mSettings.isFilmsDeveloperEnabled()) {
+        String imdbId = getIntent().getStringExtra(UtubotFilmsPresenter.EXTRA_IMDB_ID);
+
+        // No developer toggle (issue 248): the screen opens when the addon address and the IMDb id are both set.
+        if (mSettings.getFilmsAddonUrl().isEmpty() || imdbId == null || imdbId.isEmpty()) {
             finish();
             return;
         }
@@ -100,7 +103,6 @@ public class RealDebridFilmsActivity extends Activity {
         buildPanel();
         setContentView(mRoot);
 
-        String imdbId = getIntent().getStringExtra(UtubotFilmsDeveloperPresenter.EXTRA_IMDB_ID);
         mClient = new UtubotRealDebridClient(mSettings.getFilmsAddonUrl(), mSettings.getFilmsRealDebridToken());
 
         mInitializer = new ExoPlayerInitializer(this);
@@ -119,7 +121,7 @@ public class RealDebridFilmsActivity extends Activity {
         holdVideo(presenter, mVideo);
         mSponsorController = presenter.getController(SponsorBlockController.class);
 
-        loadStreams(imdbId == null ? "" : imdbId);
+        loadStreams(imdbId);
     }
 
     private void buildPanel() {
@@ -221,7 +223,7 @@ public class RealDebridFilmsActivity extends Activity {
         dispatchNewVideo();
         mController.setVideo(mVideo);
 
-        String skips = getIntent().getStringExtra(UtubotFilmsDeveloperPresenter.EXTRA_SKIPS);
+        String skips = getIntent().getStringExtra(UtubotFilmsPresenter.EXTRA_SKIPS);
 
         if (skips != null && !skips.isEmpty() && mSponsorController != null) {
             enableSponsorBlockForSkips();

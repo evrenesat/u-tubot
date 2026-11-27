@@ -36,8 +36,10 @@
     <string name="utubot_auto_scroll_value">%s px/s</string>
     <string name="utubot_browse_refresh">Browse refresh</string>
     <string name="utubot_update_interval">Update check interval</string>
+    <string name="utubot_films">Films</string>
+    <string name="utubot_films_desc">Play Real-Debrid film streams from a Stremio addon. Set the addon address and the Real-Debrid token</string>
     <string name="utubot_films_developer">Films developer entry</string>
-    <string name="utubot_films_developer_desc">Developer spike: play Real-Debrid film streams from a Stremio addon. Off by default</string>
+    <string name="utubot_films_developer_desc">Advanced: a hand-written skip list for the Real-Debrid streams. Off by default</string>
     <string name="utubot_films_open">Films (developer)</string>
     <string name="utubot_films_addon">Stream addon address</string>
     <string name="utubot_films_addon_hint">https://addon.example.com/realdebrid={token}</string>
