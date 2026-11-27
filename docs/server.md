@@ -713,7 +713,8 @@ carries both in a separate, larger bucket (`[security] rate_per_ip_per_min_realt
 refuses only the live server's own checks. The header alone grants nothing: anyone else who sends it stays in the users' bucket.
 
 To turn it on, set the same random string on both sides: `UTUBOT_REALTIME_SECRET` in the backend's environment and
-`UTUBOT_RT_BACKEND_SECRET` in the live server's. Unset on the backend means no separate bucket. Leave the realtime limit well above
+`UTUBOT_RT_BACKEND_SECRET` in the live server's. Generate it with `openssl rand -hex 32`. It travels in clear text on the
+backend URL, so keep `backend_url` on loopback or a private network; an `http://` URL to a non-loopback host exposes it. Unset on the backend means no separate bucket. Leave the realtime limit well above
 `rate_per_ip_per_min`; a device that cannot be re-checked (backend unreachable or rate limited) keeps its socket for 10 minutes.
 
 ### Two proxies in a row

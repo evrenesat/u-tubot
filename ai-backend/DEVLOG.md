@@ -51,6 +51,7 @@
 - Tests: `tests/test_security.py` covers the separate bucket with the secret, the header alone or with a wrong secret staying in the
   users' bucket, and no separate bucket without a configured secret. Docs: `ai/CONTRACT.md` ("Live server"), `docs/server.md`
   ("The live server's rate-limit bucket"), `config.example.toml`.
+
 ## 2026-11-26 (UTB-230 multi-user, per-user key, budget and rate limit)
 
 - Per-user AI provider key: a user stores their own OpenAI-compatible upstream with `PUT /v1/me/provider`, reads it back with

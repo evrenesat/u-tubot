@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -31,5 +32,26 @@ func TestFetchNamesTheLiveServerAndSendsSecretOnlyWhenSet(t *testing.T) {
 	}
 	if gotClient != ClientName || gotSecret != "rt-secret" {
 		t.Fatalf("secret configured: client=%q secret=%q", gotClient, gotSecret)
+	}
+}
+
+func TestRedirectNeverCarriesTheSecret(t *testing.T) {
+	var targetHits int
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/v1/me", http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	c := New(origin.URL, time.Second, 0).WithSecret("rt-secret")
+	if _, err := c.Check(context.Background(), "utb_c"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("a redirect must be unavailable, got %v", err)
+	}
+	if targetHits != 0 {
+		t.Fatalf("the redirect target was contacted %d times", targetHits)
 	}
 }

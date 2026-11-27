@@ -106,16 +106,14 @@ async def test_realtime_sign_in_bucket_is_separate(env, monkeypatch):
     env.cfg.security.rate_per_ip_per_min_realtime = 10
     a = anon(env)
     realtime = {"X-Utubot-Client": "realtime", "X-Utubot-Realtime-Secret": "rt-secret"}
-    # users share the ip bucket: the fourth request is refused
-    assert [(await a.get("/v1/health")).status_code for _ in range(4)] == [200, 200, 200, 429]
-    # the live server's /v1/me checks carry the header and secret and count apart, in a larger bucket
-    env.svc.limiter._hits.clear()
+    # the live server's /v1/me checks (header and secret) fill their own, larger bucket to its 429
     assert [(await a.get("/v1/health", headers=realtime)).status_code for _ in range(11)] == [
         200
     ] * 10 + [429]
-    # a 429 on that bucket does not touch the users' bucket
-    env.svc.limiter._hits.clear()
+    # a plain request from the same address still succeeds: the users' bucket is untouched
     assert (await a.get("/v1/health")).status_code == 200
+    # and the users' bucket still enforces its own limit (3 a minute, one used above)
+    assert [(await a.get("/v1/health")).status_code for _ in range(3)] == [200, 200, 429]
 
 
 async def test_realtime_header_alone_grants_nothing(env, monkeypatch):

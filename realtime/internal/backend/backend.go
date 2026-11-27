@@ -100,8 +100,12 @@ type Client struct {
 // New builds a client for the backend at base (no trailing slash).
 func New(base string, timeout, cacheTTL time.Duration) *Client {
 	return &Client{
-		base:    base,
-		http:    &http.Client{Timeout: timeout},
+		base: base,
+		http: &http.Client{
+			Timeout: timeout,
+			// A redirect would resend the secret to its target: answer the 3xx itself (an unavailable backend).
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		ttl:     cacheTTL,
 		now:     time.Now,
 		entries: map[[32]byte]cached{},

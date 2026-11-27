@@ -940,14 +940,14 @@ Frames are JSON text, every one has `"t"`; unknown types and fields are ignored.
   backend) and rides in the frame. S checks it with `GET /v1/me` and re-checks every 30 s with a 15 s cache, so a revoked device or a voice switch-off
   closes the socket within the 60 s window. `tools` is what a screen can run (names of the plan's tool table); a screen only receives those.
   A browser's `Origin` must match the allow-list (`origins`, host patterns); a native client sends none.
-Protection of the backend's sign-in budget: upgrade attempts are limited per client address (30 a minute; the address is the last entry of
-`X-Forwarded-For`, which the proxy must set), at most 64 sockets may be waiting for their hello, and every `/v1/me` call of the live server carries
-`X-Utubot-Client: realtime` and `X-Utubot-Realtime-Secret: <secret>` (the secret is `UTUBOT_RT_BACKEND_SECRET` on the live server and `UTUBOT_REALTIME_SECRET`
-on the backend, same value) so the backend can count them apart from users' own addresses. **The backend counts a request carrying both in its own, larger
-bucket** (`[security] rate_per_ip_per_min_realtime`, 6000 a minute by default, keyed apart from the `ip:` bucket of the proxy address). The header alone
-grants nothing: without the matching secret a request stays in the users' bucket, and with no secret configured on the backend there is no separate bucket.
-A 429 on it refuses only the live server's own checks, never a user, so a flood of well-formed junk tokens cannot starve the users behind that address.
-A device that cannot be re-checked (backend unreachable or rate limited) keeps its socket for 10 minutes, then closes with `not_verified`.
+  Protection of the backend's sign-in budget: upgrade attempts are limited per client address (30 a minute; the address is the last entry of
+  `X-Forwarded-For`, which the proxy must set), at most 64 sockets may be waiting for their hello, and every `/v1/me` call of the live server carries
+  `X-Utubot-Client: realtime` and `X-Utubot-Realtime-Secret: <secret>` (the secret is `UTUBOT_RT_BACKEND_SECRET` on the live server and `UTUBOT_REALTIME_SECRET`
+  on the backend, same value) so the backend can count them apart from users' own addresses. **The backend counts a request carrying both in its own, larger
+  bucket** (`[security] rate_per_ip_per_min_realtime`, 6000 a minute by default, keyed apart from the `ip:` bucket of the proxy address). The header alone
+  grants nothing: without the matching secret a request stays in the users' bucket, and with no secret configured on the backend there is no separate bucket.
+  A 429 on it refuses only the live server's own checks, never a user, so a flood of well-formed junk tokens cannot starve the users behind that address.
+  A device that cannot be re-checked (backend unreachable or rate limited) keeps its socket for 10 minutes, then closes with `not_verified`.
 - S to D `welcome`: `{"t":"welcome","device_id","user","voice":{"enabled","listen_mode","speak","retention_days"},"peers":[{"device_id","name",
   "roles","client","focus"?}],"server_time_ms"}`. `focus` is the screen's last `focus` frame as sent (left out when it is over 8 KiB). Or `error` and close: `unauthorized`,
   `voice_off` (the server's `features.voice` is false, or this device has not switched voice on), `too_many` (8 sockets per user),
