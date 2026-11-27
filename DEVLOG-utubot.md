@@ -1,3 +1,11 @@
+## 2026-11-27 (TV Inbox next and previous, issue #223)
+
+- From an opened Inbox result on the TV, media next/previous or channel down/up opens the neighbouring result in the Inbox's order (newest
+  first) and marks it read. A summary or an answer replaces the view; a cut or a caption result closes it and opens the video. At the ends
+  the key does nothing. No on-screen hint yet, and the player itself has no next/previous for Inbox results (the view is the browse screen's).
+- `UtubotInboxNavigation` (pure: key to step, neighbour in the group's order, ids to mark read) and `UtubotPanelController.stepInbox`.
+  Tests: `UtubotInboxNavigationTest`. The extension has no next/previous yet: row `inbox-next-prev` in `ai/BROWSER_EXTENSION_PLAN.md`.
+
 ## 2026-11-27 (caption storage in Settings, issue #39)
 
 - Settings, u·tubot gains "Caption storage": size, videos and tracks, a warning past 200 MiB, and Delete old captions (30 days, 90 days,

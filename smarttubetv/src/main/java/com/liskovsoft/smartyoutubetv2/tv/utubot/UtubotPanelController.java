@@ -13,15 +13,19 @@ import android.widget.FrameLayout;
 import androidx.annotation.Nullable;
 
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
+import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.misc.MotherActivity;
 import com.liskovsoft.smartyoutubetv2.common.utubot.PanelCoordinator;
 import com.liskovsoft.smartyoutubetv2.common.utubot.FocusDebouncer;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotAnswerModel;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutFocus;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotInboxNavigation;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotInboxOpen;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotKeys;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotMenu;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.InboxKind;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Prompt;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotOpenRequests;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPanelModel;
@@ -31,6 +35,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUiHost;
 import com.liskovsoft.smartyoutubetv2.tv.R;
 
 import java.lang.ref.WeakReference;
+import java.util.List;
 
 /**
  * The u-tubot overlays of an activity (browse, search, channel). Hooked into LeanbackActivity: resume attaches it, pause hides
@@ -59,6 +64,8 @@ public class UtubotPanelController implements UtubotUiHost.Host {
     private WeakReference<View> mReturnFocus = new WeakReference<>(null);
     private WeakReference<View> mWatchedCard = new WeakReference<>(null);
     private Video mFocusedVideo;
+    /** The result the Summary view or the answer shows, while it is up (the Inbox moves from it, see stepInbox) */
+    private Video mOverlayVideo;
     private int mSwallowedKey = KeyEvent.KEYCODE_UNKNOWN;
     private boolean mIsCreated;
     private final View.OnAttachStateChangeListener mCardWatcher = new View.OnAttachStateChangeListener() {
@@ -224,6 +231,18 @@ public class UtubotPanelController implements UtubotUiHost.Host {
                 mSwallowedKey = key;
             }
 
+            return true;
+        }
+
+        // The Inbox's next and previous from an opened result: the key is used here, also at the ends (the move stops there)
+        int step = UtubotInboxNavigation.stepOf(key);
+
+        if (isViewOpen && step != UtubotInboxNavigation.NONE && UtubotInboxNavigation.isInboxTile(mOverlayVideo)) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                stepInbox(step);
+            }
+
+            mSwallowedKey = key;
             return true;
         }
 
@@ -411,14 +430,47 @@ public class UtubotPanelController implements UtubotUiHost.Host {
 
     private void openSummary(Video video) {
         beginOverlay();
+        mOverlayVideo = video;
         mOverlay.open(false);
         mViewModel.show(video);
     }
 
     private void openAnswer(Video video) {
         beginOverlay();
+        mOverlayVideo = video;
         mOverlay.open(true);
         mAnswerModel.show(video);
+    }
+
+    /**
+     * Opens the Inbox result one step away from the one the view shows (u-tubot #223): a summary or an answer replaces the view, a cut or
+     * a caption result closes it and opens the video. The landed result is marked read; at the ends nothing happens.
+     */
+    private void stepInbox(int step) {
+        Video landed = UtubotInboxNavigation.neighbour(inboxTilesOf(mOverlayVideo), mOverlayVideo, step);
+
+        if (landed == null) {
+            return;
+        }
+
+        RxHelper.execute(mManager.readInbox(UtubotInboxNavigation.idsToMarkRead(landed)));
+
+        if (InboxKind.SUMMARY.equals(landed.inboxKind)) {
+            openSummary(landed);
+        } else if (InboxKind.RESEARCH.equals(landed.inboxKind)) {
+            openAnswer(landed);
+        } else {
+            closeOverlay(false);
+            UtubotInboxOpen.open(mActivity, landed);
+        }
+    }
+
+    /**
+     * The Inbox's tiles in their order: the group the shown result belongs to
+     */
+    @Nullable
+    private static List<Video> inboxTilesOf(@Nullable Video video) {
+        return video != null && video.getGroup() != null ? video.getGroup().getVideos() : null;
     }
 
     private void beginOverlay() {
@@ -438,6 +490,8 @@ public class UtubotPanelController implements UtubotUiHost.Host {
      * @param restoreFocus the focus goes back to the card it came from
      */
     private void closeOverlay(boolean restoreFocus) {
+        mOverlayVideo = null;
+
         if (mOverlay == null || !mOverlay.isOpen()) {
             return;
         }
