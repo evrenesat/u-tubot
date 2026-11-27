@@ -194,6 +194,9 @@ a.job-title { color: var(--text); text-decoration: none; border-bottom: 1px dott
 .provider:last-child { border-bottom: none; }
 .task-row { display: grid; gap: 6px; }
 
+/* ---- ledger table ---- */
+th.num, td.num { text-align: right; }
+
 .menu { display: grid; gap: 10px; }
 .menu-item { display: flex; align-items: center; gap: 14px; padding: 14px 16px; min-height: 64px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); text-decoration: none; }
 .menu-text { display: grid; }

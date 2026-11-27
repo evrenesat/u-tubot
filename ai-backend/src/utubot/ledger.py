@@ -268,8 +268,17 @@ class LedgerService:
             {**entry, "total": totals[key]} for key, entries in by_day.items() for entry in entries
         ]
 
-    def recent(self, limit: int = 50, *, category: str | None = None) -> list[dict[str, Any]]:
-        """The newest failures, with a link to the job that made them when there is one."""
+    def recent(
+        self,
+        limit: int = 50,
+        *,
+        category: str | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """The newest failures, with a link to the job that made them when there is one.
+
+        ``offset`` skips the ``offset`` newest rows, so the admin page can walk the list in pages.
+        """
         if self._db is None:
             return []
         if category and category not in KNOWN_CATEGORIES:
@@ -277,8 +286,8 @@ class LedgerService:
         rows = self._db.all(
             "SELECT id,ts,component,operation,category,video_id,message,detail,flagged,client FROM failures"
             + (" WHERE category=? " if category else " ")
-            + "ORDER BY id DESC LIMIT ?",
-            ([category, limit] if category else [limit]),
+            + "ORDER BY id DESC LIMIT ? OFFSET ?",
+            ([category, limit, offset] if category else [limit, offset]),
         )
         out = []
         for r in rows:
@@ -300,12 +309,12 @@ class LedgerService:
             )
         return out
 
-    def page(self, period_days: int, limit: int = 50) -> dict[str, Any]:
+    def page(self, period_days: int, limit: int = 50, offset: int = 0) -> dict[str, Any]:
         """Everything the admin page draws: the per-category/day counts and the newest examples."""
         return {
             "period_days": period_days,
             "counts": self.counts(period_days),
-            "recent": self.recent(limit),
+            "recent": self.recent(limit, offset=offset),
         }
 
     def prune(self, ids: Iterable[int]) -> int:

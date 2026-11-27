@@ -965,10 +965,11 @@ def create_app(
     async def admin_ledger(
         period_days: int = Query(14, ge=1, le=365),
         limit: int = Query(80, ge=1, le=400),
+        offset: int = Query(0, ge=0),
         admin: UserConfig = Depends(admin_user),
     ):
         """The error ledger: counts per category per day and the newest failures with job links."""
-        page = svc.ledger.page(period_days, limit)
+        page = svc.ledger.page(period_days, limit, offset)
         page["youtube_forbidden"] = Usage(svc.db).daily(
             METRIC_YOUTUBE_FORBIDDEN, page["period_days"]
         )

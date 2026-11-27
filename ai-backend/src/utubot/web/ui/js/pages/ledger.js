@@ -18,6 +18,10 @@ const CATEGORIES = [
 
 const PERIODS = [7, 14, 30];
 
+// The newest failures are paged, 10 per page; the server answers with one extra row so the page
+// can tell whether an "Older" button is needed.
+const RECENT_PAGE_SIZE = 10;
+
 function categoryPill(entry) {
   const kind = entry.flagged ? "warn" : (
     { "youtube-refused": "bad", "rate-limited": "warn", "timeout": "warn", "network": "warn",
@@ -79,9 +83,9 @@ function countsTable(doc) {
     return h("tr", {}, h("td", {}, pill(CATEGORIES.find((c) => c.value === cat)?.label || cat)), ...cells, h("td", { class: "num", text: fmtNumber(total) }));
   });
   const totalHeader = days.map((day) =>
-    h("th", { class: "num", text: fmtNumber(doc.counts.filter((c) => c.day === day).reduce((sum, c) => sum + c.count, 0)) }),
+    h("td", { class: "num", text: fmtNumber(doc.counts.filter((c) => c.day === day).reduce((sum, c) => sum + c.count, 0)) }),
   );
-  const totalRow = h("tr", {}, h("td", {}, h("strong", { text: "Total" })), ...totalHeader, h("th", { class: "num", text: fmtNumber(doc.counts.reduce((s, c) => s + c.count, 0)) }));
+  const totalRow = h("tr", {}, h("td", {}, h("strong", { text: "Total" })), ...totalHeader, h("td", { class: "num", text: fmtNumber(doc.counts.reduce((s, c) => s + c.count, 0)) }));
   return card(
     "Failures per category per day",
     h("table", {},
@@ -122,13 +126,32 @@ function forbiddenCard(doc) {
   );
 }
 
+// The "Newest failures" card: paged examples plus the Older/Newer navigation of the current page.
+function recentCard(doc, page, hasMore, load) {
+  const rows = doc.recent.length ? doc.recent.map((e) => exampleRow(e, load)) : empty("No failures in this period.");
+  const nav = doc.recent.length
+    ? h(
+        "div",
+        { class: "row between" },
+        page > 0 ? button("Newer", () => { page -= 1; load(); }, { kind: "sec" }) : null,
+        hasMore ? button("Older", () => { page += 1; load(); }, { kind: "sec" }) : null,
+      )
+    : null;
+  return card("Newest failures", h("div", { class: "stack" }, rows, nav));
+}
+
 export async function render(view, { rest }) {
   let period = rest[1] ? Number(rest[1]) : 14;
   if (!PERIODS.includes(period)) period = 14;
+  let page = 0;
   const host = h("div", { class: "stack" });
 
   async function load() {
-    const doc = await api("/v1/admin/ledger", { query: { period_days: period, limit: 100 } });
+    const doc = await api("/v1/admin/ledger", {
+      query: { period_days: period, limit: RECENT_PAGE_SIZE + 1, offset: page * RECENT_PAGE_SIZE },
+    });
+    const hasMore = doc.recent.length > RECENT_PAGE_SIZE;
+    const recent = hasMore ? doc.recent.slice(0, RECENT_PAGE_SIZE) : doc.recent;
     mount(
       host,
       h("a", { class: "back", href: "#/admin", text: "Back to admin" }),
@@ -147,10 +170,7 @@ export async function render(view, { rest }) {
       summaryCard(doc),
       countsTable(doc),
       forbiddenCard(doc),
-      card(
-        "Newest failures",
-        doc.recent.length ? doc.recent.map((e) => exampleRow(e, load)) : empty("No failures in this period."),
-      ),
+      recentCard(recent, page, hasMore, load),
     );
   }
   mount(view, host);
