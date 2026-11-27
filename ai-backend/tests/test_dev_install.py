@@ -292,7 +292,10 @@ def test_main_creates_the_out_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     devices = tmp_path / "adb-devices"
     devices.write_text("10.0.0.20:5555\n")
     out_dir = tmp_path / "nested" / "temp"
-    assert dev_install.main(
-        ["--repo", "evrenesat/u-tubot", "--devices", str(devices), "--out", str(out_dir)]
-    ) == 0
+    assert (
+        dev_install.main(
+            ["--repo", "evrenesat/u-tubot", "--devices", str(devices), "--out", str(out_dir)]
+        )
+        == 0
+    )
     assert (out_dir / "u-tubot_0.3.4_universal.apk").read_bytes() == apk
