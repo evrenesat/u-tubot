@@ -56,6 +56,12 @@ public class UtubotSettingsSyncTest {
         final Map<String, String> outcomes = new HashMap<>();
         final Map<String, Object> overrides = new HashMap<>();
         Thread lastThread;
+        /** What the user has on the server, and its revision; null revision: a server without secrets */
+        final Map<String, String> secrets = new HashMap<>();
+        Integer secretsRev = 0;
+        int secretStatus;
+        int secretGets;
+        final List<String> secretPuts = new ArrayList<>();
         int lastWaitMs = -1;
         Runnable clockAdvanceOnUnchanged = () -> { };
 
@@ -107,6 +113,38 @@ public class UtubotSettingsSyncTest {
             }
         }
 
+        @Override
+        public String getSecrets(int have) throws IOException {
+            secretGets++;
+
+            if (secretStatus != 0) {
+                throw new UtubotClient.HttpException(secretStatus, "HTTP " + secretStatus);
+            }
+
+            try {
+                JSONArray set = new JSONArray(new ArrayList<>(secrets.keySet()));
+
+                if (have == secretsRev) {
+                    return new JSONObject().put("rev", secretsRev).put("unchanged", true).put("set", set).toString();
+                }
+
+                return new JSONObject().put("rev", secretsRev).put("secrets", new JSONObject(secrets)).put("set", set).toString();
+            } catch (JSONException e) {
+                throw new IOException(e);
+            }
+        }
+
+        @Override
+        public void putSecret(String name, String value) throws IOException {
+            if (secrets.containsKey(name)) {
+                throw new UtubotClient.HttpException(409, "HTTP 409");
+            }
+
+            secrets.put(name, value);
+            secretsRev++;
+            secretPuts.add(name);
+        }
+
         private void check() throws IOException {
             if (isDown) {
                 throw new IOException("down");
@@ -130,6 +168,10 @@ public class UtubotSettingsSyncTest {
                 }
 
                 JSONObject doc = new JSONObject().put("version", version).put("settings", settings);
+
+                if (secretsRev != null) {
+                    doc.put("secrets_rev", secretsRev);
+                }
 
                 if (results != null) {
                     doc.put("results", results);
@@ -601,5 +643,89 @@ public class UtubotSettingsSyncTest {
         mServer.status = 404;
         assertEquals(UtubotSettingsSync.Watch.FAILED, mSync.watch(1000));
         assertEquals(UtubotSettingsSync.Status.OFF, mSync.syncOnce());
+    }
+
+    // ---- checkpoint 6: the user's secrets
+
+    @Test
+    public void aSecretOnTheServerReachesTheTvOnTheFirstSyncAndIsNotFetchedAgain() {
+        mServer.secrets.put("films_rd_token", "rd-token-from-server");
+        mServer.secrets.put("films_addon_url", "https://addon.example.org/key/manifest.json");
+        mServer.secretsRev = 7;
+
+        syncFirst();
+
+        assertEquals("rd-token-from-server", mSettings.getFilmsRealDebridToken());
+        assertEquals("https://addon.example.org/key/manifest.json", mSettings.getFilmsAddonUrl());
+        assertTrue(mSync.secretOffers().isEmpty());
+        assertEquals(1, mServer.secretGets);
+        mSync.syncOnce();
+        mSync.syncOnce();
+        assertEquals("the revision did not move: no second fetch", 1, mServer.secretGets);
+    }
+
+    @Test
+    public void aSecretRemovedOnTheWebIsRemovedFromTheTvButOnlyWhatTheServerGaveIt() {
+        mServer.secrets.put("films_rd_token", "rd-token-from-server");
+        mServer.secretsRev = 3;
+        mSettings.setFilmsAddonUrl("https://typed.example.org/on/the/tv");
+        syncFirst();
+        mSync.answerSecretOffer("films_addon_url", false);
+
+        mServer.secrets.clear();
+        mServer.secretsRev = 4;
+        mServer.version++;
+        mSync.syncOnce();
+
+        assertEquals("", mSettings.getFilmsRealDebridToken());
+        assertEquals("what was typed on the TV stays", "https://typed.example.org/on/the/tv", mSettings.getFilmsAddonUrl());
+    }
+
+    @Test
+    public void aTokenOnlyTheTvHasIsOfferedOnceAndNothingIsSentUntilTheOwnerAgrees() {
+        mSettings.setFilmsRealDebridToken("rd-typed-on-the-tv");
+
+        syncFirst();
+
+        assertEquals(java.util.Arrays.asList("films_rd_token"), mSync.secretOffers());
+        assertTrue("no silent upload", mServer.secretPuts.isEmpty());
+        mSync.answerSecretOffer("films_rd_token", false);
+        mServer.secretsRev = 1;
+        mServer.version++;
+        mSync.syncOnce();
+        assertTrue("Not now is remembered", mSync.secretOffers().isEmpty());
+        assertTrue(mServer.secretPuts.isEmpty());
+        assertEquals("rd-typed-on-the-tv", mSettings.getFilmsRealDebridToken());
+    }
+
+    @Test
+    public void whenTheOwnerAgreesTheTokenIsSentOnceWithTheNextRound() {
+        mSettings.setFilmsRealDebridToken("rd-typed-on-the-tv");
+        syncFirst();
+
+        mSync.answerSecretOffer("films_rd_token", true);
+        mSync.syncOnce();
+
+        assertEquals(java.util.Arrays.asList("films_rd_token"), mServer.secretPuts);
+        assertEquals("rd-typed-on-the-tv", mServer.secrets.get("films_rd_token"));
+        assertTrue(mSync.secretOffers().isEmpty());
+        mSync.syncOnce();
+        assertEquals("sent once", 1, mServer.secretPuts.size());
+    }
+
+    @Test
+    public void aServerWithoutSecretsOrWithoutAMasterKeyLeavesTheTvAsItWas() {
+        mSettings.setFilmsRealDebridToken("rd-typed-on-the-tv");
+        mServer.secretsRev = null;
+        syncFirst();
+        assertEquals(0, mServer.secretGets);
+
+        mServer.secretsRev = 5;
+        mServer.secretStatus = 503;
+        mServer.version++;
+        assertEquals(UtubotSettingsSync.Status.SYNCED, mSync.syncOnce());
+
+        assertEquals("rd-typed-on-the-tv", mSettings.getFilmsRealDebridToken());
+        assertTrue(mSync.secretOffers().isEmpty());
     }
 }

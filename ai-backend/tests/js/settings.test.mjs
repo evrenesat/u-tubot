@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import "./dom-stub.mjs";
-import { chipFor, clearStaged, copyChanges, groupSettings, matches, pageSettings, parseRest, render, stage, stagedFor, tooNewFor, whoWhere } from "../../src/utubot/web/ui/js/pages/settings.js";
+import { chipFor, clearStaged, copyChanges, groupSettings, matches, pageSettings, parseRest, render, secretSettings, secretState, stage, stagedFor, tooNewFor, whoWhere } from "../../src/utubot/web/ui/js/pages/settings.js";
 
 const S = (key, title, description, extra = {}) => ({
   key, title, description, group: "ai", type: "bool", default: false, phase: 1, remote: "rw", device_override: true, store: "values", ...extra,
@@ -274,5 +274,82 @@ test("the TV tab and the History tab draw", async () => {
   stop = await render(hist, { rest: ["history"] });
   await settle();
   assert.ok(hist.textContent.includes("Off → On") && hist.textContent.includes("Den TV"));
+  stop();
+});
+
+const SECRET_SCHEMA = {
+  schema_version: 2,
+  groups: [{ id: "ai", title: "AI features", order: 10 }, { id: "accounts", title: "Accounts and services", order: 100 }],
+  settings: [
+    S("ai.summary_panel", "Summary panel", "Side panel."),
+    S("secrets.films_rd_token", "Real-Debrid token", "Lets the TV's films entry use your account.", { group: "accounts", type: "secret", phase: 3, device_override: false, deliver: "tv" }),
+    S("secrets.films_addon_url", "Stream add-on address", "The address of your stream add-on.", { group: "accounts", type: "secret", phase: 3, device_override: false, deliver: "tv" }),
+  ],
+};
+
+test("secret state shows the last four characters of a token and only the host of an address", () => {
+  assert.equal(secretState({ set: false }, "films_rd_token"), "Not set");
+  assert.equal(secretState({ set: true, last4: "4f2a" }, "films_rd_token"), "Set, ends in 4f2a");
+  assert.equal(secretState({ set: true, last4: "addon.example.org" }, "films_addon_url"), "Set, host addon.example.org");
+  assert.deepEqual(secretSettings(SECRET_SCHEMA).map((s) => s.key), ["secrets.films_rd_token", "secrets.films_addon_url"]);
+});
+
+function installSecrets({ available = true, rd = { set: true, last4: "4f2a", delivered_to: [{ id: "d1", device: "Den TV", at: 1 }] } } = {}) {
+  const calls = [];
+  const secrets = { available, secrets: available ? [{ key: "films_rd_token", ...rd }, { key: "films_addon_url", set: false }] : [] };
+  globalThis.fetch = async (url, init = {}) => {
+    const method = init.method || "GET";
+    calls.push({ url, method, body: init.body ? JSON.parse(init.body) : null });
+    const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
+    if (url === "/v1/settings/schema") return reply(200, SECRET_SCHEMA);
+    if (url.startsWith("/v1/me/settings/status")) return reply(200, { version: 3, devices: [] });
+    if (url === "/v1/me/secrets") return reply(200, secrets);
+    if (url.startsWith("/v1/me/secrets/") && method === "PUT") return reply(200, { key: "films_addon_url", set: true, last4: "addon.example.org" });
+    if (url === "/v1/me/settings") return reply(200, { version: 3, values: { "ai.summary_panel": { v: false, rev: 0, from: "default" } } });
+    return reply(404, { error: "unexpected " + url });
+  };
+  return calls;
+}
+
+test("Accounts and services is write-only: it shows set, the hint and where it went, saves without showing the value", async () => {
+  clearStaged("my");
+  const calls = installSecrets();
+  const view = document.createElement("div");
+  const stop = await render(view, { rest: [] });
+  await settle();
+  const text = view.textContent;
+  assert.ok(text.includes("Accounts and services") && text.includes("Set, ends in 4f2a") && text.includes("Given to Den TV"));
+  assert.ok(text.includes("Not set"));
+  const fields = find(view, (n) => n.tagName === "INPUT" && n.type === "password");
+  assert.equal(fields.length, 2);
+  fields[1].value = "https://addon.example.org/CANARYKEY/manifest.json";
+  buttons(view, "Save")[1].dispatch("click");
+  await settle();
+  const put = calls.find((c) => c.method === "PUT");
+  assert.equal(put.url, "/v1/me/secrets/films_addon_url");
+  assert.deepEqual(put.body, { value: "https://addon.example.org/CANARYKEY/manifest.json" });
+  assert.ok(!view.textContent.includes("CANARYKEY"));
+  assert.equal(find(view, (n) => n.tagName === "INPUT" && n.type === "password")[1].value, "");
+  stop();
+});
+
+test("without a master key the section says so and offers no field", async () => {
+  clearStaged("my");
+  installSecrets({ available: false });
+  const view = document.createElement("div");
+  const stop = await render(view, { rest: [] });
+  await settle();
+  assert.ok(view.textContent.includes("Secret storage is not set up on this server"));
+  assert.equal(find(view, (n) => n.tagName === "INPUT" && n.type === "password").length, 0);
+  stop();
+});
+
+test("a server without secret routes draws no section", async () => {
+  clearStaged("my");
+  install();
+  const view = document.createElement("div");
+  const stop = await render(view, { rest: [] });
+  await settle();
+  assert.ok(!view.textContent.includes("Accounts and services"));
   stop();
 });

@@ -1,3 +1,11 @@
+## 2026-11-27 (secrets store, plan checkpoint 6, #276)
+
+- `secretstore.py`: `user_secrets` (AES-256-GCM, nonce per write, user and name as associated data, `key_id`), `user_secret_rev`, `user_secret_deliveries`. Master key from `[security] secrets_key_env` (`UTUBOT_SECRETS_KEY`); without it the routes answer 503 and nothing is stored. `cryptography` is a new dependency.
+- Routes: `GET/PUT/DELETE /v1/me/secrets` (browser only), `GET /v1/device/secrets`, `PUT /v1/device/secrets/{name}` (the TV's own token, 409 when the server has one). The settings answer has `secrets_rev`. Audit rows say only `set` and `cleared`.
+- CLI: `utubot user secret set <user> <name>` (value from stdin, no argv), `utubot secrets check`, `utubot secrets rotate --new-key-env`.
+- The per-user provider key moves into the store at startup when a master key exists (`UserProviders.migrate_keys`): each row is blanked only after it decrypts back to the same value, then the database is `VACUUM`ed and `secure_delete` is on, so no clear copy stays in a free page or the WAL (test searches the raw file). `restore_clear_keys` writes them back for a rollback. No master key: the column is used as before.
+- Live database: new tables only (`CREATE TABLE IF NOT EXISTS`); the one data change is the provider-key move above. Deploy: set `UTUBOT_SECRETS_KEY` in the service environment before the restart, then `utubot secrets check`. A backup is useless without the key: keep both.
+- Tests: `tests/test_secrets.py` (T6: canary absent from responses, logs, audit and the raw file; tampered ciphertext, nonce and user fail; other user gets nothing; 503 without a key; rotation; CLI; provider migration, idempotent, rollback).
 ## 2026-11-27 (web settings: per-TV keys, schema 2 and the long poll, plan checkpoint 5)
 
 - `SYNCED_PHASE` is 2 and the schema is version 2: the phase 2 keys are `since: 2` (see `DEVLOG-utubot.md`). `Schema.synced(1)` is still the eight AI keys; a TV's status, its document and `PUT /v1/me/devices/{id}/settings` use the schema version the TV last reported (a key it is too old for is `400` on the PUT, never "pending").

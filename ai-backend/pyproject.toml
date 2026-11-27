@@ -10,6 +10,7 @@ dependencies = [
   "pydantic>=2.9",
   "yt-dlp>=2025.11.12",
   "python-multipart>=0.0.9",
+  "cryptography>=43",
 ]
 
 [project.optional-dependencies]

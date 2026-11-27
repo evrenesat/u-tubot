@@ -49,6 +49,7 @@ public final class UtubotSettingsSyncRunner {
         thread.setDaemon(true);
         return thread;
     });
+    private final java.util.Set<String> mOffered = new java.util.HashSet<>();
     private final AtomicBoolean mIsRunning = new AtomicBoolean();
     private final AtomicBoolean mIsWatching = new AtomicBoolean();
     private final Runnable mTick = this::tick;
@@ -63,6 +64,16 @@ public final class UtubotSettingsSyncRunner {
             @Override
             public String get(int have, int schemaVersion, int waitMs) throws IOException {
                 return client().deviceSettings(have, schemaVersion, waitMs, UtubotSettingsSync.REQUEST_TIMEOUT_MS);
+            }
+
+            @Override
+            public String getSecrets(int have) throws IOException {
+                return client().deviceSecrets(have, UtubotSettingsSync.REQUEST_TIMEOUT_MS);
+            }
+
+            @Override
+            public void putSecret(String name, String value) throws IOException {
+                client().putDeviceSecret(name, value, UtubotSettingsSync.REQUEST_TIMEOUT_MS);
             }
 
             @Override
@@ -140,6 +151,7 @@ public final class UtubotSettingsSyncRunner {
 
     private void afterRound(UtubotSettingsSync.Status status) {
         showSuperseded(mSync.takeSuperseded());
+        offerSecrets();
         mMain.removeCallbacks(mTick);
 
         if (status == UtubotSettingsSync.Status.FAILED) {
@@ -179,6 +191,27 @@ public final class UtubotSettingsSyncRunner {
             requestSoon(0);
         } else if (result == UtubotSettingsSync.Watch.HELD) {
             armWatch();
+        }
+    }
+
+    private void offerSecrets() {
+        if (!Utils.isAppInForegroundFixed()) {
+            return;
+        }
+
+        for (String name : mSync.secretOffers()) {
+            if (mOffered.contains(name)) {
+                continue;
+            }
+
+            if (UtubotSecretOffer.show(mContext, name, keep -> {
+                mSync.answerSecretOffer(name, keep);
+                requestSoon(0);
+            })) {
+                // Asked once per start of the app; only "Not now" is remembered for good
+                mOffered.add(name);
+                return;
+            }
         }
     }
 

@@ -45,6 +45,10 @@
     <string name="utubot_browse_refresh">Browse refresh</string>
     <string name="utubot_update_checks">Check for u·tubot updates</string>
     <string name="utubot_update_checks_desc">Also on the web Settings page. Off: the app only looks when you choose Check for updates</string>
+    <string name="utubot_secret_offer_token">Keep this Real-Debrid token on your server so your other TVs get it?</string>
+    <string name="utubot_secret_offer_addon">Keep this stream add-on address on your server so your other TVs get it?</string>
+    <string name="utubot_secret_offer_yes">Keep it on my server</string>
+    <string name="utubot_secret_offer_no">Not now</string>
     <string name="utubot_update_interval">Update check interval</string>
     <string name="utubot_films_developer">Films developer entry</string>
     <string name="utubot_films_developer_desc">Developer spike: play Real-Debrid film streams from a Stremio addon. Off by default</string>

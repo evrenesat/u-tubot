@@ -36,6 +36,13 @@ public final class UtubotSettingsSync {
     private static final String STATE_LAST_OK = "last_ok_ms";
     private static final String STATE_COPIED = "copied";
     private static final String COPY_PREFIX = "pre.";
+    private static final String STATE_SECRETS_REV = "secrets_rev";
+    private static final String STATE_SECRET_SERVER = "secret_server";
+    private static final String STATE_SECRET_DECLINED = "secret_declined";
+    private static final String STATE_SECRET_ACCEPTED = "secret_accepted";
+    private static final String STATE_SECRET_OFFERS = "secret_offers";
+    /** The secrets that follow the server (their names on the server), in step with {@code ai/settings/schema.json} */
+    public static final String[] SECRET_NAMES = {"films_rd_token", "films_addon_url"};
     private static final String OUT_VALUE = "v";
     private static final String OUT_BASE = "base";
 
@@ -94,6 +101,12 @@ public final class UtubotSettingsSync {
         String get(int have, int schemaVersion, int waitMs) throws IOException;
 
         String post(JSONObject body) throws IOException;
+
+        /** The user's secrets for this TV ({@code have}: the revision it holds, -1 for none). Carries secret values. */
+        String getSecrets(int have) throws IOException;
+
+        /** Keeps this TV's own secret on the server */
+        void putSecret(String name, String value) throws IOException;
     }
 
     public interface Clock {
@@ -113,6 +126,7 @@ public final class UtubotSettingsSync {
     private final List<String> mSuperseded = new ArrayList<>();
     private volatile Status mStatus = Status.SYNCED;
     private volatile boolean mIsOff;
+    private int mSecretsRevSeen = -1;
 
     public UtubotSettingsSync(UtubotSettings settings, SharedPreferences state, SharedPreferences copy, Transport transport, Clock clock,
                               @Nullable String appVersion) {
@@ -189,7 +203,9 @@ public final class UtubotSettingsSync {
             }
 
             try {
+                mSecretsRevSeen = -1;
                 round();
+                syncSecrets();
                 mState.edit().putLong(STATE_LAST_OK, mClock.nowMs()).apply();
 
                 return mStatus = Status.SYNCED;
@@ -212,7 +228,7 @@ public final class UtubotSettingsSync {
     public void onConnectionChanged() {
         synchronized (mSyncLock) {
             mIsOff = false;
-            mState.edit().remove(STATE_MIGRATED).remove(STATE_MIGRATED_SCHEMA).remove(STATE_VERSION).remove(STATE_REVS).remove(STATE_OUTBOX).apply();
+            mState.edit().remove(STATE_MIGRATED).remove(STATE_SECRETS_REV).remove(STATE_SECRET_SERVER).remove(STATE_SECRET_ACCEPTED).remove(STATE_SECRET_OFFERS).remove(STATE_MIGRATED_SCHEMA).remove(STATE_VERSION).remove(STATE_REVS).remove(STATE_OUTBOX).apply();
         }
     }
 
@@ -415,6 +431,7 @@ public final class UtubotSettingsSync {
         }
 
         JSONObject revs = revs();
+        mSecretsRevSeen = doc.optInt("secrets_rev", -1);
 
         for (Key key : KEYS) {
             JSONObject entry = values.optJSONObject(key.key);
@@ -456,6 +473,165 @@ public final class UtubotSettingsSync {
             default:
                 return text;
         }
+    }
+
+    // ---- the user's secrets (plan section 6): the server hands them to this TV; this TV keeps its own only if its owner agrees
+
+    /**
+     * The secrets this TV holds that the server does not, and that its owner was not asked about yet. Ask once each on the TV
+     * ("Keep this Real-Debrid token on your server so your other TVs get it?"), then call {@link #answerSecretOffer}.
+     */
+    public List<String> secretOffers() {
+        return strings(STATE_SECRET_OFFERS);
+    }
+
+    /**
+     * The owner's answer. "Not now" is remembered and never asked again for this name; "yes" is sent with the next round.
+     */
+    public void answerSecretOffer(String name, boolean keepOnServer) {
+        synchronized (mOutboxLock) {
+            List<String> offers = strings(STATE_SECRET_OFFERS);
+            offers.remove(name);
+            SharedPreferences.Editor edit = mState.edit().putString(STATE_SECRET_OFFERS, new JSONArray(offers).toString());
+
+            if (keepOnServer) {
+                List<String> accepted = strings(STATE_SECRET_ACCEPTED);
+
+                if (!accepted.contains(name)) {
+                    accepted.add(name);
+                }
+
+                edit.putString(STATE_SECRET_ACCEPTED, new JSONArray(accepted).toString());
+            } else {
+                List<String> declined = strings(STATE_SECRET_DECLINED);
+
+                if (!declined.contains(name)) {
+                    declined.add(name);
+                }
+
+                edit.putString(STATE_SECRET_DECLINED, new JSONArray(declined).toString());
+            }
+
+            edit.apply();
+        }
+    }
+
+    private void syncSecrets() throws IOException {
+        uploadAcceptedSecrets();
+        int seen = mSecretsRevSeen;
+        int have = mState.getInt(STATE_SECRETS_REV, -1);
+
+        // The settings answer carries the revision; no revision means a server without secrets
+        if (seen < 0 || seen == have) {
+            return;
+        }
+
+        JSONObject answer;
+
+        try {
+            answer = new JSONObject(mTransport.getSecrets(have));
+        } catch (UtubotClient.HttpException e) {
+            if (e.code == 503 || e.code == 404) {
+                return;
+            }
+
+            throw e;
+        } catch (JSONException e) {
+            return;
+        }
+
+        JSONObject values = answer.optJSONObject("secrets");
+        JSONArray set = answer.optJSONArray("set");
+        List<String> onServer = new ArrayList<>();
+
+        for (int i = 0; set != null && i < set.length(); i++) {
+            onServer.add(set.optString(i));
+        }
+
+        List<String> received = strings(STATE_SECRET_SERVER);
+        List<String> declined = strings(STATE_SECRET_DECLINED);
+        List<String> offers = new ArrayList<>();
+
+        for (String name : SECRET_NAMES) {
+            String value = values != null ? values.optString(name, "") : "";
+
+            if (!value.isEmpty()) {
+                if (!value.equals(mSettings.getSecretValue(name))) {
+                    mSettings.setSecretValue(name, value);
+                }
+
+                if (!received.contains(name)) {
+                    received.add(name);
+                }
+            } else if (onServer.contains(name)) {
+                continue;
+            } else if (received.remove(name)) {
+                // Removed on the web: removed here, but only what the server gave this TV
+                mSettings.setSecretValue(name, "");
+            } else if (!mSettings.getSecretValue(name).isEmpty() && !declined.contains(name)) {
+                offers.add(name);
+            }
+        }
+
+        mState.edit().putInt(STATE_SECRETS_REV, answer.optInt("rev", seen))
+                .putString(STATE_SECRET_SERVER, new JSONArray(received).toString())
+                .putString(STATE_SECRET_OFFERS, new JSONArray(offers).toString()).apply();
+    }
+
+    private void uploadAcceptedSecrets() {
+        List<String> accepted = strings(STATE_SECRET_ACCEPTED);
+
+        if (accepted.isEmpty()) {
+            return;
+        }
+
+        List<String> received = strings(STATE_SECRET_SERVER);
+
+        for (String name : new ArrayList<>(accepted)) {
+            String value = mSettings.getSecretValue(name);
+
+            try {
+                if (!value.isEmpty()) {
+                    mTransport.putSecret(name, value);
+                }
+
+                accepted.remove(name);
+
+                if (!received.contains(name)) {
+                    received.add(name);
+                }
+            } catch (UtubotClient.HttpException e) {
+                if (e.code == 409) {
+                    // The server has one already (another TV was first): it wins and arrives with the next fetch
+                    accepted.remove(name);
+                    continue;
+                }
+
+                // Kept for the next round
+            } catch (IOException e) {
+                // Kept for the next round
+            }
+        }
+
+        // The server's revision moved with our upload: ask again for the full list
+        mState.edit().putString(STATE_SECRET_ACCEPTED, new JSONArray(accepted).toString())
+                .putString(STATE_SECRET_SERVER, new JSONArray(received).toString()).remove(STATE_SECRETS_REV).apply();
+    }
+
+    private List<String> strings(String stateKey) {
+        List<String> out = new ArrayList<>();
+
+        try {
+            JSONArray array = new JSONArray(mState.getString(stateKey, "[]"));
+
+            for (int i = 0; i < array.length(); i++) {
+                out.add(array.getString(i));
+            }
+        } catch (JSONException e) {
+            // an unreadable list is an empty one
+        }
+
+        return out;
     }
 
     /** Keeps the values of the keys that are about to start syncing (the ones newer than {@code fromSchema}), once each */

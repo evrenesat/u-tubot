@@ -1135,6 +1135,25 @@ are additive and need a signed-in caller.
   (`PUT /v1/me/devices/{id}/settings`, `400` for a key the TV's reported schema is too old for). The numeric choices (scroll speed,
   update interval, browse refresh) are `enum` keys with number values, the exact set the app accepts; `ai.cut_jump` values are
   `left_right`, `up_down`, `off`.
+- **Secrets** (checkpoint 6; the schema's `secret` keys `secrets.films_rd_token` and `secrets.films_addon_url`, `deliver: tv`). Stored in
+  `user_secrets`, AES-256-GCM, a fresh nonce per write, the user and the key name as associated data. The master key is 32 random bytes
+  (base64) in the environment variable named by `[security] secrets_key_env` (default `UTUBOT_SECRETS_KEY`), never in the config file,
+  the database or git. Without it every secret route answers `503 {"error":"secret storage is not set up on this server"}` and nothing
+  is stored.
+  `GET /v1/me/secrets` (browser) -> `{"available":bool,"secrets":[{"key":"films_rd_token","set":true,"last4":"4f2a","updated_at",
+  "delivered_to":[{"id","device","at"}]}]}` (`last4` is the last 4 characters of a token, only the host of an address);
+  `PUT /v1/me/secrets/{name}` `{"value"}` (`400` for a bad value: a token is one word of 8 to 1000 characters, an address is https, or
+  http for a private host) and `DELETE` answer for a browser; a device token gets `403`. No route returns a value to a browser.
+  `GET /v1/device/secrets?have=<rev>` (a paired TV only; `no-store`) -> `{"rev","secrets":{name:value},"set":[name]}`, or
+  `{"rev","unchanged":true,"set":[...]}` when `have` is the current revision; it records that this TV was given them. The settings
+  answer carries `"secrets_rev"` (0 without any), and a TV asks only when it changed. `PUT /v1/device/secrets/{name}` `{"value"}` lets a
+  TV keep its own value on the server (decision D2: only after its owner agreed on the TV); `409` when the server has one (the server
+  wins). A removal on the web removes the value on the next fetch. The audit and the History keep only the words `set` and `cleared`.
+  `utubot user secret set <user> <name>` reads the value from stdin; `utubot secrets check` and `utubot secrets rotate
+  --new-key-env VAR` print counts only. The per-user AI provider key (`PUT /v1/me/provider`) uses the same store (name
+  `provider.api_key`, never delivered to a TV); at the first start with a master key every clear-text key moves in, the old column is
+  blanked after the new row decrypts back to the same value, and the database file is rewritten (`VACUUM`) so no clear copy stays;
+  `key_sha256` is unchanged. Without a master key the provider key stays in its column as before.
 - `GET /v1/me/settings/status` -> `{"version","now","devices":[{"id","device","last_used","syncs","applied_version","applied_at",
   "last_sync_at","schema_version","app_version","migrated","report","overrides":[key],"pending":[key]}]}`; `pending` is every key whose `rev`
   is above the TV's `applied_version` among the keys that TV's schema may see.
