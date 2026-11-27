@@ -65,6 +65,23 @@ public final class UtubotCutQrView extends FrameLayout {
                 new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
+    /**
+     * The QR sheet for an address and a hint (the web admin sign-in link): the address, the code and the hint.
+     */
+    public static void show(Context context, String url, String hint) {
+        Activity activity = activityOf(context);
+
+        if (activity == null) {
+            MessageHelpers.showLongMessage(context, url);
+            return;
+        }
+
+        ViewGroup content = activity.findViewById(android.R.id.content);
+        close(content);
+        content.addView(new UtubotCutQrView(activity).build(url, hint),
+                new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
     private static void close(ViewGroup content) {
         for (int i = content.getChildCount() - 1; i >= 0; i--) {
             if (content.getChildAt(i) instanceof UtubotCutQrView) {
@@ -74,6 +91,32 @@ public final class UtubotCutQrView extends FrameLayout {
     }
 
     private UtubotCutQrView build(CutRequest request) {
+        LinearLayout column = base();
+
+        if (Helpers.isTouchSupported(getContext())) {
+            buildTouchSheet(column, request);
+        } else {
+            buildQrSheet(column, UtubotManager.instance(getContext()).cutRequestUrl(request.id),
+                    getContext().getString(R.string.utubot_cut_describe_hint));
+        }
+
+        // The sheet holds the focus, so its keys are its own; a key that arrives before the attach is asked for again
+        post(this::requestFocus);
+
+        return this;
+    }
+
+    private UtubotCutQrView build(String url, String hint) {
+        LinearLayout column = base();
+        buildQrSheet(column, url, hint);
+        post(this::requestFocus);
+        return this;
+    }
+
+    /**
+     * The sheet's chrome: the scrim, the key handling and the column that holds the content.
+     */
+    private LinearLayout base() {
         setBackgroundColor(SCRIM);
         setClickable(true);
         setFocusable(true);
@@ -103,17 +146,7 @@ public final class UtubotCutQrView extends FrameLayout {
         column.setGravity(Gravity.CENTER_HORIZONTAL);
         column.setPadding(PADDING_PX, PADDING_PX, PADDING_PX, PADDING_PX);
         addView(column, new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
-
-        if (Helpers.isTouchSupported(getContext())) {
-            buildTouchSheet(column, request);
-        } else {
-            buildQrSheet(column, request);
-        }
-
-        // The sheet holds the focus, so its keys are its own; a key that arrives before the attach is asked for again
-        post(this::requestFocus);
-
-        return this;
+        return column;
     }
 
     private void buildTouchSheet(LinearLayout column, CutRequest request) {
@@ -149,9 +182,7 @@ public final class UtubotCutQrView extends FrameLayout {
         buttons.addView(build, buttonLayoutParams());
     }
 
-    private void buildQrSheet(LinearLayout column, CutRequest request) {
-        String url = UtubotManager.instance(getContext()).cutRequestUrl(request.id);
-
+    private void buildQrSheet(LinearLayout column, String url, String hint) {
         TextView address = new TextView(getContext());
         address.setText(url);
         address.setTextColor(TEXT);
@@ -178,7 +209,7 @@ public final class UtubotCutQrView extends FrameLayout {
         }
 
         TextView hintView = new TextView(getContext());
-        hintView.setText(getContext().getString(R.string.utubot_cut_describe_hint));
+        hintView.setText(hint);
         hintView.setTextColor(TEXT);
         hintView.setTextSize(HINT_TEXT_SIZE_SP);
         hintView.setGravity(Gravity.CENTER);
