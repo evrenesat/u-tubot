@@ -26,6 +26,9 @@ const DEFAULT_TIMEOUT_MS = 15000;
 const LONG_POLL_SLACK_MS = 10000;
 const IMPORT_TIMEOUT_MS = 30000;
 const MAX_ERROR_CHARS = 120;
+const LEDGER_PATH = "/ledger";
+const REPORT_WINDOW_MS = 60000;
+const MAX_REPORTS_PER_WINDOW = 10;
 
 export class HttpError extends Error {
   constructor(code, message) {
@@ -65,9 +68,62 @@ function backendUrl(baseUrl, path) {
   return url;
 }
 
-export function createClient(baseUrl, token, fetchImpl = globalThis.fetch) {
+/**
+ * The failures worth telling the backend's error ledger about: one report per distinct operation and message per
+ * window and a fixed number per window overall, so a dead backend never floods the ledger.
+ */
+export function createFailureThrottle(now = () => Date.now()) {
+  let windowStart = -Infinity;
+  let sent = 0;
+  const seen = new Set();
+
+  return (operation, message) => {
+    const at = now();
+
+    if (at - windowStart >= REPORT_WINDOW_MS) {
+      windowStart = at;
+      sent = 0;
+      seen.clear();
+    }
+
+    const key = `${operation}|${message}`;
+
+    if (seen.has(key) || sent >= MAX_REPORTS_PER_WINDOW) {
+      return false;
+    }
+
+    seen.add(key);
+    sent += 1;
+    return true;
+  };
+}
+
+export function createClient(baseUrl, token, fetchImpl = globalThis.fetch, { reportFailures = false } = {}) {
   const base = stripTrailingSlash(baseUrl);
   const bearer = (token ?? "").trim();
+  const shouldReport = createFailureThrottle();
+
+  /** Fire and forget: the ledger is best effort and the report call is never itself reported. */
+  function reportFailure(url, method, error) {
+    const clientSide = !(error instanceof HttpError) || error.code >= 500;
+    const path = url.pathname.replace(API_PREFIX, "");
+
+    if (!reportFailures || !bearer || !clientSide || path === LEDGER_PATH) {
+      return;
+    }
+
+    const operation = `${method} ${path.replace(/[0-9A-Za-z_-]{11}/g, "{id}")}`;
+    const message = abbreviate(String(error?.message ?? error?.name ?? "error"));
+
+    if (!shouldReport(operation, message)) {
+      return;
+    }
+
+    json(backendUrl(base, LEDGER_PATH), {
+      method: "POST",
+      body: { component: "client", operation, message, detail: String(error?.name ?? "") },
+    }).catch(() => {});
+  }
 
   async function send(url, options = {}) {
     const headers = {};
@@ -115,11 +171,9 @@ export function createClient(baseUrl, token, fetchImpl = globalThis.fetch) {
 
       return response;
     } catch (error) {
-      if (error?.name === "AbortError") {
-        throw new Error("Timeout");
-      }
-
-      throw error;
+      const failure = error?.name === "AbortError" ? new Error("Timeout") : error;
+      reportFailure(url, options.method ?? "GET", failure);
+      throw failure;
     } finally {
       clearTimeout(timer);
     }

@@ -68,8 +68,10 @@ class JobQueue:
         db: Database,
         pipeline: CaptionPipeline,
         transcripts: TranscriptService,
+        ledger=None,
     ):
         self.cfg, self.db, self.pipeline, self.transcripts = cfg, db, pipeline, transcripts
+        self.ledger = ledger
         self.events = events.JobEvents(db, cfg.captions)
         self.events.backfill()
         self._wake = asyncio.Event()
@@ -970,6 +972,19 @@ class JobQueue:
             "UPDATE jobs SET status='failed', error=?, updated_at=?, finished_at=? WHERE id=?",
             [message, now, now, job["id"]],
         )
+        if self.ledger is not None:
+            try:
+                self.ledger.record(
+                    "job",
+                    job.get("kind", "job"),
+                    video_id=job.get("video_id"),
+                    message=message,
+                    detail=f"job_id={job['id']}",
+                    client=job.get("user"),
+                    ts=now,
+                )
+            except Exception:
+                log.warning("could not record a job failure in the ledger", exc_info=True)
         trace = events.current()
         detail: dict[str, Any] = {
             "message": message,

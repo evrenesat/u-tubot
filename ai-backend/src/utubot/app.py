@@ -52,6 +52,7 @@ from .inbox import (
     InboxService,
     thumbnail_for,
 )
+from .ledger import LedgerService
 from .llm import LLMClient
 from .media_archive import ENTRY_LIMIT, MediaArchive
 from .modelcatalog import ModelCatalog
@@ -68,6 +69,7 @@ from .models import (
     FeedbackRequest,
     ImportRequest,
     InboxIds,
+    LedgerReport,
     PairCodeRequest,
     PairRequest,
     PolicyPatch,
@@ -92,6 +94,7 @@ from .speech import SpeechError, SpeechService
 from .status import StatusService, UpdatesStatus
 from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
+from .usage import METRIC_YOUTUBE_FORBIDDEN, Usage
 from .videoref import VIDEO_ID_RE
 from .voice import VoiceService, install_voice_routes
 from .webauth import SESSION_TOKEN_ID, VIA_TAILSCALE, WebAuth, csrf_valid, hash_session
@@ -159,6 +162,11 @@ TOKEN_CLIENT = "API token"
 DEVICE_CLIENT = "device"
 JOBS_LIMIT_DEFAULT = 50
 JOBS_LIMIT_MAX = 200
+# The components the ledger records a failure under. A client-supplied component outside this set is
+# folded to "client" so a wrong value cannot pollute the admin page's category breakdown.
+LEDGER_COMPONENTS = frozenset(
+    {"client", "job", "youtube", "llm", "transcript", "cut", "download", "sync", "assess"}
+)
 
 
 @dataclass
@@ -188,6 +196,7 @@ class Services:
     status: StatusService
     updates: UpdatesStatus
     artifacts: ArtifactCache
+    ledger: LedgerService
     build: buildinfo.Build = field(default_factory=buildinfo.detect)
 
 
@@ -203,8 +212,9 @@ def build_services(
     github_transport: httpx.AsyncBaseTransport | None = None,
 ) -> Services:
     db = Database(cfg.db_path)
+    ledger = LedgerService(db, cfg.ledger.keep_days)
     llm = LLMClient(cfg, transport=llm_transport, db=db)
-    gate = YoutubeGate(cfg.youtube, db, clock)
+    gate = YoutubeGate(cfg.youtube, db, clock, ledger=ledger)
     if fetcher is None and cfg.youtube.offline:
         fetcher = OfflineYoutubeFetcher(cfg)
     transcripts = TranscriptService(cfg, db, fetcher, gate)
@@ -220,7 +230,7 @@ def build_services(
         gate=gate,
         archive=archive,
     )
-    jobs = JobQueue(cfg, db, pipeline, transcripts)
+    jobs = JobQueue(cfg, db, pipeline, transcripts, ledger=ledger)
     reports = JobReports(cfg, db, jobs, transcripts)
     transcription = Transcription(cfg, transcripts, jobs)
     auth = Auth(cfg, db)
@@ -253,6 +263,7 @@ def build_services(
         status=StatusService(cfg, db, gate, llm.usage, transcription.engines),
         updates=UpdatesStatus(cfg, github_transport),
         artifacts=ArtifactCache(db, transcripts, content, assessor, archive),
+        ledger=ledger,
     )
 
 
@@ -529,6 +540,31 @@ def create_app(
         if isinstance(result, dict) and run:
             result["cost_usd"] = round(run.get("cost", 0.0), 5)
             result["elapsed_s"] = run.get("elapsed_s")
+
+    def record_result_failure(
+        operation: str, video_id: str, result: Any, request: Request, user: UserConfig
+    ) -> None:
+        """Record a client-visible failure of an insight/summary/ask (a model or analysis error).
+
+        A transient `delayed`/`needs_transcript` answer is not a failure. A transcript-layer failure
+        (`transcript_status == "failed"`) is owned by the job that already recorded it, so it is skipped
+        here to avoid counting the same problem twice.
+        """
+        if not isinstance(result, dict) or result.get("status") != "failed":
+            return
+        if result.get("transcript_status") == "failed":
+            return
+        message = result.get("error") or f"{operation} failed"
+        try:
+            svc.ledger.record(
+                "content",
+                operation,
+                video_id=video_id,
+                message=message,
+                client=client_of(request),
+            )
+        except Exception:
+            log.warning("could not record a failure in the ledger", exc_info=True)
 
     @app.middleware("http")
     async def edge(request: Request, call_next):
@@ -830,6 +866,35 @@ def create_app(
             raise HTTPException(404, "no override to reset")
         return result
 
+    @app.get("/v1/admin/ledger")
+    async def admin_ledger(
+        period_days: int = Query(14, ge=1, le=365),
+        limit: int = Query(80, ge=1, le=400),
+        admin: UserConfig = Depends(admin_user),
+    ):
+        """The error ledger: counts per category per day and the newest failures with job links."""
+        page = svc.ledger.page(period_days, limit)
+        page["youtube_forbidden"] = Usage(svc.db).daily(
+            METRIC_YOUTUBE_FORBIDDEN, page["period_days"]
+        )
+        return page
+
+    @app.post("/v1/admin/ledger/{failure_id}/categorize")
+    async def admin_ledger_categorize(
+        failure_id: int,
+        body: dict[str, Any],
+        admin: UserConfig = Depends(admin_user),
+    ):
+        """Triage: sort one flagged/unknown failure into a real category."""
+        category = (body.get("category") or "").strip()
+        if not category:
+            raise HTTPException(400, "give a category")
+        try:
+            changed = svc.ledger.reclassify(failure_id, category, admin.name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "changed": changed}
+
     @app.get("/app/update.json")
     async def app_update():
         path = cfg.app_dir / "update.json"
@@ -896,6 +961,7 @@ def create_app(
                 length_s=meta_dict.get("duration_s"),
                 thumbnail=thumbnail_for(meta_dict, video_id),
             )
+        record_result_failure("insight", video_id, result, request, user)
         return note_transcript_use(request, user, video_id, result, "insight")
 
     @app.get("/v1/prompts")
@@ -1019,6 +1085,7 @@ def create_app(
                 label=resolved.label,
                 thumbnail=thumbnail_for(meta_dict, video_id),
             )
+        record_result_failure("summary", video_id, result, request, user)
         return note_transcript_use(
             request, user, video_id, result, "summary_panel" if panel else "summary"
         )
@@ -1056,6 +1123,7 @@ def create_app(
                 user=user.name,
             )
         attach_run_cost(result, run)
+        record_result_failure("summary", video_id, result, request, user)
         return note_transcript_use(request, user, video_id, result, "summary")
 
     @app.post("/v1/videos/{video_id}/ask")
@@ -1073,6 +1141,7 @@ def create_app(
                 user.policy, video_id, body.question, meta.as_dict(), body.wait_ms, user=user.name
             )
         attach_run_cost(result, run)
+        record_result_failure("ask", video_id, result, request, user)
         return note_transcript_use(request, user, video_id, result, "answer")
 
     @app.post("/v1/videos/{video_id}/captions")
@@ -1442,6 +1511,31 @@ def create_app(
         svc.db.execute(
             "INSERT INTO feedback(user,video_id,kind,correct,note,created_at) VALUES(?,?,?,?,?,?)",
             [user.name, body.video_id, body.kind, int(body.correct), body.note, time.time()],
+        )
+        return {"ok": True}
+
+    @app.post("/v1/ledger")
+    async def ledger_report(
+        body: LedgerReport, request: Request, user: UserConfig = Depends(current_user)
+    ):
+        """A client (TV, extension) reports one of its own failures to the error ledger.
+
+        The backend categorises it from the message unless the caller supplies a known category hint;
+        an unknown category is flagged for triage on the admin page.
+        """
+        if body.video_id:
+            check_video_id(body.video_id)
+        component = body.component or "client"
+        if component not in LEDGER_COMPONENTS:
+            component = "client"
+        svc.ledger.record(
+            component,
+            body.operation,
+            video_id=body.video_id,
+            message=body.message,
+            category=body.category,
+            detail=body.detail,
+            client=client_of(request),
         )
         return {"ok": True}
 

@@ -214,3 +214,39 @@ test("a caption file over the size cap is refused", async () => {
   const { fetchImpl } = fake(big);
   await assert.rejects(() => createClient(BASE, TOKEN, fetchImpl).captionFile("/v1/videos/abcdefghijk/captions/en.vtt"));
 });
+
+test("a failed call is reported to the ledger once, a rejected one is not", async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, method: init.method, body: init.body });
+    if (url.endsWith("/v1/ledger")) {
+      return new Response("{}", { status: 200 });
+    }
+    return new Response("boom", { status: 502 });
+  };
+  const client = createClient(BASE, TOKEN, fetchImpl, { reportFailures: true });
+  await assert.rejects(() => client.me());
+  await assert.rejects(() => client.me());
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const reports = calls.filter((c) => c.url.endsWith("/v1/ledger"));
+  assert.equal(reports.length, 1);
+  assert.equal(JSON.parse(reports[0].body).component, "client");
+
+  const rejected = [];
+  const reject = async (url) => {
+    rejected.push(url);
+    return new Response("no", { status: 401 });
+  };
+  await assert.rejects(() => createClient(BASE, TOKEN, reject, { reportFailures: true }).me());
+  assert.equal(rejected.length, 1);
+});
+
+test("without the option nothing is reported", async () => {
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    return new Response("boom", { status: 502 });
+  };
+  await assert.rejects(() => createClient(BASE, TOKEN, fetchImpl).me());
+  assert.equal(urls.length, 1);
+});

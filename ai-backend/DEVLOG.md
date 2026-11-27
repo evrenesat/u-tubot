@@ -1,3 +1,11 @@
+## 2026-11-26 (error ledger review pass, issue #206)
+
+- Rebased onto main (db schema and the `Deps` wiring kept both sides). Fixed: the admin page's counts table crashed on an undefined
+  variable; per-day buckets are UTC (`_day` used local time); numeric patterns (403, 410, 429, 401) need word boundaries; one shared
+  `LedgerService` instead of two. The admin page and `GET /v1/admin/ledger` show the `youtube_forbidden` usage metric (#226) per day beside
+  the ledger instead of duplicating it. The TV (`UtubotClient`) and the extension (`createClient`) report their own transport/5xx failures
+  to `POST /v1/ledger`, throttled. Migration: `failures` is `CREATE TABLE IF NOT EXISTS` (test opens an old DB).
+
 ## 2026-11-26 (a refused download retries, then asks the TV for captions, issue #205)
 
 - A 403 from yt-dlp (audio download and metadata extract) is retried with the next `[youtube] player_clients` entry (default `web`, `android`)

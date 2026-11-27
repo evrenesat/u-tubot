@@ -1,5 +1,9 @@
 # u·tubot browser extension devlog
 
+## 2026-11-26 (error ledger, issue #206)
+
+- `createClient(..., { reportFailures: true })` (the router) reports the extension's own transport and 5xx failures to `POST /v1/ledger`, throttled to one per message a minute and ten a minute (`createFailureThrottle`). Unit tests in `tests/unit/client.test.js`.
+
 ## 2026-11-25 (checkpoints 0-3: third fix round, the red CI)
 
 - Both `Install ffmpeg` steps of `.github/workflows/utubot-ci.yml` (`backend` and `extension`) skip when the runner already has

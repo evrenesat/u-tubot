@@ -178,6 +178,12 @@ CREATE TABLE IF NOT EXISTS voice_commands(
   at REAL NOT NULL, text TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '',
   args TEXT NOT NULL DEFAULT '{}', outcome TEXT NOT NULL DEFAULT '', marks TEXT NOT NULL DEFAULT '{}');
 CREATE INDEX IF NOT EXISTS voice_commands_user ON voice_commands(user, at DESC);
+CREATE TABLE IF NOT EXISTS failures(
+   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, component TEXT NOT NULL,
+   operation TEXT NOT NULL, category TEXT NOT NULL, video_id TEXT, message TEXT NOT NULL,
+   detail TEXT, flagged INTEGER NOT NULL DEFAULT 0, client TEXT);
+CREATE INDEX IF NOT EXISTS failures_ts ON failures(ts DESC);
+CREATE INDEX IF NOT EXISTS failures_category ON failures(category, ts DESC);
 """
 
 JOB_COLUMNS = {

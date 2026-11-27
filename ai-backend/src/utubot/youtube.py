@@ -67,6 +67,17 @@ REASON_TOO_LONG = "too_long"
 REASON_LIVE = "live"
 REASON_OFFLINE = "offline"
 
+# A breaker opening is a network-wide YouTube failure: map the reason to the ledger category so the
+# admin page counts it (a 429 is rate-limited, a 403/bot check is a refusal, a transport error is network).
+GATE_CATEGORY = {
+    REASON_RATE_LIMITED: "rate-limited",
+    REASON_FORBIDDEN: "youtube-refused",
+    REASON_FORBIDDEN_MEDIA: "youtube-refused",
+    REASON_BOT_CHECK: "youtube-refused",
+    REASON_COOLDOWN: "rate-limited",
+    REASON_NETWORK: "network",
+}
+
 VIDEO_FAILURE_MESSAGES = {
     REASON_PRIVATE: "This video is private.",
     REASON_MEMBERS_ONLY: "This video is for channel members only.",
@@ -374,11 +385,13 @@ class YoutubeGate:
         db: Database | None = None,
         clock: Clock | None = None,
         rand: Callable[[], float] = random.random,
+        ledger=None,
     ):
         self.cfg = cfg
         self._db = db
         self._clock = clock or Clock()
         self._rand = rand
+        self._ledger = ledger
         self._limit = max(1, cfg.max_concurrent)
         self._in_use = 0
         self._ready_at = 0.0
@@ -527,6 +540,20 @@ class YoutubeGate:
             breaker = self._breakers[name]
             if self._remaining(name) <= 0:
                 breaker.strikes += 1
+                category = GATE_CATEGORY.get(reason)
+                if category and self._ledger is not None:
+                    try:
+                        self._ledger.record(
+                            "youtube",
+                            name,
+                            category=category,
+                            message=f"YouTube gate open for {name}: {reason}",
+                            detail=f"reason={reason} strikes={breaker.strikes}",
+                        )
+                    except Exception:
+                        log.warning(
+                            "could not record a youtube failure in the ledger", exc_info=True
+                        )
             if hint_s and hint_s > 0:
                 cooldown = hint_s
             else:

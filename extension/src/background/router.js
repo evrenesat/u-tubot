@@ -35,7 +35,7 @@ export function createRouter({ storage, fetchImpl = globalThis.fetch, extensionB
   }
 
   async function clientFor(connectionValues) {
-    return createClient(connectionValues.backend, connectionValues.token, fetchImpl);
+    return createClient(connectionValues.backend, connectionValues.token, fetchImpl, { reportFailures: true });
   }
 
   async function setConnection(backend, token, user) {
