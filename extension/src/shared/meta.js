@@ -19,7 +19,47 @@ export function videoToJson(meta, videoId) {
 
   body.is_short = Boolean(meta?.isShort ?? meta?.is_short);
   body.is_live = Boolean(meta?.isLive ?? meta?.is_live);
+
+  // Optional assess context (ai/CONTRACT.md VideoMeta): each is added only where the page or the
+  // signed-in user's subscription list exposes it, so an unknown signal never reads as a negative
+  // (the TV sends is_subscribed only when true for the same reason).
+  if (meta?.isSubscribed ?? meta?.is_subscribed) {
+    body.is_subscribed = true;
+  }
+  putText(body, "upload_date", meta?.uploadDate ?? meta?.upload_date);
+  putInt(body, "likes", meta?.likes);
+  putInt(body, "dislikes", meta?.dislikes);
+  putInt(body, "subscriber_count", meta?.subscriberCount ?? meta?.subscriber_count);
+  putText(body, "channel_description", meta?.channelDescription ?? meta?.channel_description);
+  putTitles(body, "channel_titles", meta?.channelTitles ?? meta?.channel_titles);
+
   return body;
+}
+
+function putText(body, key, value) {
+  if (value) {
+    body[key] = String(value);
+  }
+}
+
+function putInt(body, key, value) {
+  if (value == null || value === "") {
+    return;
+  }
+  const number = Number(value);
+  if (Number.isFinite(number)) {
+    body[key] = number;
+  }
+}
+
+function putTitles(body, key, values) {
+  if (!Array.isArray(values)) {
+    return;
+  }
+  const titles = values.filter((value) => typeof value === "string" && value);
+  if (titles.length) {
+    body[key] = titles;
+  }
 }
 
 export function addMeta(query, meta) {
