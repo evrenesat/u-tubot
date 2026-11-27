@@ -83,6 +83,27 @@ class TestCreateAndBuild:
         assert json.loads(doc["raw_answer"])["summary"] == "The demo part."
         assert doc["job_id"]
 
+    async def test_quick_cut_build_records_its_feature_call(self, cuts_env):
+        set_transcript(cuts_env.fetcher)
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 2, "to": 4, "label": "The demo"}],
+            "summary": "The demo part.",
+            "kept_s": 15,
+        }
+        r = await post_cut(cuts_env, preset="cut-demo")
+        assert r.status_code == 200, r.text
+        doc = await wait_ready(cuts_env, r.json()["request_id"])
+        assert doc["state"] == "ready", doc.get("error")
+        row = cuts_env.svc.db.one(
+            "SELECT feature, alias, prompt_tokens, completion_tokens, elapsed_ms, cost "
+            "FROM feature_calls WHERE feature=?",
+            ["cuts"],
+        )
+        assert row, "the quick cut model call should record a feature_calls row"
+        assert row["feature"] == "cuts"
+        assert row["alias"] == "cutmodel"
+        assert row["cost"] is None  # no per-alias price is configured in the tests
+
     async def test_a_captions_job_reuses_a_cut_s_transcript_s_speech_recognition(self, cuts_env):
         # a cut build first makes a transcript (speech recognition), then HQ captions reuse it
         cuts_env.fetcher.text = None

@@ -128,7 +128,11 @@ async def _ask(
         raise LLMError("watched cuts have no vision model")
     result = await asyncio.wait_for(
         llm.chat_result(
-            task, messages, priority=INTERACTIVE, deadline_s=timeout_s, feature=task.feature
+            task,
+            messages,
+            priority=INTERACTIVE,
+            deadline_s=timeout_s,
+            feature=task.feature or "cuts_vision",
         ),
         timeout_s,
     )

@@ -615,14 +615,17 @@ class WatchedBuilder:
 
         async def ask(problem: str | None) -> tuple[Any, list[Any]]:
             data = await self.llm.chat_json(
-                task, messages_for(problem), priority=INTERACTIVE, feature=task.feature
+                task, messages_for(problem), priority=INTERACTIVE, feature=task.feature or "cuts"
             )
             try:
                 return data, parse_cut_answer(data, units)
             except CutFormatError as exc:
                 trace.emit(STAGE_MODEL, events.WARN, problem=exc.problem, repair=1)
                 data = await self.llm.chat_json(
-                    task, messages_for(exc.problem), priority=INTERACTIVE, feature=task.feature
+                    task,
+                    messages_for(exc.problem),
+                    priority=INTERACTIVE,
+                    feature=task.feature or "cuts",
                 )
                 try:
                     return data, parse_cut_answer(data, units)
