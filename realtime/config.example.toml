@@ -1,6 +1,7 @@
 # utubot-rt: the live server of u·tubot voice control. Copy to /etc/utubot/realtime.toml.
 # Secrets come from the environment, never from this file: UTUBOT_RT_ADMIN_TOKEN (the stats route).
 # UTUBOT_RT_LISTEN and UTUBOT_RT_BACKEND_URL override the two keys of the same name below.
+# UTUBOT_RT_BACKEND_SECRET (environment only) is sent to the backend with its checks; see README.md.
 
 [server]
 listen = "127.0.0.1:8791"                     # behind the reverse proxy; /rt/ is passed with the WebSocket upgrade

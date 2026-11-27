@@ -60,6 +60,26 @@ def _in(nets, host: str) -> bool:
 PROXY_SECRET_HEADER = "X-Utubot-Proxy-Secret"
 TAILSCALE_LOGIN_HEADER = "tailscale-user-login"
 
+# The live server of voice control (realtime/) marks its /v1/me sign-in checks with this header so
+# the backend counts them apart from the users' own addresses (ai/CONTRACT.md, "Live server").
+CLIENT_HEADER = "X-Utubot-Client"
+REALTIME_CLIENT = "realtime"
+REALTIME_SECRET_HEADER = "X-Utubot-Realtime-Secret"
+
+
+def is_realtime_client(client: str | None, presented: str | None, expected: str | None) -> bool:
+    """True only for the live server: it names itself and proves it with the configured shared secret.
+
+    The header alone grants nothing, so a client that sends `X-Utubot-Client: realtime` stays in the users' bucket.
+    An unset secret on the backend disables the separate bucket.
+    """
+    return bool(
+        client == REALTIME_CLIENT
+        and expected
+        and presented
+        and hmac.compare_digest(presented.encode(), expected.encode())
+    )
+
 
 def is_loopback(host: str | None) -> bool:
     """True for a loopback peer address, including an IPv4 address written as IPv4-mapped IPv6."""

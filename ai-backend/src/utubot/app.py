@@ -80,7 +80,10 @@ from .models import (
 from .processed import ProcessedService
 from .prompts import PANEL_ALIAS, TASK_CUTS, Prompt, PromptError, PromptStore, validate_prompt_set
 from .security import (
+    CLIENT_HEADER,
     PROXY_SECRET_HEADER,
+    REALTIME_CLIENT,
+    REALTIME_SECRET_HEADER,
     TAILSCALE_LOGIN_HEADER,
     BodyLimitMiddleware,
     RateLimited,
@@ -88,6 +91,7 @@ from .security import (
     client_ip,
     is_https,
     is_loopback,
+    is_realtime_client,
     origin_allowed,
 )
 from .settings import SettingsError, SettingsService
@@ -597,7 +601,19 @@ def create_app(
     @app.middleware("http")
     async def edge(request: Request, call_next):
         try:
-            svc.limiter.check(f"ip:{ip_of(request)}", cfg.security.rate_per_ip_per_min)
+            ip = ip_of(request)
+            if is_realtime_client(
+                request.headers.get(CLIENT_HEADER),
+                request.headers.get(REALTIME_SECRET_HEADER),
+                cfg.realtime_secret(),
+            ):
+                # The live server's /v1/me checks count in their own, larger bucket so a flood of junk tokens
+                # cannot starve the users behind this address. Anyone else sending the header stays in the users' bucket.
+                svc.limiter.check(
+                    f"ip:{ip}:{REALTIME_CLIENT}", cfg.security.rate_per_ip_per_min_realtime
+                )
+            else:
+                svc.limiter.check(f"ip:{ip}", cfg.security.rate_per_ip_per_min)
             response = await call_next(request)
         except RateLimited as exc:
             response = error(429, "rate limited")

@@ -29,6 +29,10 @@ const maxMeBytes = 1 << 20
 const ClientHeader = "X-Utubot-Client"
 const ClientName = "realtime"
 
+// SecretHeader carries the shared secret that lets the backend count those calls in its own bucket. A header
+// without it counts as an ordinary client (the backend never trusts the name alone).
+const SecretHeader = "X-Utubot-Realtime-Secret"
+
 // Identity is what the live server keeps of a token's owner.
 type Identity struct {
 	User          string
@@ -90,17 +94,28 @@ type Client struct {
 	now     func() time.Time
 	mu      sync.Mutex
 	entries map[[32]byte]cached
+	secret  string
 }
 
 // New builds a client for the backend at base (no trailing slash).
 func New(base string, timeout, cacheTTL time.Duration) *Client {
 	return &Client{
-		base:    base,
-		http:    &http.Client{Timeout: timeout},
+		base: base,
+		http: &http.Client{
+			Timeout: timeout,
+			// A redirect would resend the secret to its target: answer the 3xx itself (an unavailable backend).
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		ttl:     cacheTTL,
 		now:     time.Now,
 		entries: map[[32]byte]cached{},
 	}
+}
+
+// WithSecret sets the shared secret sent with every backend call (empty: none).
+func (c *Client) WithSecret(secret string) *Client {
+	c.secret = secret
+	return c
 }
 
 // Check returns the identity behind a token, from the cache when it is younger than the cache window.
@@ -135,7 +150,7 @@ func (c *Client) fetch(ctx context.Context, token string) (Identity, error) {
 		return Identity{}, ErrUnavailable
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set(ClientHeader, ClientName)
+	c.mark(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return Identity{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
@@ -165,6 +180,14 @@ func (c *Client) fetch(ctx context.Context, token string) (Identity, error) {
 	return id, nil
 }
 
+// mark names this service to the backend, with the shared secret when one is configured.
+func (c *Client) mark(req *http.Request) {
+	req.Header.Set(ClientHeader, ClientName)
+	if c.secret != "" {
+		req.Header.Set(SecretHeader, c.secret)
+	}
+}
+
 // Record files a command record. It is called after the command ended, never on the live path.
 func (c *Client) Record(ctx context.Context, token string, rec Record) error {
 	body, err := json.Marshal(rec)
@@ -177,7 +200,7 @@ func (c *Client) Record(ctx context.Context, token string, rec Record) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(ClientHeader, ClientName)
+	c.mark(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err

@@ -56,3 +56,14 @@ func TestLoadRejectsBadInput(t *testing.T) {
 		t.Fatal("missing file")
 	}
 }
+
+func TestBackendSecretFromEnvironmentOnly(t *testing.T) {
+	cfg, err := Load("", env(map[string]string{EnvBackendURL: "http://127.0.0.1:1", EnvBackendSecret: "rt-secret"}))
+	if err != nil || cfg.BackendSecret != "rt-secret" {
+		t.Fatalf("secret from environment: %q %v", cfg.BackendSecret, err)
+	}
+	cfg, err = Load("", env(map[string]string{EnvBackendURL: "http://127.0.0.1:1"}))
+	if err != nil || cfg.BackendSecret != "" {
+		t.Fatalf("unset secret: %q %v", cfg.BackendSecret, err)
+	}
+}

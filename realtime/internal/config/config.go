@@ -18,6 +18,9 @@ const (
 	EnvAdminToken = "UTUBOT_RT_ADMIN_TOKEN"
 	EnvListen     = "UTUBOT_RT_LISTEN"
 	EnvBackendURL = "UTUBOT_RT_BACKEND_URL"
+	// EnvBackendSecret is the shared secret the backend expects with its realtime rate-limit bucket
+	// ([security] realtime_secret_env there). Unset: the checks share the users' bucket.
+	EnvBackendSecret = "UTUBOT_RT_BACKEND_SECRET"
 )
 
 // Defaults of the plan (ai/VOICE_CONTROL_PLAN.md, 2.3 and 2.5).
@@ -65,6 +68,7 @@ type Config struct {
 	Listen         string
 	Path           string
 	BackendURL     string
+	BackendSecret  string
 	Origins        []string
 	AdminToken     string
 	HelloTimeout   time.Duration
@@ -166,6 +170,9 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	}
 	if v := getenv(EnvAdminToken); v != "" {
 		cfg.AdminToken = v
+	}
+	if v := getenv(EnvBackendSecret); v != "" {
+		cfg.BackendSecret = v
 	}
 	return cfg, cfg.Validate()
 }

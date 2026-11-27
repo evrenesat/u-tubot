@@ -912,6 +912,8 @@ class SecurityConfig(BaseModel):
     client_ip_header_secret_env: str = "UTUBOT_PROXY_SECRET"
     rate_per_token_per_min: int = 240
     rate_per_ip_per_min: int = 600
+    rate_per_ip_per_min_realtime: int = 6000
+    realtime_secret_env: str = "UTUBOT_REALTIME_SECRET"
     rate_window_s: int = 60
     pair_code_digits: int = 6
     pair_code_ttl_s: int = 900
@@ -1080,6 +1082,11 @@ class Config(BaseModel):
     def client_ip_secret(self) -> str | None:
         """The shared secret a trusted proxy sends with `client_ip_header`; unset disables the header."""
         env = self.security.client_ip_header_secret_env
+        return (os.environ.get(env) or None) if env else None
+
+    def realtime_secret(self) -> str | None:
+        """The shared secret the live server sends with `X-Utubot-Client: realtime`; unset means no separate bucket."""
+        env = self.security.realtime_secret_env
         return (os.environ.get(env) or None) if env else None
 
     def api_key(self, provider: str) -> str | None:
