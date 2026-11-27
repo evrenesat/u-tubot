@@ -9,16 +9,27 @@ from .ledger import KNOWN_CATEGORIES
 
 
 class VideoMeta(BaseModel):
+    """What the app knows from a card for triage. Every field but `video_id` is optional; the assess
+    prompt judges clickbait from the title plus this context, so a punchy headline on a subscribed
+    creator's regular show is not called clickbait. Missing fields are simply not sent."""
+
     video_id: str
     title: str | None = None
     channel: str | None = None
     channel_id: str | None = None
     duration_s: int | None = None
     published: str | None = None
+    upload_date: str | None = None
     views: str | None = None
+    likes: int | None = None
+    dislikes: int | None = None
+    is_subscribed: bool | None = None
+    subscriber_count: int | None = None
+    channel_description: str | None = None
+    description: str | None = None
+    channel_titles: list[str] | None = None
     is_short: bool | None = None
     is_live: bool | None = None
-    description: str | None = None
 
 
 class Flag(BaseModel):

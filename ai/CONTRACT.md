@@ -20,11 +20,15 @@ differently with the same APK.
 ## Common objects
 
 `VideoMeta` (what the app knows from the card; every field but `video_id`
-optional):
+optional). The assess prompt judges clickbait from the title plus this
+context, so a punchy headline on a subscribed creator's regular show is not
+called clickbait:
 
 ```json
 {"video_id":"dQw4w9WgXcQ","title":"...","channel":"...","channel_id":"UC...",
- "duration_s":754,"published":"3 days ago","views":"1.2M views",
+ "duration_s":754,"published":"3 days ago","upload_date":"2026-11-20","views":"1.2M views",
+ "likes":12000,"dislikes":300,"is_subscribed":true,"subscriber_count":6200000,
+ "channel_description":"...","channel_titles":["...","..."],
  "is_short":false,"is_live":false,"description":"..."}
 ```
 
@@ -118,6 +122,14 @@ Rules:
   On error/timeout it shows the videos unfiltered.
 - Deep (transcript) analysis may refine a verdict later; the app re-reads the
   cache-backed verdict on the next load.
+- The triage classifier judges clickbait from the title plus the channel/video
+  context above (subscription, subscriber count, channel description and usual
+  format from recent titles, views, likes, upload date): a comedic, satirical
+  or hype-framed headline on a channel the viewer subscribes to is not
+  clickbait by itself, and only a clear, out-of-the-ordinary mismatch is. The
+  backend can re-triage a user's recent clickbait verdicts on subscribed
+  channels (`utubot assess-fixup`) so a wrong label from the title-only prompt
+  disappears without the owner asking.
 
 ### `GET /v1/videos/{id}/insight?wait_ms=20000`
 Optional query fields: `title`, `channel`, `duration_s` (used if the backend has

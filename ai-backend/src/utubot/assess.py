@@ -15,11 +15,23 @@ from .models import Flag, Verdict, VideoMeta
 from .transcripts import NoCaptions, TranscriptService
 from .youtube import FETCH_CLASSES, YoutubeDelayed
 
+CHANNEL_TITLES_MAX = 5
+
 TRIAGE_SYSTEM = (
-    "You triage YouTube videos for a TV viewer using only the title, channel and metadata. "
-    'Return ONLY a JSON object: {"results":[{"id":<int>,"clickbait":0-1,"low_quality":0-1,'
+    "You triage YouTube videos for a TV viewer from the title, channel and all the context the app "
+    "sends (channel name and id, subscriber count, channel description, whether the viewer is "
+    "subscribed to the channel, views, likes, upload date, duration, the video description and the "
+    "channel's recent titles). Return ONLY a JSON object: "
+    '{"results":[{"id":<int>,"clickbait":0-1,"low_quality":0-1,'
     '"topics":[<matched topics>],"title_question":<string|null>}]}. '
-    "clickbait = how much the title/thumbnail text withholds, exaggerates or misleads. "
+    "clickbait = how much the title/thumbnail makes a CLEAR, OUT-OF-THE-ORDINARY mismatch between "
+    "what it promises and what the video actually is or delivers. A comedic, satirical or "
+    "hype-framed headline is NOT clickbait by itself. A known creator's regular show (comedy, talk, "
+    "reaction or the channel's usual format, from its recent titles) on a channel the viewer "
+    "subscribes to is almost never clickbait, even with a punchy or curiosity-gap title. "
+    "Subscription, a large or reputable channel and a genre that thrives on dramatic framing all "
+    "lower the score; only flag clickbait when the promise and the content genuinely diverge in a "
+    "surprising way. "
     "low_quality = likelihood of low-effort, AI-generated narration slop, spam or filler. "
     "topics = ONLY entries copied verbatim from the user's topic list that the video clearly "
     "belongs to (empty list if none). "
@@ -46,8 +58,13 @@ def fmt_duration(seconds: float) -> str:
     return f"{round(seconds / SEC_PER_MIN)}m"
 
 
+# Part of the triage cache key: bump it when the triage prompt changes meaning, so labels the old
+# prompt gave (a regular show called clickbait) are re-judged the next time the video appears.
+TRIAGE_VERSION = 2
+
+
 def topics_hash(topics: list[str]) -> str:
-    return hashlib.sha256(json.dumps(sorted(topics)).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps([TRIAGE_VERSION, sorted(topics)]).encode()).hexdigest()[:16]
 
 
 def policy_hash(policy: UserPolicy) -> str:
@@ -323,6 +340,20 @@ class Assessor:
                 if fut and not fut.done():
                     fut.set_result(None)
 
+    def _recent_channel_titles(self, video: VideoMeta) -> list[str] | None:
+        """The channel's usual format, from the titles of its other videos this server has seen:
+        the clients do not send them, so the prompt would otherwise never see the channel's format."""
+        if not video.channel_id:
+            return None
+        rows = self.db.all(
+            "SELECT json_extract(json,'$.title') AS title FROM video_meta"
+            " WHERE json_extract(json,'$.channel_id')=? AND video_id<>?"
+            " AND json_extract(json,'$.title') IS NOT NULL ORDER BY fetched_at DESC LIMIT ?",
+            [video.channel_id, video.video_id, CHANNEL_TITLES_MAX],
+        )
+        titles = [(row["title"] or "")[: self.cfg.assess.title_max_chars] for row in rows]
+        return titles or None
+
     async def _triage_call(
         self, batch: list[VideoMeta], topics: list[str], model: str | None = None
     ) -> dict[int, dict[str, Any]]:
@@ -334,9 +365,20 @@ class Assessor:
                     "id": idx,
                     "title": (v.title or "")[: cfg.title_max_chars],
                     "channel": v.channel,
+                    "channel_id": v.channel_id,
+                    "subscriber_count": v.subscriber_count,
+                    "channel_description": (v.channel_description or "")[
+                        : cfg.channel_description_max_chars
+                    ]
+                    or None,
+                    "is_subscribed": v.is_subscribed,
+                    "views": v.views,
+                    "likes": v.likes,
+                    "dislikes": v.dislikes,
+                    "upload_date": v.upload_date,
                     "duration_s": v.duration_s,
                     "published": v.published,
-                    "views": v.views,
+                    "channel_titles": v.channel_titles or self._recent_channel_titles(v),
                     "description": (v.description or "")[: cfg.description_max_chars] or None,
                 }
             )
@@ -498,6 +540,63 @@ class Assessor:
             "INSERT OR REPLACE INTO deep(video_id,json,created_at) VALUES(?,?,?)",
             [video_id, json.dumps(deep), time.time()],
         )
+
+    def _clickbait_on_subscribed_channels(self, user: str, limit: int) -> list[str]:
+        """Recent verdicts of one user that are clickbait and whose stored metadata says the channel
+        is subscribed: the wrong labels the context-aware prompt should undo."""
+        targets: list[str] = []
+        for row in self.db.all("SELECT video_id, json FROM verdicts WHERE user=?", [user]):
+            try:
+                verdict = json.loads(row["json"])
+            except (ValueError, TypeError):
+                continue
+            if not any(flag.get("kind") == "clickbait" for flag in verdict.get("flags", [])):
+                continue
+            if (self.transcripts.cached_meta(row["video_id"]) or {}).get("is_subscribed"):
+                targets.append(row["video_id"])
+            if len(targets) >= limit:
+                break
+        return targets
+
+    async def reassess_subscribed(
+        self, user: str, policy: UserPolicy, limit: int | None = None
+    ) -> int:
+        """Re-run triage on the user's recent clickbait verdicts whose channel is subscribed, so a
+        wrong label from the old title-only prompt disappears without the owner asking. Returns the
+        number of videos re-triaged."""
+        cfg = self.cfg.assess
+        limit = cfg.reassess_max_per_run if limit is None else limit
+        topics = [*policy.hide_topics, *policy.mark_topics]
+        thash = topics_hash(topics)
+        targets = self._clickbait_on_subscribed_channels(user, limit)
+        if not targets:
+            return 0
+        metas: list[VideoMeta] = []
+        for video_id in targets:
+            stored = self.transcripts.cached_meta(video_id) or {}
+            fields = {key: stored[key] for key in stored if key in VideoMeta.model_fields}
+            metas.append(VideoMeta(**{**fields, "video_id": video_id}))
+        try:
+            results = await self._triage_call(metas, topics, model=policy.models.get(TASK_TRIAGE))
+        except (LLMError, ValueError):
+            return 0
+        for idx, video_id in enumerate(targets):
+            item = results.get(idx)
+            if item is None:
+                continue
+            triage = normalize_triage(item, topics)
+            self.db.execute(
+                "INSERT OR REPLACE INTO triage(video_id,topics_hash,json,created_at)"
+                " VALUES(?,?,?,?)",
+                [video_id, thash, json.dumps(triage), time.time()],
+            )
+            # A deep (tier 2) analysis of the old label (inflation, answer) was gated on the old
+            # clickbait score; drop it when the new context no longer calls for one, so the rebuilt
+            # verdict carries only what the context-aware triage just decided.
+            if not self._tier2_wanted(policy, triage):
+                self.db.execute("DELETE FROM deep WHERE video_id=?", [video_id])
+            self.verdict_for(user, policy, metas[idx])
+        return len(targets)
 
     async def drain(self) -> None:
         while True:

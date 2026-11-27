@@ -48,6 +48,8 @@ public final class UtubotModels {
         public boolean isShort;
         public boolean isLive;
         public String description;
+        /** Only sent when true: an unknown subscription must not read as "not subscribed". */
+        public boolean isSubscribed;
 
         public JSONObject toJson() throws JSONException {
             JSONObject json = new JSONObject();
@@ -63,6 +65,9 @@ public final class UtubotModels {
             json.put("is_short", isShort);
             json.put("is_live", isLive);
             putIfPresent(json, "description", description);
+            if (isSubscribed) {
+                json.put("is_subscribed", true);
+            }
             return json;
         }
 

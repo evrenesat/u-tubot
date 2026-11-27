@@ -155,6 +155,11 @@ class AssessConfig(BaseModel):
     triage_cache_ttl_s: int = 7 * 86400
     title_max_chars: int = 200
     description_max_chars: int = 300
+    channel_description_max_chars: int = 400
+    # After the clickbait prompt gains channel/video context, re-run triage on this many of the
+    # user's recent clickbait verdicts whose channel is subscribed, so a wrong label from the old
+    # prompt disappears without the owner asking (`utubot assess-fixup`).
+    reassess_max_per_run: int = 200
 
 
 class YoutubeConfig(BaseModel):

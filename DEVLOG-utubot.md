@@ -32,6 +32,17 @@
 - The web admin pages already expose `:focus-visible` and 44px+ targets; `test_web_ui_is_remote_friendly` checks the CSS. Backend tests
   green (1443, the one `test_cuts_api` failure is the pre-existing missing `watched` extra, not this change); ruff clean.
 
+## 2026-11-26 (clickbait triage uses channel/video context, issue #178)
+
+- The clickbait verdict is a backend decision, so this checkpoint lands the context-aware triage on the server: the assess prompt now
+  weighs subscription, subscriber count, channel description and usual format (recent titles), plus views/likes/upload date, and no
+  longer calls a comedic/satirical headline on a subscribed channel clickbait. The `VideoMeta` fields are additive and optional, so the
+  change is live for every client at once and degrades gracefully when a card sends less.
+- Takeover fixes: the TV sends `is_subscribed` (only when true: the card is from the Subscriptions feed or the channel is subscribed); the
+  other new fields are not sent by either client yet (the extension follow-up is #243). The backend fills `channel_titles` itself
+  from the titles of the channel's other videos it has stored, and the triage cache key carries `TRIAGE_VERSION`, so verdicts the old prompt
+  gave are re-judged when the video next appears (`utubot assess-fixup` covers the rest). Tests: `UtubotMetaTest`, `test_assess_context.py`.
+
 ## 2026-11-26 (refused server download falls back to TV captions, issue #205)
 
 - Backend retries a 403 with another yt-dlp player client, then a cut waits for the TV's own captions; `UtubotMenu.stateText` shows the

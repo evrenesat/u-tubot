@@ -317,9 +317,13 @@ Existing extensions read for technique: section 15. Not verifiable from here: se
     `aria-label`), `channel` (text of the card's channel link), `channel_id` (only when that link is `/channel/UC…`),
     `duration_s` (the thumbnail's time badge parsed as a clock), `is_short` (a `/shorts/` link), `is_live` (a live badge the
     site layer recognises), `views` and `published` (the two parts of the card's metadata line, as on the TV), `description`
-    (search results only, the snippet). On the watch page the playing video's own facts are `title` (document title without the
-    site suffix), `channel` (the owner link's text) and `duration_s` (the video element), `is_live` when the duration is not
-    finite.
+    (search results only, the snippet). The backend's assess prompt also accepts optional context
+    (`is_subscribed`, `upload_date`, `likes`, `dislikes`, `subscriber_count`, `channel_description`, `channel_titles`; `ai/CONTRACT.md`).
+    The TV sends `is_subscribed` when its card knows it; the extension sends none of them yet, because YouTube's cards do not expose
+    them (the backend fills the channel's usual titles itself from what it has seen), so the assess row stays "same, without the extra
+    context" until the follow-up in u-tubot#243. On the watch page the
+    playing video's own facts are `title` (document title without the site suffix), `channel` (the owner link's text) and
+    `duration_s` (the video element), `is_live` when the duration is not finite.
 17. **Android differences are decided per row in the matrix**; code branches only on site kind and on
     `runtime.getPlatformInfo().os`, in `site.js` and `ui/layout.js`.
 18. **Tests never contact YouTube.** Unit tests on Node (`node --test`). End-to-end tests drive real Firefox (Selenium,
