@@ -13,6 +13,10 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.service.SidebarServi
 import com.liskovsoft.smartyoutubetv2.common.app.views.BrowseView;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBrowseCache;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptionStore;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutNotices;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotDiskCache;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.InboxList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.ProcessedList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotProcessedSection;
@@ -56,6 +60,7 @@ public class BrowsePresenterInboxBadgeTest {
     public void setUp() throws Exception {
         Assume.assumeTrue(UtubotSettings.isBuiltIn());
         BrowsePresenter.unhold();
+        resetUtubotSingletons();
         mView = Robolectric.buildActivity(FakeBrowseView.class).setup().get();
         UtubotSettings settings = UtubotSettings.instance(mView);
         settings.setUrl("http://127.0.0.1:9");
@@ -78,6 +83,7 @@ public class BrowsePresenterInboxBadgeTest {
             mCache.invalidate();
         }
         BrowsePresenter.unhold();
+        resetUtubotSingletons();
     }
 
     @Test
@@ -146,6 +152,21 @@ public class BrowsePresenterInboxBadgeTest {
 
     private SidebarService getSidebar() {
         return SidebarService.instance(mView);
+    }
+
+    private static void resetUtubotSingletons() throws Exception {
+        setStatic(UtubotSettings.class, "sInstance", null);
+        setStatic(UtubotManager.class, "sInstance", null);
+        setStatic(UtubotBrowseCache.class, "sInstance", null);
+        setStatic(UtubotDiskCache.class, "sInstance", null);
+        setStatic(UtubotCutNotices.class, "sInstance", null);
+        setStatic(UtubotCaptionStore.class, "sInstance", null);
+    }
+
+    private static void setStatic(Class<?> type, String name, Object value) throws Exception {
+        Field field = type.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(null, value);
     }
 
     private BrowseSection sectionOf(int sectionId) throws Exception {
