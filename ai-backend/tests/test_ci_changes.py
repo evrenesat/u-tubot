@@ -44,8 +44,30 @@ def test_app_file_keeps_the_old_answer():
 
 def test_pipeline_file_runs_backend_app_and_extension_and_never_releases():
     assert classify_files([".github/workflows/utubot-ci.yml"]) == Classification(
-        backend=True, app=True, release=False, extension=True, extension_release=False
+        backend=True,
+        app=True,
+        release=False,
+        extension=True,
+        extension_release=False,
+        realtime=True,
     )
+
+
+def test_live_server_files_run_only_the_realtime_job():
+    assert classify_files(
+        ["realtime/internal/session/hub.go", "realtime/go.mod"]
+    ) == Classification(
+        backend=False,
+        app=False,
+        release=False,
+        extension=False,
+        extension_release=False,
+        realtime=True,
+    )
+
+
+def test_an_unknown_file_list_runs_the_realtime_job_too():
+    assert classify_or_everything(None).realtime is True
 
 
 def test_every_ffmpeg_step_skips_when_present_and_refreshes_the_index_otherwise():
@@ -84,7 +106,12 @@ def test_a_zero_before_on_a_push_runs_everything(monkeypatch):
     files = changed_files("push", "a" * 40, "0" * 40, "")
     assert files is None
     assert classify_or_everything(files) == Classification(
-        backend=True, app=True, release=False, extension=True, extension_release=False
+        backend=True,
+        app=True,
+        release=False,
+        extension=True,
+        extension_release=False,
+        realtime=True,
     )
 
 
@@ -116,6 +143,7 @@ def test_classifier_command_prints_the_outputs(tmp_path):
         "release=false",
         "extension=true",
         "extension_release=false",
+        "realtime=false",
     ]
 
 
@@ -262,7 +290,12 @@ def test_ci_green_command_reads_json_files(tmp_path):
 
 def test_an_unknown_file_list_runs_every_job_and_never_releases():
     assert classify_or_everything(None) == Classification(
-        backend=True, app=True, release=False, extension=True, extension_release=False
+        backend=True,
+        app=True,
+        release=False,
+        extension=True,
+        extension_release=False,
+        realtime=True,
     )
     assert classify_or_everything(["extension/src/content/main.js"]) == classify_files(
         ["extension/src/content/main.js"]
@@ -317,6 +350,7 @@ def test_a_failed_listing_on_a_pull_request_runs_everything(tmp_path):
         "release=false",
         "extension=true",
         "extension_release=false",
+        "realtime=true",
     ]
 
 
@@ -328,6 +362,7 @@ def test_a_failed_listing_on_a_push_still_decides_the_release(tmp_path):
         "release=true",
         "extension=true",
         "extension_release=true",
+        "realtime=true",
     ]
 
 
@@ -347,6 +382,7 @@ def test_a_failed_listing_after_a_tag_still_releases(tmp_path):
         "release=true",
         "extension=true",
         "extension_release=true",
+        "realtime=true",
     ]
 
 

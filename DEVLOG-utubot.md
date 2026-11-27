@@ -1,3 +1,12 @@
+## 2026-11-27 (live server without models, voice plan checkpoint 2, issue #181)
+
+- New `realtime/` (Go, `utubot-rt`): the control channel of `ai/VOICE_CONTROL_PLAN.md` 2.3 with the backend check, focus store, target choice, typed
+  `say` through the phrase matcher, `command` / `ack` / expiry / confirmation, several devices, offline answers, limits, statistics. No model, no
+  microphone, nothing deployed (evrenesat/evreniops#250). Details and numbers in `realtime/DEVLOG.md`: 56 socket tests, server's own time p50
+  0.008 ms and p99 0.08 ms on loopback against a 20 ms budget.
+- `ai/CONTRACT.md` gains "Live server"; CI gains the `realtime` job (Go 1.27.4, race tests, the benchmark as a gate) and `scripts/utubot_ci_changes.py`
+  classifies `realtime/` (it no longer counts as an app change); the plan's status line and the live-server row of 2.5 are updated.
+
 ## 2026-11-27 (tablet on-device flow, takeover of #237, issue #218)
 
 - Rebase onto main was already clean (#225 web admin and #196 voice are in the base). The tablet menu entry now reads "Describe the cut…" (the TV keeps "Describe on phone…"); "Describe by voice…" is the same on both.

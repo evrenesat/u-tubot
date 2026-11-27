@@ -1,6 +1,6 @@
 # Voice control: talk to the TV, and a phone app with a robot mode (plan, epic #189)
 
-Status: revision 2. The owner's decisions are taken (Part 1, 26 November 2026) and checkpoint 0 is measured (sections 2.5 and 5.2). Nothing is implemented and no service is changed.
+Status: revision 2. The owner's decisions are taken (Part 1, 26 November 2026) and checkpoint 0 is measured (sections 2.5 and 5.2). Checkpoint 1 (backend and contract) is merged (#234). Checkpoint 2 (the live server in `realtime/`, no models) is implemented in its pull request and measured on loopback (section 2.5); it is not deployed (the operations task is [evrenesat/evreniops#250](https://github.com/evrenesat/evreniops/issues/250)). Checkpoints 3 to 13 are not started.
 Scope: the owner speaks, from a phone or to the TV itself, and the TV does it for the content in focus: describe a cut,
 play it, next part, HQ subtitles, a summary, research, play, pause, seek, or a question about what is on screen. Three
 pieces are added: a **live server** (Go, grown from R2T4's server) that carries audio, the TV control channel and the
@@ -367,7 +367,7 @@ gateway key; ten calls each, 50th and 90th percentile by nearest rank; whole-req
 | Intent, 295 tokens in (plan target: 700), at most 120 out | `fast` (`bonsai-2.5-27b`) | 10 | 12.2 s | 25.4 s | 31.0 s | 0.6 / 1.2 s | **20 to 40 times over**; 8 of 10 answered, 2 ran out of the 120 tokens |
 | Intent, same prompts | `coder` (`Ornith-1.5-35B-A3B`) | 10 | 3.0 s | 5.4 s | 6.5 s | 0.6 / 1.2 s | **5 times over**; 9 of 10 answered (1 ran out of tokens), tool and arguments right on all 9 |
 | Speech out | none | 0 | | | | 0.5 / 1.0 s | **no route on the gateway** (section 5.2) |
-| Live server's own time | | | not measured | | | 10 / 20 ms | nothing to measure before checkpoint 2 |
+| Live server's own time (checkpoint 2, 27 November 2026, loopback, 3,000 `say` commands from 4 controllers to 4 screens with 200 idle sockets open, no engines) | none | 3,000 | 0.008 ms | 0.033 ms | 2.6 ms (99th: 0.08 ms) | 10 / 20 ms | **within budget by two orders of magnitude**; this is the server's code and the loopback only (frame read to command queued for the socket's writer, queue wait excluded; not the write itself); the real figure on the owner's server adds the proxy and the network hop, which belong to "push", not to this row |
 
 What the numbers say: the speech engine is as fast as hoped. The intent models are not, and the cause is not the
 engine speed (`coder` first token 0.4 s, about 32 tokens a second) but that both aliases **think before answering even

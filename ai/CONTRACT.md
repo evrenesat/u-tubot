@@ -915,6 +915,84 @@ reads `features.voice`.
 - Clients: the TV app is the screen and, later, a controller; this checkpoint adds no TV code (it ignores the new keys). The
   extension's row is `voice-control` in the plan's parity matrix.
 
+## Live server (addendum, 2026-11-27)
+
+The real-time half of `ai/VOICE_CONTROL_PLAN.md` (checkpoint 2): the Go service in `realtime/` (`utubot-rt`). Not the Python backend: its
+own process, reached at `realtime_url` from `/setup.json` (`<public base>/rt`). Nothing here exists until the owner deploys it; without
+`realtime_url` a client has no voice, and every other feature is unchanged. This checkpoint has no speech engine and no model: `say`
+is understood by the phrase matcher only, and `listen` answers "Speech is not available on this server".
+
+Routes (under the path, default `/rt`): `GET /rt/v1/ws` (WebSocket), `GET /rt/v1/health` (`{"ok":true}`, no auth),
+`GET /rt/v1/stats` (`Authorization: Bearer <admin token>` from `UTUBOT_RT_ADMIN_TOKEN`; `404` when none is set, `401` otherwise wrong): the last
+1,000 commands as `{"count","window","outcomes","hops":{hop:{"n","p50_ms","p90_ms","p99_ms","max_ms"}},"families":{family:{hop:...}}}` with
+hops `server`, `push_ack`, `act`, `total`, `queue` and families `player`, `cut`, `captions`, `view`, `ask`, `other`.
+
+Frames are JSON text, every one has `"t"`; unknown types and fields are ignored. Binary frames are audio of an open `listen`. A frame over
+64 KiB closes the socket. Sides: D = device, S = server.
+
+- D to S `hello` (first, within 5 s): `{"t":"hello","v":1,"token","roles":["screen"|"controller"],"client","name","tools":[...],"mic","speaker"}`.
+  The token is a device token as for the backend (`utb_` prefix, at most 128 characters; anything else is refused as `unauthorized` without asking the
+  backend) and rides in the frame. S checks it with `GET /v1/me` and re-checks every 30 s with a 15 s cache, so a revoked device or a voice switch-off
+  closes the socket within the 60 s window. `tools` is what a screen can run (names of the plan's tool table); a screen only receives those.
+  A browser's `Origin` must match the allow-list (`origins`, host patterns); a native client sends none.
+  Protection of the backend's sign-in budget: upgrade attempts are limited per client address (30 a minute; the address is the last entry of
+  `X-Forwarded-For`, which the proxy must set), at most 64 sockets may be waiting for their hello, and every `/v1/me` call of the live server carries
+  `X-Utubot-Client: realtime` so the backend can count them apart from users' own addresses. **The live server needs its own backend rate bucket**
+  (keyed by that header, or by its own address): without it, its checks share the `ip:` bucket of the proxy address. A device that cannot be re-checked
+  (backend unreachable or rate limiting) keeps its socket for 10 minutes, then closes with `not_verified`.
+- S to D `welcome`: `{"t":"welcome","device_id","user","voice":{"enabled","listen_mode","speak","retention_days"},"peers":[{"device_id","name",
+  "roles","client","focus"?}],"server_time_ms"}`. `focus` is the screen's last `focus` frame as sent (left out when it is over 8 KiB). Or `error` and close: `unauthorized`,
+  `voice_off` (the server's `features.voice` is false, or this device has not switched voice on), `too_many` (8 sockets per user),
+  `bad_hello`, `unsupported_version`, `hello_timeout`, `backend_unavailable`, `shutdown` (a hello that arrives while the server stops). A second socket of the
+  same device replaces the first: the older one gets `replaced`, which is **terminal**, a client must not reconnect on its own after it (two copies
+  of the app would otherwise replace each other forever). After `revoked`, `voice_off`, `not_verified`, `unauthorized` a client reconnects only after the user acts;
+  after `shutdown`, `idle_timeout` or a plain close it reconnects with backoff.
+- S to D `peers` `{"peers":[...]}` whenever another device joins or leaves, or a screen's video, screen, playing state, cut state or view changes (not its position).
+- D (screen) to S `focus`: `{"t":"focus","seq","screen":"player|browse|menu|search|other","video":{"id","title","channel","duration_s"}|null,
+  "position_s","playing","rate","cut":{"active","label","part","parts","preset_id"|"request_id"}|null,"captions":{"track"}|null,
+  "view":"summary|answer|cuts|none","at_ms"}`. The server keeps the latest per screen (a lower `seq` is ignored) and times it by its own clock (`at_ms` is informational). A screen that has not
+  reported for 15 s no longer counts as playing. The understanding stage is given the focus with `playing` aged that way and the position extrapolated
+  from the time the frame was received, `playing` and `rate`. Send on change (debounced 300 ms) and every 5 s while playing.
+- D (controller) to S `say`: `{"t":"say","id","text","target"?}` (text up to 2,000 characters; `target` pins a screen by device id; a `say` id seen from the same device in the last 2 minutes is ignored, so a frame resent
+  after a reconnect does not run twice). `listen`:
+  `{"t":"listen","id","state":"start|end|cancel","format","target"?}` followed by binary frames; limits 30 s, 2 MiB, one utterance per
+  controller at a time, 20 utterances a minute and 30 minutes a day per user (`error` codes `busy`, `too_long`, `rate_limited`,
+  `daily_audio_limit`, `no_listen`). Audio is counted and dropped; the server never writes it anywhere. Elapsed time is charged to the day's audio on every way an utterance ends (end, cancel,
+  too long, the server's own 30 s timer, a disconnect), and every device of the user is sent `heard` `failed` when it ends, so no screen keeps its microphone
+  indicator on. The limits belong to the user and survive reconnecting. A refused frame answers `error` with one of `not_screen`, `not_controller`,
+  `bad_frame` (unknown screen or view, empty text), `too_long`, `rate_limited`, `busy`, `no_listen`, `daily_audio_limit`. A screen too slow to take its queue is closed with `slow_consumer`.
+- S to every device of the user `heard`: `{"t":"heard","id","state":"listening|transcribing|understood|failed","text"?,"tool"?,"message"?}`;
+  `reply`: `{"t":"reply","id","text","more":false,"speak":false}` (a refusal or failure in words: "The TV is not connected", "Focus a video first");
+  `outcome`: `{"t":"outcome","id","command_id"?,"tool","state","message"?}` with `state` one of `ok`, `failed`, `refused`, `timeout`, `expired`,
+  `busy`, `cancelled`, `offline`, `none`, `clarify`, `rate_limited` (told to the user, but not filed in the history and not counted in the statistics). `id` is the `say` or `listen` id.
+- S to the target screen `command`: `{"t":"command","id","tool","args","origin":{"device_id","kind":"text|voice"},"expires_ms","confirm":{"text","eta_s"?}|null}`.
+  `id` is the server's own (`c<n>`), `expires_ms` is a time on the server's clock (`welcome.server_time_ms`, `pong.server_ms`), 10 s after the
+  command was made. A command is sent once, never replayed after a reconnect, and a screen must ignore one past `expires_ms` and one it
+  already saw. The target is the pinned screen, else the only connected one that lists the tool, else the one that is playing, else the
+  one whose focus changed last within 10 minutes; two playing screens and no pin give an `ask` frame.
+- D (screen) to S `ack`: `{"t":"ack","id","state":"received|confirm_shown|started|done|failed|refused","message"?,"data"?}`. `received` first
+  (within 2 s, or the command is dead and the controller is told "The TV did not answer"), then `done`/`started`/`failed`/`refused` (within
+  30 s). A screen handles one command at a time; up to 3 wait behind it (each expiring at 10 s), more are refused as `busy`. The `message` of
+  a `failed`/`refused` is shown to the user as the reply.
+- S to D `revoke` `{"id","reason"}`: the screen drops that command or its confirmation (no `received` in time, no answer to a confirmation).
+- Confirmation is decided by the server from its tool table and the focus (`research`; a `watched` cut; HQ captions of a video over 30
+  minutes). The screen shows the text, sends `confirm_shown`, and then the user answers on the TV (the screen acks `started` or `refused`) or by
+  voice/another device: `answer` `{"id","option":"yes|no"}` from a controller (or `say` "yes"/"no") is forwarded to the screen as `answer`.
+  Unanswered for 15 s the command is cancelled (`revoke`, outcome `cancelled`).
+- S to D `ask` `{"id","text","options":[...],"expires_ms"}`: a question (which screen, or a clarifying question of the model), kept 30 s. The answer to a
+  clarifying question is read as the user's next command. Any device answers with `answer`
+  `{"id","option"}` (an option label) or by saying the option (or "the first"/"the second"); an unrelated utterance drops the question.
+- `ping`/`pong`: either side sends `{"t":"ping","ts"}` and the other answers `{"t":"pong","ts"(echoed),"server_ms"}`; a device answers the server's
+  ping (every 20 s) with `{"t":"pong","ts":<its clock ms>}`, from which the server keeps the clock offset. A socket silent for 45 s is dropped
+  (`idle_timeout`).
+- A device whose token is revoked, or whose voice switch is turned off, is closed within the cache window (`revoked`, `voice_off`). The server
+  shutting down closes with `shutdown`; clients reconnect with backoff (1 s to 30 s, jitter). A backend that cannot be reached does not
+  close sockets: the last good answer stays in use.
+- After a command ends the server files one record with `POST /v1/voice/commands` using the speaker's own token (outcome mapped to the
+  route's vocabulary, `marks` of `server_ms`, `push_ack_ms`, `act_ms`, `total_ms`, `queue_ms`). Best effort: filing goes through a bounded queue and a record is dropped when it is full, a failure is logged only. The `queue`/`server` hops stop when the frame is queued for the socket's writer, not when it is written.
+- Clients: the TV app is the screen (checkpoint 3), the phone page, the phone app and later the extension are controllers. Server only in this
+  checkpoint: no client speaks this protocol yet, so the parity matrix row `voice-control` is unchanged.
+
 ## Setup file (`GET /setup.json`)
 
 Public, rate limited like `/v1/health`. The app's "Import setup" fetches it so nothing is typed

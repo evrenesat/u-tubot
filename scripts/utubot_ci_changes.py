@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Iterable
 
 NON_APP = re.compile(
-    r"^(ai-backend/|ai/|docs/|updates/|fastlane/|images/|assets/|scripts/|\.github/|extension/|[^/]+\.md$|LICENSE$|crowdin\.yml$)"
+    r"^(ai-backend/|ai/|docs/|updates/|fastlane/|images/|assets/|scripts/|\.github/|extension/|realtime/|[^/]+\.md$|LICENSE$|crowdin\.yml$)"
 )
 BACKEND = re.compile(
     r"^(ai-backend/|ai/|docs/|scripts/utubot_release\.py$|scripts/emulator_mock_backend\.py$|scripts/utubot_ci_changes\.py$|scripts/dev_install\.py$)"
@@ -31,6 +31,7 @@ PIPELINE = re.compile(
     r"^\.github/(workflows/utubot-ci\.yml$|workflows/utubot-parity\.yml$|workflows/utubot-extension-release\.yml$|actions/)"
 )
 EXTENSION = re.compile(r"^(extension/|ai/CONTRACT\.md$|scripts/emulator_mock_backend\.py$)")
+REALTIME = re.compile(r"^realtime/")
 UTUBOT_CODE = re.compile(r"^(common|smarttubetv)/(?:.*/)?utubot/")
 PLAN = "ai/BROWSER_EXTENSION_PLAN.md"
 CONTRACT = "ai/CONTRACT.md"
@@ -47,6 +48,7 @@ class Classification:
     release: bool
     extension: bool
     extension_release: bool
+    realtime: bool = False
 
 
 def classify_files(files: Iterable[str]) -> Classification:
@@ -60,7 +62,8 @@ def classify_files(files: Iterable[str]) -> Classification:
     backend = has(BACKEND) or pipeline
     app = (any(not NON_APP.search(name) for name in names)) or pipeline
     extension = has(EXTENSION) or pipeline
-    return Classification(backend=backend, app=app, release=False, extension=extension, extension_release=False)
+    realtime = has(REALTIME) or pipeline
+    return Classification(backend=backend, app=app, release=False, extension=extension, extension_release=False, realtime=realtime)
 
 
 def release_decision(push: bool, files_since_tag: list[str] | None, has_tag: bool) -> bool:
@@ -149,7 +152,7 @@ def changed_files(event: str, sha: str, before: str, pr_number: str) -> list[str
 def classify_or_everything(files: list[str] | None) -> Classification:
     """An unknown file list runs both test jobs, like the inline script's defaults."""
     if files is None:
-        return Classification(backend=True, app=True, release=False, extension=True, extension_release=False)
+        return Classification(backend=True, app=True, release=False, extension=True, extension_release=False, realtime=True)
     return classify_files(files)
 
 
@@ -186,7 +189,7 @@ def classify_command(args: argparse.Namespace) -> int:
             since = gh_lines_or_none(["--paginate", f"repos/{os.environ['REPO']}/compare/utubot-v{newest}...{sha}", "--jq", '.files[] | .filename, (.previous_filename // empty)'])
         release = release_decision(push, since, bool(newest))
         if release:
-            result = Classification(backend=result.backend, app=True, release=True, extension=result.extension, extension_release=False)
+            result = Classification(backend=result.backend, app=True, release=True, extension=result.extension, extension_release=False, realtime=result.realtime)
 
     extension_release = False
     if push:
@@ -197,7 +200,7 @@ def classify_command(args: argparse.Namespace) -> int:
         tags = extension_tags()
         extension_release = extension_release_decision(push, version, tags if tags is not None else [])
 
-    result = Classification(result.backend, result.app, release, result.extension, extension_release)
+    result = Classification(result.backend, result.app, release, result.extension, extension_release, result.realtime)
     lines = [f"{key}={str(value).lower()}" for key, value in result.__dict__.items()]
     print("\n".join(lines))
     if os.environ.get("GITHUB_OUTPUT"):
