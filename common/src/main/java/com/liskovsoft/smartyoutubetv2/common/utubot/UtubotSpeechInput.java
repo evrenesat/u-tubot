@@ -10,6 +10,8 @@ import android.speech.RecognizerIntent;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 
+import com.liskovsoft.smartyoutubetv2.common.misc.MotherActivity;
+
 import java.io.IOException;
 import java.util.ArrayList;
 
@@ -17,19 +19,19 @@ import java.util.ArrayList;
  * Describe something by voice: capture the TV's microphone, transcribe it through the backend's
  * speech-to-text (`POST /v1/speech`), return the text. The capture is pluggable ({@link Capture})
  * so the record → WAV → upload pipeline is unit-tested with a fake, while the real
- * {@link android.media.AudioRecord} probe and the platform recogniser live in {@link AudioCapture}.
+ * {@link android.media.AudioRecord} and the platform recogniser live in {@link AudioCapture}.
  *
- * The remote's mic button usually opens the system assistant, and raw capture from the remote is
- * device-dependent, so {@link AudioCapture} first probes each {@code AudioManager} input device and
- * falls back to the platform {@code SpeechRecognizer} (text only) when none delivers usable audio.
+ * The capture runs on a worker thread (recording blocks, and the upload is network). When the
+ * microphone cannot be opened the platform {@code SpeechRecognizer} (text only) is the fallback.
  * The permission and recogniser results come through {@link #onUtubotSpeechActivityResult}.
  */
 public final class UtubotSpeechInput implements UtubotSpeechActivityHost {
-    static final String PROGRESS_PROBING = "Finding the best microphone…";
+    static final String PROGRESS_RECORDING = "Recording…";
     static final String ERROR_NO_MIC = "This TV has no usable microphone; type the description.";
     static final String ERROR_EMPTY = "The recording had no speech; try again or type it.";
 
     static final int REQUEST_PERMISSION = 0x91;
+    private static final int MS_PER_SECOND = 1000;
     static final int REQUEST_SPEECH = 0x92;
 
     /** Backend default recording budget; the backend enforces the real limit server-side. */
@@ -37,8 +39,13 @@ public final class UtubotSpeechInput implements UtubotSpeechActivityHost {
 
     /** Records audio, or returns the platform recogniser's text directly. Pluggable for tests. */
     public interface Capture {
-        void record(int durationMs, Result result);
+        /** Records up to {@code maxDurationMs} (blocking; call off the main thread) and reports through {@code result}. */
+        void record(int maxDurationMs, Result result);
 
+        /** Ends the recording now and keeps what was heard so far. */
+        void stop();
+
+        /** Ends the recording now and throws it away. */
         void cancel();
 
         interface Result {
@@ -52,7 +59,7 @@ public final class UtubotSpeechInput implements UtubotSpeechActivityHost {
         }
     }
 
-    /** The result of a describe call, always on the thread that called {@link #describe}. */
+    /** The result of a describe call; delivered on a worker thread, so a view posts to its own thread. */
     public interface Listener {
         void onProgress(String message);
 
@@ -73,7 +80,7 @@ public final class UtubotSpeechInput implements UtubotSpeechActivityHost {
     @Nullable private Capture.Result mSpeechResult;
 
     public UtubotSpeechInput(Context context, UtubotClient client) {
-        this(context, client, new AudioCapture(context));
+        this(context, client, new AudioCapture());
     }
 
     UtubotSpeechInput(Context context, UtubotClient client, Capture capture) {
@@ -83,8 +90,7 @@ public final class UtubotSpeechInput implements UtubotSpeechActivityHost {
     }
 
     /**
-     * Probe the microphone, record, transcribe, and report through the listener. Idempotent while a
-     * call is running: a second call is ignored until the first finishes or is cancelled.
+     * Record, transcribe, and report through the listener.
      *
      * @param languageHint the caller's language, or null to follow the server's default
      * @param maxSeconds the recording cap (the backend's {@code speech_max_s})
@@ -99,12 +105,15 @@ public final class UtubotSpeechInput implements UtubotSpeechActivityHost {
         mMaxSeconds = maxSeconds;
         mListener = listener;
         mAwaitingPermission = false;
-        listener.onProgress(PROGRESS_PROBING);
+        listener.onProgress(PROGRESS_RECORDING);
 
         Activity activity = activityOf(mContext);
 
         if (activity != null && ActivityCompat.checkSelfPermission(activity, android.Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
+            if (activity instanceof MotherActivity) {
+                ((MotherActivity) activity).addOnPermissions(this::onPermissions);
+            }
             ActivityCompat.requestPermissions(activity, new String[]{android.Manifest.permission.RECORD_AUDIO}, REQUEST_PERMISSION);
             mAwaitingPermission = true;
             return;
@@ -135,7 +144,24 @@ public final class UtubotSpeechInput implements UtubotSpeechActivityHost {
                 onCaptureError(message);
             }
         };
-        mCapture.record(mMaxSeconds, mCaptureResult);
+        Capture.Result result = mCaptureResult;
+        Thread worker = new Thread(() -> mCapture.record(mMaxSeconds * MS_PER_SECOND, result), "utubot-speech");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private synchronized void onPermissions(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode != REQUEST_PERMISSION || !mAwaitingPermission) {
+            return;
+        }
+
+        mAwaitingPermission = false;
+
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            startCapture();
+        } else {
+            fail(ERROR_NO_MIC);
+        }
     }
 
     private void uploadPcm(short[] pcm, int sampleRate, int channels) {
@@ -206,18 +232,6 @@ public final class UtubotSpeechInput implements UtubotSpeechActivityHost {
 
     @Override
     public synchronized void onUtubotSpeechActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_PERMISSION) {
-            mAwaitingPermission = false;
-
-            if (resultCode == Activity.RESULT_OK && activityOf(mContext) != null) {
-                startCapture();
-                return;
-            }
-
-            fail(ERROR_NO_MIC);
-            return;
-        }
-
         if (requestCode == REQUEST_SPEECH) {
             if (mSpeechResult == null) {
                 return;
@@ -257,6 +271,11 @@ public final class UtubotSpeechInput implements UtubotSpeechActivityHost {
         }
 
         mListener.onError(message);
+    }
+
+    /** Ends the recording and transcribes what was heard (the "tap to stop" of the sheet). */
+    public void stopRecording() {
+        mCapture.stop();
     }
 
     /** Stops the capture and releases the microphone; safe to call from any thread. */

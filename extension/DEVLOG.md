@@ -7,7 +7,7 @@
 ## 2026-11-26 (round 1 fix: the spoken cut description parity box)
 
 - The spoken cut description (the TV's "Describe by voice…") is TV only: the extension has a keyboard and takes the description
-  itself (`POST .../cuts {"prompt"}`), exactly as row 19's "Describe here". Its row in the plan's parity matrix (row 36) says so
+  itself (`POST .../cuts {"prompt"}`), exactly as the `cut-qr` row's "Describe here". Its row in the plan's parity matrix (row `cut-speech`) says so
   and points at `POST /v1/speech`, so a change to the TV-side speech feature needs no PR parity box.
 - Evidence: `scripts/utubot_ci_changes.py parity` passes with the plan touched and fails without it; backend `ruff check`/`format
   --check` clean and `pytest -q` (1403 pass); `./gradlew :common:testStutubotDebugUnitTest` (the speech client, probe and WAV

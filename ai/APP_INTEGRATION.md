@@ -196,19 +196,20 @@ so the other flavors behave as before.
   with the cut carried to the player, `UtubotCutController.applyOnOpen`), a `none` row asks for the build (`POST {preset}`, then the request is followed), and the
   last row "Describe on phone…" creates a waiting request (`POST {await_prompt:true}`) and shows `UtubotCutQrView`: a dimming sheet
   over the playing video with the request's short address (`<backend>/cuts/<id>`) as a QR code (made on the device, `QrCodeEncoder`)
-   and in text. The video is not paused; Back (any key) takes the sheet away. Without a model on the backend the picker says so.
+  and in text. The video is not paused; Back (any key) takes the sheet away. Without a model on the backend the picker says so.
 - Describe by voice (issue 176). The video menu gains "Describe by voice…" (`UtubotMenu`), which opens `UtubotCutSpeechView`: a dimming
-   sheet over the playing video with a mic, the states IDLE → RECORDING → TRANSCRIPT → ERROR, an editable box for the transcript and "Use this"
-   / "Record again". The video is not paused; Back (any key) takes the sheet away. The mic is driven by `UtubotSpeechInput`, which reports
-   through a `Listener` and forwards the permission and the speech recognizer results through `MotherActivity.OnResult` (an existing hook,
-   reused by other presenters, re-registered after each result). The capture is `AudioCapture`: it probes each `AudioManager` input device on
-   API 31+ (`getInputDevices`, `setPreferredDevice`), records 3 s from each source (VOICE_RECOGNITION then MIC) and keeps the loudest usable
-   one (`UtubotSpeechProbe.measureRms`/`selectBest`, unit-tested); a device without a usable mic, or a TV before API 31, falls back to the
-   platform `SpeechRecognizer` (text only). The recorded 16 kHz mono 16-bit PCM is muxed to WAV on the device (`UtubotWav`) and uploaded
-   (`UtubotClient.speech`, `POST /v1/speech`: multipart `audio` plus an optional `language` hint). The backend transcribes through modelgate
-   and returns the text; an empty recording or an upload the backend rejects (`ai/CONTRACT.md`, Voice prompts) is reported back for a re-record.
-   "Use this" builds the cut with the spoken text as the prompt (`POST {prompt}`), the same path as a typed description, and follows it like
-   the others. Without a backend the menu row is not shown.
+  sheet over the playing video with a mic, the states IDLE → RECORDING → TRANSCRIPT → ERROR, an editable box for the transcript and "Use this"
+  / "Record again". The video is not paused; Back (any key) takes the sheet away. The mic is driven by `UtubotSpeechInput`, which reports
+  through a `Listener` (on a worker thread: the recording blocks and the upload is network; the view posts to the UI thread), asks for the
+  RECORD_AUDIO permission through `MotherActivity.addOnPermissions` and forwards the speech recognizer result through `MotherActivity.OnResult`
+  (an existing hook; the view re-registers it after each result, posted, since the activity is still iterating its callbacks). The capture is
+  `AudioCapture`: `AudioRecord` on the voice-recognition source until the cap (`speech_max_s`, 50 s) or the Stop tap; a silent recording
+  (`UtubotSpeechProbe.isUsable`) reports "no speech", and a recorder that cannot start (no microphone) falls back to the platform
+  `SpeechRecognizer` (text only). The recorded 16 kHz mono 16-bit PCM is muxed to WAV on the device (`UtubotWav`) and uploaded
+  (`UtubotClient.speech`, `POST /v1/speech`: multipart `audio` plus an optional `language` hint). The backend transcribes through modelgate
+  and returns the text; an empty recording or an upload the backend rejects (`ai/CONTRACT.md`, Voice prompts) is reported back for a re-record.
+  "Use this" builds the cut with the spoken text as the prompt (`POST {prompt}`), the same path as a typed description, and follows it like
+  the others. Without a backend the menu row is not shown.
 - Director's cuts, real length (issue 82): a ready preset's row in the picker is titled with the cut's real length
   ("Highlights in 5 min · 5:02", `UtubotCutController.presetTitle` from `kept_ms`). Only `UtubotMenu` changed, no upstream file.
 - Director's cuts (checkpoint 4): a ready preset also appends a read-only "Kept parts" category under the preset row: the cut's

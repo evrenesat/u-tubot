@@ -34,7 +34,7 @@ public final class UtubotCutSpeechView extends FrameLayout implements UtubotSpee
     }
 
     private enum State {
-        IDLE, RECORDING, TRANSCRIPT, ERROR
+        RECORDING, TRANSCRIBING, TRANSCRIPT, ERROR
     }
 
     private static final int PULSE_HZ = 3;
@@ -59,7 +59,8 @@ public final class UtubotCutSpeechView extends FrameLayout implements UtubotSpee
     private final int mMaxSeconds;
     private final UtubotSpeechInput.Listener mDescribeListener;
 
-    private State mState = State.IDLE;
+    private State mState = State.RECORDING;
+    private String mError = "";
     private boolean mActive = true;
     private final Runnable mPulse = new Runnable() {
         private boolean on = true;
@@ -148,12 +149,8 @@ public final class UtubotCutSpeechView extends FrameLayout implements UtubotSpee
         mDescribeListener = new UtubotSpeechInput.Listener() {
             @Override
             public void onProgress(String message) {
-                post(() -> {
-                    if (mState != State.RECORDING) {
-                        mTranscript.setText("");
-                        setState(State.RECORDING);
-                    }
-                });
+                // The capture reports progress once it is listening; the sheet already shows it.
+
             }
 
             @Override
@@ -167,14 +164,13 @@ public final class UtubotCutSpeechView extends FrameLayout implements UtubotSpee
 
             @Override
             public void onError(String message) {
-                post(() -> showError());
+                post(() -> showError(message));
             }
         };
 
         mSpeech = new UtubotSpeechInput(activity, client);
-        mSpeech.describe(languageHint, maxSeconds, mDescribeListener);
-
         mActivity.addOnResult(this);
+        mSpeech.describe(languageHint, maxSeconds, mDescribeListener);
         draw();
     }
 
@@ -193,26 +189,30 @@ public final class UtubotCutSpeechView extends FrameLayout implements UtubotSpee
     }
 
     private void onPrimary() {
-        if (mState == State.IDLE || mState == State.RECORDING) {
-            setState(State.RECORDING);
+        if (mState == State.RECORDING) {
+            mSpeech.stopRecording();
+            setState(State.TRANSCRIBING);
         } else if (mState == State.TRANSCRIPT) {
             finish(mTranscript.getText().toString());
+        } else if (mState == State.ERROR) {
+            restart();
         }
     }
 
     private void onSecondary() {
-        if (mState == State.TRANSCRIPT || mState == State.ERROR) {
+        if (mState == State.TRANSCRIPT) {
             restart();
         }
     }
 
     private void restart() {
         mTranscript.setText("");
+        setState(State.RECORDING);
         mSpeech.describe(mLanguageHint, mMaxSeconds, mDescribeListener);
-        post(() -> setState(State.RECORDING));
     }
 
-    private void showError() {
+    private void showError(String message) {
+        mError = message == null ? "" : message;
         setState(State.ERROR);
     }
 
@@ -220,7 +220,7 @@ public final class UtubotCutSpeechView extends FrameLayout implements UtubotSpee
         String description = text == null ? "" : text.trim();
 
         if (description.isEmpty()) {
-            showError();
+            showError(getContext().getString(R.string.utubot_speech_no_speech));
             return;
         }
 
@@ -235,30 +235,32 @@ public final class UtubotCutSpeechView extends FrameLayout implements UtubotSpee
 
     private void draw() {
         switch (mState) {
-            case IDLE:
-                mTitle.setText(R.string.utubot_cut_describe_by_voice);
-                mStatus.setText(R.string.utubot_speech_record);
-                mStatus.setVisibility(View.VISIBLE);
-                mTranscript.setVisibility(View.GONE);
-                mSecondary.setVisibility(View.GONE);
-                mPrimary.setText(R.string.utubot_speech_record);
-                mPrimary.setVisibility(View.VISIBLE);
-                break;
-
             case RECORDING:
                 mTitle.setText(R.string.utubot_cut_describe_by_voice);
                 mStatus.setText(R.string.utubot_speech_recording);
                 mStatus.setVisibility(View.VISIBLE);
                 mTranscript.setVisibility(View.GONE);
                 mSecondary.setVisibility(View.GONE);
-                mPrimary.setText(R.string.utubot_speech_record);
+                mPrimary.setText(R.string.utubot_speech_stop);
                 mPrimary.setVisibility(View.VISIBLE);
                 post(mPulse);
+                break;
+
+            case TRANSCRIBING:
+                mTitle.setText(R.string.utubot_cut_describe_by_voice);
+                mStatus.setText(R.string.utubot_speech_transcribing);
+                mStatus.setTextColor(MUTED);
+                mStatus.setVisibility(View.VISIBLE);
+                mTranscript.setVisibility(View.GONE);
+                mSecondary.setVisibility(View.GONE);
+                mPrimary.setVisibility(View.GONE);
+                removeCallbacks(mPulse);
                 break;
 
             case TRANSCRIPT:
                 mTitle.setText(R.string.utubot_speech_edit);
                 mStatus.setText(R.string.utubot_speech_hint);
+                mStatus.setTextColor(MUTED);
                 mStatus.setVisibility(View.VISIBLE);
                 mTranscript.setVisibility(View.VISIBLE);
                 mSecondary.setVisibility(View.VISIBLE);
@@ -270,10 +272,11 @@ public final class UtubotCutSpeechView extends FrameLayout implements UtubotSpee
             case ERROR:
             default:
                 mTitle.setText(R.string.utubot_cut_describe_by_voice);
-                mStatus.setText(R.string.utubot_speech_no_mic);
+                mStatus.setText(mError);
+                mStatus.setTextColor(MUTED);
                 mStatus.setVisibility(View.VISIBLE);
                 mTranscript.setVisibility(View.GONE);
-                mSecondary.setVisibility(View.VISIBLE);
+                mSecondary.setVisibility(View.GONE);
                 mPrimary.setText(R.string.utubot_speech_record_again);
                 mPrimary.setVisibility(View.VISIBLE);
                 removeCallbacks(mPulse);
@@ -290,7 +293,8 @@ public final class UtubotCutSpeechView extends FrameLayout implements UtubotSpee
     public void onResult(int requestCode, int resultCode, Intent data) {
         mSpeech.onUtubotSpeechActivityResult(requestCode, resultCode, data);
         if (mActive) {
-            mActivity.addOnResult(this);
+            // Posted: the activity is still iterating its callbacks and clears them afterwards.
+            post(() -> mActivity.addOnResult(this));
         }
     }
 

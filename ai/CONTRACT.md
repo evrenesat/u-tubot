@@ -445,9 +445,9 @@ contract is built for both. Exceptions, each with its reason:
 
 - The QR sheet of "Describe on phone…": TV only. The extension has a keyboard, takes the description itself
   (`POST /v1/videos/{id}/cuts {"prompt"}`) and opens the cut sheet (`/cuts/{request_id}`) in a tab.
-- The spoken cut description (the TV's "Describe by voice…"): TV only. It records the TV's microphone and uploads the
-  recording (`POST /v1/speech`); the extension has a keyboard and takes the description itself, as the QR sheet does.
-  The endpoint is client-agnostic and the extension could upload a recording too, but the recording UI is TV-only.
+- The TV's "Describe by voice…": TV only. It records the TV's microphone and uploads the recording (`POST /v1/speech`, a
+  `recording.wav`, with the TV's UI language as the optional `language` hint); the extension has a keyboard and takes the
+  description itself, as the QR sheet does. The endpoint is client-agnostic; only the recording UI is TV-only.
 - The sponsor-segment merge of a cut jump and turning SponsorBlock fully off while a cut is applied: TV only. The browser has
   no built-in sponsor skip, so neither the merge of the cut's jump past the sponsor segments nor the suppression of the sponsor
   skip over the cut's ranges applies; it comes back when the cut is off or the video has no active cut.
@@ -727,7 +727,7 @@ user, video and preset or prompt is queued again; the wire documents do not chan
 
 ## Voice prompts (addendum, 2026-11-21)
 
-The TV's spoken cut description becomes text through modelgate only: this backend posts the
+The phone's spoken cut description becomes text through modelgate only: this backend posts the
 audio to modelgate `POST /v1/audio/transcriptions` (`[speech] alias`, EVR-464). The audio is not
 stored: no file, no transcript row, and the server log records only the client, alias, bytes and
 duration. The multipart form is closed after the read, so a spooled temp file is unlinked before
@@ -736,28 +736,25 @@ the route answers `503 {"error":"Speech is not configured on this server; type t
 and `GET /v1/me` features carries `"speech": false`.
 
 - `POST /v1/speech`: `multipart/form-data` with one recording in the field `audio` (the field
-   name `file` is accepted too), and an optional `language` hint. Authenticated like every `/v1`
-   route. It has its own body cap, `[speech] max_upload_bytes` (default 4 MiB) — `413
-   {"error":"request too large"}` before the form is read; `security.max_body_bytes` (256 KiB)
-   stays for every other route. A per-user rate limit, `[speech] per_user_per_min` (default 10),
-   answers `429 {"error":"rate limited"}` with `Retry-After`.
-- `200 -> {"text":"<transcribed text>"}`. The text is returned as it came; the TV puts it in
-   the description box and keeps it editable, never sending it itself.
+  name `file` is accepted too) and an optional `language` hint (the caller's language; it overrides
+  `[speech] language` for that request). Authenticated like every `/v1` route. It has its own body cap,
+  `[speech] max_upload_bytes` (default 4 MiB) — `413 {"error":"request too large"}` before the
+  form is read; `security.max_body_bytes` (256 KiB) stays for every other route. A per-user
+  rate limit, `[speech] per_user_per_min` (default 10), answers `429 {"error":"rate limited"}`
+  with `Retry-After`.
+- `200 -> {"text":"<transcribed text>"}`. The text is returned as it came; the phone puts it in
+  the description box and keeps it editable, never sending it itself.
 - Plain errors: `"Speech service is busy, try again or type it."` (`429`/`503`/`504` upstream,
-   timeouts, and transport failures such as modelgate being unreachable), `"Speech could not be
-   transcribed, try again or type it."` (other upstream refusals), `"The recording was empty; try
-   again or type it."` (empty upload, `400`), `"The recording is too long or too large; try again
-   or type it."` (upstream `413`).
-- The forwarded file part keeps a decoder-friendly extension: the TV sends `recording.wav` (the
-   16-bit PCM the recorder reads is muxed into a WAV on the device), and a bare client filename
-   gets an extension from the content type.
-- The optional `language` field is the caller's hint (the TV's UI language): when set it overrides
-   the server's `[speech] language`, so one build serves any client's language; unset, the server
-   default rides along.
-- `GET /v1/me` features adds `"speech":bool` and `"speech_max_s":int` (default 50), the TV's
-   recording limit. The modelgate route's engine refuses a chunk over about 55 s (EVR-524), so the
-   default stays below it; a longer description takes several Speak taps, each appended to the
-   box.
+  timeouts, and transport failures such as modelgate being unreachable), `"Speech could not be
+  transcribed, try again or type it."` (other upstream refusals), `"The recording was empty; try
+  again or type it."` (empty upload, `400`), `"The recording is too long or too large; try again
+  or type it."` (upstream `413`).
+- The forwarded file part keeps a decoder-friendly extension: the phone sends `recording.webm` or
+  `recording.m4a`, the TV `recording.wav` (16 kHz mono PCM muxed on the device), and a bare client filename gets an extension from the content type.
+- `GET /v1/me` features adds `"speech":bool` and `"speech_max_s":int` (default 50), the phone's
+  recording limit. The modelgate route's engine refuses a chunk over about 55 s (EVR-524), so the
+  default stays below it; a longer description takes several Speak taps, each appended to the
+  box.
 
 ## Saved cut presets and the phone share target (addendum, 2026-11-21)
 

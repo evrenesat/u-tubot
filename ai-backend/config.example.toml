@@ -282,11 +282,10 @@ max_tokens = 2000
 # max_upload_bytes = 4194304     # 4 MiB
 # max_record_s = 50              # one recording stops here: the engine refuses over ~55 s;
                                  # tap Speak again to add more text
- # per_user_per_min = 10
- # timeout_s = 60.0
- # language = "en"            # default language hint sent to modelgate; a client's `language`
-                              # field (the TV's UI language) overrides it per request
-# language = "en"                # optional hint for the transcriber
+# per_user_per_min = 10
+# timeout_s = 60.0
+# language = "en"                # optional hint for the transcriber; a client's `language` form field
+                                 # (the TV sends its UI language) overrides it per request
 
 # Voice control (ai/VOICE_CONTROL_PLAN.md, checkpoint 1: consent, history, setup address). Off: the voice
 # routes answer 404 and clients see nothing new. Switching it on also needs the live server behind the proxy.

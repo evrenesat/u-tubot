@@ -195,12 +195,15 @@
     <string name="utubot_cut_stale">List may be out of date</string>
     <string name="utubot_cut_stale_hint">The server could not be reached, so this is the list saved earlier.</string>
     <string name="utubot_cut_describe_by_voice">Describe by voice…</string>
-    <string name="utubot_speech_record">Tap the mic to record a description</string>
+    <string name="utubot_speech_record">Record a description</string>
     <string name="utubot_speech_recording">Recording… tap to stop</string>
     <string name="utubot_speech_use">Use this</string>
     <string name="utubot_speech_record_again">Record again</string>
     <string name="utubot_speech_edit">Edit the description</string>
-    <string name="utubot_speech_hint">Speak what to keep and what to skip. The remote stops the recording for you.</string>
+    <string name="utubot_speech_hint">Check the text, fix it if needed, then use it.</string>
+    <string name="utubot_speech_stop">Stop</string>
+    <string name="utubot_speech_transcribing">Transcribing…</string>
+    <string name="utubot_speech_no_speech">The recording had no speech; try again or type it.</string>
     <string name="utubot_speech_no_mic">This TV has no usable microphone; type the description instead.</string>
     <string name="utubot_speech_error">Could not record the description: %s</string>
     <string name="utubot_processed_title">Processed</string>
