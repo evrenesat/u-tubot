@@ -126,25 +126,26 @@ function forbiddenCard(doc) {
   );
 }
 
-// The "Newest failures" card: paged examples plus the Older/Newer navigation of the current page.
-function recentCard(doc, page, hasMore, load) {
-  const rows = doc.recent.length ? doc.recent.map((e) => exampleRow(e, load)) : empty("No failures in this period.");
-  const nav = doc.recent.length
-    ? h(
-        "div",
-        { class: "row between" },
-        page > 0 ? button("Newer", () => { page -= 1; load(); }, { kind: "sec" }) : null,
-        hasMore ? button("Older", () => { page += 1; load(); }, { kind: "sec" }) : null,
-      )
-    : null;
-  return card("Newest failures", h("div", { class: "stack" }, rows, nav));
-}
-
 export async function render(view, { rest }) {
   let period = rest[1] ? Number(rest[1]) : 14;
   if (!PERIODS.includes(period)) period = 14;
   let page = 0;
   const host = h("div", { class: "stack" });
+
+  // The "Newest failures" card: paged examples plus the Older/Newer navigation of the current page.
+  // It closes over `page` and `load` so the navigation changes the same page the loader reads.
+  function recentCard(entries, hasMore) {
+    const rows = entries.length ? entries.map((e) => exampleRow(e, load)) : empty("No failures in this period.");
+    const nav = entries.length
+      ? h(
+          "div",
+          { class: "row between" },
+          page > 0 ? button("Newer", () => { page -= 1; load(); }, { kind: "sec" }) : null,
+          hasMore ? button("Older", () => { page += 1; load(); }, { kind: "sec" }) : null,
+        )
+      : null;
+    return card("Newest failures", h("div", { class: "stack" }, rows, nav));
+  }
 
   async function load() {
     const doc = await api("/v1/admin/ledger", {
@@ -170,7 +171,7 @@ export async function render(view, { rest }) {
       summaryCard(doc),
       countsTable(doc),
       forbiddenCard(doc),
-      recentCard(recent, page, hasMore, load),
+      recentCard(recent, hasMore),
     );
   }
   mount(view, host);
