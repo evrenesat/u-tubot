@@ -4,7 +4,8 @@
   first) and marks it read. A summary or an answer replaces the view; a cut or a caption result closes it and opens the video. At the ends
   the key does nothing. No on-screen hint yet, and the player itself has no next/previous for Inbox results (the view is the browse screen's).
 - `UtubotInboxNavigation` (pure: key to step, neighbour in the group's order, ids to mark read) and `UtubotPanelController.stepInbox`.
-  Tests: `UtubotInboxNavigationTest`. The extension has no next/previous yet: row `inbox-next-prev` in `ai/BROWSER_EXTENSION_PLAN.md`.
+  The Inbox tiles are copied when the result opens (a refresh that drops the group keeps the order), and the key is used only when a
+  neighbour exists. Tests: `UtubotInboxNavigationTest`, `UtubotPanelControllerTest` (key routing, ends, dropped group). The extension has no next/previous yet: row `inbox-next-prev` in `ai/BROWSER_EXTENSION_PLAN.md`.
 
 ## 2026-11-27 (caption storage in Settings, issue #39)
 
