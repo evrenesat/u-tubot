@@ -238,7 +238,7 @@ public class UtubotCutNoticesTest {
 
         mNotices.onCutReady(entry(), cut());
 
-        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.question);
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.items.get(0).getTitle());
         assertNull(mController.appliedOnOpen());
     }
 
@@ -276,11 +276,12 @@ public class UtubotCutNoticesTest {
 
         assertTrue(mNotices.presentPrompt(new Item(entry(), cut()), new TestAnswer()));
 
-        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.question);
-        assertNull(mDialog.text); // the title is hidden over a playing video: the question must not depend on it
-        assertEquals(2, mDialog.items.size());
-        assertEquals(mContext.getString(R.string.utubot_cut_play_yes), mDialog.items.get(0).getTitle());
-        assertEquals(mContext.getString(R.string.utubot_cut_play_no), mDialog.items.get(1).getTitle());
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.items.get(0).getTitle());
+        assertFalse(mDialog.items.get(0).isEnabled()); // the question reads, it is not a choice
+        assertEquals(mDialog.text, mDialog.items.get(0).getTitle()); // the skins that show the title get the question too
+        assertEquals(3, mDialog.items.size());
+        assertEquals(mContext.getString(R.string.utubot_cut_play_yes), mDialog.items.get(1).getTitle());
+        assertEquals(mContext.getString(R.string.utubot_cut_play_no), mDialog.items.get(2).getTitle());
         assertTrue(mDialog.transparent);
         assertFalse(mDialog.expandable);
     }
@@ -293,7 +294,7 @@ public class UtubotCutNoticesTest {
 
         mNotices.presentPrompt(new Item(entry(), cut), new TestAnswer());
 
-        assertEquals(mContext.getString(R.string.utubot_cut_ready_play_no_length, TITLE), mDialog.question);
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_play_no_length, TITLE), mDialog.items.get(0).getTitle());
     }
 
     @Test
@@ -302,7 +303,7 @@ public class UtubotCutNoticesTest {
         TestAnswer answer = new TestAnswer();
         mNotices.presentPrompt(new Item(entry(), cut()), answer);
 
-        mDialog.items.get(0).onSelect(true);
+        mDialog.items.get(1).onSelect(true);
 
         assertTrue(answer.played);
         assertFalse(answer.stayed);
@@ -315,7 +316,7 @@ public class UtubotCutNoticesTest {
         TestAnswer answer = new TestAnswer();
         mNotices.presentPrompt(new Item(entry(), cut()), answer);
 
-        mDialog.items.get(1).onSelect(true);
+        mDialog.items.get(2).onSelect(true);
 
         assertFalse(answer.played);
         assertTrue(answer.stayed);
@@ -332,7 +333,7 @@ public class UtubotCutNoticesTest {
         Cut cut = cut(); // browsing, nothing plays: the ready cut is asked
         mNotices.onCutReady(entry(), cut);
 
-        mDialog.items.get(0).onSelect(true); // Yes, through the real queue and openWithCut
+        mDialog.items.get(1).onSelect(true); // Yes, through the real queue and openWithCut
 
         assertTrue(promptQueue().isEmpty());
         assertSame(cut, mController.appliedOnOpen());
@@ -507,7 +508,6 @@ public class UtubotCutNoticesTest {
     private static final class TestDialog extends AppDialogPresenter {
         private final List<OptionItem> items = new ArrayList<>();
         private CharSequence text;
-        private CharSequence question;
         private boolean shown;
         private boolean transparent;
         private boolean expandable = true;
@@ -529,10 +529,6 @@ public class UtubotCutNoticesTest {
             items.add(optionItem);
         }
 
-        @Override
-        public void appendLongTextCategory(CharSequence categoryTitle, OptionItem item) {
-            question = item.getTitle();
-        }
 
         @Override
         public void setId(int id) {

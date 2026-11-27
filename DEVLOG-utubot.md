@@ -1,11 +1,13 @@
 ## 2026-11-27 (cut-ready question shows its text over a playing video, issue #274)
 
-- The "Director's cut ready" question was passed as the dialog title, which the transparent dialog hides over a playing video, so only Yes and No showed.
-  The question is now the dialog's body text (a long-text row, title "Director's cut"), the buttons say "Play the cut now" / "Not now", and the wording is "Play it now?".
-- While a video plays, the question is not a modal: a toast gives the same text with "Play it from Director's cut… in the menu.", and the cut stays in the picker and Processed.
-  The modal stays for browsing. Strings in `utubot_strings.xml`; logic in `UtubotCutNotices.presentPrompt`.
-- Tests: `UtubotCutNoticesTest` asserts the question as body text, the toast while a video plays, and the Yes path while browsing. TV-only; the extension's
-  cut notice (`cut-ready-elsewhere` in `ai/BROWSER_EXTENSION_PLAN.md`) already shows its own text.
+- The "Director's cut ready" question is the first row of the dialog: a disabled button carrying the whole question, then "Play the cut now" and "Not now".
+  It is also passed as the dialog title for skins that show one. Focus lands on "Play the cut now". (The title alone is hidden over a playing video, and the old
+  long-text row only showed its text after opening it.)
+- While a video plays, the question is a long toast ("Open the video menu to play it.") instead of a modal; the cut stays in the picker and Processed.
+  The modal stays for browsing. Strings in `utubot_strings.xml` (only the values/ locale has these keys, so no translation update).
+- Tests: `UtubotCutNoticesTest` checks the question is the first, disabled row, the Yes/No order, the toast while playing and the Yes path while browsing.
+  `UtubotCutQuestionRowTest` (smarttubetv) runs the real `AppPreferenceManager.createButtonPreference` on a disabled question row. TV-only; the
+  extension's cut notice (`cut-ready-elsewhere` in `ai/BROWSER_EXTENSION_PLAN.md`) already shows its own text.
 
 ## 2026-11-27 (TV Inbox next and previous, issue #223)
 

@@ -211,7 +211,7 @@ public final class UtubotCutNotices {
         if (controller != null && controller.hasLivePlayer()) {
             // A video plays: the question is a notice that does not take the focus or cover the picture. The cut stays in the
             // Director's cut picker and the Processed section, where the owner plays it (issue 274).
-            MessageHelpers.showMessage(screen, promptLaterText(screen, item.entry, item.cut));
+            MessageHelpers.showLongMessage(screen, promptLaterText(screen, item.entry, item.cut));
             answer.stay();
             return true;
         }
@@ -224,6 +224,10 @@ public final class UtubotCutNotices {
         }
 
         final boolean[] answered = {false};
+        // The question is the first row: a disabled button, so it is read and the focus lands on the first answer. Skins that
+        // show the title (the classic list) get the same text as the title.
+        OptionItem question = UiOptionItem.from(text);
+        question.setEnabled(false);
         OptionItem yes = UiOptionItem.from(screen.getString(R.string.utubot_cut_play_yes), option -> {
             answered[0] = true;
             dialog.closeDialog();
@@ -235,6 +239,7 @@ public final class UtubotCutNotices {
             answer.stay();
         });
 
+        dialog.appendSingleButton(question);
         dialog.appendSingleButton(yes);
         dialog.appendSingleButton(no);
         dialog.setId(PROMPT_DIALOG_ID);
@@ -246,13 +251,11 @@ public final class UtubotCutNotices {
                 answer.stay();
             }
         });
-        // Transparent dialogs over a video hide the title, so the question is the body text of the dialog, not the title (issue 274)
-        dialog.appendLongTextCategory(screen.getString(R.string.utubot_cut), UiOptionItem.from(text));
         dialog.enableTransparent(true);
         dialog.enableExpandable(false);
 
         mPromptShown = true;
-        dialog.showDialog();
+        dialog.showDialog(text);
 
         return true;
     }
