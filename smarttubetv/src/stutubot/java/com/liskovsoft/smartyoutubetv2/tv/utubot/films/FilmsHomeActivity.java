@@ -16,6 +16,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsCatalog;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsCatalog.Item;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsProgress;
@@ -34,6 +35,7 @@ import java.util.concurrent.Executors;
  */
 public class FilmsHomeActivity extends Activity {
     private static final String TAG = "UtubotFilmsHome";
+    private static final String ERROR_TAG = "error";
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService mIo = Executors.newFixedThreadPool(3);
@@ -43,6 +45,9 @@ public class FilmsHomeActivity extends Activity {
     private LinearLayout mContinueSlot;
     private LinearLayout mResultsSlot;
     private TextView mStatus;
+    private EditText mSearch;
+    private boolean mInitialFocusDone;
+    private boolean mFocusOnRetry;
     private boolean mDestroyed;
 
     @Override
@@ -66,7 +71,7 @@ public class FilmsHomeActivity extends Activity {
         scroll.setFocusable(false);
         mRows = new LinearLayout(this);
         mRows.setOrientation(LinearLayout.VERTICAL);
-        mRows.setPadding(0, FilmsUi.dp(this, 24), 0, FilmsUi.dp(this, 24));
+        mRows.setPadding(0, FilmsUi.dp(this, 8), 0, FilmsUi.dp(this, 16));
         scroll.addView(mRows, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         setContentView(scroll);
 
@@ -75,7 +80,7 @@ public class FilmsHomeActivity extends Activity {
         mResultsSlot = slot();
 
         if (settings.getFilmsAddonUrl().isEmpty()) {
-            mStatus.setText("Set the stream addon in Settings, Updates, Films (developer) to play films.");
+            setStatus(getString(R.string.utubot_films_no_addon));
         }
 
         loadRow(UtubotRealDebridClient.TYPE_MOVIE, UtubotFilmsCatalog.POPULAR, "Popular films", true);
@@ -84,9 +89,14 @@ public class FilmsHomeActivity extends Activity {
     }
 
     private void buildHeader() {
-        TextView title = FilmsUi.text(this, "Films", 28, FilmsUi.TEXT, true);
-        title.setPadding(FilmsUi.dp(this, FilmsUi.MARGIN), 0, FilmsUi.dp(this, FilmsUi.MARGIN), FilmsUi.dp(this, 8));
-        mRows.addView(title);
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        bar.setPadding(FilmsUi.dp(this, FilmsUi.MARGIN), 0, FilmsUi.dp(this, FilmsUi.MARGIN), 0);
+
+        TextView title = FilmsUi.text(this, "Films", 24, FilmsUi.TEXT, true);
+        title.setPadding(0, 0, FilmsUi.dp(this, 28), 0);
+        bar.addView(title);
 
         EditText search = new EditText(this);
         search.setHint("Search films and series");
@@ -95,9 +105,10 @@ public class FilmsHomeActivity extends Activity {
         search.setTextSize(FilmsUi.BODY_SP);
         search.setSingleLine();
         search.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        search.setPadding(FilmsUi.dp(this, 16), FilmsUi.dp(this, 10), FilmsUi.dp(this, 16), FilmsUi.dp(this, 10));
-        FilmsUi.focusRing(search, search, FilmsUi.CARD, null);
+        search.setPadding(FilmsUi.dp(this, 16), FilmsUi.dp(this, 6), FilmsUi.dp(this, 16), FilmsUi.dp(this, 6));
+        FilmsUi.focusRing(search, search, FilmsUi.CARD, null, null);
         search.setFocusableInTouchMode(true);
+        mSearch = search;
         search.setOnEditorActionListener((view, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_SEARCH || event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER) {
                 search(search.getText().toString());
@@ -106,13 +117,18 @@ public class FilmsHomeActivity extends Activity {
 
             return false;
         });
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(FilmsUi.dp(this, 480), ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(FilmsUi.dp(this, FilmsUi.MARGIN), 0, 0, 0);
-        mRows.addView(search, params);
+        bar.addView(search, new LinearLayout.LayoutParams(FilmsUi.dp(this, 420), ViewGroup.LayoutParams.WRAP_CONTENT));
+        mRows.addView(bar);
 
-        mStatus = FilmsUi.text(this, "", FilmsUi.CHIP_SP + 2, FilmsUi.WARN, false);
-        mStatus.setPadding(FilmsUi.dp(this, FilmsUi.MARGIN), FilmsUi.dp(this, 8), FilmsUi.dp(this, FilmsUi.MARGIN), 0);
+        mStatus = FilmsUi.text(this, "", FilmsUi.BODY_SP, FilmsUi.WARN, false);
+        mStatus.setPadding(FilmsUi.dp(this, FilmsUi.MARGIN), FilmsUi.dp(this, 6), FilmsUi.dp(this, FilmsUi.MARGIN), 0);
+        mStatus.setVisibility(View.GONE);
         mRows.addView(mStatus);
+    }
+
+    private void setStatus(String text) {
+        mStatus.setText(text);
+        mStatus.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
     }
 
     private LinearLayout slot() {
@@ -129,6 +145,11 @@ public class FilmsHomeActivity extends Activity {
 
         if (mProgress != null) {
             showContinueWatching();
+
+            if (!mInitialFocusDone && mContinueSlot.getChildCount() > 0) {
+                mInitialFocusDone = true;
+                focusFirstCard(mContinueSlot.getChildAt(1));
+            }
         }
     }
 
@@ -137,7 +158,7 @@ public class FilmsHomeActivity extends Activity {
         List<View> cards = new ArrayList<>();
 
         for (Entry entry : mProgress.continueWatching()) {
-            String subtitle = entry.season > 0 ? "S" + entry.season + " E" + entry.episode : FilmsUi.clock(entry.positionMs);
+            String subtitle = entry.season > 0 ? "S" + entry.season + " E" + entry.episode : entry.timeLeft();
             cards.add(FilmsUi.posterCard(this, entry.name, subtitle, entry.poster, entry.share(), false,
                     v -> openDetails(entry.type, entry.titleId, entry.name, entry.poster)));
         }
@@ -154,7 +175,9 @@ public class FilmsHomeActivity extends Activity {
         }
 
         mResultsSlot.removeAllViews();
-        mStatus.setText("Searching...");
+        mResultsSlot.addView(FilmsUi.rowHeader(this, "Search results for \"" + text + "\""));
+        mResultsSlot.addView(row(placeholders()));
+        setStatus("");
         mIo.execute(() -> {
             try {
                 List<Item> found = new ArrayList<>(mCatalog.search(UtubotRealDebridClient.TYPE_MOVIE, text));
@@ -162,9 +185,19 @@ public class FilmsHomeActivity extends Activity {
                 mHandler.post(() -> showResults(text, found));
             } catch (Exception e) {
                 Log.w(TAG, "Search failed: " + e.getMessage());
-                mHandler.post(() -> mStatus.setText("Search failed: " + e.getMessage()));
+                mHandler.post(() -> showSearchError(text));
             }
         });
+    }
+
+    private void showSearchError(String text) {
+        if (mDestroyed) {
+            return;
+        }
+
+        mResultsSlot.removeAllViews();
+        mResultsSlot.addView(FilmsUi.rowHeader(this, "Search results for \"" + text + "\""));
+        mResultsSlot.addView(errorPadded("Search did not work. Check the connection and try again.", () -> search(text)));
     }
 
     private void showResults(String text, List<Item> found) {
@@ -173,45 +206,131 @@ public class FilmsHomeActivity extends Activity {
         }
 
         mResultsSlot.removeAllViews();
-        mStatus.setText(found.isEmpty() ? "Nothing found for \"" + text + "\"" : "");
 
-        if (!found.isEmpty()) {
-            mResultsSlot.addView(FilmsUi.rowHeader(this, "Search results for \"" + text + "\""));
-            mResultsSlot.addView(row(cards(found)));
-            View first = ((ViewGroup) ((ViewGroup) mResultsSlot.getChildAt(1)).getChildAt(0)).getChildAt(0);
-            first.post(first::requestFocus);
+        if (found.isEmpty()) {
+            setStatus("Nothing found for \"" + text + "\"");
+            return;
         }
+
+        setStatus("");
+        mResultsSlot.addView(FilmsUi.rowHeader(this, "Search results for \"" + text + "\""));
+        View row = row(cards(found, true));
+        mResultsSlot.addView(row);
+        focusFirstCard(row);
     }
 
     private void loadRow(String type, String catalog, String header, boolean takeFocus) {
         LinearLayout slot = slot();
+        slot.addView(FilmsUi.rowHeader(this, header));
+        fillRow(slot, type, catalog, header, takeFocus);
+    }
+
+    private void fillRow(LinearLayout slot, String type, String catalog, String header, boolean takeFocus) {
+        while (slot.getChildCount() > 1) {
+            slot.removeViewAt(1);
+        }
+
+        slot.addView(row(placeholders()));
         mIo.execute(() -> {
             try {
                 List<Item> items = mCatalog.list(type, catalog);
                 mHandler.post(() -> {
-                    if (!mDestroyed && !items.isEmpty()) {
-                        slot.addView(FilmsUi.rowHeader(this, header));
-                        View row = row(cards(items));
-                        slot.addView(row);
+                    if (mDestroyed) {
+                        return;
+                    }
 
-                        if (takeFocus) {
-                            View first = ((ViewGroup) ((ViewGroup) row).getChildAt(0)).getChildAt(0);
-                            first.post(first::requestFocus);
-                        }
+                    while (slot.getChildCount() > 1) {
+                        slot.removeViewAt(1);
+                    }
+
+                    if (items.isEmpty()) {
+                        slot.removeAllViews();
+                        return;
+                    }
+
+                    View row = row(cards(items, false));
+                    slot.addView(row);
+
+                    if (takeFocus && !mInitialFocusDone && (getCurrentFocus() == null || getCurrentFocus() == mSearch)) {
+                        mInitialFocusDone = true;
+                        focusFirstCard(row);
                     }
                 });
             } catch (Exception e) {
                 Log.w(TAG, header + " failed: " + e.getMessage());
-                mHandler.post(() -> mStatus.setText("Cannot load the catalogue: " + e.getMessage()));
+                mHandler.post(() -> {
+                    if (mDestroyed) {
+                        return;
+                    }
+
+                    while (slot.getChildCount() > 1) {
+                        slot.removeViewAt(1);
+                    }
+
+                    View error = errorPadded("Cannot load the " + header.toLowerCase(java.util.Locale.US) + ". Check the connection and try again.",
+                            () -> fillRow(slot, type, catalog, header, takeFocus));
+                    slot.addView(error);
+
+                    if (mFocusOnRetry || getCurrentFocus() == null || getCurrentFocus() == mSearch) {
+                        mFocusOnRetry = true;
+                        focusFirstError();
+                    }
+                });
             }
         });
     }
 
-    private List<View> cards(List<Item> items) {
+    /** The Retry button nearest the top, so a failed start puts the focus on the first row that needs it */
+    private void focusFirstError() {
+        for (int i = 0; i < mRows.getChildCount(); i++) {
+            View child = mRows.getChildAt(i);
+
+            if (child instanceof ViewGroup) {
+                ViewGroup slot = (ViewGroup) child;
+
+                for (int j = 0; j < slot.getChildCount(); j++) {
+                    if (ERROR_TAG.equals(slot.getChildAt(j).getTag())) {
+                        FilmsUi.retryButton(((ViewGroup) slot.getChildAt(j)).getChildAt(0)).requestFocus();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    private View errorPadded(String message, Runnable retry) {
+        LinearLayout holder = new LinearLayout(this);
+        holder.setPadding(FilmsUi.dp(this, FilmsUi.MARGIN), 0, FilmsUi.dp(this, FilmsUi.MARGIN), FilmsUi.dp(this, 8));
+        holder.setClipChildren(false);
+        holder.setClipToPadding(false);
+        holder.setTag(ERROR_TAG);
+        holder.addView(FilmsUi.errorBlock(this, message, v -> retry.run()), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        return holder;
+    }
+
+    private List<View> placeholders() {
+        List<View> cards = new ArrayList<>();
+
+        for (int i = 0; i < FilmsUi.PLACEHOLDER_CARDS; i++) {
+            cards.add(FilmsUi.placeholderCard(this));
+        }
+
+        return cards;
+    }
+
+    private void focusFirstCard(View row) {
+        View first = ((ViewGroup) ((ViewGroup) row).getChildAt(0)).getChildAt(0);
+        first.post(first::requestFocus);
+    }
+
+    private List<View> cards(List<Item> items, boolean labelKind) {
         List<View> cards = new ArrayList<>();
 
         for (Item item : items) {
-            cards.add(FilmsUi.posterCard(this, item.name, item.year, item.poster, 0f, mProgress.isWatched(item.id),
+            String subtitle = labelKind ? (item.year.isEmpty() ? "" : item.year + " \u00b7 ") + (item.isSeries() ? "Series" : "Film") : item.year;
+            cards.add(FilmsUi.posterCard(this, item.name, subtitle, item.poster, 0f, mProgress.isWatched(item.id),
                     v -> openDetails(item.type, item.id, item.name, item.poster)));
         }
 
@@ -225,7 +344,7 @@ public class FilmsHomeActivity extends Activity {
         scroll.setClipChildren(false);
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(FilmsUi.dp(this, FilmsUi.MARGIN - 6), 0, FilmsUi.dp(this, FilmsUi.MARGIN), 0);
+        row.setPadding(FilmsUi.dp(this, FilmsUi.MARGIN - 8), 0, FilmsUi.dp(this, FilmsUi.MARGIN), 0);
         row.setClipChildren(false);
 
         for (View card : cards) {

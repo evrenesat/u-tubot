@@ -61,10 +61,18 @@ public class UtubotFilmsProgress {
             return isWatched() || positionMs < MIN_RESUME_MS ? 0 : positionMs;
         }
 
+        /** "40 min left", "1 h 5 min left"; empty when the running time is unknown */
+        public String timeLeft() {
+            return UtubotFilmsProgress.timeLeft(durationMs - positionMs);
+        }
+
         public float share() {
             return durationMs <= 0 ? 0f : Math.min(1f, positionMs / (float) durationMs);
         }
     }
+
+    private static final long MINUTE_MS = 60_000;
+    private static final long HOUR_MINUTES = 60;
 
     private final SharedPreferences mPrefs;
 
@@ -126,6 +134,23 @@ public class UtubotFilmsProgress {
         }
 
         return result;
+    }
+
+    /** "40 min left" (rounded up to a whole minute), "1 h 5 min left"; empty for no time left */
+    public static String timeLeft(long leftMs) {
+        if (leftMs <= 0) {
+            return "";
+        }
+
+        long minutes = (leftMs + MINUTE_MS - 1) / MINUTE_MS;
+
+        if (minutes < HOUR_MINUTES) {
+            return minutes + " min left";
+        }
+
+        long rest = minutes % HOUR_MINUTES;
+
+        return minutes / HOUR_MINUTES + " h" + (rest > 0 ? " " + rest + " min" : "") + " left";
     }
 
     @Nullable

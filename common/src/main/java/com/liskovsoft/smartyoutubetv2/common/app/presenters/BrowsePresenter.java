@@ -60,6 +60,7 @@ import com.liskovsoft.smartyoutubetv2.common.prefs.MainUIData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SectionFilterData;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBrowseCache;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsSection;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotInboxOpen;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotInboxSection;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
@@ -371,6 +372,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
                      getContext().getString(R.string.utubot_inbox_title), BrowseSection.TYPE_GRID, R.drawable.icon_playlist);
              inbox.setMessage(getContext().getString(R.string.utubot_inbox_message));
              mSectionsMapping.put(UtubotInboxSection.ID, inbox);
+
+             mSectionsMapping.put(UtubotFilmsSection.ID, new BrowseSection(UtubotFilmsSection.ID,
+                     getContext().getString(R.string.utubot_films_title), BrowseSection.TYPE_SETTINGS_GRID, R.drawable.icon_playlist));
          }
 
         if (getSidebarService().isSettingsSectionEnabled()) {
@@ -485,6 +489,11 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
     private void initSettingsGridMapping() {
         mSettingsGridMapping.put(MediaGroup.TYPE_SETTINGS, () -> mDataSourcePresenter.getSettingItems(getContext()));
+
+        if (UtubotSettings.isBuiltIn()) {
+            mSettingsGridMapping.put(UtubotFilmsSection.ID, () -> Collections.singletonList(
+                    new SettingsItem(getContext().getString(R.string.utubot_films_open_home), () -> UtubotFilmsSection.open(getContext()), R.drawable.icon_playlist)));
+        }
     }
 
     private void initLocalGridMapping() {
@@ -1038,6 +1047,19 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
 
         updateCurrentSection();
         restoreSelectedItems(); // Don't place anywhere else
+    }
+
+    /**
+     * A rail click on a section that is an app of its own (Films): opens it. False for every other section.
+     */
+    public boolean openSectionApp(int sectionId) {
+        if (sectionId != UtubotFilmsSection.ID || !UtubotSettings.isBuiltIn()) {
+            return false;
+        }
+
+        UtubotFilmsSection.open(getContext());
+
+        return true;
     }
 
     @Override

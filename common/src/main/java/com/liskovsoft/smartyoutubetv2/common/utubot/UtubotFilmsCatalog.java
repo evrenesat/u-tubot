@@ -94,6 +94,13 @@ public class UtubotFilmsCatalog {
             this.title = title;
         }
 
+        /** The title without a leading "Episode N:" (the card already says "EN"); empty when nothing else is left */
+        public String shortTitle() {
+            String text = title == null ? "" : title.replaceFirst("(?i)^\\s*episode\\s*\\d+\\s*[:.\\-\u2013]?\\s*", "").trim();
+
+            return text;
+        }
+
         /** The Stremio id of the episode's streams, e.g. tt0944947:1:2 */
         public String videoId(String seriesId) {
             return seriesId + ":" + season + ":" + number;

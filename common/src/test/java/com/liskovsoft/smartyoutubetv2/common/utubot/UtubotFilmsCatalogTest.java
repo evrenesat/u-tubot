@@ -46,4 +46,12 @@ public class UtubotFilmsCatalogTest {
         assertEquals("A1", first.get(0).title);
         assertEquals("tt9:1:2", first.get(1).videoId("tt9"));
     }
+
+    @Test
+    public void anEpisodeTitleDropsItsOwnEpisodeNumber() {
+        assertEquals("Winter Is Coming", new Episode(1, 1, "Episode 1: Winter Is Coming").shortTitle());
+        assertEquals("Pilot", new Episode(1, 2, "episode 2 - Pilot").shortTitle());
+        assertEquals("", new Episode(1, 3, "Episode 3").shortTitle());
+        assertEquals("Episodes of Doom", new Episode(1, 4, "Episodes of Doom").shortTitle());
+    }
 }

@@ -13,6 +13,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import androidx.annotation.Nullable;
@@ -83,6 +84,7 @@ public class RealDebridFilmsActivity extends Activity {
 
     private static final int TEXT_SP = 18;
     private static final int ROW_PADDING = 16;
+    private static final float PANEL_HEIGHT_SHARE = 0.5f;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private UtubotSettings mSettings;
@@ -97,7 +99,7 @@ public class RealDebridFilmsActivity extends Activity {
     private Video mVideo;
     private UtubotRealDebridClient mClient;
     private List<Stream> mStreams = new ArrayList<>();
-    private List<TextView> mRows = new ArrayList<>();
+    private List<View> mRows = new ArrayList<>();
     private int mFocusedIndex = -1;
     private Disposable mLoadAction;
     private boolean mLoaded;
@@ -172,24 +174,25 @@ public class RealDebridFilmsActivity extends Activity {
     private void buildPanel() {
         mPanel = new LinearLayout(this);
         mPanel.setOrientation(LinearLayout.VERTICAL);
-        mPanel.setBackgroundColor(0xAA000000);
+        mPanel.setBackgroundColor(FilmsUi.PANEL);
         mPanel.setPadding(ROW_PADDING, ROW_PADDING, ROW_PADDING, ROW_PADDING);
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
-        panelParams.height = (int) (0.45f * getResources().getDisplayMetrics().heightPixels);
+        panelParams.height = (int) (PANEL_HEIGHT_SHARE * getResources().getDisplayMetrics().heightPixels);
         mRoot.addView(mPanel, panelParams);
-
-        mList = new LinearLayout(this);
-        mList.setOrientation(LinearLayout.VERTICAL);
-        mList.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        mPanel.addView(mList);
 
         mStatus = new TextView(this);
         mStatus.setTextColor(Color.WHITE);
         mStatus.setTextSize(TEXT_SP);
-        mStatus.setPadding(ROW_PADDING, ROW_PADDING, ROW_PADDING, ROW_PADDING);
-        mRoot.addView(mStatus, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP));
+        mStatus.setPadding(0, 0, 0, ROW_PADDING);
+        mPanel.addView(mStatus, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        mList = new LinearLayout(this);
+        mList.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(mList, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        mPanel.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
     }
 
     private void loadStreams(String imdbId) {
@@ -205,7 +208,7 @@ public class RealDebridFilmsActivity extends Activity {
         mLoadAction = Observable.fromCallable(() -> mClient.streams(mStreamType, imdbId))
                 .subscribeOn(Schedulers.io())
                 .subscribe(list -> mHandler.post(() -> onStreamsLoaded(list)),
-                        error -> mHandler.post(() -> setStatus(getString(R.string.utubot_films_failed, error.getMessage()))));
+                        error -> mHandler.post(() -> setStatus(getString(R.string.utubot_films_failed))));
     }
 
     private void onStreamsLoaded(List<Stream> streams) {
@@ -218,23 +221,16 @@ public class RealDebridFilmsActivity extends Activity {
             return;
         }
 
-        for (final Stream stream : streams) {
-            final int position = mRows.size();
-            TextView row = new TextView(this);
-            row.setText(rowText(stream));
-            row.setTextColor(Color.WHITE);
-            row.setTextSize(TEXT_SP - 1);
-            row.setPadding(ROW_PADDING, 12, ROW_PADDING, 12);
-            row.setFocusable(true);
-            row.setFocusableInTouchMode(true);
-            row.setId(position);
-            row.setOnClickListener(v -> play(position));
+        for (int i = 0; i < streams.size(); i++) {
+            final int position = i;
+            View row = FilmsUi.streamRow(this, streams.get(i), i == 0, mDevice, v -> play(position));
+            row.setId(View.generateViewId());
             mRows.add(row);
             mList.addView(row);
         }
 
         setFocus(0);
-        setStatus(getString(R.string.utubot_films_hint, streams.size()));
+        setStatus(getResources().getQuantityString(R.plurals.utubot_films_hint, streams.size(), streams.size()));
     }
 
     private void clearList() {
@@ -249,12 +245,7 @@ public class RealDebridFilmsActivity extends Activity {
             return;
         }
 
-        if (mFocusedIndex >= 0 && mFocusedIndex < mRows.size()) {
-            mRows.get(mFocusedIndex).setBackgroundColor(0x00000000);
-        }
-
         mFocusedIndex = index;
-        mRows.get(index).setBackgroundColor(0xAA4B3FE0);
         mRows.get(index).requestFocus();
     }
 
@@ -313,31 +304,6 @@ public class RealDebridFilmsActivity extends Activity {
     protected void onPause() {
         saveProgress();
         super.onPause();
-    }
-
-    private String rowText(Stream stream) {
-        StringBuilder text = new StringBuilder("  ");
-        List<String> chips = stream.format.chips();
-
-        if (stream.resolution > 0) {
-            chips.add(0, stream.resolution == 2160 ? "4K" : stream.resolution + "p");
-        }
-
-        for (String chip : chips) {
-            text.append('[').append(chip).append("] ");
-        }
-
-        if (stream.sizeBytes > 0) {
-            text.append(Stream.formatSize(stream.sizeBytes));
-        }
-
-        String note = stream.format.note(mDevice);
-
-        if (!note.isEmpty()) {
-            text.append("   ! ").append(note);
-        }
-
-        return text.toString().trim().isEmpty() ? stream.display() : text.toString();
     }
 
     private void setOverlayVisible(boolean visible) {

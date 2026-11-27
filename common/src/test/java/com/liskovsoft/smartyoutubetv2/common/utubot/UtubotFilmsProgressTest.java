@@ -42,6 +42,18 @@ public class UtubotFilmsProgressTest {
     }
 
     @Test
+    public void timeLeftIsInWholeMinutesThenHours() {
+        mProgress.save("tt1", "movie", "tt1", "One", "", 0, 0, 60 * MINUTE, 100 * MINUTE, 1);
+        mProgress.save("tt2", "movie", "tt2", "Two", "", 0, 0, 35 * MINUTE, 100 * MINUTE, 1);
+
+        assertEquals("40 min left", mProgress.get("tt1").timeLeft());
+        assertEquals("1 h 5 min left", mProgress.get("tt2").timeLeft());
+        assertEquals("2 h left", UtubotFilmsProgress.timeLeft(120 * MINUTE));
+        assertEquals("1 min left", UtubotFilmsProgress.timeLeft(1_000));
+        assertEquals("", UtubotFilmsProgress.timeLeft(0));
+    }
+
+    @Test
     public void aTitleNearTheEndIsWatchedAndLeavesTheContinueRow() {
         mProgress.save("tt1", "movie", "tt1", "One", "", 0, 0, 95 * MINUTE, 100 * MINUTE, 1);
         mProgress.save("tt2", "movie", "tt2", "Two", "", 0, 0, 20 * MINUTE, 100 * MINUTE, 2);

@@ -117,8 +117,10 @@ public final class UtubotFilmFormat {
             bits = 10; // HDR is always 10 bit or more
         }
 
-        return new UtubotFilmFormat(codec, bits, hdr, dv && (hdr10 || hdr10Plus), dv ? dolbyVisionProfile(name) : PROFILE_UNKNOWN,
-                audio(name), channels(name), source(name));
+        int profile = dv ? dolbyVisionProfile(name) : PROFILE_UNKNOWN;
+        boolean hdr10Layer = dv && (hdr10 || hdr10Plus) && profile != PROFILE_5; // profile 5 has none, "DV | HDR" in a name is a label
+
+        return new UtubotFilmFormat(codec, bits, hdr, hdr10Layer, profile, audio(name), channels(name), source(name));
     }
 
     private static int dolbyVisionProfile(String name) {

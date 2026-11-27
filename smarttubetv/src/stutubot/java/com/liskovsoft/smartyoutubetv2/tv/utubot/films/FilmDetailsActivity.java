@@ -18,6 +18,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.bumptech.glide.Glide;
+import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmDevice;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsCatalog;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsCatalog.Episode;
@@ -46,6 +47,7 @@ public class FilmDetailsActivity extends Activity {
     private static final String TAG = "UtubotFilmDetails";
     private static final int BACKDROP_ALPHA = 90;
     private static final int PLOT_LINES = 4;
+    private static final int EPISODE_W = 160;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService mIo = Executors.newFixedThreadPool(2);
@@ -103,20 +105,41 @@ public class FilmDetailsActivity extends Activity {
         mContent.setPadding(FilmsUi.dp(this, FilmsUi.MARGIN), FilmsUi.dp(this, 32), FilmsUi.dp(this, FilmsUi.MARGIN), FilmsUi.dp(this, 32));
         scroll.setClipChildren(false);
         mContent.setClipChildren(false);
+        mContent.setClipToPadding(false);
         scroll.addView(mContent, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(scroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
 
         buildHeader(null);
+        loadMeta();
+    }
+
+    private void loadMeta() {
         mIo.execute(() -> {
             try {
                 Item item = new UtubotFilmsCatalog(mSettings.getFilmsCatalogUrl()).meta(mType, mId);
                 mHandler.post(() -> onMeta(item));
             } catch (Exception e) {
                 Log.w(TAG, "Details failed: " + e.getMessage());
-                mHandler.post(() -> mStreamStatus.setText("Cannot load the details: " + e.getMessage()));
+                mHandler.post(this::showMetaError);
             }
         });
+    }
+
+    private void showMetaError() {
+        if (mDestroyed) {
+            return;
+        }
+
+        setStreamStatus("");
+        mStreamList.removeAllViews();
+        View error = FilmsUi.errorBlock(this, "Cannot load the details. Check the connection and try again.", v -> {
+            mStreamList.removeAllViews();
+            setStreamStatus("Loading...");
+            loadMeta();
+        });
+        mStreamList.addView(error);
+        FilmsUi.retryButton(error).requestFocus();
     }
 
     @Override
@@ -187,6 +210,7 @@ public class FilmDetailsActivity extends Activity {
         }
 
         mPlay = FilmsUi.button(this, "Loading...", 22, v -> playBest());
+        mPlay.setPadding(FilmsUi.dp(this, 28), FilmsUi.dp(this, 10), FilmsUi.dp(this, 28), FilmsUi.dp(this, 10));
         mPlay.setEnabled(false);
         LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         playParams.topMargin = FilmsUi.dp(this, 16);
@@ -201,14 +225,22 @@ public class FilmDetailsActivity extends Activity {
         mEpisodeSlot.setOrientation(LinearLayout.VERTICAL);
         mContent.addView(mEpisodeSlot);
 
+        // A film has no pickers, so its streams sit beside the poster, under the Play button; a series lists them below the episodes
+        LinearLayout streamHost = UtubotRealDebridClient.TYPE_SERIES.equals(mType) ? mContent : info;
         TextView header = FilmsUi.text(this, "Streams", FilmsUi.ROW_HEADER_SP, FilmsUi.TEXT, false);
-        header.setPadding(0, FilmsUi.dp(this, 20), 0, FilmsUi.dp(this, 8));
-        mContent.addView(header);
+        header.setPadding(0, FilmsUi.dp(this, 14), 0, FilmsUi.dp(this, 6));
+        streamHost.addView(header);
         mStreamStatus = FilmsUi.text(this, item == null ? "Loading..." : "", FilmsUi.BODY_SP, FilmsUi.WARN, false);
-        mContent.addView(mStreamStatus);
+        mStreamStatus.setVisibility(item == null ? View.VISIBLE : View.GONE);
+        streamHost.addView(mStreamStatus);
         mStreamList = new LinearLayout(this);
         mStreamList.setOrientation(LinearLayout.VERTICAL);
-        mContent.addView(mStreamList);
+        streamHost.addView(mStreamList, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    private void setStreamStatus(String text) {
+        mStreamStatus.setText(text);
+        mStreamStatus.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
     }
 
     private void buildEpisodePickers() {
@@ -220,14 +252,12 @@ public class FilmDetailsActivity extends Activity {
             return;
         }
 
-        TextView seasonHeader = FilmsUi.text(this, "Season", FilmsUi.ROW_HEADER_SP, FilmsUi.TEXT, false);
-        seasonHeader.setPadding(0, FilmsUi.dp(this, 20), 0, FilmsUi.dp(this, 8));
-        mSeasonSlot.addView(seasonHeader);
-        LinearLayout seasonRow = new LinearLayout(this);
+                LinearLayout seasonRow = new LinearLayout(this);
         seasonRow.setClipChildren(false);
+        seasonRow.setPadding(FilmsUi.dp(this, 4), FilmsUi.dp(this, 14), 0, 0);
 
         for (int season : seasons) {
-            TextView button = FilmsUi.button(this, String.valueOf(season), FilmsUi.BODY_SP, v -> selectSeason(season));
+            TextView button = FilmsUi.button(this, "Season " + season, FilmsUi.BODY_SP, v -> selectSeason(season));
             button.setBackground(FilmsUi.rounded(this, season == mSeason ? FilmsUi.ACCENT : FilmsUi.CARD, android.graphics.Color.TRANSPARENT, 3));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             params.setMargins(FilmsUi.dp(this, 4), FilmsUi.dp(this, 4), FilmsUi.dp(this, 8), FilmsUi.dp(this, 4));
@@ -241,10 +271,11 @@ public class FilmDetailsActivity extends Activity {
         mSeasonSlot.addView(seasonScroll);
 
         TextView episodeHeader = FilmsUi.text(this, "Episodes", FilmsUi.ROW_HEADER_SP, FilmsUi.TEXT, false);
-        episodeHeader.setPadding(0, FilmsUi.dp(this, 12), 0, FilmsUi.dp(this, 8));
+        episodeHeader.setPadding(0, FilmsUi.dp(this, 10), 0, FilmsUi.dp(this, 4));
         mEpisodeSlot.addView(episodeHeader);
         LinearLayout row = new LinearLayout(this);
         row.setClipChildren(false);
+        row.setPadding(FilmsUi.dp(this, 8), 0, 0, 0);
 
         for (Episode episode : UtubotFilmsCatalog.episodesOf(mItem.episodes, mSeason)) {
             Entry entry = mProgress.get(episode.videoId(mItem.id));
@@ -261,27 +292,37 @@ public class FilmDetailsActivity extends Activity {
     }
 
     private View episodeCard(Episode episode, float share, boolean watched) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        int pad = FilmsUi.dp(this, 12);
-        card.setPadding(pad, pad, pad, pad);
+        FrameLayout card = new FrameLayout(this);
         boolean selected = mEpisode != null && mEpisode.season == episode.season && mEpisode.number == episode.number;
-        card.addView(FilmsUi.text(this, "E" + episode.number + (watched ? "  ✓" : ""), FilmsUi.BODY_SP, watched ? FilmsUi.WARN : FilmsUi.TEXT, true));
-        TextView title = FilmsUi.text(this, episode.title, FilmsUi.CHIP_SP + 1, FilmsUi.TEXT_DIM, false);
-        title.setMaxLines(2);
-        title.setEllipsize(TextUtils.TruncateAt.END);
-        card.addView(title);
+        int textColor = selected ? FilmsUi.TEXT : FilmsUi.TEXT_DIM;
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        int pad = FilmsUi.dp(this, 12);
+        texts.setPadding(pad, pad, pad, pad);
+        texts.addView(FilmsUi.text(this, "E" + episode.number + (watched ? "  \u2713" : ""), FilmsUi.BODY_SP, FilmsUi.TEXT, true));
+        String shortTitle = episode.shortTitle();
+
+        if (!shortTitle.isEmpty()) {
+            TextView title = FilmsUi.text(this, shortTitle, FilmsUi.CHIP_SP, selected ? FilmsUi.TEXT : textColor, false);
+            title.setMaxLines(2);
+            title.setEllipsize(TextUtils.TruncateAt.END);
+            texts.addView(title);
+        }
+
+        card.addView(texts, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         if (share > 0 && !watched) {
             View bar = new View(this);
-            bar.setBackgroundColor(FilmsUi.WARN);
-            card.addView(bar, new LinearLayout.LayoutParams(Math.round(FilmsUi.dp(this, 130) * share), FilmsUi.dp(this, 3)));
+            bar.setBackgroundColor(FilmsUi.TEXT);
+            card.addView(bar, new FrameLayout.LayoutParams(Math.round(FilmsUi.dp(this, EPISODE_W) * share), FilmsUi.dp(this, 4),
+                    android.view.Gravity.BOTTOM | android.view.Gravity.START));
         }
 
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(FilmsUi.dp(this, 154), FilmsUi.dp(this, 84));
-        params.setMargins(FilmsUi.dp(this, 4), FilmsUi.dp(this, 6), FilmsUi.dp(this, 8), FilmsUi.dp(this, 6));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(FilmsUi.dp(this, EPISODE_W), FilmsUi.dp(this, 92));
+        params.setMargins(FilmsUi.dp(this, 4), FilmsUi.dp(this, 8), FilmsUi.dp(this, 8), FilmsUi.dp(this, 8));
         card.setLayoutParams(params);
+        FilmsUi.clipRounded(card);
         FilmsUi.focusRing(card, card, selected ? FilmsUi.ACCENT : FilmsUi.CARD, null);
         card.setOnClickListener(v -> selectEpisode(episode));
 
@@ -351,12 +392,18 @@ public class FilmDetailsActivity extends Activity {
         String videoId = videoId();
 
         if (mSettings.getFilmsAddonUrl().isEmpty()) {
-            mStreamStatus.setText("Set the stream addon in Settings, Updates, Films (developer).");
+            setStreamStatus(getString(R.string.utubot_films_no_addon));
             mPlay.setText("No stream addon");
             return;
         }
 
-        mStreamStatus.setText("Loading streams...");
+        setStreamStatus("");
+
+        for (int i = 0; i < FilmsUi.PLACEHOLDER_ROWS; i++) {
+            View bar = FilmsUi.placeholderBar(this, 560, 34, i == 0 ? 3 : 6);
+            mStreamList.addView(bar);
+        }
+
         mIo.execute(() -> {
             try {
                 UtubotRealDebridClient client = new UtubotRealDebridClient(mSettings.getFilmsAddonUrl(), mSettings.getFilmsRealDebridToken());
@@ -370,8 +417,16 @@ public class FilmDetailsActivity extends Activity {
             } catch (Exception e) {
                 Log.w(TAG, "Streams failed: " + e.getMessage());
                 mHandler.post(() -> {
-                    mStreamStatus.setText("Cannot load streams: " + e.getMessage());
+                    if (mDestroyed || !videoId.equals(videoId())) {
+                        return;
+                    }
+
+                    mStreamList.removeAllViews();
+                    setStreamStatus("");
                     mPlay.setText("No streams");
+                    View error = FilmsUi.errorBlock(this, "Cannot load streams. Check the connection and try again.", v -> loadStreams());
+                    mStreamList.addView(error);
+                    FilmsUi.retryButton(error).requestFocus();
                 });
             }
         });
@@ -380,12 +435,13 @@ public class FilmDetailsActivity extends Activity {
     private void onStreams(List<Stream> streams) {
         mStreams = streams;
         mStreamList.removeAllViews();
-        mStreamStatus.setText(streams.isEmpty() ? "The addon returned no playable streams." : "");
+        setStreamStatus(streams.isEmpty() ? "The addon returned no playable streams." : "");
         mPlay.setEnabled(!streams.isEmpty());
         updatePlayLabel();
 
         for (int i = 0; i < streams.size(); i++) {
-            mStreamList.addView(streamRow(streams.get(i), i == 0));
+            Stream stream = streams.get(i);
+            mStreamList.addView(FilmsUi.streamRow(this, stream, i == 0, mDevice, v -> play(stream)));
         }
 
         if (!streams.isEmpty()) {
@@ -402,48 +458,6 @@ public class FilmDetailsActivity extends Activity {
         boolean resume = entry != null && entry.resumeMs() > 0;
         String episode = mItem.isSeries() && mEpisode != null ? "S" + mEpisode.season + " E" + mEpisode.number + "  " : "";
         mPlay.setText("▶  " + (resume ? "Resume " + episode + FilmsUi.clock(entry.resumeMs()) : "Play " + episode).trim());
-    }
-
-    private View streamRow(Stream stream, boolean best) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        int pad = FilmsUi.dp(this, 10);
-        row.setPadding(pad, pad, pad, pad);
-
-        if (best) {
-            TextView bestChip = FilmsUi.chip(this, "Best", false);
-            bestChip.setBackground(FilmsUi.rounded(this, FilmsUi.ACCENT, android.graphics.Color.TRANSPARENT, 0));
-            row.addView(bestChip);
-        }
-
-        if (stream.resolution > 0) {
-            TextView quality = FilmsUi.chip(this, stream.resolution == 2160 ? "4K" : stream.resolution + "p", false);
-            quality.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-            row.addView(quality);
-        }
-
-        for (String chip : stream.format.chips()) {
-            row.addView(FilmsUi.chip(this, chip, false));
-        }
-
-        if (stream.sizeBytes > 0) {
-            row.addView(FilmsUi.chip(this, Stream.formatSize(stream.sizeBytes), false));
-        }
-
-        String note = stream.format.note(mDevice);
-
-        if (!note.isEmpty()) {
-            row.addView(FilmsUi.chip(this, note, true));
-        }
-
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, FilmsUi.dp(this, 3), 0, FilmsUi.dp(this, 3));
-        row.setLayoutParams(params);
-        FilmsUi.focusRing(row, row, FilmsUi.CARD, null);
-        row.setOnClickListener(v -> play(stream));
-
-        return row;
     }
 
     private void playBest() {

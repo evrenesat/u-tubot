@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class UtubotFilmFormatTest {
@@ -77,6 +78,16 @@ public class UtubotFilmFormatTest {
         assertEquals(UtubotFilmFormat.PROFILE_UNKNOWN, UtubotFilmFormat.parse("Movie 2160p DV HDR HEVC").dolbyVisionProfile);
         assertEquals(Hdr.DOLBY_VISION, UtubotFilmFormat.parse("Movie 2160p DV HDR HEVC").hdr);
         assertTrue(UtubotFilmFormat.parse("Movie 2160p DV HDR HEVC").hasHdr10Layer);
+    }
+
+    @Test
+    public void dolbyVisionProfile5NeverGetsAnHdr10Chip() {
+        UtubotFilmFormat f = UtubotFilmFormat.parse("Torrentio 4k DV | HDR Movie.2160p.REMUX.HEVC.DV.P5.TrueHD");
+
+        assertEquals(5, f.dolbyVisionProfile);
+        assertFalse(f.hasHdr10Layer);
+        assertFalse(f.chips().contains("HDR10"));
+        assertTrue(UtubotFilmFormat.parse("Movie 2160p DV HDR HEVC").chips().contains("HDR10"));
     }
 
     @Test

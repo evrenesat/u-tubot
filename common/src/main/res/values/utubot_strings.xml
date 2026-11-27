@@ -65,8 +65,11 @@
     <string name="utubot_films_list">List streams</string>
     <string name="utubot_films_missing">Set the stream addon address and the IMDb id first</string>
     <string name="utubot_films_no_streams">The addon returned no playable streams</string>
-    <string name="utubot_films_failed">Cannot load streams: %1$s</string>
-    <string name="utubot_films_hint">%1$d stream(s). Up and down to choose, OK to play</string>
+    <string name="utubot_films_failed">Cannot load streams</string>
+    <plurals name="utubot_films_hint">
+        <item quantity="one">%1$d stream. Up and down to choose, OK to play</item>
+        <item quantity="other">%1$d streams. Up and down to choose, OK to play</item>
+    </plurals>
     <string name="utubot_development_mode">Development mode</string>
     <string name="utubot_development_mode_desc">Offer a new version at once when no video plays, with Install selected</string>
     <string name="utubot_browse_refresh_value">%s min</string>
@@ -289,6 +292,10 @@
     <string name="utubot_whats_new_failed">Couldn\'t load the version history: %s</string>
     <string name="utubot_whats_new_none">No versions are recorded yet</string>
     <string name="utubot_release_page_on_phone">Open the release page on a phone (QR code)</string>
+    <string name="utubot_films_no_addon">Set the stream addon in your u·tubot web settings (Accounts and services), or in Settings, Updates, Films developer entry</string>
+    <string name="utubot_films_title">Films</string>
+    <string name="utubot_films_open_home">Open Films</string>
+    <string name="utubot_films_turn_on">Turn on Settings, Updates, Films developer entry to use Films</string>
     <string name="utubot_inbox_title">Inbox</string>
     <string name="utubot_inbox_message">Your ready results: cuts, summaries, research and captions</string>
     <string name="utubot_inbox_empty">No results yet</string>
