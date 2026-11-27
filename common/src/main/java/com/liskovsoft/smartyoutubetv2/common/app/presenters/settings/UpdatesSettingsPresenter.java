@@ -29,6 +29,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotChangelog;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotClient;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotChangelog.Entry;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsDeveloperPresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 
@@ -89,6 +90,18 @@ public class UpdatesSettingsPresenter extends BasePresenter<Void> {
             settingsPresenter.appendSingleSwitch(UiOptionItem.from(getContext().getString(R.string.utubot_development_mode),
                     getContext().getString(R.string.utubot_development_mode_desc),
                     option -> mSettings.setDevelopmentMode(option.isSelected()), mSettings.isDevelopmentMode()));
+            settingsPresenter.appendSingleSwitch(UiOptionItem.from(getContext().getString(R.string.utubot_films_developer),
+                    getContext().getString(R.string.utubot_films_developer_desc),
+                    option -> {
+                        mSettings.setFilmsDeveloperEnabled(option.isSelected());
+                        settingsPresenter.closeDialog();
+                        show();
+                    }, mSettings.isFilmsDeveloperEnabled()));
+
+            if (mSettings.isFilmsDeveloperEnabled()) {
+                settingsPresenter.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.utubot_films_open),
+                        option -> UtubotFilmsDeveloperPresenter.instance(getContext()).show()));
+            }
         }
 
         OptionItem releaseNotesItem = UiOptionItem.from(getContext().getString(R.string.release_notes), option -> loadReleases());

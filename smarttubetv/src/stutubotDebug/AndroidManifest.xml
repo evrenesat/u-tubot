@@ -12,11 +12,6 @@
             android:name="com.liskovsoft.smartyoutubetv2.tv.utubot.harness.CutsHarnessActivity"
             android:exported="true"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
-        <!-- Real-Debrid spike: list a Stremio addon's streams and play one on the progressive path (issue 211) -->
-        <activity
-            android:name="com.liskovsoft.smartyoutubetv2.tv.utubot.harness.RealDebridHarnessActivity"
-            android:exported="true"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
     </application>
 
 </manifest>

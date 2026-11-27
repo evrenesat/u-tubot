@@ -1,4 +1,4 @@
-package com.liskovsoft.smartyoutubetv2.tv.utubot.harness;
+package com.liskovsoft.smartyoutubetv2.tv.utubot.films;
 
 import android.app.Activity;
 import android.graphics.Color;
@@ -29,7 +29,10 @@ import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.ExoPlayerInitialize
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.renderer.CustomOverridesRenderersFactory;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.selector.RestoreTrackSelector;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SponsorBlockData;
+import com.liskovsoft.smartyoutubetv2.common.R;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsDeveloperPresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient.Stream;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridSkips;
 
@@ -46,35 +49,24 @@ import io.reactivex.disposables.Disposable;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 
 /**
- * Debug builds only. The hidden developer entry of the Real-Debrid spike: paste (or start from the intent) a Stremio stream addon
- * address and an IMDb id, list the streams the addon returns, and play one through the app's real player on the progressive path (a muxed
- * MP4/MKV, an HDR/Dolvision/AV1 file, whatever the extractor decodes), next to {@link ExoPlayerController#openUrlList}. A hand-written skip
- * list, when given, is fed through the sponsor block so cut-style playback is proven without building a director's cut.
+ * The film screen of the Real-Debrid spike (issue 211), reached from Settings, Updates, "Films (developer)" once the developer entry is on.
+ * It lists the streams the configured Stremio addon returns for the IMDb id and plays the chosen one through the app's real player on the
+ * progressive path, next to {@link ExoPlayerController#openUrlList}. A hand-written skip list, when set, is fed through the sponsor block so
+ * cut-style playback is proven without building a director's cut.
  *
- * <p>Nothing here reaches YouTube; the addon and the stream are the developer's own (a self-hosted Comet, a Torrentio instance, the owner's
- * Real-Debrid links). The Real-Debrid token is passed in and added to a stream's address by {@link UtubotRealDebridClient}, never logged.
- *
- * <pre>
- * adb shell am start -n dev.utubot.tv/com.liskovsoft.smartyoutubetv2.tv.utubot.harness.RealDebridHarnessActivity \
- *     --es imdb_id tt0944947 --es addon_url https://torrentio.strem.io --es rd_token "" --es skips "30,90;600,720"
- * </pre>
+ * <p>The addon address and the Real-Debrid token come from {@link UtubotSettings}; stream addresses can carry a key, so neither they nor the
+ * addon address are shown or logged. The screen closes at once when the developer entry is off.
  */
-public class RealDebridHarnessActivity extends Activity {
-    private static final String TAG = "UtubotRealDebridHarness";
-    private static final String EXTRA_IMDB_ID = "imdb_id";
-    private static final String EXTRA_ADDON_URL = "addon_url";
-    private static final String EXTRA_RD_TOKEN = "rd_token";
-    private static final String EXTRA_SKIPS = "skips";
+public class RealDebridFilmsActivity extends Activity {
+    private static final String TAG = "UtubotRealDebridFilms";
 
     private static final int TEXT_SP = 18;
     private static final int ROW_PADDING = 16;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
+    private UtubotSettings mSettings;
     private FrameLayout mRoot;
     private LinearLayout mPanel;
-    private TextView mAddonField;
-    private TextView mImdbField;
-    private TextView mLoadButton;
     private LinearLayout mList;
     private TextView mStatus;
     private ExoPlayerInitializer mInitializer;
@@ -93,6 +85,13 @@ public class RealDebridHarnessActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        mSettings = UtubotSettings.instance(this);
+
+        if (!mSettings.isFilmsDeveloperEnabled()) {
+            finish();
+            return;
+        }
+
         mRoot = new FrameLayout(this);
         mRoot.setBackgroundColor(Color.BLACK);
         PlayerView playerView = new PlayerView(this);
@@ -101,20 +100,8 @@ public class RealDebridHarnessActivity extends Activity {
         buildPanel();
         setContentView(mRoot);
 
-        String addonUrl = getIntent().getStringExtra(EXTRA_ADDON_URL);
-        String imdbId = getIntent().getStringExtra(EXTRA_IMDB_ID);
-        String rdToken = getIntent().getStringExtra(EXTRA_RD_TOKEN);
-        String skips = getIntent().getStringExtra(EXTRA_SKIPS);
-
-        if (addonUrl != null) {
-            mAddonField.setText(addonUrl);
-        }
-
-        if (imdbId != null) {
-            mImdbField.setText(imdbId);
-        }
-
-        mClient = new UtubotRealDebridClient(addonUrl == null ? "" : addonUrl, rdToken);
+        String imdbId = getIntent().getStringExtra(UtubotFilmsDeveloperPresenter.EXTRA_IMDB_ID);
+        mClient = new UtubotRealDebridClient(mSettings.getFilmsAddonUrl(), mSettings.getFilmsRealDebridToken());
 
         mInitializer = new ExoPlayerInitializer(this);
         mController = new ExoPlayerController(this, noOpListener());
@@ -132,11 +119,7 @@ public class RealDebridHarnessActivity extends Activity {
         holdVideo(presenter, mVideo);
         mSponsorController = presenter.getController(SponsorBlockController.class);
 
-        if (imdbId != null && !imdbId.isEmpty()) {
-            loadStreams(addonUrl == null ? "" : addonUrl, imdbId, skips);
-        } else {
-            setStatus("Enter the addon address and the IMDb id, then Load.");
-        }
+        loadStreams(imdbId == null ? "" : imdbId);
     }
 
     private void buildPanel() {
@@ -148,13 +131,6 @@ public class RealDebridHarnessActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
         panelParams.height = (int) (0.45f * getResources().getDisplayMetrics().heightPixels);
         mRoot.addView(mPanel, panelParams);
-
-        mAddonField = editableLabel("Addon: ", "");
-        mImdbField = editableLabel("IMDb: ", "");
-        mLoadButton = button("Load streams");
-        mPanel.addView(mAddonField);
-        mPanel.addView(mImdbField);
-        mPanel.addView(mLoadButton);
 
         mList = new LinearLayout(this);
         mList.setOrientation(LinearLayout.VERTICAL);
@@ -169,53 +145,28 @@ public class RealDebridHarnessActivity extends Activity {
                 Gravity.TOP));
     }
 
-    private TextView editableLabel(String prefix, String value) {
-        TextView view = new TextView(this);
-        view.setText(prefix + value);
-        view.setTextColor(Color.WHITE);
-        view.setTextSize(TEXT_SP);
-        view.setPadding(ROW_PADDING, 8, ROW_PADDING, 8);
-        view.setFocusable(true);
-        view.setFocusableInTouchMode(true);
-        return view;
-    }
-
-    private TextView button(String text) {
-        TextView view = new TextView(this);
-        view.setText(text);
-        view.setTextColor(Color.GREEN);
-        view.setBackgroundColor(0xAA000000);
-        view.setTextSize(TEXT_SP);
-        view.setPadding(ROW_PADDING, 12, ROW_PADDING, 12);
-        view.setFocusable(true);
-        view.setFocusableInTouchMode(true);
-        view.setOnClickListener(v -> loadStreams(mAddonField.getText().toString().trim(), mImdbField.getText().toString().trim(), null));
-        return view;
-    }
-
-    private void loadStreams(String addonUrl, String imdbId, @Nullable String skips) {
-        if (addonUrl.isEmpty() || imdbId.isEmpty()) {
-            setStatus("Add the addon address and the IMDb id first.");
+    private void loadStreams(String imdbId) {
+        if (imdbId.isEmpty()) {
+            setStatus(getString(R.string.utubot_films_missing));
             return;
         }
 
-        mClient = new UtubotRealDebridClient(addonUrl, getIntent().getStringExtra(EXTRA_RD_TOKEN));
         setStatus("Loading streams…");
         mLoaded = false;
         clearList();
 
         mLoadAction = Observable.fromCallable(() -> mClient.streams(imdbId))
                 .subscribeOn(Schedulers.io())
-                .subscribe(list -> mHandler.post(() -> onStreamsLoaded(list, skips)),
-                        error -> mHandler.post(() -> setStatus("Can't load streams: " + error.getMessage())));
+                .subscribe(list -> mHandler.post(() -> onStreamsLoaded(list)),
+                        error -> mHandler.post(() -> setStatus(getString(R.string.utubot_films_failed, error.getMessage()))));
     }
 
-    private void onStreamsLoaded(List<Stream> streams, @Nullable String skips) {
+    private void onStreamsLoaded(List<Stream> streams) {
         mStreams = streams;
         mLoaded = true;
 
         if (streams.isEmpty()) {
-            setStatus("The addon returned no playable streams.");
+            setStatus(getString(R.string.utubot_films_no_streams));
             return;
         }
 
@@ -235,7 +186,7 @@ public class RealDebridHarnessActivity extends Activity {
         }
 
         setFocus(0);
-        setStatus(streams.size() + " stream(s). Move and press OK to play" + (skips != null ? ", skips on." : "."));
+        setStatus(getString(R.string.utubot_films_hint, streams.size()));
     }
 
     private void clearList() {
@@ -265,17 +216,12 @@ public class RealDebridHarnessActivity extends Activity {
         }
 
         Stream stream = mStreams.get(index);
-        String url = mClient.playbackUrl(stream);
-
-        if (url == null) {
-            setStatus("No address to play this stream (Real-Debrid token needed?).");
-            return;
-        }
+        String url = stream.url;
 
         dispatchNewVideo();
         mController.setVideo(mVideo);
 
-        String skips = getIntent().getStringExtra(EXTRA_SKIPS);
+        String skips = getIntent().getStringExtra(UtubotFilmsDeveloperPresenter.EXTRA_SKIPS);
 
         if (skips != null && !skips.isEmpty() && mSponsorController != null) {
             enableSponsorBlockForSkips();
@@ -284,8 +230,7 @@ public class RealDebridHarnessActivity extends Activity {
 
         mController.openProgressiveUrl(url);
         mController.setPlayWhenReady(true);
-        setStatus("Playing: " + url);
-        Log.i(TAG, "play " + stream.display() + " -> " + url);
+        setStatus("Playing: " + stream.display());
     }
 
     private void enableSponsorBlockForSkips() {
@@ -309,7 +254,7 @@ public class RealDebridHarnessActivity extends Activity {
 
     private void setStatus(String text) {
         mStatus.setText(text);
-        Log.i(TAG, text);
+        Log.i(TAG, text); // a status never holds an address or a token
     }
 
     @Override
@@ -338,6 +283,11 @@ public class RealDebridHarnessActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (mRoot == null) {
+            super.onDestroy();
+            return;
+        }
+
         RxHelper.disposeActions(mLoadAction);
 
         if (mSponsorController != null) {

@@ -36,6 +36,22 @@
     <string name="utubot_auto_scroll_value">%s px/s</string>
     <string name="utubot_browse_refresh">Browse refresh</string>
     <string name="utubot_update_interval">Update check interval</string>
+    <string name="utubot_films_developer">Films developer entry</string>
+    <string name="utubot_films_developer_desc">Developer spike: play Real-Debrid film streams from a Stremio addon. Off by default</string>
+    <string name="utubot_films_open">Films (developer)</string>
+    <string name="utubot_films_addon">Stream addon address</string>
+    <string name="utubot_films_addon_hint">https://addon.example.com/realdebrid={token}</string>
+    <string name="utubot_films_token">Real-Debrid token</string>
+    <string name="utubot_films_token_hint">Replaces {token} in the addon address</string>
+    <string name="utubot_films_imdb">IMDb id</string>
+    <string name="utubot_films_imdb_hint">tt0000000</string>
+    <string name="utubot_films_skips">Skip list</string>
+    <string name="utubot_films_skips_hint">Seconds, start,end pairs: 30,90;600,720</string>
+    <string name="utubot_films_list">List streams</string>
+    <string name="utubot_films_missing">Set the stream addon address and the IMDb id first</string>
+    <string name="utubot_films_no_streams">The addon returned no playable streams</string>
+    <string name="utubot_films_failed">Cannot load streams: %1$s</string>
+    <string name="utubot_films_hint">%1$d stream(s). Up and down to choose, OK to play</string>
     <string name="utubot_development_mode">Development mode</string>
     <string name="utubot_development_mode_desc">Offer a new version at once when no video plays, with Install selected</string>
     <string name="utubot_browse_refresh_value">%s min</string>
