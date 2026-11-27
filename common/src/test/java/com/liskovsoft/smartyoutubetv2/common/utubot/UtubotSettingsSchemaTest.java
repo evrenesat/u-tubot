@@ -28,7 +28,7 @@ import static org.junit.Assert.assertTrue;
 public class UtubotSettingsSchemaTest {
     /** Never synced: the TV's identity, the connection, local state and developer tools (plan section 2.4) */
     private static final List<String> DEVICE_ONLY = Arrays.asList("url", "token", "update_url", "pair_prompt_done", "setup_prompt_done",
-            "dismissed_update", "dismissed_update_code", "cut_legend_shown", "pending_prompt_sets", "films_developer", "films_skips", "films_imdb_id");
+            "dismissed_update", "dismissed_update_code", "cut_legend_shown", "pending_prompt_sets", "films_developer", "films_skips", "films_imdb_id", "films_catalog_url");
 
     private static String read(String relative) throws Exception {
         File file = new File(relative);

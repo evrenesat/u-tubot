@@ -17,6 +17,7 @@ import com.liskovsoft.smartyoutubetv2.common.utils.SimpleEditDialog;
  */
 public class UtubotFilmsDeveloperPresenter extends BasePresenter<Void> {
     public static final String FILMS_ACTIVITY = "com.liskovsoft.smartyoutubetv2.tv.utubot.films.RealDebridFilmsActivity";
+    public static final String HOME_ACTIVITY = "com.liskovsoft.smartyoutubetv2.tv.utubot.films.FilmsHomeActivity";
     public static final String EXTRA_IMDB_ID = "imdb_id";
     public static final String EXTRA_SKIPS = "skips";
 
@@ -44,6 +45,7 @@ public class UtubotFilmsDeveloperPresenter extends BasePresenter<Void> {
                 option -> edit(R.string.utubot_films_imdb, R.string.utubot_films_imdb_hint, mSettings::getFilmsImdbId, mSettings::setFilmsImdbId, false)));
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_films_skips), dash(mSettings.getFilmsSkips()),
                 option -> edit(R.string.utubot_films_skips, R.string.utubot_films_skips_hint, mSettings::getFilmsSkips, mSettings::setFilmsSkips, false)));
+        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_films_browse), option -> openHome()));
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_films_list), option -> openFilms()));
         dialog.showDialog(context.getString(R.string.utubot_films_open));
     }
@@ -59,6 +61,12 @@ public class UtubotFilmsDeveloperPresenter extends BasePresenter<Void> {
         return new Intent().setClassName(getContext(), FILMS_ACTIVITY)
                 .putExtra(EXTRA_IMDB_ID, mSettings.getFilmsImdbId())
                 .putExtra(EXTRA_SKIPS, mSettings.getFilmsSkips());
+    }
+
+    private void openHome() {
+        Context context = getContext();
+        AppDialogPresenter.instance(context).closeDialog();
+        context.startActivity(new Intent().setClassName(context, HOME_ACTIVITY));
     }
 
     private void openFilms() {

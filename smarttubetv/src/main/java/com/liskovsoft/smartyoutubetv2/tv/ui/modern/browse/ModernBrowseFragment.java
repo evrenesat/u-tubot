@@ -477,6 +477,10 @@ public class ModernBrowseFragment extends Fragment implements BrowseView, Modern
 
     @Override
     public void onSectionClicked(int sectionId) {
+        if (mPresenter.openSectionApp(sectionId)) {
+            return;
+        }
+
         if (sectionId != mSectionId) {
             mFocusOnContent = true;
             onSectionFocused(sectionId);
