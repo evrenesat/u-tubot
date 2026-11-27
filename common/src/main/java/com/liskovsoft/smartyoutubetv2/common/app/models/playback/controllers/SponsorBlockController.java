@@ -1,6 +1,7 @@
 package com.liskovsoft.smartyoutubetv2.common.app.models.playback.controllers;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 import com.liskovsoft.mediaserviceinterfaces.MediaItemService;
 import com.liskovsoft.mediaserviceinterfaces.ServiceManager;
@@ -252,6 +253,30 @@ public class SponsorBlockController extends BasePlayerController {
     private boolean isCutActive() {
         UtubotCutController cut = getController(UtubotCutController.class);
         return cut != null && cut.isCutActive();
+    }
+
+    /**
+     * A hand-written list of skip ranges (the Real-Debrid spike: prove cut-style playback through the sponsor-skip machinery without
+     * building a director's cut). It replaces what the sponsor block would fetch from the service, so the existing skip logic runs over
+     * these ranges. Used by the debug harness; the normal path still fetches from the service.
+     */
+    public void applyHandWrittenSkips(@Nullable List<SponsorSegment> segments) {
+        if (getPlayer() == null) {
+            return;
+        }
+
+        disposeActions();
+
+        if (segments == null || segments.isEmpty()) {
+            mActiveSegments = null;
+            return;
+        }
+
+        mActiveSegments = new ArrayList<>(segments);
+        mSegmentsAction = Observable.just(mActiveSegments)
+                .flatMap(this::startSponsorWatcher)
+                .subscribe(this::skipSegment,
+                        error -> Log.d(TAG, "It's ok. Nothing to block in this video. Error msg: %s", error.getMessage()));
     }
 
     private void skipSegment(long interval) {

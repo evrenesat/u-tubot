@@ -55,6 +55,11 @@ public class UtubotSettings {
     private static final String KEY_DISMISSED_UPDATE_CODE = "dismissed_update_code";
     private static final String KEY_UPDATE_INTERVAL_MINUTES = "update_interval_minutes";
     private static final String KEY_DEVELOPMENT_MODE = "development_mode";
+    private static final String KEY_FILMS_DEV = "films_developer";
+    private static final String KEY_FILMS_ADDON = "films_addon_url";
+    private static final String KEY_FILMS_RD_TOKEN = "films_rd_token";
+    private static final String KEY_FILMS_IMDB = "films_imdb_id";
+    private static final String KEY_FILMS_SKIPS = "films_skips";
     private static final String KEY_PENDING_PROMPT_SETS = "pending_prompt_sets";
     private static final String LIST_SEPARATOR = "\n";
     @SuppressLint("StaticFieldLeak")
@@ -499,6 +504,52 @@ public class UtubotSettings {
 
     public void setDevelopmentMode(boolean enabled) {
         mPrefs.edit().putBoolean(KEY_DEVELOPMENT_MODE, enabled).apply();
+    }
+
+    /**
+     * The hidden Real-Debrid films developer entry (issue 211). Off by default, built-in flavor only.
+     */
+    public boolean isFilmsDeveloperEnabled() {
+        return isBuiltIn() && mPrefs.getBoolean(KEY_FILMS_DEV, false);
+    }
+
+    public void setFilmsDeveloperEnabled(boolean enabled) {
+        mPrefs.edit().putBoolean(KEY_FILMS_DEV, enabled).apply();
+    }
+
+    /** The Stremio stream addon address; it may hold a key, so it is never logged or shown. */
+    public String getFilmsAddonUrl() {
+        return mPrefs.getString(KEY_FILMS_ADDON, "");
+    }
+
+    public void setFilmsAddonUrl(String value) {
+        mPrefs.edit().putString(KEY_FILMS_ADDON, value == null ? "" : value.trim()).apply();
+    }
+
+    /** The Real-Debrid token, entered on the TV and kept in these private preferences; never logged or shown. */
+    public String getFilmsRealDebridToken() {
+        return mPrefs.getString(KEY_FILMS_RD_TOKEN, "");
+    }
+
+    public void setFilmsRealDebridToken(String value) {
+        mPrefs.edit().putString(KEY_FILMS_RD_TOKEN, value == null ? "" : value.trim()).apply();
+    }
+
+    public String getFilmsImdbId() {
+        return mPrefs.getString(KEY_FILMS_IMDB, "");
+    }
+
+    public void setFilmsImdbId(String value) {
+        mPrefs.edit().putString(KEY_FILMS_IMDB, value == null ? "" : value.trim()).apply();
+    }
+
+    /** The hand-written skip list ("30,90;600,720"), see {@link UtubotRealDebridSkips}. */
+    public String getFilmsSkips() {
+        return mPrefs.getString(KEY_FILMS_SKIPS, "");
+    }
+
+    public void setFilmsSkips(String value) {
+        mPrefs.edit().putString(KEY_FILMS_SKIPS, value == null ? "" : value.trim()).apply();
     }
 
     public int getBrowseRefreshMinutes() {

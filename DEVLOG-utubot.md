@@ -62,6 +62,17 @@
 
 - The Settings section "u·tubot" is now "AI features" (switches, summary delay, reading pace, auto captions, auto cuts, cut jump, prompts) and a new "Backend" section (`UtubotBackendSettingsPresenter`: Import setup, Pair with code, Test connection, u·tubot web admin, Advanced with the address and token). Browse refresh moved to System, General; update check interval and development mode moved to Updates. Every option has a one-line description. Docs and string references follow the new names.
 
+## 2026-11-27 (Real-Debrid films spike, issue #211, takeover)
+
+- Spike to play Real-Debrid film streams in the u·tubot player: `ExoMediaSourceFactory.fromProgressiveUrl` and `ExoPlayerController.openProgressiveUrl` next
+  to the `urlList` path, `UtubotRealDebridSkips` + `SponsorBlockController.applyHandWrittenSkips` for a hand-written skip list.
+- Takeover fixes: the client spoke a made-up protocol (`POST /Streams/{id}`, a `?token=` suffix); it is now the Stremio one (`GET /stream/movie/{id}.json`,
+  direct http(s) `url` only, `{token}` placeholder in the addon address) and its errors never quote the address. The entry was an exported debug
+  activity driven by adb extras (token on the command line, the stream address shown and logged); it is now `RealDebridFilmsActivity` (stutubot flavor,
+  not exported) behind Settings, Updates, "Films developer entry" (off by default), with the address, token, IMDb id and skips entered on the TV and kept
+  in `UtubotSettings`. Stray `temp/pr-body-*.md` files removed. The on-TV codec matrix is the owner's: `docs/films-codec-checklist.md`.
+- Tests: `UtubotRealDebridClientTest` (fake addon, no real network), `UtubotRealDebridSkipsTest`, `UtubotFilmsDeveloperPresenterTest`.
+
 ## 2026-11-26 (voice plan checkpoint 0: gates, issue #180)
 
 - `ai/VOICE_CONTROL_PLAN.md`: owner decisions recorded (all as recommended; R2T4 is MIT, evrenesat/r2t4#22). Measured on the owner's server, from the backend's container with its own gateway key, no config changed: speech-to-text `stt` 50th 0.34 s / 90th 0.43 s; intent `fast` 12.2 / 25.4 s and `coder` 3.0 / 5.4 s (both aliases think despite `reasoning_effort: none`, 3 of 20 calls hit the 120-token cap); no speech-out route on the gateway; backend loop on `/v1/health` 1.9 / 2.2 ms, worst 57 to 111 ms; WebSocket through the proxy chain not provable without a config change. Sections 2.5 and 5.2 carry the numbers and who must act; the infra task is evrenesat/evreniops#250.

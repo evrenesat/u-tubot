@@ -117,6 +117,14 @@ public class ExoMediaSourceFactory {
     }
 
     /**
+     * A single progressive stream (a Real-Debrid direct link, an MP4/MKV, anything {@link Util#inferContentType} reads as a file the
+     * extractor plays): one media source, next to {@link #fromUrlList} which takes a list of format alternatives.
+     */
+    public MediaSource fromProgressiveUrl(String url) {
+        return buildMediaSource(Uri.parse(url), null);
+    }
+
+    /**
      * Returns a new DataSource factory.
      *
      * @param useBandwidthMeter Whether to set {@link #BANDWIDTH_METER} as a listener to the new

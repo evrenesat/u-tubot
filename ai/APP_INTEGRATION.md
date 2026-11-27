@@ -66,6 +66,12 @@ so the other flavors behave as before.
 | `exoplayer/selector/TrackSelectorManager.java` | `findUtubotCaptionTrack` first in `findBestMatch`, `invalidateSubtitles` | an HQ track is picked by its id, not by the language it shares with YouTube's track |
 | `app/models/playback/controllers/VideoStateController.java` | `restoreSubtitleFormat` leaves the HQ track of the video selected | the saved subtitle choice (usually none) is applied twice per video, the second time after the HQ track was picked (#31) |
 | `app/models/playback/controllers/PlayerUIController.java` | `onTrackSelected` refreshes the CC button; a key it consumes calls `UtubotCutController.resetJumpGesture` | the button follows a track the app picked, and OK, Back, a menu or a number key breaks the cut's double press even though it never reaches the cut controller |
+| `common/.../utubot/UtubotRealDebridClient.java` | new: `streams(imdbId)` does `GET {addon}/stream/movie/{imdbId}.json` on a Stremio addon (Torrentio/Comet/MediaFusion), keeps entries with a direct http(s) `url` (torrent-only entries are dropped); `{token}` in the addon address is replaced by the Real-Debrid token entered on the TV; errors never quote the address (it may hold a key) | the spike's film list: a title is turned into playable streams, the key stays on the TV |
+| `common/.../utubot/UtubotRealDebridSkips.java` | new: `parse(spec)` turns a hand-written `start,end` spec (seconds, `ms` suffix, comma/semicolon/newline separated, reversed ranges kept in time order) into `SponsorSegment`s of `CATEGORY="real-debrid"` with a skip action | the hand-written skip list fed through the sponsor block to prove cut-style playback, no director's cut built |
+| `app/models/playback/controllers/ExoPlayerController.java` | `openProgressiveUrl(url)` next to `openUrlList`, builds a single progressive source and plays it | the spike plays one Real-Debrid stream through the same path as `urlList` |
+| `exoplayer/ExoMediaSourceFactory.java` | `fromProgressiveUrl(url)` next to `fromUrlList` | the single-source media source for one stream |
+| `app/models/playback/controllers/SponsorBlockController.java` | `applyHandWrittenSkips(List<SponsorSegment>)` (and `@Nullable` import): feeds the hand-written ranges to the sponsor block (`Observable.just(...).flatMap(this::startSponsorWatcher)`); the caller enables and skips the `real-debrid` category first | cut-style skips for a Real-Debrid stream, through the existing sponsor watcher |
+| `common/.../utubot/UtubotFilmsDeveloperPresenter.java`, `UtubotSettings.java`, `UpdatesSettingsPresenter.java`, `smarttubetv/src/stutubot/.../films/RealDebridFilmsActivity.java` | new: Settings, Updates, switch "Films developer entry" (off by default, built-in flavor only; its address, token, IMDb id and skip list live in the private `UtubotSettings` prefs, never logged) shows "Films (developer)": address, token, IMDb id, skip list, "List streams" which opens the film screen (stutubot flavor, not exported, closes itself when the switch is off) | the hidden developer entry of the spike; the codec checklist is `docs/films-codec-checklist.md` |
 | `tv/presenter/VideoCardPresenter.java` | mark with own colour, `addMark` overload, card tag | mark rendering, panel reads the focused card |
 | `tv/ui/modern/widgets/ModernVideoCard.java` | card tag | panel reads the focused card |
 | `tv/ui/common/LeanbackActivity.java` | `UtubotPanelController` (key dispatch, resume, pause) | passive Summary panel and the Summary view (not in the player activity) |
@@ -382,6 +388,15 @@ captions") has the recipe, including the network namespace that keeps the emulat
 `PlaybackPresenter`'s `UtubotCutController` (and `SponsorBlockController`) get the video events, a cut request is created the way the
 menu does it (`--es request_preset`, or `--ez await_prompt true` for the QR sheet), and the mock backend's cuts routes stand in for the
 server. The recipe, with the keyevents of a seek and the log lines a check reads: docs/development.md, "Checking the director's cuts".
+
+## Checking the Real-Debrid streams spike without YouTube
+
+The spike's entry is on the TV: Settings, Updates, "Films developer entry" (off by default; stutubot flavor only), then "Films (developer)". Enter
+the stream addon address, the Real-Debrid token, an IMDb id and optionally a skip list ("30,90;600,720", seconds), then "List streams" and choose one.
+The address may contain `{token}`, which is replaced by the token (Torrentio: `https://host/realdebrid={token}`). Address and token stay in the app's
+private preferences and are never logged or shown. The skip list is fed through `SponsorBlockController.applyHandWrittenSkips` (the `real-debrid`
+category is set to skip first). Unit tests run against a local fake addon (`TinyHttpServer`), never a real service and never YouTube. What the owner
+tests on the TCL: `docs/films-codec-checklist.md`.
 
 ## End-to-end test without a device
 
