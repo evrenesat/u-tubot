@@ -241,15 +241,20 @@ public class UtubotCaptionStoreTest {
     }
 
     @Test
-    public void deleteAll_removesEveryTrackAndLabels() {
+    public void deleteAll_removesEveryTrackAndLabels() throws IOException {
         mStore.save(VIDEO, track("tr", "Turkish (u·tubot)", 0), TURKISH);
         mStore.save(VIDEO, track("en", "English (u·tubot)", 0), ENGLISH);
         mStore.save(OTHER_VIDEO, track("tr", "Turkish (u·tubot)", 0), TURKISH);
+        File unknownVideo = new File(mRoot, "not-a-video!");
+        assertTrue(unknownVideo.mkdirs());
+        File unknownTrack = new File(unknownVideo, "tr.vtt");
+        Files.write(unknownTrack.toPath(), TURKISH);
 
         assertEquals(3, mStore.deleteAll());
 
         assertFalse(new File(mRoot, VIDEO).exists());
         assertFalse(new File(mRoot, OTHER_VIDEO).exists());
+        assertTrue(unknownTrack.exists());
         assertFalse(mStore.has(VIDEO));
         assertFalse(mStore.has(OTHER_VIDEO));
         assertEquals(0, mStore.usage().videos);
