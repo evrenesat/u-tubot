@@ -1,3 +1,10 @@
+## 2026-11-27 (cuts: a model that ranks the whole video no longer loses the end, issue #255)
+
+- Cause: half cut 675edfafa45f ranked 38 scenes (4427 of 4889 s); ranks 20-38 were in film order, so the rank trim kept ranks 1-19 and dropped the end of the film.
+- `cuts.ranked_tail_in_time_order` / `is_non_selection` / `choose_problem`: an answer is "not chosen" when it keeps more than `non_selection_factor` (2.5) times the target or maximum, or when its distinct ranks follow video order over `rank_tail_min` (6) parts while the total is over the asked amount plus the band. Tied ranks are not a judgement and never count.
+- One-pass, reduce and map excerpts re-ask once with "choose about N s (M min) ... rank only the parts you keep". If trimming is still needed, `spread_select` splits the video into windows of half `max_skip_s` (600) and trims inside each window by rank, so no stretch the trim removes exceeds `max_skip_s` (a gap the model itself left stays). Used by `select_for_target` and `trim_to_cap` for non-selection answers only; normal answers trim as before.
+- Tests: `tests/test_cuts_rank_trim.py` (a recorded answer shaped like the half cut, no real model; detection, spread, the re-ask once, a normal answer asked once).
+
 ## 2026-11-26 (UTB-230 multi-user, per-user key, budget and rate limit)
 
 - Per-user AI provider key: a user stores their own OpenAI-compatible upstream with `PUT /v1/me/provider`, reads it back with

@@ -387,6 +387,14 @@ class CutsConfig(BaseModel):
     preset_target_frac: dict[str, float] = Field(default_factory=lambda: {"cut-skim-film": 0.5})
     length_tolerance: float = 0.15  # accepted kept length: target +/- this fraction
     over_ask_frac: float = 0.2  # the model is asked for this much more than the target
+    # A model that ranks (almost) the whole video instead of choosing is asked once more to choose.
+    # Its answer counts as such when it keeps more than `non_selection_factor` times the target (or
+    # maximum), or when the ranks follow video order over a tail of `rank_tail_min` parts or more
+    # while the total is over the asked amount plus the band. If trimming is still needed it is spread over the
+    # video, never by rank alone: no stretch the trim removes is longer than `max_skip_s`.
+    non_selection_factor: float = Field(default=2.5, gt=1.0)
+    rank_tail_min: int = Field(default=6, ge=2)
+    max_skip_s: float = Field(default=600.0, gt=0.0)
     release_duration_tolerance_ms: int = 2000
     # The cut list and each ready cut are immutable per cut key, so they carry a strong ETag and a
     # long cache lifetime: the client serves the menu from them and re-validates with If-None-Match,

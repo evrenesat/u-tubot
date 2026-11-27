@@ -211,6 +211,9 @@ max_tokens = 2000
 # client_captions_wait_s = 120.0   # after a 403, how long a cut waits for the TV to upload its own captions before failing
 # length_tolerance = 0.15          # a preset with a target length keeps target +/- this fraction
 # over_ask_frac = 0.2              # the model is asked for this much more than the target
+# non_selection_factor = 2.5       # an answer keeping more than this times the target counts as not chosen
+# rank_tail_min = 6                # ranks in video order over this many parts count as not chosen
+# max_skip_s = 600                 # a trim of a not-chosen answer is spread: no removed stretch is longer
 # preset_target_s = { "cut-highlights-5" = 300 }   # target kept seconds per preset id
 # preset_target_frac = { "cut-skim-film" = 0.5 }   # target kept = duration * frac, for a film-length cut (0 < frac < 1)
 # repair_near_full_frac = 0.9      # repair: an old map/reduce cut with no target that kept more is rebuilt once
