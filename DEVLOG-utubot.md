@@ -1,3 +1,12 @@
+## 2026-11-27 (cut-ready question shows its text over a playing video, issue #274)
+
+- The "Director's cut ready" question was passed as the dialog title, which the transparent dialog hides over a playing video, so only Yes and No showed.
+  The question is now the dialog's body text (a long-text row, title "Director's cut"), the buttons say "Play the cut now" / "Not now", and the wording is "Play it now?".
+- While a video plays, the question is not a modal: a toast gives the same text with "Play it from Director's cut… in the menu.", and the cut stays in the picker and Processed.
+  The modal stays for browsing. Strings in `utubot_strings.xml`; logic in `UtubotCutNotices.presentPrompt`.
+- Tests: `UtubotCutNoticesTest` asserts the question as body text, the toast while a video plays, and the Yes path while browsing. TV-only; the extension's
+  cut notice (`cut-ready-elsewhere` in `ai/BROWSER_EXTENSION_PLAN.md`) already shows its own text.
+
 ## 2026-11-27 (TV Inbox next and previous, issue #223)
 
 - From an opened Inbox result on the TV, media next/previous or channel down/up opens the neighbouring result in the Inbox's order (newest

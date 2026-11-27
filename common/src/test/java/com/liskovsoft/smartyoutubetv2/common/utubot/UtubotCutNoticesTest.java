@@ -119,34 +119,38 @@ public class UtubotCutNoticesTest {
     }
 
     @Test
-    public void aCutOfTheVideoThatPlays_orderedElsewhere_isAsked() {
+    public void aCutOfTheVideoThatPlays_orderedElsewhere_isAnnouncedNotAsked() {
         foreground();
         mController.open(video(VIDEO), 240_000);
 
         mNotices.onCutReady(entry(), cut());
 
-        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.text);
+        assertFalse(mDialog.shown); // no modal over the playing video
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_later, TITLE, "3:12"), ShadowToast.getTextOfLatestToast());
+        assertNull(mController.appliedOnOpen());
     }
 
     @Test
-    public void aSecondCutOfTheVideoThatPlays_isAskedWhileThePlayerFollowsAnother() throws Exception {
+    public void aSecondCutOfTheVideoThatPlays_isAnnouncedWhileThePlayerFollowsAnother() throws Exception {
         foreground();
         mController.open(video(VIDEO), 240_000);
         followedRequest("cut2");
 
         mNotices.onCutReady(entry(), cut());
 
-        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.text);
+        assertFalse(mDialog.shown);
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_later, TITLE, "3:12"), ShadowToast.getTextOfLatestToast());
     }
 
     @Test
-    public void aCutOfAnotherVideoThatPlays_isAskedOverIt() {
+    public void aCutOfAnotherVideoThatPlays_isAnnouncedNotAskedOverIt() {
         foreground();
         mController.open(video(OTHER_VIDEO), 240_000);
 
         mNotices.onCutReady(entry(), cut());
 
-        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.text);
+        assertFalse(mDialog.shown);
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_later, TITLE, "3:12"), ShadowToast.getTextOfLatestToast());
     }
 
     @Test
@@ -209,7 +213,7 @@ public class UtubotCutNoticesTest {
 
         mNotices.onCutReady(entry(), cut);
 
-        assertNull(mDialog.text); // no "Play?" question
+        assertNull(mDialog.text); // no question modal
         assertSame(cut, mController.appliedOnOpen()); // carried to the player
         assertEquals(VIDEO, mPresenter.getVideo().videoId); // the cut's video opens by itself
     }
@@ -234,7 +238,7 @@ public class UtubotCutNoticesTest {
 
         mNotices.onCutReady(entry(), cut());
 
-        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.text);
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.question);
         assertNull(mController.appliedOnOpen());
     }
 
@@ -246,7 +250,8 @@ public class UtubotCutNoticesTest {
 
         mNotices.onCutReady(entry(), cut());
 
-        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.text);
+        assertFalse(mDialog.shown);
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_later, TITLE, "3:12"), ShadowToast.getTextOfLatestToast());
         assertNull(mController.appliedOnOpen());
     }
 
@@ -271,7 +276,8 @@ public class UtubotCutNoticesTest {
 
         assertTrue(mNotices.presentPrompt(new Item(entry(), cut()), new TestAnswer()));
 
-        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.text);
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_play, TITLE, "3:12"), mDialog.question);
+        assertNull(mDialog.text); // the title is hidden over a playing video: the question must not depend on it
         assertEquals(2, mDialog.items.size());
         assertEquals(mContext.getString(R.string.utubot_cut_play_yes), mDialog.items.get(0).getTitle());
         assertEquals(mContext.getString(R.string.utubot_cut_play_no), mDialog.items.get(1).getTitle());
@@ -287,7 +293,7 @@ public class UtubotCutNoticesTest {
 
         mNotices.presentPrompt(new Item(entry(), cut), new TestAnswer());
 
-        assertEquals(mContext.getString(R.string.utubot_cut_ready_play_no_length, TITLE), mDialog.text);
+        assertEquals(mContext.getString(R.string.utubot_cut_ready_play_no_length, TITLE), mDialog.question);
     }
 
     @Test
@@ -323,16 +329,13 @@ public class UtubotCutNoticesTest {
     @Test
     public void theYesPathCarriesTheCutThroughTheRealOpen() throws Exception {
         foreground();
-        mController.open(video(OTHER_VIDEO), 240_000); // another video plays: the ready cut is asked over it
-
-        Cut cut = cut();
+        Cut cut = cut(); // browsing, nothing plays: the ready cut is asked
         mNotices.onCutReady(entry(), cut);
 
         mDialog.items.get(0).onSelect(true); // Yes, through the real queue and openWithCut
 
         assertTrue(promptQueue().isEmpty());
         assertSame(cut, mController.appliedOnOpen());
-
         Video opened = mPresenter.getVideo();
         assertNotNull(opened);
         assertEquals(VIDEO, opened.videoId);
@@ -504,6 +507,7 @@ public class UtubotCutNoticesTest {
     private static final class TestDialog extends AppDialogPresenter {
         private final List<OptionItem> items = new ArrayList<>();
         private CharSequence text;
+        private CharSequence question;
         private boolean shown;
         private boolean transparent;
         private boolean expandable = true;
@@ -523,6 +527,11 @@ public class UtubotCutNoticesTest {
         @Override
         public void appendSingleButton(OptionItem optionItem) {
             items.add(optionItem);
+        }
+
+        @Override
+        public void appendLongTextCategory(CharSequence categoryTitle, OptionItem item) {
+            question = item.getTitle();
         }
 
         @Override
