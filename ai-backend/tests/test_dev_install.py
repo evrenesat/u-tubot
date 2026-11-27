@@ -269,3 +269,30 @@ def test_main_fetches_the_latest_release_and_installs(
         "-r",
         str(tmp_path / "u-tubot_0.3.4_universal.apk"),
     ] in calls
+
+
+def test_main_creates_the_out_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    apk = b"apk"
+    digest = hashlib.sha256(apk).hexdigest()
+    base = "https://github.com/evrenesat/u-tubot/releases/download/utubot-v0.3.4"
+    monkeypatch.setattr(
+        dev_install.urllib.request,
+        "urlopen",
+        fake_urlopen(
+            {
+                "https://api.github.com/repos/evrenesat/u-tubot/releases/latest": json.dumps(
+                    {"tag_name": "utubot-v0.3.4"}
+                ).encode(),
+                f"{base}/u-tubot_0.3.4_universal.apk": apk,
+                f"{base}/SHA256SUMS": f"{digest}  u-tubot_0.3.4_universal.apk\n".encode(),
+            }
+        ),
+    )
+    monkeypatch.setattr(dev_install.subprocess, "run", fake_run([]))
+    devices = tmp_path / "adb-devices"
+    devices.write_text("10.0.0.20:5555\n")
+    out_dir = tmp_path / "nested" / "temp"
+    assert dev_install.main(
+        ["--repo", "evrenesat/u-tubot", "--devices", str(devices), "--out", str(out_dir)]
+    ) == 0
+    assert (out_dir / "u-tubot_0.3.4_universal.apk").read_bytes() == apk

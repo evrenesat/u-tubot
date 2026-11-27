@@ -102,6 +102,7 @@ def fetch_release_apk(repo: str, tag: str, out_dir: Path) -> Path:
     if hashlib.sha256(data).hexdigest() != expected:
         raise ValueError(f"the SHA-256 of {filename} does not match the release's SHA256SUMS")
     out = out_dir / filename
+    out_dir.mkdir(parents=True, exist_ok=True)
     out.write_bytes(data)
     return out
 
