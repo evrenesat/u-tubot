@@ -1129,6 +1129,13 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
         return newClient().cutRequestUrl(requestId);
     }
 
+    /**
+     * Fills the description of a waiting request (the tablet sheet) and starts the build
+     */
+    public Observable<CutRequest> fillCutRequestObserve(String requestId, String prompt, @Nullable String mode) {
+        return cancellable(client -> client.fillCutRequest(requestId, prompt, mode));
+    }
+
     //endregion
 
     //region Processed videos

@@ -1,3 +1,8 @@
+## 2026-11-27 (tablet on-device flow, takeover of #237, issue #218)
+
+- Rebase onto main was already clean (#225 web admin and #196 voice are in the base). The tablet menu entry now reads "Describe the cut…" (the TV keeps "Describe on phone…"); "Describe by voice…" is the same on both.
+- The touch sheet puts the cursor in the description field and raises the keyboard; the two browser opens share `UtubotWebAdmin.openInBrowser` instead of two copies; the pairing dialog's "Open in browser" shows on touch devices only (the TV keeps the code flow). `temp/pr-body-r2.md` removed from the tree.
+
 ## 2026-11-27 (describe by voice on the TV, issue #176, takeover fixes)
 
 - The capture asked the recorder for 50 milliseconds (seconds passed as milliseconds), ran on the main thread (UI freeze, network on the main
@@ -8,6 +13,11 @@
 - Dropped the per-device 3 s probe (the owner had to speak through a dozen silent probes before the real recording).
 - `ai/CONTRACT.md` keeps the phone's `recording.webm` / `.m4a` wording and adds the TV's `.wav` and the `language` field; whitespace damage in
   the docs and `config.example.toml` reverted. Tests: `UtubotSpeechInputTest` (fake capture, loopback backend), `UtubotSpeechProbeTest`.
+
+## 2026-11-26 (cut description on the tablet, issue #218)
+
+- The cut-request sheet (`UtubotCutQrView`) is on-device on touch devices: `Helpers.isTouchSupported` routes tablets to a text field for the description, an "Open cut sheet" button that opens the request's page (`cutRequestUrl`, `<base>/cuts/<id>`) in the browser and a "Build" button that sends the typed description (`UtubotClient.fillCutRequest` / `UtubotManager.fillCutRequestObserve`, `PUT /v1/cut-requests/{id}`, prompt plus the mode when chosen) and starts the build. The QR code and address stay on the non-touch TV.
+- `UtubotPairing.showDialog` adds an "Open in browser" option (`<base>/#/tvs`) when the backend URL is known, via new `SimpleEditDialog` overloads that take an action label and callback. `UtubotCutsClientTest` gains tests for the fill request (prompt and optional mode in the body).
 
 ## 2026-11-26 (error ledger: the TV reports its own failures, issue #206)
 

@@ -10,7 +10,10 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.Button;
 import android.widget.EditText;
+import android.widget.LinearLayout;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -49,10 +52,18 @@ public class SimpleEditDialog {
     }
 
     /**
-     * Digits only, e.g. a pairing code
+     * A number-only field, the keyboard is the number pad, the OK button is sent by the Enter key
      */
     public static void showNumber(Context context, String dialogTitle, String dialogHint, OnChange onChange, Runnable onDismiss) {
-        show(context, dialogTitle, dialogHint, "", onChange, onDismiss, InputType.TYPE_CLASS_NUMBER);
+        showNumber(context, dialogTitle, dialogHint, onChange, onDismiss, null, null);
+    }
+
+    /**
+     * As above, with an extra action button under the field (e.g. "Open in browser"); label or action null omits it
+     */
+    public static void showNumber(Context context, String dialogTitle, String dialogHint, OnChange onChange, Runnable onDismiss,
+                                  @Nullable String actionLabel, @Nullable Runnable onAction) {
+        show(context, dialogTitle, dialogHint, "", onChange, onDismiss, InputType.TYPE_CLASS_NUMBER, null, actionLabel, onAction);
     }
 
     /**
@@ -75,15 +86,22 @@ public class SimpleEditDialog {
         show(context, dialogTitle, dialogHint, defaultValue, onChange, onDismiss, inputType, null);
     }
 
+    private static void show(Context context, String dialogTitle, String dialogHint, String defaultValue, OnChange onChange, Runnable onDismiss,
+                              int inputType, String privateImeOptions) {
+        show(context, dialogTitle, dialogHint, defaultValue, onChange, onDismiss, inputType, privateImeOptions, null, null);
+    }
+
     /**
      * @param inputType the InputType.TYPE_* of the field, or {@link InputType#TYPE_NULL} for the one of the layout
      * @param privateImeOptions for the keyboard (see EditorInfo.privateImeOptions), null for none
+     * @param actionLabel the extra action button under the field, null for none
+     * @param onAction the extra action button's click, null for none
      */
     private static void show(Context context, String dialogTitle, String dialogHint, String defaultValue, OnChange onChange, Runnable onDismiss,
-                             int inputType, String privateImeOptions) {
+                              int inputType, String privateImeOptions, @Nullable String actionLabel, @Nullable Runnable onAction) {
         AlertDialog.Builder builder = new AlertDialog.Builder(context, R.style.AppDialog);
         LayoutInflater inflater = LayoutInflater.from(context);
-        View contentView = inflater.inflate(R.layout.simple_edit_dialog, null);
+        LinearLayout contentView = (LinearLayout) inflater.inflate(R.layout.simple_edit_dialog, null);
 
         EditText editField = contentView.findViewById(R.id.simple_edit_value);
         if (inputType != InputType.TYPE_NULL) {
@@ -102,6 +120,16 @@ public class SimpleEditDialog {
 
         if (defaultValue != null) { // move cursor to the end
             editField.setSelection(defaultValue.length());
+        }
+
+        if (actionLabel != null && onAction != null) {
+            Button actionButton = new Button(context);
+            actionButton.setText(actionLabel);
+            actionButton.setOnClickListener(v -> onAction.run());
+            LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            actionParams.topMargin = 16;
+            contentView.addView(actionButton, actionParams);
         }
 
         // keep empty, will override below.

@@ -4,6 +4,7 @@ import android.content.Context;
 
 import androidx.annotation.Nullable;
 
+import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.R;
@@ -262,7 +263,8 @@ public final class UtubotMenu {
         dialog.appendSingleButton(UiOptionItem.from(context.getString(
                 force ? R.string.utubot_cut_force_on : R.string.utubot_cut_force_off),
                 option -> showCutsDialog(context, video, cuts, !force)));
-        dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_describe_on_phone),
+        dialog.appendSingleButton(UiOptionItem.from(context.getString(Helpers.isTouchSupported(context)
+                ? R.string.utubot_cut_describe_on_device : R.string.utubot_cut_describe_on_phone),
                 option -> describeOnPhone(context, video, mode)));
         dialog.appendSingleButton(UiOptionItem.from(context.getString(R.string.utubot_cut_describe_by_voice),
                 option -> describeByVoice(context, video, mode)));
@@ -516,8 +518,7 @@ public final class UtubotMenu {
      */
     private static void showPhoneSheet(Context context, CutRequest request) {
         AppDialogPresenter.instance(context).closeDialog();
-        UtubotCutQrView.show(context, UtubotManager.instance(context).cutRequestUrl(request.id),
-                context.getString(R.string.utubot_cut_describe_hint));
+        UtubotCutQrView.show(context, request);
     }
 
     private static String describeError(Context context, Throwable error) {
