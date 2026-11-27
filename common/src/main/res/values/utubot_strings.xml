@@ -59,6 +59,30 @@
     <string name="utubot_auto_captions_desc">Turns on the u·tubot captions when the video has them</string>
     <string name="utubot_auto_cuts">Apply ready cuts automatically</string>
     <string name="utubot_auto_cuts_desc">Turns on a director\'s cut that is already ready when the video opens</string>
+    <string name="utubot_caption_storage">Caption storage</string>
+    <string name="utubot_caption_storage_empty">No HQ captions are stored yet</string>
+    <string name="utubot_caption_storage_usage">%1$s · %2$s · %3$s</string>
+    <string name="utubot_caption_storage_warning">Caption storage is large (%s). Delete older captions to free space.</string>
+    <string name="utubot_caption_storage_delete">Delete old captions</string>
+    <string name="utubot_caption_storage_delete_30">Delete captions older than 30 days</string>
+    <string name="utubot_caption_storage_delete_90">Delete captions older than 90 days</string>
+    <string name="utubot_caption_storage_delete_365">Delete captions older than 1 year</string>
+    <string name="utubot_caption_storage_delete_all">Delete all stored captions</string>
+    <string name="utubot_caption_storage_confirm">%s? This can\'t be undone.</string>
+    <string name="utubot_caption_storage_none">No caption tracks were deleted</string>
+    <string name="utubot_caption_storage_failed">Couldn\'t delete captions: %s</string>
+    <plurals name="utubot_caption_storage_videos">
+        <item quantity="one">%d video</item>
+        <item quantity="other">%d videos</item>
+    </plurals>
+    <plurals name="utubot_caption_storage_tracks">
+        <item quantity="one">%d track</item>
+        <item quantity="other">%d tracks</item>
+    </plurals>
+    <plurals name="utubot_caption_storage_deleted">
+        <item quantity="one">Deleted %d caption track</item>
+        <item quantity="other">Deleted %d caption tracks</item>
+    </plurals>
     <string name="utubot_test_connection">Test connection</string>
     <string name="utubot_test_connection_desc">Check that the backend answers with the token</string>
     <string name="utubot_web_admin">u·tubot web admin</string>

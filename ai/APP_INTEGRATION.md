@@ -85,7 +85,8 @@ so the other flavors behave as before.
   connection tested, then "Paired as <user>"), Test connection, u·tubot web admin, Advanced (backend URL and token by hand; a typed backend
   also sets `<backend>/app/update.json` when no update URL is stored). "AI features" (`UtubotSettingsPresenter.buildCategories`), in this order: assess switch,
   mark only, answer in menu, Summary panel, Summary delay, Reading pace (the self-scroll of the long answer and Summary text, 30, 45 or 60 px/s),
-  auto-select HQ captions, apply ready cuts automatically, Cut jump, Prompts (list, choose default, Import from URL, Refresh all). Browse refresh is in System,
+  auto-select HQ captions, apply ready cuts automatically, Cut jump, Prompts (list, choose default, Import from URL, Refresh all), Caption storage
+  (size, videos and tracks; a warning past 200 MiB; delete older than 30, 90 or 365 days, or all, after a confirmation). Browse refresh is in System,
   General; update check interval and development mode are in Updates.
 - Web admin on the TV (issue #203). In the "Backend" section the built-in flavor's "u·tubot web admin" (`UtubotWebAdmin`, only when
   `isBuiltIn()`): it asks the backend for a short-lived, single-use sign-in link (`POST /v1/web-login`, `UtubotClient.webLogin`, bearer
@@ -184,9 +185,12 @@ so the other flavors behave as before.
   (`UtubotCaptionsFollower`): one `GET /captions` at the start, then every 10 s while the answer is `queued` or `running` (at most 2 h,
   5 errors in a row). A ready answer is downloaded (`UtubotClient.captionFile`, header scoped to the backend) into
   `UtubotCaptionStore` (`files/utubot_captions/<video id>/<lang>.vtt`), then kept in memory and given to the player. The store is
-  permanent: only WebVTT of at most 4 MiB, a track never replaced, nothing deleted, not cleared by a change of backend or token (the
-  memory caches are). `UtubotCaptions.attach` merges the stored tracks (no backend needed) and, until a track is stored, the answer
-  in memory (played from the backend). A video whose captions are stored makes no request.
+  permanent: only WebVTT of at most 4 MiB, a track never replaced, and a track removed only when the user asks for it in Settings,
+  u·tubot, Caption storage; not cleared by a change of backend or token (the memory caches are). That entry shows the size, videos and
+  tracks, warns past 200 MiB, and deletes tracks older than 30, 90 or 365 days or all after a confirmation; it removes their labels and
+  a video folder left without a track (`UtubotCaptionStore.usage`, `deleteOlderThan`, `deleteAll`). `UtubotCaptions.attach` merges the
+  stored tracks (no backend needed) and, until a track is stored, the answer in memory (played from the backend). A video whose
+  captions are stored makes no request.
   At the start the track is selected when "auto-select HQ captions" is on (default). Captions that come after the source was opened
   (a job finished while playing, or a late answer) open the source again with the track at the same position; the user-requested
   ones are selected whatever the setting says and announced ("u·tubot captions ready"). `VideoStateController.restoreSubtitleFormat`

@@ -10,16 +10,23 @@ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.base.BasePresenter;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptionStore.Usage;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Prompt;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptList;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.PromptSet;
+import com.liskovsoft.smartyoutubetv2.common.utils.AppDialogUtil;
 import com.liskovsoft.smartyoutubetv2.common.utils.SimpleEditDialog;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+import java.util.function.IntSupplier;
 
+import io.reactivex.Single;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.Disposable;
+import io.reactivex.schedulers.Schedulers;
 
 /**
  * Settings → AI features: the AI feature switches and the prompt sets
@@ -41,8 +48,13 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
     }
 
     public void show() {
+        show(false);
+    }
+
+    private void show(boolean replace) {
         Context context = getContext();
         AppDialogPresenter dialog = AppDialogPresenter.instance(context);
+        dialog.enableReplace(replace);
 
         for (OptionCategory category : buildCategories()) {
             dialog.appendCategory(category);
@@ -52,7 +64,7 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
     }
 
     /**
-     * The AI features, always in this order: the switches, Summary delay, Auto captions, Auto cuts, Cut jump, Prompts
+     * The AI features, always in this order: the switches, Summary delay, Auto captions, Auto cuts, Cut jump, Prompts, Caption storage
      */
     List<OptionCategory> buildCategories() {
         Context context = getContext();
@@ -78,8 +90,85 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
                 formatCutJump(context, mSettings.getCutJumpBinding()), option -> showCutJump())));
         categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_prompts), context.getString(R.string.utubot_prompts_desc),
                 option -> showPrompts())));
+        categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_caption_storage),
+                formatCaptionStorage(context, UtubotCaptionStore.instance(context).usage()), option -> showCaptionStorage())));
 
         return categories;
+    }
+
+    private void showCaptionStorage() {
+        Context context = getContext();
+        AppDialogPresenter dialog = AppDialogPresenter.instance(context);
+
+        appendDeleteAction(context, dialog, context.getString(R.string.utubot_caption_storage_delete_30),
+                () -> UtubotCaptionStore.instance(context).deleteOlderThan(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(30)));
+        appendDeleteAction(context, dialog, context.getString(R.string.utubot_caption_storage_delete_90),
+                () -> UtubotCaptionStore.instance(context).deleteOlderThan(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(90)));
+        appendDeleteAction(context, dialog, context.getString(R.string.utubot_caption_storage_delete_365),
+                () -> UtubotCaptionStore.instance(context).deleteOlderThan(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(365)));
+        appendDeleteAction(context, dialog, context.getString(R.string.utubot_caption_storage_delete_all),
+                () -> UtubotCaptionStore.instance(context).deleteAll());
+
+        dialog.showDialog(context.getString(R.string.utubot_caption_storage_delete));
+    }
+
+    private void appendDeleteAction(Context context, AppDialogPresenter dialog, String title, IntSupplier delete) {
+        dialog.appendSingleButton(UiOptionItem.from(title, option -> AppDialogUtil.showConfirmationDialog(context,
+                context.getString(R.string.utubot_caption_storage_confirm, title), () -> deleteCaptions(delete))));
+    }
+
+    private void deleteCaptions(IntSupplier delete) {
+        RxHelper.disposeActions(mAction);
+        mAction = Single.fromCallable(delete::getAsInt)
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(this::afterDelete, error -> {
+                    MessageHelpers.showLongMessage(getContext(), getContext().getString(R.string.utubot_caption_storage_failed,
+                            error.getMessage()));
+                    show(true);
+                });
+    }
+
+    private void afterDelete(int deleted) {
+        Context context = getContext();
+
+        if (deleted == 0) {
+            MessageHelpers.showMessage(context, context.getString(R.string.utubot_caption_storage_none));
+        } else {
+            MessageHelpers.showMessage(context, context.getResources().getQuantityString(
+                    R.plurals.utubot_caption_storage_deleted, deleted, deleted));
+        }
+
+        show(true);
+    }
+
+    /**
+     * "12.4 MB · 3 videos · 5 tracks", with the warning under it when the store is large
+     */
+    static String formatCaptionStorage(Context context, Usage usage) {
+        if (usage.tracks == 0) {
+            return context.getString(R.string.utubot_caption_storage_empty);
+        }
+
+        String videos = context.getResources().getQuantityString(R.plurals.utubot_caption_storage_videos, usage.videos, usage.videos);
+        String tracks = context.getResources().getQuantityString(R.plurals.utubot_caption_storage_tracks, usage.tracks, usage.tracks);
+        String text = context.getString(R.string.utubot_caption_storage_usage, formatBytes(usage.bytes), videos, tracks);
+
+        if (usage.bytes >= UtubotCaptionStore.WARN_BYTES) {
+            text += "\n" + context.getString(R.string.utubot_caption_storage_warning, formatBytes(UtubotCaptionStore.WARN_BYTES));
+        }
+
+        return text;
+    }
+
+    static String formatBytes(long bytes) {
+        if (bytes < 1024L * 1024L) {
+            return String.format(Locale.ROOT, "%.1f KB", bytes / 1024.0);
+        } else if (bytes < 1024L * 1024L * 1024L) {
+            return String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
+        }
+
+        return String.format(Locale.ROOT, "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
     }
 
     private void showPanelDelays() {
