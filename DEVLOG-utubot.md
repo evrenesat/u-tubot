@@ -9,6 +9,10 @@
   `UtubotFilmsPresenter`. `RealDebridFilmsActivity` reads the constants from `UtubotFilmsPresenter`.
 - Tests: `UtubotFilmsPresenterTest` (opens without the developer toggle, carries the IMDb id and skips, the token never rides the intent),
   `UtubotFilmsDeveloperPresenterTest` (skip list). `:common:testStutubotDebugUnitTest` and `:smarttubetv:assembleStutubotDebug` green.
+- The parity-box gate failed because this pull request touches `common/**/utubot/` without touching `extension/` or the plan, and the live
+  PR body did not carry a ticked parity box. The gate (`scripts/utubot_ci_changes.py parity`) passes when the branch adds the extension side,
+  so the Real-Debrid films entry — TV-only, the extension's scope is YouTube — gained a `films-real-debrid` row in `ai/BROWSER_EXTENSION_PLAN.md`
+  (section 3). `ai-backend` tests (1590) and ruff green; the Android build could not be run locally (sibling checkouts absent), so it relies on CI.
 
 ## 2026-11-27 (tablet on-device flow, takeover of #237, issue #218)
 
