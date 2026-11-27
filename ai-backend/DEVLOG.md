@@ -27,6 +27,15 @@
   (other schemes refused); each user's own upstream gets its own slot limiter, so one person never queues behind another. Tests: keys per
   user never cross, never in a response or log, db mode, scheme refusal, per-user limiter. Modelgate cannot take a per-request upstream
   key: [modelgate#24](https://github.com/evrenesat/modelgate/issues/24). The Real-Debrid token and addon URL stay on the device (#231; a per-user entry: [#248](https://github.com/evrenesat/u-tubot/issues/248)). Admin page: the upstream pill read `provider.configured`, which `describe` never returns, so every user showed "no upstream"; it now reads the host. Screenshots at 1440 and 390 px checked.
+## 2026-11-27 (error ledger page: paged newest failures, aligned totals row, issue #241)
+
+- The "Newest failures" card is paged, ten per page with Older/Newer buttons, instead of the whole list at once. `LedgerService.recent`
+  and `page` take an `offset`; `GET /v1/admin/ledger` accepts `offset` (admin only). The page asks for `limit + 1` so it knows when
+  there is no older page.
+- The "Failures per category per day" totals row used `th` cells, which browsers centre, so the totals did not line up with the
+  category rows. The row now uses `td` cells and a `th.num, td.num { text-align: right; }` rule, so every number in the table is
+  right-aligned.
+- Tests: service-level paging (with the category filter) and the endpoint with `offset`, including the rejection of a negative offset.
 
 ## 2026-11-26 (error ledger review pass, issue #206)
 
