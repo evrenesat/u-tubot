@@ -41,7 +41,7 @@ override, then `[users.policy]`, then `[default_policy]`, then the built-in defa
 | `auto_transcribe_max_minutes` | `30` | videos longer than this are not transcribed automatically (an unknown length is looked up first with one metadata request; if that fails the video is not transcribed automatically): they answer `needs_transcript` and the TV asks |
 | `captions_translate_to` | unset | the language u·tubot captions are translated into (`en`, `tr`, ...); `off` keeps the spoken language; unset follows `[captions] translate_to` (`en`). A captions request that names its own `translate_to` wins. Web UI: Captions page, Subtitle language |
 | `cut_mode` | unset | `quick` or `watched`: the viewer's default director's-cut mode; unset follows `[cuts] default_mode` (`quick`). A per-channel default wins over it; each cut request can still choose the other mode |
-| `summary_delay_ms` | `700` | TV: how long a card stays focused before its summary is requested |
+| `summary_delay_ms` | `1800` | TV: how long a card stays focused before its summary is requested |
 | `summary_panel` | unset | TV: side panel on by default; unset follows `[setup.defaults] summary_panel` |
 | `auto_captions` | unset | TV: offer u·tubot captions automatically; unset follows `[setup.defaults] auto_captions` |
 | `update_checks` | `true` | TV: ask the server for newer app versions |

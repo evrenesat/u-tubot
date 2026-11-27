@@ -42,7 +42,7 @@ async def test_document_shape_defaults_and_overrides(env):
     assert s["prompts"] == {"default": "builtin/tldr", "panel_default": "builtin/glance"}
     assert s["filtering"]["hide_topics"] == ["reaction videos"]
     assert s["filtering"]["mark_only"] is False and s["tv"]["summary_panel"] is False
-    assert s["tv"]["summary_delay_ms"] == 700 and s["tv"]["update_checks"] is True
+    assert s["tv"]["summary_delay_ms"] == 1800 and s["tv"]["update_checks"] is True
     assert s["summaries"] == {"language": "en", "auto_long": False}
     assert s["cuts"] == {"cut_mode": "quick"}
     assert doc["defaults"]["filtering"]["hide_topics"] == ["reaction videos"]
@@ -70,7 +70,7 @@ async def test_put_merges_and_versions(env):
     assert doc["settings"]["filtering"]["mark_clickbait_above"] == 0.5
     assert doc["settings"]["transcripts"]["auto_transcribe"] == "on_dwell"
     assert doc["overrides"]["tv"] == {"summary_delay_ms": 1500}
-    assert doc["defaults"]["tv"]["summary_delay_ms"] == 700
+    assert doc["defaults"]["tv"]["summary_delay_ms"] == 1800
     second = (await put(env, {"settings": {"tv": {"update_checks": False}}})).json()
     assert second["version"] == 2
     assert second["settings"]["tv"] == {

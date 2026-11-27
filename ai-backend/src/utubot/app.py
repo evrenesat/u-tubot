@@ -44,6 +44,7 @@ from .config import (
 from .content import ContentService
 from .cuts import CutRefused, CutService
 from .db import MAX_CHANNEL_ID_CHARS, Database
+from .devicesettings import DeviceSettings, install_settings_routes
 from .feature import feature_run
 from .inbox import (
     KIND_CAPTIONS,
@@ -95,6 +96,7 @@ from .security import (
     origin_allowed,
 )
 from .settings import SettingsError, SettingsService
+from .settingsschema import default_schema
 from .speech import SpeechError, SpeechService
 from .status import StatusService, UpdatesStatus
 from .transcribe import TranscribeRefused, Transcription
@@ -212,6 +214,7 @@ class Services:
     artifacts: ArtifactCache
     ledger: LedgerService
     user_providers: UserProviders
+    device_settings: Any = None
     build: buildinfo.Build = field(default_factory=buildinfo.detect)
 
 
@@ -773,6 +776,7 @@ def create_app(
                 "speech": svc.speech.configured,
                 "speech_max_s": cfg.speech.max_record_s,
                 "voice": cfg.voice.enabled,
+                **({"settings_sync": True} if cfg.settings_sync.enabled else {}),
             },
             **voice_me(request, user),
         }
@@ -1654,6 +1658,7 @@ def create_app(
         )
         return {"ok": True}
 
+    svc.device_settings = DeviceSettings(cfg, svc.db, svc.auth, svc.settings, default_schema())
     deps = Deps(
         svc=svc,
         current_user=current_user,
@@ -1670,6 +1675,7 @@ def create_app(
     )
     install_web_routes(app, deps)
     install_voice_routes(app, deps)
+    install_settings_routes(app, deps)
     return app
 
 

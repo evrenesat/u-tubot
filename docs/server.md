@@ -650,6 +650,21 @@ off, and opens with the cut the viewer chose for that video (or the preset used 
 ready cut here); with no such cut it offers every ready director's cut with one Apply each (the
 player's cut controller, as at any video start).
 
+## Web settings
+
+`[settings_sync] enabled = true` switches on the Settings page of the web UI and the TV's settings sync (plan
+`ai/WEB_SETTINGS_PLAN.md`, wire in `ai/CONTRACT.md` "Web settings"). Off by default: the routes answer 404 and nothing else changes.
+
+- Every setting is named once in `ai/settings/schema.json` (packaged as `utubot/settings_schema.json`). The page and the TV read it;
+  `GET /v1/settings/schema` serves it.
+- The database gains tables only (`settings_values`, `settings_rev`, `device_settings_state`, `settings_audit`, all
+  `CREATE TABLE IF NOT EXISTS`); no existing column changes, so an older backend opens the same file. Switching the setting off
+  removes the routes and leaves the stored values in place.
+- A TV keeps its own value per setting if it has one; a change you make on the web for all your TVs does not replace it ("Use my
+  default" on the page removes it). The first time a TV syncs it sends its current values, so nothing on it changes.
+- `[settings_sync]` also has `audit_days` (180), `audit_max_rows_per_user` (5000), `max_changes_per_post`, `max_body_bytes` and
+  `history_max`.
+
 ## Voice prompts
 
 The phone records a spoken cut description and posts it to `POST /v1/speech`; this backend sends

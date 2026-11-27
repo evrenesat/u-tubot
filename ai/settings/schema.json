@@ -1,0 +1,877 @@
+{
+ "schema_version": 1,
+ "groups": [
+  {
+   "id": "ai",
+   "title": "AI features",
+   "order": 10
+  },
+  {
+   "id": "filters",
+   "title": "Filters",
+   "order": 20
+  },
+  {
+   "id": "summaries",
+   "title": "Summaries",
+   "order": 30
+  },
+  {
+   "id": "transcripts",
+   "title": "Captions and transcripts",
+   "order": 40
+  },
+  {
+   "id": "cuts",
+   "title": "Cuts",
+   "order": 50
+  },
+  {
+   "id": "prompts",
+   "title": "Prompts",
+   "order": 60
+  },
+  {
+   "id": "models",
+   "title": "Models",
+   "order": 70
+  },
+  {
+   "id": "updates",
+   "title": "App updates",
+   "order": 80
+  },
+  {
+   "id": "tv",
+   "title": "This TV only",
+   "order": 90
+  },
+  {
+   "id": "accounts",
+   "title": "Accounts and services",
+   "order": 100
+  }
+ ],
+ "settings": [
+  {
+   "scope": "user",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": true,
+   "clients": [
+    "tv",
+    "extension"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "ai.assess",
+   "group": "ai",
+   "title": "Assess videos",
+   "description": "Check each video card with the AI and hide or mark the ones you do not want.",
+   "type": "bool",
+   "default": true,
+   "confirm_text": "Stop assessing videos on all your TVs?",
+   "store": "values",
+   "tv_pref": "assess",
+   "setup_default": "assess"
+  },
+  {
+   "scope": "user",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv",
+    "extension"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "ai.mark_only",
+   "group": "ai",
+   "title": "Mark only, never hide",
+   "description": "Show a label on cards the AI would hide, but never remove them.",
+   "type": "bool",
+   "default": false,
+   "store": "policy:mark_only",
+   "tv_pref": "mark_only"
+  },
+  {
+   "scope": "user",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv",
+    "extension"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "ai.answer_in_menu",
+   "group": "ai",
+   "title": "AI answer in the video menu",
+   "description": "Show the AI answer to a question about the video in the video menu.",
+   "type": "bool",
+   "default": true,
+   "store": "values",
+   "tv_pref": "answer_in_menu",
+   "setup_default": "answer_in_menu"
+  },
+  {
+   "scope": "user",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv",
+    "extension"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "ai.summary_panel",
+   "group": "ai",
+   "title": "Summary panel",
+   "description": "Show the side panel with a summary while you browse.",
+   "type": "bool",
+   "default": false,
+   "store": "policy:summary_panel",
+   "tv_pref": "summary_panel"
+  },
+  {
+   "scope": "user",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv",
+    "extension"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "ai.panel_delay_ms",
+   "group": "ai",
+   "title": "Summary delay",
+   "description": "How long a card stays focused before its summary is asked for.",
+   "type": "int",
+   "default": 1800,
+   "min": 0,
+   "max": 10000,
+   "step": 100,
+   "presets": [
+    1000,
+    1800,
+    3000,
+    5000
+   ],
+   "unit": "ms",
+   "store": "policy:summary_delay_ms",
+   "tv_pref": "panel_delay_ms"
+  },
+  {
+   "scope": "user",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv",
+    "extension"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "ai.auto_captions",
+   "group": "ai",
+   "title": "Auto captions",
+   "description": "Pick the better captions for a video when it starts playing.",
+   "type": "bool",
+   "default": true,
+   "store": "policy:auto_captions",
+   "tv_pref": "auto_captions"
+  },
+  {
+   "scope": "user",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv",
+    "extension"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "ai.auto_cuts",
+   "group": "ai",
+   "title": "Apply ready cuts",
+   "description": "Apply a ready director's cut when you open the video.",
+   "type": "bool",
+   "default": false,
+   "store": "values",
+   "tv_pref": "auto_cuts"
+  },
+  {
+   "scope": "user",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv",
+    "extension"
+   ],
+   "since": 1,
+   "phase": 1,
+   "advanced": true,
+   "key": "ai.wait_ms",
+   "group": "ai",
+   "title": "Assess wait",
+   "description": "How long a card waits for its verdict before it is shown unchecked.",
+   "type": "int",
+   "default": 1200,
+   "min": 0,
+   "max": 3000,
+   "step": 100,
+   "unit": "ms",
+   "store": "values",
+   "tv_pref": "wait_ms"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "filtering.hide_topics",
+   "group": "filters",
+   "title": "Hide topics",
+   "description": "Hide videos about these topics.",
+   "type": "list",
+   "default": [],
+   "max_items": 50,
+   "max_len": 80,
+   "store": "policy:hide_topics"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "filtering.mark_topics",
+   "group": "filters",
+   "title": "Mark topics",
+   "description": "Label videos about these topics.",
+   "type": "list",
+   "default": [],
+   "max_items": 50,
+   "max_len": 80,
+   "store": "policy:mark_topics"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "filtering.hide_clickbait_above",
+   "group": "filters",
+   "title": "Hide clickbait above",
+   "description": "Hide videos whose clickbait score is above this.",
+   "type": "float",
+   "default": 0.9,
+   "min": 0,
+   "max": 1.01,
+   "step": 0.05,
+   "store": "policy:hide_clickbait_above"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "filtering.mark_clickbait_above",
+   "group": "filters",
+   "title": "Mark clickbait above",
+   "description": "Label videos whose clickbait score is above this.",
+   "type": "float",
+   "default": 0.6,
+   "min": 0,
+   "max": 1.01,
+   "step": 0.05,
+   "store": "policy:mark_clickbait_above"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "filtering.hide_low_quality_above",
+   "group": "filters",
+   "title": "Hide low quality above",
+   "description": "Hide videos whose low quality score is above this.",
+   "type": "float",
+   "default": 0.9,
+   "min": 0,
+   "max": 1.01,
+   "step": 0.05,
+   "store": "policy:hide_low_quality_above"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "filtering.mark_low_quality_above",
+   "group": "filters",
+   "title": "Mark low quality above",
+   "description": "Label videos whose low quality score is above this.",
+   "type": "float",
+   "default": 0.65,
+   "min": 0,
+   "max": 1.01,
+   "step": 0.05,
+   "store": "policy:mark_low_quality_above"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "filtering.mark_inflated_ratio_below",
+   "group": "filters",
+   "title": "Mark padded videos below",
+   "description": "Label videos whose useful part is below this share.",
+   "type": "float",
+   "default": 0.35,
+   "min": 0,
+   "max": 1.01,
+   "step": 0.05,
+   "store": "policy:mark_inflated_ratio_below"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "filtering.inflated_min_duration_s",
+   "group": "filters",
+   "title": "Padding check from",
+   "description": "Only check videos for padding when they are longer than this.",
+   "type": "int",
+   "default": 300,
+   "min": 0,
+   "max": 86400,
+   "unit": "s",
+   "store": "policy:inflated_min_duration_s"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "filtering.answer_in_label",
+   "group": "filters",
+   "title": "Answer in the label",
+   "description": "Put the short AI answer in the label of a marked card.",
+   "type": "bool",
+   "default": false,
+   "store": "policy:answer_in_label"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "summaries.language",
+   "group": "summaries",
+   "title": "Summary language",
+   "description": "The language of summaries and answers.",
+   "type": "string",
+   "default": "en",
+   "max_len": 16,
+   "store": "policy:language"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "summaries.auto_long",
+   "group": "summaries",
+   "title": "Long summaries",
+   "description": "Write long summaries without asking.",
+   "type": "bool",
+   "default": false,
+   "store": "policy:auto_long"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "transcripts.auto_transcribe",
+   "group": "transcripts",
+   "title": "Automatic transcription",
+   "description": "When to make a transcript from the audio if the video has no captions.",
+   "type": "enum",
+   "default": "on_open",
+   "choices": [
+    {
+     "value": "off",
+     "label": "Off"
+    },
+    {
+     "value": "on_dwell",
+     "label": "When a card stays focused"
+    },
+    {
+     "value": "on_open",
+     "label": "When the video opens"
+    }
+   ],
+   "store": "policy:auto_transcribe"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "transcripts.auto_transcribe_max_minutes",
+   "group": "transcripts",
+   "title": "Longest automatic transcription",
+   "description": "Do not transcribe videos longer than this automatically.",
+   "type": "int",
+   "default": 30,
+   "min": 1,
+   "max": 600,
+   "unit": "min",
+   "store": "policy:auto_transcribe_max_minutes"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "transcripts.captions_translate_to",
+   "group": "transcripts",
+   "title": "Translate captions to",
+   "description": "Language code to translate captions into, or off.",
+   "type": "string",
+   "default": "off",
+   "max_len": 16,
+   "store": "policy:captions_translate_to"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "cuts.cut_mode",
+   "group": "cuts",
+   "title": "Default cut mode",
+   "description": "Quick cuts use the transcript; watched cuts also look at the video.",
+   "type": "enum",
+   "default": "quick",
+   "choices": [
+    {
+     "value": "quick",
+     "label": "Quick"
+    },
+    {
+     "value": "watched",
+     "label": "Watched"
+    }
+   ],
+   "store": "policy:cut_mode"
+  },
+  {
+   "scope": "user",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 2,
+   "key": "updates.checks",
+   "group": "updates",
+   "title": "Check for app updates",
+   "description": "Let the TV look for new app versions by itself.",
+   "type": "bool",
+   "default": true,
+   "store": "policy:update_checks"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "prompts.default",
+   "group": "prompts",
+   "title": "Default prompt",
+   "description": "The prompt used for summaries and answers.",
+   "type": "prompt",
+   "default": "builtin/tldr",
+   "store": "prompts:default"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "prompts.panel_default",
+   "group": "prompts",
+   "title": "Panel prompt",
+   "description": "The prompt used by the summary panel.",
+   "type": "prompt",
+   "default": "builtin/glance",
+   "store": "prompts:panel_default"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "models.glance",
+   "group": "models",
+   "title": "Glance model",
+   "description": "The model that does the glance work for you.",
+   "type": "model",
+   "default": "",
+   "store": "models:glance"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "models.summary",
+   "group": "models",
+   "title": "Summary model",
+   "description": "The model that does the summary work for you.",
+   "type": "model",
+   "default": "",
+   "store": "models:summary"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "models.answer",
+   "group": "models",
+   "title": "Answer model",
+   "description": "The model that does the answer work for you.",
+   "type": "model",
+   "default": "",
+   "store": "models:answer"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "models.triage",
+   "group": "models",
+   "title": "Triage model",
+   "description": "The model that does the triage work for you.",
+   "type": "model",
+   "default": "",
+   "store": "models:triage"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "web"
+   ],
+   "since": 1,
+   "phase": 1,
+   "key": "models.analysis",
+   "group": "models",
+   "title": "Analysis model",
+   "description": "The model that does the analysis work for you.",
+   "type": "model",
+   "default": "",
+   "store": "models:analysis"
+  },
+  {
+   "scope": "device",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv"
+   ],
+   "since": 1,
+   "phase": 2,
+   "key": "ai.auto_scroll_speed",
+   "group": "tv",
+   "title": "Text scroll speed",
+   "description": "How fast summary and answer text scrolls by itself.",
+   "type": "int",
+   "default": 45,
+   "min": 30,
+   "max": 60,
+   "presets": [
+    30,
+    45,
+    60
+   ],
+   "unit": "px/s",
+   "store": "values",
+   "tv_pref": "auto_scroll_speed"
+  },
+  {
+   "scope": "device",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv"
+   ],
+   "since": 1,
+   "phase": 2,
+   "key": "ai.cut_jump",
+   "group": "tv",
+   "title": "Cut jump keys",
+   "description": "The remote keys that jump between the kept parts of a cut.",
+   "type": "enum",
+   "default": "left_right",
+   "choices": [
+    {
+     "value": "left_right",
+     "label": "Left and right"
+    },
+    {
+     "value": "up_down",
+     "label": "Up and down"
+    },
+    {
+     "value": "off",
+     "label": "Off"
+    }
+   ],
+   "store": "values",
+   "tv_pref": "cut_jump"
+  },
+  {
+   "scope": "device",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv"
+   ],
+   "since": 1,
+   "phase": 2,
+   "key": "updates.interval_minutes",
+   "group": "tv",
+   "title": "Update check interval",
+   "description": "How often the TV looks for a new app version.",
+   "type": "int",
+   "default": 5,
+   "min": 5,
+   "max": 360,
+   "presets": [
+    5,
+    15,
+    60,
+    360
+   ],
+   "unit": "min",
+   "store": "values",
+   "tv_pref": "update_interval_minutes"
+  },
+  {
+   "scope": "device",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": true,
+   "clients": [
+    "tv"
+   ],
+   "since": 1,
+   "phase": 2,
+   "key": "updates.development_mode",
+   "group": "tv",
+   "title": "Development mode",
+   "description": "Offer test builds on this TV.",
+   "type": "bool",
+   "default": true,
+   "confirm_text": "Change development mode on this TV?",
+   "store": "values",
+   "tv_pref": "development_mode"
+  },
+  {
+   "scope": "device",
+   "device_override": true,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv"
+   ],
+   "since": 1,
+   "phase": 2,
+   "key": "browse.refresh_minutes",
+   "group": "tv",
+   "title": "Browse refresh",
+   "description": "How often a browse list refreshes itself.",
+   "type": "int",
+   "default": 10,
+   "min": 5,
+   "max": 60,
+   "presets": [
+    5,
+    10,
+    20,
+    30,
+    60
+   ],
+   "unit": "min",
+   "store": "values",
+   "tv_pref": "browse_refresh_minutes"
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv"
+   ],
+   "since": 1,
+   "phase": 3,
+   "key": "secrets.films_rd_token",
+   "group": "accounts",
+   "title": "Real-Debrid token",
+   "description": "Your Real-Debrid token. The page shows only that it is set.",
+   "type": "secret",
+   "deliver": "tv",
+   "store": "secrets",
+   "tv_pref": "films_rd_token",
+   "default": null
+  },
+  {
+   "scope": "user",
+   "device_override": false,
+   "remote": "rw",
+   "confirm": false,
+   "clients": [
+    "tv"
+   ],
+   "since": 1,
+   "phase": 3,
+   "key": "secrets.films_addon_url",
+   "group": "accounts",
+   "title": "Stream add-on address",
+   "description": "The address of your stream add-on. The page shows only its host.",
+   "type": "secret",
+   "deliver": "tv",
+   "store": "secrets",
+   "tv_pref": "films_addon_url",
+   "default": null
+  }
+ ]
+}

@@ -1,3 +1,21 @@
+## 2026-11-27 (web settings review fixes)
+
+- Status, history, a TV's document and its `PUT` answer 403 to a paired TV's token (they are browser routes; a TV could read and change its siblings).
+- First sync: only a value flagged `user_set` skips the `base_rev` check; an untouched default is base-checked, so it cannot replace a newer web value (D1). Tests for both.
+- A TV's `report` is reduced to at most 20 short scalar entries before it is stored (it was cut at 2000 characters and then failed to parse, which broke `/v1/me/settings/status`); the POST body is read with a size cap (413).
+- A change for a key without `device_override` is `not_remote`.
+- `summary_delay_ms` default 1800: only the old "TV settings" card of the web UI showed the value (as a default); the TV, the extension and the API never acted on it. No change needed when sync is off.
+
+## 2026-11-27 (web settings: schema and device channel, plan checkpoints 1 and 2)
+
+- `ai/settings/schema.json` (38 keys, `schema_version` 1) is the one list of settings; `settingsschema.py` loads and validates it, `GET /v1/settings/schema` serves it, the wheel packs it as `utubot/settings_schema.json`.
+- `devicesettings.py`: per-key revisions (`settings_rev`), a TV's own values (`settings_values`), `device_settings_state`, `settings_audit` (180 days, 5,000 rows per user), and the routes `GET/POST /v1/device/settings`, `GET /v1/me/settings/status`, `GET /v1/me/settings/history`, `GET/PUT /v1/me/devices/{id}/settings`. The document `PUT` takes dotted keys and now records every changed key in the audit; the document gains `values`.
+- Off by default (`[settings_sync] enabled`): routes 404, `/v1/me` and the document unchanged. All tables are new (`CREATE TABLE IF NOT EXISTS`); `test_a_database_from_before_opens_with_its_data` opens an old file.
+- First sync keeps the TV's values: every differing key becomes that TV's own value (`via: migration`); test `test_first_sync_keeps_what_the_tv_has`.
+- `tv.summary_delay_ms` now defaults to 1800 (the TV's value); it never had an effect before. The `mark_only` finding is in the contract: only the TV acts on it.
+- Not covered: changes through `PUT /v1/me/policy` and the old prompt-default calls do not write the audit or the per-key revision (the version still rises). The Settings page uses the document `PUT`.
+- Tests: `test_settings_schema.py` (T1, including a check that every `KEY_*` of `UtubotSettings` is classified), `test_device_settings.py` (T2).
+
 ## 2026-11-27 (tests never reach YouTube: refusals are recorded and fail the test, issue #35)
 
 - The no-YouTube guard in `tests/conftest.py` already refused yt-dlp, httpx and DNS lookups, but a refusal the code under test caught

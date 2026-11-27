@@ -1067,7 +1067,7 @@ The phone web UI (`GET /`, static files under `/ui/`) uses the same API as the a
                 "inflated_min_duration_s":300,"answer_in_label":false,"mark_only":false},
    "summaries":{"language":"en","auto_long":false},
    "transcripts":{"auto_transcribe":"on_open","auto_transcribe_max_minutes":30,"captions_translate_to":"en"},
-   "tv":{"summary_delay_ms":700,"summary_panel":false,"auto_captions":true,"update_checks":true}},
+   "tv":{"summary_delay_ms":1800,"summary_panel":false,"auto_captions":true,"update_checks":true}},
  "overrides":{"models":{"glance":"llama3.2:3b"}},
  "defaults":{ "...": "the same shape: what applies with no override" },
  "choices":{"tasks":["glance","summary","answer","triage","analysis"],"auto_transcribe":["off","on_dwell","on_open"]}}
@@ -1093,6 +1093,49 @@ compare-and-set, so of two writers from the same version only one succeeds). Err
 (`unknown setting filtering.nope`, `invalid settings: auto_transcribe: Input should be 'off', 'on_dwell' or 'on_open'`). A task model
 must appear in `GET /v1/models` unless an admin sends `allow_unlisted_models: true` (`400` with `"unlisted":"<model>"` otherwise; `403`
 when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-admin that sets `models`.
+
+### Web settings (`[settings_sync] enabled`, default off)
+
+Plan: [`ai/WEB_SETTINGS_PLAN.md`](WEB_SETTINGS_PLAN.md). With the switch off every route below answers `404` after authentication,
+`GET /v1/me` has no `features.settings_sync` and the settings document has no `values`, so an old client sees nothing new. All routes
+are additive and need a signed-in caller.
+
+- `GET /v1/settings/schema` -> the file `ai/settings/schema.json` (`schema_version`, `groups`, `settings`); `ETag` is the
+  `schema_version`. A setting is named only there. Per setting: `key` (`ai.summary_panel`), `group`, `title` (at most 60 characters),
+  `description` (at most 160), `type` (`bool`, `int`, `float`, `enum`, `string`, `list`, `model`, `prompt`, `secret`), `default`, the range
+  (`min`, `max`, `step`, `presets`, `choices`, `max_items`, `max_len`), `scope` (`user` or `device`), `device_override` (one TV may hold
+  its own value), `remote` (`rw`, `ro`, `none`), `confirm`, `clients` (`tv`, `extension`, `web`), `since`, `phase`, `store`, `tv_pref`.
+  A client sends its schema version and ignores keys it does not know; the server never sends a key with a higher `since`.
+- `GET /v1/device/settings?have=<version>&schema=<n>` (a paired device's token; a browser session or config token gets `400`) ->
+  `{"version":41,"schema_version":1,"settings":{"ai.summary_panel":{"v":true,"rev":39,"from":"user"}}}`, every key this client may see,
+  resolved for this device (`from`: `device`, `user`, `default`). `have` is the version the TV has applied; the server records it.
+  When `have` equals the current version the answer is `{"version":41,"unchanged":true}` (under 300 bytes). `Cache-Control: no-store`.
+- `POST /v1/device/settings` `{"schema_version","app_version","applied_version","initial":false,
+  "changes":[{"key","value","base_rev"}],"report":{...}}` -> the same document plus `"results":[{"key","outcome"}]` with `outcome`
+  `applied`, `superseded`, `invalid` or `not_remote`. At most 200 changes and 64 KiB. A TV change lands as that TV's own value, never as
+  the user's (the web page offers "Use for all my TVs"). `base_rev` is the `rev` the TV last saw: equal to the key's current `rev`
+  -> applied; different -> `superseded`, the server's value stays (the arrival order decides, never a device clock) and the lost value
+  stays in the history. **First sync** (`initial: true`, once per device): each change may carry `"user_set": true` (the value was
+  chosen on the TV). For every key the server compares the TV's value with the value it would give; equal -> nothing stored;
+  different and `user_set` -> the TV's value becomes this TV's own value (`via: migration`), so the TV keeps what it chose;
+  different and not `user_set` (an untouched default) -> checked against `base_rev` like any change, so it never replaces a newer
+  web value. A second `initial` is a normal sync. `report` keeps at most 20 short scalar entries; a body over 64 KiB is `413`.
+- The routes below this one (status, history, a TV's document and `PUT`) are for a browser session or config token: a paired TV's token gets `403`, so a TV cannot read or change its sibling TVs.
+- `GET /v1/me/settings/status` -> `{"version","now","devices":[{"id","device","last_used","syncs","applied_version","applied_at",
+  "last_sync_at","schema_version","app_version","migrated","report","overrides":[key],"pending":[key]}]}`; `pending` is every key whose `rev`
+  is above the TV's `applied_version`.
+- `GET /v1/me/devices/{id}/settings` -> the device document with `device` (state). `PUT /v1/me/devices/{id}/settings`
+  `{"version","settings":{key:value|null}}` sets or (`null`) removes a TV's own values; `version` is required (`428`, `409` as for the
+  document).
+- `GET /v1/me/settings/history?limit=50&key=&device=` -> `{"entries":[{"id","at","key","title","device_id","device","old","new","by","via",
+  "actor","outcome"}]}`, newest first; `via` is `web`, `tv`, `admin` or `migration`; `outcome` is `applied` or `superseded`. Kept 180 days
+  and 5,000 entries per user.
+- `PUT /v1/me/settings` also takes the schema's dotted keys (`{"settings":{"ai.assess":false}}`, `null` resets) beside the old
+  sections, and `GET` adds `values` (`{key:{"v","rev","from"}}` for every user-level key). `rev` is the settings `version` at which the
+  key last changed; the version still rises by one on every change.
+- Known value mismatch, decided: `ai.panel_delay_ms` (server `tv.summary_delay_ms`) now defaults to 1800 ms (the TV's value), range
+  0-10000. `ai.mark_only` is one key backed by `filtering.mark_only`: today only the TV acts on it (hide or mark a card); the server
+  never reads it when it answers, and `/setup.json` only carries the starting value.
 
 ### Models
 

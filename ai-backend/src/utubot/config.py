@@ -468,6 +468,21 @@ class SpeechConfig(BaseModel):
     language: str | None = None
 
 
+class SettingsSyncConfig(BaseModel):
+    """Web settings (ai/WEB_SETTINGS_PLAN.md): the schema, the device channel and the history.
+
+    Off by default: with `enabled = false` the routes answer 404, `GET /v1/me` has no
+    `features.settings_sync` and the settings document has no `values`.
+    """
+
+    enabled: bool = False
+    audit_days: int = Field(180, ge=1)
+    audit_max_rows_per_user: int = Field(5000, ge=1)
+    max_changes_per_post: int = Field(200, ge=1)
+    max_body_bytes: int = Field(65536, ge=1024)
+    history_max: int = Field(200, ge=1)
+
+
 class VoiceConfig(BaseModel):
     """Voice control (ai/VOICE_CONTROL_PLAN.md): consent, history and the live server's address.
 
@@ -777,6 +792,9 @@ MAX_INFLATED_MIN_S = 24 * 3600
 Threshold = Annotated[float, Field(ge=0.0, le=MAX_THRESHOLD)]
 
 
+DEFAULT_SUMMARY_DELAY_MS = 1800
+
+
 class UserPolicy(BaseModel):
     """Everything the server keeps per user: filtering rules, models, transcript and TV settings.
 
@@ -801,7 +819,7 @@ class UserPolicy(BaseModel):
     models: dict[str, str] = Field(default_factory=dict)
     auto_transcribe: Literal["off", "on_dwell", "on_open"] = "on_open"
     auto_transcribe_max_minutes: int = Field(30, ge=1, le=MAX_TRANSCRIBE_MINUTES)
-    summary_delay_ms: int = Field(700, ge=0, le=MAX_SUMMARY_DELAY_MS)
+    summary_delay_ms: int = Field(DEFAULT_SUMMARY_DELAY_MS, ge=0, le=MAX_SUMMARY_DELAY_MS)
     summary_panel: bool | None = None
     auto_captions: bool | None = None
     captions_translate_to: str | None = Field(None, max_length=MAX_LANGUAGE_CHARS)
@@ -1037,6 +1055,7 @@ class Config(BaseModel):
     classes: ClassesConfig = Field(default_factory=ClassesConfig)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    settings_sync: SettingsSyncConfig = Field(default_factory=SettingsSyncConfig)
     captions: CaptionsConfig = Field(default_factory=CaptionsConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
