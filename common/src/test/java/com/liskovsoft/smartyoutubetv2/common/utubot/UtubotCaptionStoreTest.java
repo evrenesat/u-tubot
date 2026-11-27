@@ -27,8 +27,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * The caption files the TV keeps: they survive a restart (a second store over the same folder), are never replaced or lost, and only real
- * WebVTT is stored.
+ * The caption files the TV keeps: they survive a restart (a second store over the same folder), are never replaced, and are lost only
+ * when deletion is asked for; only real WebVTT is stored.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
