@@ -180,6 +180,25 @@ async def test_client_report_folds_an_unknown_component_to_client(env):
     assert entry["component"] == "client"
 
 
+def test_service_recent_pages_with_offset():
+    db = Database(":memory:")
+    ledger = LedgerService(db)
+    for i in range(15):
+        ledger.record("job", "captions", message=f"failure number {i}")
+    # the first page is the ten newest, newest first; the second page the five that remain.
+    first = ledger.recent(10)
+    second = ledger.recent(10, offset=10)
+    assert [e["id"] for e in first] == list(range(15, 5, -1))
+    assert [e["id"] for e in second] == list(range(5, 0, -1))
+    # the pages cover every row exactly once, and an offset past the end is empty.
+    assert [e["id"] for e in first + second] == list(range(15, 0, -1))
+    assert ledger.recent(10, offset=100) == []
+    # paging also applies when filtered by category.
+    ledger.record("job", "captions", message="YouTube 429 rate limited")
+    assert len(ledger.recent(10, category="rate-limited")) == 1
+    assert len(ledger.recent(10, category="rate-limited", offset=10)) == 0
+
+
 def test_ledger_migration_is_additive(tmp_path):
     # a database from before the ledger opens with the table created on the way in.
     import sqlite3
@@ -218,6 +237,37 @@ def test_day_is_utc_and_numbers_need_word_boundaries():
     assert _day(1_700_000_000.0) == "2023-11-14"
     assert categorize("read 4031 bytes")[1] is True
     assert categorize("HTTP 403 from the player")[0] == "youtube-refused"
+
+
+async def test_admin_ledger_recent_is_paged_with_offset(env):
+    # the admin page walks the newest failures in pages of ten; the server sends them newest first.
+    for i in range(15):
+        await env.client.post(
+            "/v1/ledger", json={"operation": "x", "message": f"failure number {i}"}
+        )
+    first = (
+        await env.client.get(
+            "/v1/admin/ledger", params={"period_days": 7, "limit": 10, "offset": 0}
+        )
+    ).json()
+    assert len(first["recent"]) == 10
+    second = (
+        await env.client.get(
+            "/v1/admin/ledger", params={"period_days": 7, "limit": 10, "offset": 10}
+        )
+    ).json()
+    assert len(second["recent"]) == 5
+    assert first["recent"][0]["id"] > second["recent"][-1]["id"]
+    assert not any(a["id"] == b["id"] for a in first["recent"] for b in second["recent"])
+    assert (
+        await env.client.get(
+            "/v1/admin/ledger", params={"period_days": 7, "limit": 10, "offset": 100}
+        )
+    ).json()["recent"] == []
+    # a negative offset is refused like the other bounds.
+    assert (
+        await env.client.get("/v1/admin/ledger", params={"period_days": 7, "offset": -1})
+    ).status_code == 400
 
 
 async def test_admin_page_carries_the_youtube_forbidden_metric(env):

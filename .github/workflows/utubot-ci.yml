@@ -88,6 +88,15 @@ jobs:
       - name: Test
         run: uv run pytest -q
 
+      - name: Set up Node
+        # The web UI modules are plain ES modules with no build step; node --test runs their tests with the DOM stub.
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Test the web UI modules
+        run: node --test tests/js/*.test.mjs
+
   app:
     needs: changes
     if: needs.changes.outputs.app == 'true'
