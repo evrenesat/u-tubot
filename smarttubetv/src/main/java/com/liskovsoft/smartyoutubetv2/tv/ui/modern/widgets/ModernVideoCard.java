@@ -32,6 +32,9 @@ import androidx.core.graphics.ColorUtils;
 import com.liskovsoft.smartyoutubetv2.common.misc.FormatInfoPrefetcher;
 import com.liskovsoft.smartyoutubetv2.common.misc.Skins;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotOpenRequests;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUiHost;
+import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AiSListFilterData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.MainUIData;
 import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
@@ -269,6 +272,31 @@ public class ModernVideoCard extends LinearLayout {
         invalidateThumbOutline();
         updateResumeProgress();
         invalidate();
+
+        // A touch device has no Info or Menu key: the u·tubot symbol on the card opens the Summary view (a long press opens the menu),
+        // the same code path as the key
+        setupUtubotSummaryControl(video);
+    }
+
+    /**
+     * The touch entry point for the Summary view on a tablet: the u·tubot symbol in the corner of the card opens it, reusing the menu's
+     * request so the view behaves exactly as when the Info key or the menu opens it. Hidden on a D-pad screen, where the key is the entry.
+     */
+    private void setupUtubotSummaryControl(Video video) {
+        ImageView control = findViewById(R.id.modern_card_utubot_summary);
+
+        if (!Helpers.isTouchSupported(getContext())) {
+            control.setVisibility(View.GONE);
+            control.setOnClickListener(null);
+            return;
+        }
+
+        control.setVisibility(View.VISIBLE);
+        control.setOnClickListener(v -> {
+            if (UtubotUiHost.canOpen()) {
+                UtubotUiHost.request(UtubotOpenRequests.Kind.SUMMARY, video);
+            }
+        });
     }
 
     /**

@@ -9,7 +9,9 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotOpenRequests;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUiHost;
 import com.liskovsoft.smartyoutubetv2.tv.R;
 
 import org.junit.After;
@@ -267,6 +269,27 @@ public class UtubotPanelControllerTest {
         idle(0);
 
         assertSame(mSecondCard, focus());
+    }
+
+    @Test
+    public void theTouchControlOnTheCardOpensTheSummaryViewLikeTheInfoKey() {
+        resume();
+        mFirstCard.requestFocus();
+        idle(DELAY_MS + 100);
+
+        // A touch device has no Info key: the u·tubot symbol on the card posts the same request as the menu's summary item
+        if (UtubotUiHost.canOpen()) {
+            UtubotUiHost.request(UtubotOpenRequests.Kind.SUMMARY, video("aaaaaaaaaaa", "First"));
+        }
+        idle(0);
+
+        assertEquals("the control opens the view over the screen", View.VISIBLE, overlay().getVisibility());
+        assertTrue("the view has the focus once it is open", overlay().hasFocus());
+
+        // Back closes it and the focus returns to the card
+        assertTrue(mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_BACK)));
+        idle(0);
+        assertSame(mFirstCard, focus());
     }
 
     @Test

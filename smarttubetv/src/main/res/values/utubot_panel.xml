@@ -59,4 +59,7 @@
     <dimen name="utubot_badge_margin">20dp</dimen>
     <dimen name="utubot_badge_padding">8dp</dimen>
     <dimen name="utubot_badge_count_size">12sp</dimen>
+
+    <dimen name="utubot_card_control_size">32dp</dimen>
+    <dimen name="utubot_card_control_margin">6dp</dimen>
 </resources>
