@@ -27,9 +27,10 @@ import okhttp3.Response;
  * error message.
  */
 public class UtubotRealDebridClient {
+    public static final String TYPE_MOVIE = "movie";
+    public static final String TYPE_SERIES = "series";
     public static final String TOKEN_PLACEHOLDER = "{token}";
     private static final int TIMEOUT_MS = 30_000;
-    private static final String STREAM_PATH = "/stream/movie/";
     private static final String STREAM_SUFFIX = ".json";
 
     private final String mAddonUrl;
@@ -46,6 +47,13 @@ public class UtubotRealDebridClient {
      * @throws IOException the addon did not answer, answered with a non-2xx status or an unreadable body; the message never holds the address
      */
     public List<Stream> streams(String imdbId) throws IOException {
+        return streams(TYPE_MOVIE, imdbId);
+    }
+
+    /**
+     * The addon's streams for a movie, or for one episode of a series (id {@code tt0000000:season:episode}).
+     */
+    public List<Stream> streams(String type, String imdbId) throws IOException {
         if (mAddonUrl.isEmpty() || imdbId == null || imdbId.trim().isEmpty()) {
             throw new IOException("A stream addon address and an IMDb id are needed");
         }
@@ -58,7 +66,7 @@ public class UtubotRealDebridClient {
         Request request;
 
         try {
-            request = new Request.Builder().url(mAddonUrl + STREAM_PATH + imdbId.trim() + STREAM_SUFFIX).get().build();
+            request = new Request.Builder().url(mAddonUrl + "/stream/" + type + "/" + imdbId.trim() + STREAM_SUFFIX).get().build();
         } catch (IllegalArgumentException e) {
             throw new IOException("The stream addon address is not a valid web address");
         }

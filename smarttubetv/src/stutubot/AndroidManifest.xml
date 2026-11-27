@@ -13,6 +13,15 @@
             android:name="com.liskovsoft.smartyoutubetv2.tv.utubot.films.RealDebridFilmsActivity"
             android:exported="false"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+        <!-- The films home and details screens (issue 290); opened from the same entry, close themselves when it is off -->
+        <activity
+            android:name="com.liskovsoft.smartyoutubetv2.tv.utubot.films.FilmsHomeActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+        <activity
+            android:name="com.liskovsoft.smartyoutubetv2.tv.utubot.films.FilmDetailsActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
     </application>
 
 </manifest>

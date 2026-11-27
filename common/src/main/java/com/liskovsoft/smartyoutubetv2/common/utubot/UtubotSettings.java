@@ -62,6 +62,7 @@ public class UtubotSettings {
     private static final String KEY_FILMS_RD_TOKEN = "films_rd_token";
     private static final String KEY_FILMS_IMDB = "films_imdb_id";
     private static final String KEY_FILMS_SKIPS = "films_skips";
+    private static final String KEY_FILMS_CATALOG = "films_catalog_url";
     private static final String KEY_PENDING_PROMPT_SETS = "pending_prompt_sets";
     private static final String LIST_SEPARATOR = "\n";
     @SuppressLint("StaticFieldLeak")
@@ -726,6 +727,15 @@ public class UtubotSettings {
 
     public void setFilmsDeveloperEnabled(boolean enabled) {
         mPrefs.edit().putBoolean(KEY_FILMS_DEV, enabled).apply();
+    }
+
+    /** The Stremio catalogue (titles, posters, details) the films screens browse; empty means the public Cinemeta address. */
+    public String getFilmsCatalogUrl() {
+        return mPrefs.getString(KEY_FILMS_CATALOG, "");
+    }
+
+    public void setFilmsCatalogUrl(String value) {
+        mPrefs.edit().putString(KEY_FILMS_CATALOG, value == null ? "" : value.trim()).apply();
     }
 
     /** The Stremio stream addon address; it may hold a key, so it is never logged or shown. */

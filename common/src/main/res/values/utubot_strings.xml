@@ -61,6 +61,7 @@
     <string name="utubot_films_imdb_hint">tt0000000</string>
     <string name="utubot_films_skips">Skip list</string>
     <string name="utubot_films_skips_hint">Seconds, start,end pairs: 30,90;600,720</string>
+    <string name="utubot_films_browse">Browse films</string>
     <string name="utubot_films_list">List streams</string>
     <string name="utubot_films_missing">Set the stream addon address and the IMDb id first</string>
     <string name="utubot_films_no_streams">The addon returned no playable streams</string>

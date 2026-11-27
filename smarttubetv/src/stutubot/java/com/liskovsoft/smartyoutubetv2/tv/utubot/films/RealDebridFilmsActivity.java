@@ -2,6 +2,7 @@ package com.liskovsoft.smartyoutubetv2.tv.utubot.films;
 
 import android.app.Activity;
 import android.graphics.Color;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -39,6 +40,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmDevice;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmFormat;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsDeveloperPresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsKeys;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsProgress;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotKeys;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
@@ -67,7 +69,17 @@ import com.liskovsoft.sharedutils.rx.RxHelper;
  * addon address are shown or logged. The screen closes at once when the developer entry is off.
  */
 public class RealDebridFilmsActivity extends Activity {
+    static final String EXTRA_TYPE = "type";
+    static final String EXTRA_TITLE_ID = "title_id";
+    static final String EXTRA_NAME = "name";
+    static final String EXTRA_POSTER = "poster";
+    static final String EXTRA_SEASON = "season";
+    static final String EXTRA_EPISODE = "episode";
+    static final String EXTRA_STREAM_URL = "stream_url";
+    static final String EXTRA_STREAM_NAME = "stream_name";
+    static final String EXTRA_START_MS = "start_ms";
     private static final String TAG = "UtubotRealDebridFilms";
+    private static final long SAVE_INTERVAL_MS = 15_000;
 
     private static final int TEXT_SP = 18;
     private static final int ROW_PADDING = 16;
@@ -92,6 +104,15 @@ public class RealDebridFilmsActivity extends Activity {
     private boolean mPlaying;
     private UtubotFilmDevice mDevice;
     private SimpleExoPlayer mPlayer;
+    private UtubotFilmsProgress mProgress;
+    private String mStreamType = UtubotRealDebridClient.TYPE_MOVIE;
+    private final Runnable mSaveTick = new Runnable() {
+        @Override
+        public void run() {
+            saveProgress();
+            mHandler.postDelayed(this, SAVE_INTERVAL_MS);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -135,7 +156,17 @@ public class RealDebridFilmsActivity extends Activity {
         holdVideo(presenter, mVideo);
         mSponsorController = presenter.getController(SponsorBlockController.class);
 
+        mProgress = new UtubotFilmsProgress(this);
+        String type = getIntent().getStringExtra(EXTRA_TYPE);
+        mStreamType = type == null ? UtubotRealDebridClient.TYPE_MOVIE : type;
+        String direct = getIntent().getStringExtra(EXTRA_STREAM_URL);
+
         loadStreams(imdbId == null ? "" : imdbId);
+
+        if (direct != null && !direct.isEmpty()) {
+            String name = getIntent().getStringExtra(EXTRA_STREAM_NAME);
+            playStream(new Stream(name == null ? "" : name, direct, 0, 0), getIntent().getLongExtra(EXTRA_START_MS, 0));
+        }
     }
 
     private void buildPanel() {
@@ -171,7 +202,7 @@ public class RealDebridFilmsActivity extends Activity {
         mLoaded = false;
         clearList();
 
-        mLoadAction = Observable.fromCallable(() -> mClient.streams(imdbId))
+        mLoadAction = Observable.fromCallable(() -> mClient.streams(mStreamType, imdbId))
                 .subscribeOn(Schedulers.io())
                 .subscribe(list -> mHandler.post(() -> onStreamsLoaded(list)),
                         error -> mHandler.post(() -> setStatus(getString(R.string.utubot_films_failed, error.getMessage()))));
@@ -232,7 +263,10 @@ public class RealDebridFilmsActivity extends Activity {
             return;
         }
 
-        Stream stream = mStreams.get(index);
+        playStream(mStreams.get(index), mProgress.get(mVideo.videoId) == null ? 0 : mProgress.get(mVideo.videoId).resumeMs());
+    }
+
+    private void playStream(Stream stream, long startMs) {
         String url = stream.url;
         Log.i(TAG, "Chosen stream: " + stream.format.describe() + " verdict=" + stream.format.verdict(mDevice) + " resolution=" + stream.resolution);
 
@@ -247,10 +281,38 @@ public class RealDebridFilmsActivity extends Activity {
         }
 
         mController.openProgressiveUrl(url);
+
+        if (startMs > 0) {
+            mPlayer.seekTo(startMs);
+        }
+
         mController.setPlayWhenReady(true);
+        mHandler.removeCallbacks(mSaveTick);
+        mHandler.postDelayed(mSaveTick, SAVE_INTERVAL_MS);
         mPlaying = true;
         setOverlayVisible(false);
         Log.i(TAG, "Playing: " + stream.display());
+    }
+
+    /** Remembers where the owner is, for Resume, the watched mark and Continue watching */
+    private void saveProgress() {
+        long duration = mPlayer == null ? C.TIME_UNSET : mPlayer.getDuration();
+
+        if (!mPlaying || duration == C.TIME_UNSET || duration <= 0) {
+            return;
+        }
+
+        Intent intent = getIntent();
+        String titleId = intent.getStringExtra(EXTRA_TITLE_ID);
+        mProgress.save(mVideo.videoId, mStreamType, titleId == null ? mVideo.videoId : titleId, intent.getStringExtra(EXTRA_NAME),
+                intent.getStringExtra(EXTRA_POSTER), intent.getIntExtra(EXTRA_SEASON, 0), intent.getIntExtra(EXTRA_EPISODE, 0),
+                mPlayer.getCurrentPosition(), duration, System.currentTimeMillis());
+    }
+
+    @Override
+    protected void onPause() {
+        saveProgress();
+        super.onPause();
     }
 
     private String rowText(Stream stream) {
@@ -391,6 +453,7 @@ public class RealDebridFilmsActivity extends Activity {
             return;
         }
 
+        mHandler.removeCallbacks(mSaveTick);
         RxHelper.disposeActions(mLoadAction);
 
         if (mSponsorController != null) {

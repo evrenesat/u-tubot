@@ -1,3 +1,12 @@
+## 2026-11-27 (films browse UI, #290)
+
+- Films home (`FilmsHomeActivity`): search field and rows of posters (Continue watching, Popular films, Trending films, Popular series), D-pad focus with the white ring and slight zoom of the YouTube home, title and year under each poster. Details (`FilmDetailsActivity`): backdrop, poster, year, runtime, rating, plot, a big Play / Resume button, the season and episode pickers of a series, and the stream picker with quality, codec, bit depth, HDR / Dolby Vision, audio, source and size as chips, best stream first, with an amber note for streams this TV shows reduced or not in colour (#289). Back goes player, details, home, then to where the films were opened from; it never quits the app.
+- Data: `UtubotFilmsCatalog` reads a Stremio catalogue (default Cinemeta, the `films_catalog_url` pref overrides it) for lists, search and details; `UtubotRealDebridClient.streams(type, id)` also asks for one episode (`tt0000000:season:episode`). `UtubotFilmsProgress` keeps resume positions per film or episode on the TV (a title past 90% is watched, under 30 s is not resumed); the player saves every 15 s and on pause.
+- Entry: Settings, Updates, Films (developer), "Browse films" (the old "List streams" stays for the skip-list test).
+- Emulator check: `scripts/emulator_mock_films.py` stands in for the catalogue and the add-on (posters generated, one local test video); the emulator ran with `-dns-server 127.0.0.1` so nothing left the host.
+- Tests: `UtubotFilmsCatalogTest`, `UtubotFilmsProgressTest`.
+- Not done: a Films entry on the main home (only the developer entry opens it), no Fable UI review yet, the player keeps its plain stream list overlay.
+
 ## 2026-11-27 (films player: Back and colour, #289)
 
 - Back on the film screen (`UtubotFilmsKeys`): with the stream list up while a stream plays, Back closes the list and playback goes on; the next Back leaves the screen, like the YouTube player. OK, the D-pad and Menu bring the list back. Starting a stream hides the list. The Back release is consumed so the activity default never runs a second time.
