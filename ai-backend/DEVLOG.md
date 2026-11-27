@@ -1,3 +1,13 @@
+## 2026-11-27 (cuts: a long-video short-by-design cut keeps a tiny part, issue #151)
+
+- The `min_keep_frac` guard already excludes `cuts.short_presets` (`cut-answer`, `cut-demo`,
+  `cut-highlights-5`) in `keep_guards`, so a "Just answers" build keeping 4 % is ready. The
+  missing piece was coverage: the existing API test used a short transcript that stays on the
+  one-pass path, not the map/reduce path a 58:51 video takes.
+- `tests/test_cuts_longvideo.py`: a stand-in model proposes 2:10 per excerpt and keeps one
+  candidate on a 58:50 transcript (~4 %). `cut-answer` finishes `ready` on the map/reduce path;
+  the same answer for `cut-no-filler` still fails with "remove almost everything".
+
 ## 2026-11-27 (TV captions kept, refusals fall back, issue #261)
 
 - Cause: a forced cut dropped the stored captions row (`CutService._ensure_transcript` deleted it before queuing an audio rebuild), so the TV's captions were gone and the rebuild had to download, which failed with "Requested format is not available". That text also matched the "unavailable" pattern, so it failed fast with no fallback.

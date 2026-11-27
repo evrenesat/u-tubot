@@ -312,6 +312,8 @@ class HighlightsModel:
 
 
 HUNDRED_MIN_S = 100 * 60
+REPORTED_LONG_S = 58 * 60 + 51  # the "Just answers" report on GitHub #151
+ANSWER_UNITS = 13  # 2:10 of a 58:51 video: 4 %, under min_keep_frac
 
 
 class OverInclusiveModel:
@@ -347,6 +349,35 @@ class OverInclusiveModel:
             "summary": "keep everything",
             "kept_s": 0,
         }
+
+
+class TinyAnswerModel:
+    """Proposes the first `ANSWER_UNITS` of every excerpt and keeps one candidate: the report
+    behind GitHub #151, a "Just answers" cut of a 58:51 video keeping only about 4 %."""
+
+    def __init__(self):
+        self.maps = 0
+        self.reduces = 0
+
+    def __call__(self, system: str, user: str):
+        if "You finish director's cuts" in system:
+            self.reduces += 1
+            cid = int(CANDIDATE_LINE.findall(user)[0][0])
+            return {"parts": [{"from": cid, "to": cid, "rank": 1}], "summary": "s", "kept_s": 0}
+        self.maps += 1
+        ids = [int(n) for n in UNIT_LINE.findall(user)]
+        last = ids[min(ANSWER_UNITS - 1, len(ids) - 1)]
+        return {"parts": [{"from": ids[0], "to": last, "rank": 1}], "summary": "s", "kept_s": 0}
+
+    def tiny_answer_on_long_video(self, env):
+        set_transcript(env.fetcher, n=int(REPORTED_LONG_S / UNIT_S), seconds_each=UNIT_S)
+        cuts = env.cfg.cuts
+        cuts.max_input_tokens = 6000
+        cuts.map_chunk_tokens = 3000
+        cuts.map_overlap_units = 3
+        cuts.reduce_excerpt_chars = 40
+        env.llm.cut_answer = self
+        return self
 
 
 class TestHighlightsSpread:
@@ -452,3 +483,24 @@ class TestNoTargetLongVideos:
         doc = await wait_ready(cuts_env, r.json()["request_id"], wait_ms=30000)
         assert doc["state"] == "ready", doc
         assert 0 < doc["cut"]["kept_ms"] / doc["cut"]["duration_ms"] <= 0.55
+
+    async def test_a_short_by_design_preset_may_keep_a_tiny_part_of_a_long_video(self, cuts_env):
+        model = TinyAnswerModel().tiny_answer_on_long_video(cuts_env)
+        r = await post_cut(cuts_env, preset="cut-answer")
+        doc = await wait_ready(cuts_env, r.json()["request_id"], wait_ms=30000)
+        assert doc["state"] == "ready", doc.get("error") or doc
+        cut = doc["cut"]
+        assert cut["target_s"] is None
+        assert cut["duration_ms"] >= (58 * 60) * 1000
+        share = cut["kept_ms"] / cut["duration_ms"]
+        assert 0 < share < cuts_env.cfg.cuts.min_keep_frac, share
+        assert 120_000 <= cut["kept_ms"] <= 140_000, cut["kept_ms"]
+        # It really took the long-video map/reduce path.
+        assert model.maps >= 2 and model.reduces == 1
+
+    async def test_the_same_tiny_keep_is_still_refused_for_a_removal_preset(self, cuts_env):
+        TinyAnswerModel().tiny_answer_on_long_video(cuts_env)
+        r = await post_cut(cuts_env, preset="cut-no-filler")
+        doc = await wait_ready(cuts_env, r.json()["request_id"], wait_ms=30000)
+        assert doc["state"] == "failed", doc
+        assert "remove almost everything" in doc["error"]
