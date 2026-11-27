@@ -1,3 +1,13 @@
+## 2026-11-27 (web settings plan checkpoints 1 and 2: schema, device channel)
+
+- `ai/settings/schema.json` (38 keys, `schema_version` 1) is the one list of settings; `settingsschema.py` loads and validates it, `GET /v1/settings/schema` serves it, the wheel packs it as `utubot/settings_schema.json`.
+- `devicesettings.py`: per-key revisions (`settings_rev`), a TV's own values (`settings_values`), `device_settings_state`, `settings_audit` (180 days, 5,000 rows per user), and the routes `GET/POST /v1/device/settings`, `GET /v1/me/settings/status`, `GET /v1/me/settings/history`, `GET/PUT /v1/me/devices/{id}/settings`. The document `PUT` takes dotted keys and now records every changed key in the audit; the document gains `values`.
+- Off by default (`[settings_sync] enabled`): routes 404, `/v1/me` and the document unchanged. All tables are new (`CREATE TABLE IF NOT EXISTS`); `test_a_database_from_before_opens_with_its_data` opens an old file.
+- First sync keeps the TV's values: every differing key becomes that TV's own value (`via: migration`); test `test_first_sync_keeps_what_the_tv_has`.
+- `tv.summary_delay_ms` now defaults to 1800 (the TV's value); it never had an effect before. The `mark_only` finding is in the contract: only the TV acts on it.
+- Not covered: changes through `PUT /v1/me/policy` and the old prompt-default calls do not write the audit or the per-key revision (the version still rises). The Settings page uses the document `PUT`.
+- Tests: `test_settings_schema.py` (T1, including a check that every `KEY_*` of `UtubotSettings` is classified), `test_device_settings.py` (T2).
+
 ## 2026-11-27 (cut-ready question shows its text over a playing video, issue #274)
 
 - The "Director's cut ready" question is the first row of the dialog: a disabled button carrying the whole question, then "Play the cut now" and "Not now".

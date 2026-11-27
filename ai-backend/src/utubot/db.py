@@ -84,6 +84,21 @@ CREATE INDEX IF NOT EXISTS pair_failures_ip ON pair_failures(ip, ts);
 CREATE TABLE IF NOT EXISTS policy_overrides(
   user TEXT PRIMARY KEY, json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0,
   updated_at REAL NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS settings_values(
+  user TEXT NOT NULL, device_id TEXT NOT NULL DEFAULT '', key TEXT NOT NULL, json TEXT NOT NULL,
+  rev INTEGER NOT NULL, changed_at REAL NOT NULL, PRIMARY KEY(user, device_id, key));
+CREATE TABLE IF NOT EXISTS settings_rev(
+  user TEXT NOT NULL, device_id TEXT NOT NULL DEFAULT '', key TEXT NOT NULL, rev INTEGER NOT NULL,
+  PRIMARY KEY(user, device_id, key));
+CREATE TABLE IF NOT EXISTS device_settings_state(
+  device_id TEXT PRIMARY KEY, user TEXT NOT NULL, applied_version INTEGER NOT NULL DEFAULT 0,
+  applied_at REAL, schema_version INTEGER, app_version TEXT, last_sync_at REAL, migrated_at REAL,
+  report_json TEXT);
+CREATE TABLE IF NOT EXISTS settings_audit(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT NOT NULL, device_id TEXT NOT NULL DEFAULT '',
+  key TEXT NOT NULL, old_json TEXT, new_json TEXT, by_user TEXT, via TEXT NOT NULL,
+  actor_device_id TEXT, at REAL NOT NULL, outcome TEXT NOT NULL DEFAULT 'applied');
+CREATE INDEX IF NOT EXISTS settings_audit_user ON settings_audit(user, id);
 CREATE TABLE IF NOT EXISTS user_passwords(
   user TEXT PRIMARY KEY, hash TEXT NOT NULL, updated_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(

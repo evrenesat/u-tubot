@@ -169,7 +169,11 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
         body: dict[str, Any], request: Request, user: UserConfig = Depends(current_user)
     ):
         return await svc.settings.update(
-            user.name, body, is_admin=user.admin, require_version=from_browser(request)
+            user.name,
+            body,
+            is_admin=user.admin,
+            require_version=from_browser(request),
+            by=user.name,
         )
 
     @app.get("/v1/users/{name}/settings")
@@ -183,7 +187,12 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
     ):
         known_user(name)
         return await svc.settings.update(
-            name, body, is_admin=True, require_version=from_browser(request)
+            name,
+            body,
+            is_admin=True,
+            require_version=from_browser(request),
+            via="admin",
+            by=admin.name,
         )
 
     # ---- models, status, updates ----------------------------------------------------------

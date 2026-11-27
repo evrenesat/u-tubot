@@ -307,6 +307,16 @@ max_tokens = 2000
 # history_page_max = 200
 # commands_per_min = 120         # filed records per user
 
+# Web settings (ai/WEB_SETTINGS_PLAN.md): the Settings page, the schema route and the TV's settings sync.
+# Off: the routes answer 404 and clients see nothing new.
+# [settings_sync]
+# enabled = false
+# audit_days = 180               # the History tab keeps changes this long ...
+# audit_max_rows_per_user = 5000 # ... and at most this many per user
+# max_changes_per_post = 200
+# max_body_bytes = 65536
+# history_max = 200
+
 [assess]
 batch_size = 25                    # titles per triage call
 max_videos_per_request = 50
@@ -648,7 +658,7 @@ auto_transcribe = "on_open"       # off | on_dwell | on_open: transcribe videos 
 auto_transcribe_max_minutes = 30  # ... but only videos up to this long
 # captions_translate_to = "en"    # unset: follows [captions] translate_to; "off" keeps the spoken language
 # cut_mode = "quick"              # "quick" | "watched": the viewer's default director's cut
-summary_delay_ms = 700            # TV: how long a card stays focused before its summary is requested
+summary_delay_ms = 1800           # TV: how long a card stays focused before its summary is requested
 # summary_panel = false           # unset: follows [setup.defaults] summary_panel
 # auto_captions = true            # unset: follows [setup.defaults] auto_captions
 update_checks = true              # TV: ask this server for newer app versions

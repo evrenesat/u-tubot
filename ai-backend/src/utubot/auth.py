@@ -385,4 +385,6 @@ class Auth:
             )
         if gone:
             self.db.execute("DELETE FROM device_voice WHERE device_id=?", [device_id])
+            for table in ("settings_values", "settings_rev", "device_settings_state"):
+                self.db.execute(f"DELETE FROM {table} WHERE device_id=?", [device_id])
         return gone

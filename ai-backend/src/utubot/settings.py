@@ -87,6 +87,16 @@ def resolved_fields(cfg: Config, policy: UserPolicy) -> dict[str, Any]:
 class SettingsService:
     def __init__(self, cfg: Config, auth: Auth, prompts: PromptStore, catalog: ModelCatalog):
         self.cfg, self.auth, self.prompts, self.catalog = cfg, auth, prompts, catalog
+        self._sync: Any = None  # DeviceSettings
+
+    @property
+    def sync(self) -> Any:
+        """The device settings, only while `[settings_sync]` is on."""
+        return self._sync if self.cfg.settings_sync.enabled else None
+
+    @sync.setter
+    def sync(self, value: Any) -> None:
+        self._sync = value
 
     def _sections(self, cfg_values: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -152,6 +162,7 @@ class SettingsService:
                 "auto_transcribe": ["off", "on_dwell", "on_open"],
                 "cut_mode": ["quick", "watched"],
             },
+            **({"values": self.sync.user_layer(name)} if self.sync is not None else {}),
         }
 
     def _parse(
@@ -182,7 +193,14 @@ class SettingsService:
         return fields, models, prompts
 
     async def update(
-        self, name: str, body: Any, *, is_admin: bool = False, require_version: bool = False
+        self,
+        name: str,
+        body: Any,
+        *,
+        is_admin: bool = False,
+        require_version: bool = False,
+        via: str = "web",
+        by: str | None = None,
     ) -> dict[str, Any]:
         """Apply a partial settings document.
 
@@ -191,6 +209,9 @@ class SettingsService:
         check runs without yielding, and the write itself is a compare-and-set on the version, so
         two writers from the same version cannot both succeed.
         """
+        values: dict[str, Any] = {}
+        if self.sync is not None and isinstance(body, dict):
+            body, values = self.sync.split_document_keys(body)
         fields, models, prompts = self._parse(body)
         allow_unlisted = bool(body.get("allow_unlisted_models"))
         if allow_unlisted and not is_admin:
@@ -205,7 +226,7 @@ class SettingsService:
         for value in models.values():
             if value is not None and not isinstance(value, str):
                 raise SettingsError(400, "a model must be a string")
-        if not (fields or models or prompts):
+        if not (fields or models or prompts or values):
             return self.document(name)
         await self._check_models(models, allow_unlisted)
         current, _ = self.auth.settings_version(name)
@@ -219,13 +240,17 @@ class SettingsService:
             ):
                 raise SettingsError(400, f"unknown prompt for {key}: {value}")
         override = self._merged_override(name, fields, models)
+        before = self.sync.user_layer(name) if self.sync is not None else None
         try:
-            self.auth.write_override(name, override, expected=current)
+            version = self.auth.write_override(name, override, expected=current)
         except VersionConflict as exc:
             raise SettingsError(
                 409, "settings changed since you loaded them; reload", version=exc.version
             ) from exc
         self._apply_prompts(name, prompts)
+        if self.sync is not None and before is not None:
+            self.sync.write_user_values(name, values, version)
+            self.sync.record_document_change(name, before, version, via=via, by=by)
         return self.document(name)
 
     def _merged_override(
