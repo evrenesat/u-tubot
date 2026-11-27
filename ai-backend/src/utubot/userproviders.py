@@ -119,8 +119,8 @@ class UserProviders:
         base = base_url.strip().rstrip("/")
         if not base:
             raise ValueError("a base url is required")
-        if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", base):
-            raise ValueError("the base url needs a scheme, e.g. https://host/v1")
+        if not re.match(r"^https?://[^/\s]+", base, re.IGNORECASE):
+            raise ValueError("the base url must be http(s)://host/v1")
         if not api_key:
             raise ValueError("an api key is required")
         now = datetime.now(UTC).timestamp()

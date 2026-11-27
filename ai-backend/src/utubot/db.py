@@ -249,12 +249,18 @@ MAX_CHANNEL_NAME_CHARS = 120
 METADATA_ONLY = "metadata_only"
 
 
+DB_FILE_MODE = 0o600
+
+
 class Database:
     def __init__(self, path: Path | str):
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        if str(path) != ":memory:":
+            # the file holds users' own provider keys: owner-only, like users.toml
+            Path(path).chmod(DB_FILE_MODE)
         self._lock = threading.Lock()
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")

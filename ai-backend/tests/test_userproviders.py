@@ -52,7 +52,16 @@ def test_set_describe_and_remove_roundtrip():
 def test_set_rejects_a_base_url_without_a_scheme():
     db = Database(":memory:")
     ups = UserProviders(db)
-    for bad in ("", "   ", "no-scheme", "ftp", "just-a-token"):
+    for bad in (
+        "",
+        "   ",
+        "no-scheme",
+        "ftp",
+        "just-a-token",
+        "ftp://h.example.com",
+        "file:///etc/passwd",
+        "https://",
+    ):
         with pytest.raises(ValueError):
             ups.set("owner", bad, "pk-secret")
     assert ups.describe("owner") is None  # nothing was stored
@@ -157,6 +166,12 @@ def test_a_database_from_before_the_user_tables_opens(tmp_path):
     UserProviders(db).set("owner", "https://h.example.com", "pk")
     PerUserUsage(db).add("owner", 0.5)
     assert db.one("SELECT cost FROM user_usage WHERE user='owner'")["cost"] == 0.5
+
+
+def test_the_database_file_is_owner_only(tmp_path):
+    path = tmp_path / "keys.db"
+    Database(path)
+    assert path.stat().st_mode & 0o777 == 0o600
 
 
 # --- routes --------------------------------------------------------------------------------
@@ -283,3 +298,53 @@ async def test_the_per_user_request_cap_is_enforced(env):
     r = await env.client.get("/v1/me")
     assert r.status_code == 429
     assert r.headers["retry-after"].isdigit() and int(r.headers["retry-after"]) > 0
+
+
+async def test_each_users_calls_use_only_their_own_key(env, caplog):
+    messages = [{"role": "user", "content": "hello"}]
+    mine = bind_call("owner", UserProvider("https://models.example.com/v1", "pk-owner-secret"))
+    try:
+        await env.svc.llm.complete(env.cfg.llm.analysis, messages, priority=INTERACTIVE)
+    finally:
+        unbind_call(mine)
+    theirs = bind_call(
+        "partner", UserProvider("https://models.example.com/v1", "pk-partner-secret")
+    )
+    try:
+        await env.svc.llm.complete(env.cfg.llm.analysis, messages, priority=INTERACTIVE)
+    finally:
+        unbind_call(theirs)
+    # a user with no upstream of their own never receives anyone else's key
+    plain = bind_call("friend", None)
+    try:
+        await env.svc.llm.complete(env.cfg.llm.analysis, messages, priority=INTERACTIVE)
+    finally:
+        unbind_call(plain)
+    auths = [req["auth"] for req in env.llm.requests[-3:]]
+    assert auths[0] == "Bearer pk-owner-secret"
+    assert auths[1] == "Bearer pk-partner-secret"
+    assert "secret" not in str(auths[2])
+    assert "pk-owner-secret" not in caplog.text and "pk-partner-secret" not in caplog.text
+
+
+async def test_the_other_users_do_not_see_a_stored_key(env):
+    await env.client.put(
+        "/v1/me/provider", json={"base_url": "https://h.example.com", "api_key": "pk-private"}
+    )
+    admin = await env.client.get("/v1/admin/users")
+    assert "pk-private" not in admin.text
+    assert "pk-private" not in (await env.client.get("/v1/users")).text
+
+
+def test_own_upstreams_get_one_limiter_per_user(env):
+    t1 = bind_call("owner", UserProvider("https://h.example.com", "k1"))
+    try:
+        a = env.svc.llm.limiter(USER_PROVIDER)
+    finally:
+        unbind_call(t1)
+    t2 = bind_call("partner", UserProvider("https://h.example.com", "k2"))
+    try:
+        b = env.svc.llm.limiter(USER_PROVIDER)
+    finally:
+        unbind_call(t2)
+    assert a is not b

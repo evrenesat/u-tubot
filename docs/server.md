@@ -481,7 +481,7 @@ their key and budget instead of this server's. They store it with `PUT /v1/me/pr
 (host and a short key fingerprint, never the key, or `{"configured": false}`), and clear it with
 `DELETE /v1/me/provider` (back to the server default). The key is needed to make the call, so it is
 stored on the server, never returned in a response or a log line, exactly like the `[llm.providers]`
-env-var keys. A base url without a scheme or an empty key is refused with `400`.
+env-var keys. A base url that is not `http(s)://host` or an empty key is refused with `400`. The database file is owner-only (0600); keep backups of it equally private.
 
 Their calls still run under their own limits: `user_budget_usd` (`[usage]`, a daily UTC cost ceiling,
 `0` = unlimited) is checked before each send and a `UserBudgetError` surfaces as `429` with a

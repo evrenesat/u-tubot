@@ -209,7 +209,6 @@ class Services:
     ledger: LedgerService
     user_providers: UserProviders
     build: buildinfo.Build = field(default_factory=buildinfo.detect)
-    build: buildinfo.Build = field(default_factory=buildinfo.detect)
 
 
 def build_services(

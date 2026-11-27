@@ -216,6 +216,9 @@ class LLMClient:
         await self._http.aclose()
 
     def limiter(self, provider: str) -> PriorityLimiter:
+        if provider == USER_PROVIDER:
+            # one slot pool per user: one person's own upstream never queues behind another's
+            provider = f"{USER_PROVIDER}:{current_user()}"
         lim = self._limiters.get(provider)
         if lim is None:
             pc = self.cfg.llm.providers.get(provider)

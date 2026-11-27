@@ -589,6 +589,13 @@ auto_captions = true
 [ledger]
 keep_days = 90
 
+# Per-user limits (multi-user, issue 212). Cost is estimated from tokens and the alias price below, so an
+# alias with no price adds nothing to a user's budget. 0 = no limit.
+[usage]
+user_budget_usd = 0         # daily (UTC) cost ceiling per user
+user_requests_per_min = 0   # requests per user per minute; 0 = follow the global limit
+# price_usd_per_million = { "worker" = 0.5 }
+
 # The landing page "/" shows a public Download section from `utubot app publish`.
 # Downloader (AFTVnews) short codes, shown when non-empty; keys are ABIs.
 [app]
