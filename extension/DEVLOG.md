@@ -1,5 +1,19 @@
 # u·tubot browser extension devlog
 
+## 2026-11-27 (assess: send channel and video context, issue #243)
+
+- The assess request now carries the optional context of `ai/CONTRACT.md` (`VideoMeta`): `is_subscribed`, `upload_date`, `likes`,
+  `dislikes`, `subscriber_count`, `channel_description`, `channel_titles`. `shared/meta.js` `videoToJson` adds each only where the
+  meta exposes it and omits it otherwise, so an unknown signal never reads as a negative (`is_subscribed` is sent only when true,
+  like the TV's `UtubotMeta`); a "1.2M" count the reader has not parsed is dropped rather than sent as `0`. The backend still fills
+  the channel's usual titles itself from what it has seen.
+- `ai/BROWSER_EXTENSION_PLAN.md`: decision 16 and the `assess-switch` parity row now say the extension sends the same context where
+  the page or the signed-in user's subscription list exposes it, each omitted when not found. No `ai/CONTRACT.md` edit: the fields
+  were already part of `VideoMeta`, so the wire is unchanged.
+- Evidence: extension `npm run lint` clean, `npm test` (63 pass, new `tests/unit/meta.test.js` and the assess-context client case),
+  the five builds, `web-ext lint` on the three Firefox variants (0 errors with `--self-hosted`); `scripts/utubot_ci_changes.py parity`
+  ok. No test or check contacts YouTube.
+
 ## 2026-11-26 (error ledger, issue #206)
 
 - `createClient(..., { reportFailures: true })` (the router) reports the extension's own transport and 5xx failures to `POST /v1/ledger`, throttled to one per message a minute and ten a minute (`createFailureThrottle`). Unit tests in `tests/unit/client.test.js`.

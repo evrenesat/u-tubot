@@ -184,6 +184,38 @@ test("an error status is an HttpError with the code", async () => {
   await assert.rejects(() => client.me(), (error) => error instanceof HttpError && error.code === 401 && error.isUnauthorized());
 });
 
+test("an assess request carries the channel and video context the meta exposes", async () => {
+  const call = await one(
+    (client) =>
+      client.assess(
+        [
+          {
+            video_id: VIDEO,
+            title: "Title",
+            isSubscribed: true,
+            uploadDate: "2026-11-20",
+            likes: 1200,
+            dislikes: 40,
+            subscriberCount: 900000,
+            channelDescription: "The channel",
+            channelTitles: ["Show A", "Vlog B"],
+          },
+        ],
+        "home",
+        1200,
+      ),
+    { results: [] },
+  );
+  const video = bodyOf(call).videos[0];
+  assert.equal(video.is_subscribed, true);
+  assert.equal(video.upload_date, "2026-11-20");
+  assert.equal(video.likes, 1200);
+  assert.equal(video.dislikes, 40);
+  assert.equal(video.subscriber_count, 900000);
+  assert.equal(video.channel_description, "The channel");
+  assert.deepEqual(video.channel_titles, ["Show A", "Vlog B"]);
+});
+
 test("too many videos in one assess call are refused before a request", async () => {
   const { calls, fetchImpl } = fake({ results: [] });
   const client = createClient(BASE, TOKEN, fetchImpl);
