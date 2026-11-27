@@ -279,7 +279,6 @@ def build_services(
         ledger=ledger,
         user_providers=user_providers,
     )
-    )
 
 
 def error(status: int, message: str) -> JSONResponse:
