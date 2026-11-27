@@ -110,6 +110,22 @@
 - Takeover fix: the classic card is a leanback `BaseCardView` that stacks children by view type and ignores gravity, so the symbol added to the card itself
   would have become a stacked row under the thumb; it is now added to the thumb's own layout (`main_image_wrapper`, top-end). Unused id removed.
 
+## 2026-11-26 (Tablet: touch-friendly browse/player layout, issue #217)
+
+- The leanback screens are built for a D-pad. On a 10-inch tablet the browse rows and the headers already scroll by touch: they are
+  `VerticalGridView`/`HorizontalGridView`, which are `RecyclerView` subclasses, and the classic rows and the headers go through the same
+  widgets via `RowsSupportFragment`/`HeadersSupportFragment`. The player double-tap seek (`PlaybackFragment.initializeDoubleTapHandler`,
+  gated on `Helpers.isTouchSupported`) and the 48 dp control bar are touch already, and `SplashActivity` already handles
+  `orientation|screenSize`, so a rotation restarts nothing. The gap left is the tap target size: a leanback row, a dialog option or a menu
+  item can be shorter than a finger.
+- `TabletTouch` decides whether the device is a large touch screen (touch and a screen diagonal at or above 7 inches), so the touch layout
+  is applied only on a tablet; the other flavours and the D-pad are unchanged. `TouchTargets` is the 48 dp minimum tap target, in dp or px.
+- The settings/dialog list rows grow to the minimum target on a tablet (`LeanbackListPreferenceDialogFragment`, the list picker of both the
+  classic and the modern dialog activities). Same native screens, no embedded web UI, the TV code paths are shared.
+- Tests: `TabletTouchTest`, `TouchTargetsTest`. Lint and the unit tests pass.
+- Emulator check not done: the p100 emulator (37.2.13) segfaults at start for every AVD, as at the install step (#201); the screenshots of
+  browse, settings, the u·tubot menu and the player in both orientations still need a working tablet emulator.
+
 ## 2026-11-26 (voice plan checkpoint 0: gates, issue #180)
 
 - `ai/VOICE_CONTROL_PLAN.md`: owner decisions recorded (all as recommended; R2T4 is MIT, evrenesat/r2t4#22). Measured on the owner's server, from the backend's container with its own gateway key, no config changed: speech-to-text `stt` 50th 0.34 s / 90th 0.43 s; intent `fast` 12.2 / 25.4 s and `coder` 3.0 / 5.4 s (both aliases think despite `reasoning_effort: none`, 3 of 20 calls hit the 120-token cap); no speech-out route on the gateway; backend loop on `/v1/health` 1.9 / 2.2 ms, worst 57 to 111 ms; WebSocket through the proxy chain not provable without a config change. Sections 2.5 and 5.2 carry the numbers and who must act; the infra task is evrenesat/evreniops#250.
