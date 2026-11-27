@@ -13,6 +13,7 @@ import * as login from "./pages/login.js";
 import * as models from "./pages/models.js";
 import * as more from "./pages/more.js";
 import * as prompts from "./pages/prompts.js";
+import * as settings from "./pages/settings.js";
 import * as transcripts from "./pages/transcripts.js";
 import * as updates from "./pages/updates.js";
 import { applyTheme } from "./theme.js";
@@ -27,6 +28,7 @@ const ROUTES = [
   { path: "filters", label: "Filters", icon: "filters", page: filtering, primary: true },
   { path: "captions", label: "Captions", icon: "captions", page: transcripts, primary: true },
   { path: "jobs", label: "Job", icon: "captions", page: job, parent: "captions", hidden: true },
+  { path: "settings", label: "Settings", icon: "settings", page: settings, settingsOnly: true },
   { path: "tvs", label: "TVs", icon: "tv", page: devices },
   { path: "history", label: "Voice", icon: "mic", page: history, voiceOnly: true },
   { path: "updates", label: "Updates", icon: "updates", page: updates },
@@ -46,7 +48,7 @@ function parseHash() {
 }
 
 function allowed(route) {
-  return (!route.adminOnly || session.admin) && (!route.voiceOnly || session.voice);
+  return (!route.adminOnly || session.admin) && (!route.voiceOnly || session.voice) && (!route.settingsOnly || session.settingsSync);
 }
 
 function drawNav(current) {
