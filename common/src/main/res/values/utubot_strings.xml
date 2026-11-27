@@ -2,6 +2,14 @@
 <resources>
     <string name="utubot_title" translatable="false">u·tubot</string>
     <string name="utubot_ai_features">AI features</string>
+    <string name="utubot_sync_title">Settings sync</string>
+    <string name="utubot_sync_ok">Synced with %1$s, %2$s</string>
+    <string name="utubot_sync_failed">Not synced: the server does not answer. Changes are kept on this TV.</string>
+    <string name="utubot_sync_just_now">just now</string>
+    <string name="utubot_sync_minutes_ago">%1$d min ago</string>
+    <string name="utubot_sync_hours_ago">%1$d h ago</string>
+    <string name="utubot_sync_superseded">%1$s was changed on the web while this TV was offline. The web value is used.</string>
+    <string name="utubot_panel_delay_custom">Custom (%1$d ms)</string>
     <string name="utubot_backend">Backend</string>
     <string name="utubot_import_setup">Import setup</string>
     <string name="utubot_import_setup_desc">Type your server\'s address (for example utubot.example.com) to configure the app</string>

@@ -48,7 +48,47 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
     }
 
     public void show() {
+        UtubotSettingsSyncRunner.requestNow(getContext());
         show(false);
+    }
+
+    /**
+     * "Synced with host, 2 min ago", or that the server does not answer; null when the server has no web settings or the TV is not paired
+     */
+    private String syncStatusLine(Context context) {
+        UtubotSettingsSync.Status status = UtubotSettingsSyncRunner.status();
+
+        if (status == UtubotSettingsSync.Status.FAILED) {
+            return context.getString(R.string.utubot_sync_failed);
+        }
+
+        long lastOk = UtubotSettingsSyncRunner.lastOkMs();
+
+        if (status != UtubotSettingsSync.Status.SYNCED || lastOk == 0) {
+            return null;
+        }
+
+        return context.getString(R.string.utubot_sync_ok, hostOf(mSettings.getUrl()), formatAgo(context, System.currentTimeMillis() - lastOk));
+    }
+
+    static String hostOf(String url) {
+        try {
+            String host = java.net.URI.create(url).getHost();
+            return host != null ? host : url;
+        } catch (IllegalArgumentException e) {
+            return url;
+        }
+    }
+
+    static String formatAgo(Context context, long ageMs) {
+        long minutes = ageMs / TimeUnit.MINUTES.toMillis(1);
+
+        if (minutes < 1) {
+            return context.getString(R.string.utubot_sync_just_now);
+        }
+
+        return minutes < 60 ? context.getString(R.string.utubot_sync_minutes_ago, (int) minutes)
+                : context.getString(R.string.utubot_sync_hours_ago, (int) (minutes / 60));
     }
 
     private void show(boolean replace) {
@@ -69,6 +109,12 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
     List<OptionCategory> buildCategories() {
         Context context = getContext();
         List<OptionCategory> categories = new ArrayList<>();
+        String syncLine = syncStatusLine(context);
+
+        if (syncLine != null) {
+            categories.add(OptionCategory.singleButton(UiOptionItem.from(context.getString(R.string.utubot_sync_title), syncLine,
+                    option -> UtubotSettingsSyncRunner.requestNow(context))));
+        }
 
         categories.add(OptionCategory.singleSwitch(UiOptionItem.from(context.getString(R.string.utubot_assess), context.getString(R.string.utubot_assess_desc),
                 option -> mSettings.setAssessEnabled(option.isSelected()), mSettings.isAssessEnabled())));
@@ -242,6 +288,10 @@ public class UtubotSettingsPresenter extends BasePresenter<Void> {
      * "1 s", "1.8 s"
      */
     static String formatDelay(Context context, int delayMs) {
+        if (!UtubotSettings.isPanelDelayChoice(delayMs)) {
+            return context.getString(R.string.utubot_panel_delay_custom, delayMs);
+        }
+
         float seconds = delayMs / (float) MS_PER_SECOND;
         String text = seconds == Math.floor(seconds) ? String.valueOf((int) seconds) : String.valueOf(seconds);
 

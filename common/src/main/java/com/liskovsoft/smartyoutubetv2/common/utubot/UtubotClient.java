@@ -157,6 +157,7 @@ public class UtubotClient {
     private final String mToken;
     private final Set<Call> mCalls = ConcurrentHashMap.newKeySet();
     private volatile boolean mIsCancelled;
+    private volatile boolean mIsQuiet;
 
     /**
      * @param baseUrl the backend address, with or without a trailing slash
@@ -191,6 +192,36 @@ public class UtubotClient {
 
     public boolean isCancelled() {
         return mIsCancelled;
+    }
+
+    /**
+     * A background client: its calls do not light the working indicator and their failures are not reported to the ledger
+     * (the settings sync polls all the time and a server that is down is not a defect to count)
+     */
+    public UtubotClient quiet() {
+        mIsQuiet = true;
+        return this;
+    }
+
+    /**
+     * The settings this TV should use (ai/CONTRACT.md, "Web settings"): the document, or {@code {"unchanged":true}} when
+     * {@code have} is the current version. Answers 404 while the backend has the feature off.
+     */
+    public String deviceSettings(int have, int schemaVersion, int timeoutMs) throws IOException {
+        HttpUrl.Builder url = urlBuilder("/device/settings").addQueryParameter("schema", String.valueOf(schemaVersion));
+
+        if (have >= 0) {
+            url.addQueryParameter("have", String.valueOf(have));
+        }
+
+        return send(authorized(url), timeoutMs);
+    }
+
+    /**
+     * Reports what this TV applied and sends its own changes; the answer is the document plus the result of each change
+     */
+    public String postDeviceSettings(JSONObject body, int timeoutMs) throws IOException {
+        return send(builder("/device/settings", true).post(json(body)), timeoutMs);
     }
 
     /**
@@ -784,7 +815,10 @@ public class UtubotClient {
 
         Call call = sBase.newCall(builder.build());
         mCalls.add(call);
-        UtubotBusyTracker.instance().begin();
+
+        if (!mIsQuiet) {
+            UtubotBusyTracker.instance().begin();
+        }
 
         try (Response response = call.execute()) {
             if (!response.isSuccessful()) {
@@ -946,7 +980,7 @@ public class UtubotClient {
         String path = request.url().encodedPath();
         boolean clientSide = !(error instanceof HttpException) || ((HttpException) error).code >= HTTP_SERVER_ERROR;
 
-        if (mIsCancelled || mToken.isEmpty() || path.endsWith(LEDGER_PATH) || !clientSide) {
+        if (mIsCancelled || mIsQuiet || mToken.isEmpty() || path.endsWith(LEDGER_PATH) || !clientSide) {
             return;
         }
 
@@ -1036,7 +1070,10 @@ public class UtubotClient {
             }
         } finally {
             mCalls.remove(call);
-            UtubotBusyTracker.instance().end();
+
+            if (!mIsQuiet) {
+                UtubotBusyTracker.instance().end();
+            }
         }
     }
 
