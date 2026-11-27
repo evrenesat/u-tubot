@@ -757,12 +757,17 @@ def test_a_cookie_is_redacted_to_the_end_of_its_line_only():
 async def test_no_test_can_reach_youtube(tmp_path):
     import yt_dlp
 
-    with pytest.raises(AssertionError, match="never reach YouTube"):
-        yt_dlp.YoutubeDL({"quiet": True}).extract_info("https://www.youtube.com/watch?v=" + VID)
-    with pytest.raises(AssertionError, match="never reach YouTube"):
-        await httpx.AsyncClient().get("https://rr1.googlevideo.com/videoplayback")
-    with pytest.raises(AssertionError, match="never reach YouTube"):
-        httpx.Client().get("https://www.youtube.com/api/timedtext")
+    from tests.conftest import VIOLATIONS
+
+    try:
+        with pytest.raises(AssertionError, match="never reach YouTube"):
+            yt_dlp.YoutubeDL({"quiet": True}).extract_info("https://www.youtube.com/watch?v=" + VID)
+        with pytest.raises(AssertionError, match="never reach YouTube"):
+            await httpx.AsyncClient().get("https://rr1.googlevideo.com/videoplayback")
+        with pytest.raises(AssertionError, match="never reach YouTube"):
+            httpx.Client().get("https://www.youtube.com/api/timedtext")
+    finally:
+        VIOLATIONS.clear()  # the refusals above are expected; the fixture must not fail on them
 
 
 def test_clean_drops_secret_looking_keys_and_keeps_plain_facts():

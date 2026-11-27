@@ -1,3 +1,17 @@
+## 2026-11-27 (tests never reach YouTube: refusals are recorded and fail the test, issue #35)
+
+- The no-YouTube guard in `tests/conftest.py` already refused yt-dlp, httpx and DNS lookups, but a refusal the code under test caught
+  (a broad `except`) passed silently. Every refusal now lands in `VIOLATIONS`, and the autouse fixture fails the test at teardown.
+- Host match is exact or a subdomain (`notyoutube.com` is not blocked).
+- Opt-out for a test that replays a recorded cassette and must touch a YouTube host: `@pytest.mark.youtube_fixture` (registered in
+  `pyproject.toml`). No test uses it.
+- Audit: the full suite (1607 tests) makes no YouTube request with the recording guard on; no leak was found.
+- Tests: `test_network_guard.py` and `test_job_report.py::test_no_test_can_reach_youtube` clear the expected refusals. Probe (removed):
+  swallowed httpx and yt-dlp refusals error at teardown.
+- Docs: `docs/development.md` "Tests without YouTube" (what the guard covers and does not, how to write a fake fetcher, downloader or
+  cassette test). Not covered: raw IP literals, subprocess URLs, a test-installed `yt_dlp.YoutubeDL` stand-in.
+- Follow-up: full record/replay proxy for the emulator/E2E path is not in this change (issue #35 remains open for it).
+
 ## 2026-11-27 (TV captions kept, refusals fall back, issue #261)
 
 - Cause: a forced cut dropped the stored captions row (`CutService._ensure_transcript` deleted it before queuing an audio rebuild), so the TV's captions were gone and the rebuild had to download, which failed with "Requested format is not available". That text also matched the "unavailable" pattern, so it failed fast with no fallback.

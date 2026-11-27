@@ -6,7 +6,7 @@ import urllib.request
 import httpx
 import pytest
 
-from tests.conftest import block_youtube
+from tests.conftest import VIOLATIONS, block_youtube
 
 YOUTUBE = "https://www.youtube.com/watch?v=utubot_demo"
 
@@ -18,6 +18,7 @@ def test_httpx_refuses_youtube_hosts():
             httpx.get(YOUTUBE, timeout=2.0)
     finally:
         restore()
+        VIOLATIONS.clear()  # these refusals are the point of the test, not a leak
 
 
 def test_resolver_refuses_youtube_names_but_keeps_the_loopback_working():
@@ -38,3 +39,4 @@ def test_resolver_refuses_youtube_names_but_keeps_the_loopback_working():
         assert socket.getaddrinfo("127.0.0.1", 80) is not None
     finally:
         restore()
+        VIOLATIONS.clear()  # these refusals are the point of the test, not a leak

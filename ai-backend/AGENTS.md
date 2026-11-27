@@ -44,7 +44,7 @@
   queue a job call `mark_origin`; routes that hand a stored result to a client call the `record_*_delivery` helpers (`JobQueue`). The detail
   page lives in `web/ui/js/pages/job.js` + `jobtext.js`; document stages in `docs/server.md` (Job details) and `ai/CONTRACT.md`.
 - Tests and demos never reach YouTube (owner rule): `tests/conftest.py` `block_youtube()` makes real yt-dlp, httpx and DNS-resolved
-  requests to YouTube hosts fail (an autouse fixture, so every test is covered). Use the fake fetcher/downloader or a stand-in
+  requests to YouTube hosts fail and records each one in `VIOLATIONS`, so the test fails even if the code caught the error (autouse fixture; opt-out only via `@pytest.mark.youtube_fixture`). Use the fake fetcher/downloader or a stand-in
   `yt_dlp.YoutubeDL`; `tests/webui_demo.py` is the same. The offline dev-proxy mode (`[youtube] offline = true`) is the same rule for a
   running backend: it refuses every YouTube request and answers from caches and recorded fixtures (`youtube_fixtures.py`, cassettes in
   `fixtures/youtube/`; unknown videos answer `offline`). Recording a cassette (`utubot youtube-record`) is the one command that reaches

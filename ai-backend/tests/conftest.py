@@ -28,6 +28,24 @@ YDL_METHODS = ("extract_info", "download", "urlopen", "process_ie_result")
 # even one the httpx/yt-dlp patches above would miss.
 RESOLVERS = ("getaddrinfo", "gethostbyname")
 NO_YOUTUBE = "tests and demos never reach YouTube: use a fake fetcher, downloader or yt-dlp"
+# A test that replays a recorded cassette (or otherwise must touch a YouTube host) opts out with
+# `@pytest.mark.youtube_fixture`; the guard is then off for that test only. No test uses it yet.
+YOUTUBE_FIXTURE_MARK = "youtube_fixture"
+# Every refused request of the running test, kept even when the code under test caught the error
+# (a broad `except` would hide the AssertionError, so the autouse fixture fails the test from here).
+VIOLATIONS: list[str] = []
+
+
+def is_youtube_host(host: str) -> bool:
+    name = host.lower().rstrip(".")  # a trailing dot is a valid absolute DNS name
+    return any(name == s or name.endswith("." + s) for s in YOUTUBE_HOST_SUFFIXES)
+
+
+def refuse_request(detail: str) -> None:
+    """Record the attempt, then raise so the caller stops at once."""
+    message = f"{NO_YOUTUBE} ({detail})" if detail else NO_YOUTUBE
+    VIOLATIONS.append(message)
+    raise AssertionError(message)
 
 
 def block_youtube():
@@ -35,8 +53,9 @@ def block_youtube():
 
     yt-dlp's extract/download/urlopen raise, the real httpx transports refuse YouTube hosts, and
     the resolver refuses to look a YouTube name up at all (a last line for anything unpatched).
-    Tests that stand in for `yt_dlp.YoutubeDL` replace the class itself and are not affected.
-    Returns the function that undoes it.
+    Each refusal is also appended to `VIOLATIONS`, which the autouse fixture turns into a test
+    failure. Tests that stand in for `yt_dlp.YoutubeDL` replace the class itself and are not
+    affected. Returns the function that undoes it.
     """
     real_ydl = yt_dlp.YoutubeDL
     originals = {name: getattr(real_ydl, name) for name in YDL_METHODS}
@@ -45,12 +64,11 @@ def block_youtube():
     real_resolvers = {name: getattr(socket, name) for name in RESOLVERS}
 
     def refuse(*_args, **_kwargs):
-        raise AssertionError(NO_YOUTUBE)
+        refuse_request("")
 
     def guard(host: str) -> None:
-        name = host.lower().rstrip(".")  # a trailing dot is a valid absolute DNS name
-        if name.endswith(YOUTUBE_HOST_SUFFIXES):
-            raise AssertionError(f"{NO_YOUTUBE} ({host})")
+        if is_youtube_host(host):
+            refuse_request(host)
 
     def sync_guarded(self, request):
         guard(request.url.host)
@@ -92,10 +110,25 @@ def block_youtube():
 
 
 @pytest.fixture(autouse=True)
-def no_youtube():
+def no_youtube(request):
+    if request.node.get_closest_marker(YOUTUBE_FIXTURE_MARK):
+        yield
+        return
+    VIOLATIONS.clear()
     restore = block_youtube()
-    yield
-    restore()
+    try:
+        yield
+    finally:
+        restore()
+        found = list(VIOLATIONS)
+        VIOLATIONS.clear()
+    if found:
+        pytest.fail(
+            "the test tried to reach YouTube "
+            f"{len(found)} time(s); a test must use a fake, not the network:\n  "
+            + "\n  ".join(dict.fromkeys(found)),
+            pytrace=False,
+        )
 
 
 TOKEN = "utb_testtoken"

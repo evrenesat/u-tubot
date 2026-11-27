@@ -39,6 +39,9 @@ packages = ["src/utubot"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = [
+    "youtube_fixture: test replays a recorded YouTube cassette and may touch YouTube hosts (disables the no-YouTube guard for that test)",
+]
 
 [tool.ruff]
 line-length = 100
