@@ -36,6 +36,21 @@
 - One-pass, reduce and map excerpts re-ask once with "choose about N s (M min) ... rank only the parts you keep". If trimming is still needed, `spread_select` splits the video into windows of half `max_skip_s` (600) and trims inside each window by rank, so no stretch the trim removes exceeds `max_skip_s` (a gap the model itself left stays). Used by `select_for_target` and `trim_to_cap` for non-selection answers only; normal answers trim as before.
 - Tests: `tests/test_cuts_rank_trim.py` (a recorded answer shaped like the half cut, no real model; detection, spread, the re-ask once, a normal answer asked once).
 
+## 2026-11-27 (live server sign-in checks in a separate rate-limit bucket, issue #252)
+
+- The live server of voice control (`realtime/`) calls `GET /v1/me` for every hello and every 30 s per connected device, all from the
+  proxy's address. It shared the backend's `ip:` bucket (600 a minute), so a flood of well-formed junk tokens could starve the users
+  behind that address.
+- The edge middleware counts a request in a separate, larger bucket (`ip:<addr>:realtime`, `[security] rate_per_ip_per_min_realtime`,
+  6000 a minute) only when it carries `X-Utubot-Client: realtime` AND `X-Utubot-Realtime-Secret` equal to `UTUBOT_REALTIME_SECRET`
+  (`[security] realtime_secret_env`, compared with `hmac.compare_digest`). The header alone grants nothing: a client that names itself
+  stays in the users' bucket. With no secret configured there is no separate bucket. The live server's address is not a usable
+  key: the proxy's address is the peer of users' and the live server's calls alike.
+- Realtime side: `UTUBOT_RT_BACKEND_SECRET` is sent as the same header on every backend call (`realtime/internal/backend`).
+- Deploy: set the same random string in both services' environments before the realtime bucket is expected to work.
+- Tests: `tests/test_security.py` covers the separate bucket with the secret, the header alone or with a wrong secret staying in the
+  users' bucket, and no separate bucket without a configured secret. Docs: `ai/CONTRACT.md` ("Live server"), `docs/server.md`
+  ("The live server's rate-limit bucket"), `config.example.toml`.
 ## 2026-11-26 (UTB-230 multi-user, per-user key, budget and rate limit)
 
 - Per-user AI provider key: a user stores their own OpenAI-compatible upstream with `PUT /v1/me/provider`, reads it back with

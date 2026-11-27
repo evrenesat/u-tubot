@@ -59,7 +59,9 @@ published in `/setup.json` and in APK download links), `users_file` (default `da
 
 **`[security]`**: `trusted_proxies` (peers whose `X-Forwarded-For` is believed; default `["127.0.0.1", "::1"]`), `client_ip_header` and
 `client_ip_header_secret_env` (name the real client through a second proxy hop, see [Reverse proxy and TLS](#reverse-proxy-and-tls)),
-`rate_per_token_per_min`, `rate_per_ip_per_min`, `rate_window_s`, pairing limits (`pair_code_digits`, `pair_code_ttl_s`,
+`rate_per_token_per_min`, `rate_per_ip_per_min`, `rate_per_ip_per_min_realtime` (6000) with `realtime_secret_env`
+(`UTUBOT_REALTIME_SECRET`): the live server's sign-in checks count in this larger, separate bucket only with the secret,
+see [The live server's rate-limit bucket](#the-live-server-s-rate-limit-bucket)), `rate_window_s`, pairing limits (`pair_code_digits`, `pair_code_ttl_s`,
 `pair_attempts_per_ip_per_min`, `pair_lockout_failures`, `pair_lockout_s`, `pair_global_failures`, `pair_global_window_s`),
 `max_body_bytes`, `max_device_name_chars`, `max_devices_per_user`; web sign-in: `session_cookie`, `session_ttl_s` (30 days),
 `session_refresh_s`, `max_sessions_per_user`, `password_min_chars` (10), `password_max_chars`, `scrypt_n` (2^17)/`scrypt_r`/`scrypt_p`/`scrypt_max_concurrent`,
@@ -701,6 +703,18 @@ Keep the service on `127.0.0.1:8790` and terminate TLS in front of it. Set `serv
 `security.trusted_proxies` must list the address your proxy connects from when it is not loopback; the client IP is then the
 right-most `X-Forwarded-For` entry that is not itself trusted. Wrong values either let clients spoof their IP (too wide) or make
 all clients look like the proxy and share rate limits (too narrow).
+
+### The live server's rate-limit bucket
+
+The live server of voice control calls `GET /v1/me` for every hello and every 30 s per connected device, all from the proxy's address.
+It marks each call with `X-Utubot-Client: realtime` and its shared secret in `X-Utubot-Realtime-Secret`. The backend counts a call that
+carries both in a separate, larger bucket (`[security] rate_per_ip_per_min_realtime`, 6000 a minute by default) instead of the shared
+`rate_per_ip_per_min` one, so a flood of well-formed junk tokens cannot starve the users behind that address; a 429 on the realtime bucket
+refuses only the live server's own checks. The header alone grants nothing: anyone else who sends it stays in the users' bucket.
+
+To turn it on, set the same random string on both sides: `UTUBOT_REALTIME_SECRET` in the backend's environment and
+`UTUBOT_RT_BACKEND_SECRET` in the live server's. Unset on the backend means no separate bucket. Leave the realtime limit well above
+`rate_per_ip_per_min`; a device that cannot be re-checked (backend unreachable or rate limited) keeps its socket for 10 minutes.
 
 ### Two proxies in a row
 

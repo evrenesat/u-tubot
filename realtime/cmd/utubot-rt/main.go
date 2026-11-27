@@ -66,7 +66,7 @@ func serve(args []string) error {
 		return err
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	client := backend.New(cfg.BackendURL, cfg.BackendTimeout, cfg.AuthCache/authCacheSplit)
+	client := backend.New(cfg.BackendURL, cfg.BackendTimeout, cfg.AuthCache/authCacheSplit).WithSecret(cfg.BackendSecret)
 	hub := session.New(session.Options{Config: cfg, Recorder: client, Stats: stats.New(cfg.StatsWindow), Log: log})
 	srv := ws.New(cfg, hub, client, log)
 	httpServer := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: cfg.HelloTimeout}

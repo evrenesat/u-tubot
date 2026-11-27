@@ -456,6 +456,11 @@ The one-time web sign-in link (issue 203: `POST /v1/web-login`, `GET /web-login/
 options page links the same web admin the user signs into normally, so it has no equivalent entry; no `extension/` file and no matrix row
 change were needed. This note is the extension's side of the parity box for that pull request.
 
+The live server's sign-in budget (issue 252: its `/v1/me` checks count in the backend's own realtime bucket when they carry
+`X-Utubot-Client: realtime` and the shared secret) is a backend rate-limit change. The extension never calls the live server and never sends
+that header, and its own sign-in is unchanged, so no `extension/` file and no matrix row change were needed; this note is the extension's side
+of the parity box for that pull request.
+
 ## 4. Architecture
 
 ```

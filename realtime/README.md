@@ -15,5 +15,7 @@ go run ./cmd/utubot-rt bench                      # server's own time on loopbac
 UTUBOT_RT_BACKEND_URL=http://127.0.0.1:8790 go run ./cmd/utubot-rt serve -config config.example.toml
 ```
 
-`GET /rt/v1/health` answers without a token; `GET /rt/v1/stats` needs `UTUBOT_RT_ADMIN_TOKEN` as a bearer token. Configuration:
+`GET /rt/v1/health` answers without a token; `GET /rt/v1/stats` needs `UTUBOT_RT_ADMIN_TOKEN` as a bearer token.
+`UTUBOT_RT_BACKEND_SECRET` is sent to the backend with its sign-in checks so they count in the backend's realtime bucket (the same
+value as the backend's `UTUBOT_REALTIME_SECRET`; unset means the users' bucket). Configuration:
 [config.example.toml](config.example.toml). Third-party code: [THIRD_PARTY.md](THIRD_PARTY.md).

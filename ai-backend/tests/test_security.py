@@ -100,6 +100,57 @@ async def test_pair_rate_limited(env):
     )
 
 
+async def test_realtime_sign_in_bucket_is_separate(env, monkeypatch):
+    monkeypatch.setenv("UTUBOT_REALTIME_SECRET", "rt-secret")
+    env.cfg.security.rate_per_ip_per_min = 3
+    env.cfg.security.rate_per_ip_per_min_realtime = 10
+    a = anon(env)
+    realtime = {"X-Utubot-Client": "realtime", "X-Utubot-Realtime-Secret": "rt-secret"}
+    # users share the ip bucket: the fourth request is refused
+    assert [(await a.get("/v1/health")).status_code for _ in range(4)] == [200, 200, 200, 429]
+    # the live server's /v1/me checks carry the header and secret and count apart, in a larger bucket
+    env.svc.limiter._hits.clear()
+    assert [(await a.get("/v1/health", headers=realtime)).status_code for _ in range(11)] == [
+        200
+    ] * 10 + [429]
+    # a 429 on that bucket does not touch the users' bucket
+    env.svc.limiter._hits.clear()
+    assert (await a.get("/v1/health")).status_code == 200
+
+
+async def test_realtime_header_alone_grants_nothing(env, monkeypatch):
+    monkeypatch.setenv("UTUBOT_REALTIME_SECRET", "rt-secret")
+    env.cfg.security.rate_per_ip_per_min = 3
+    env.cfg.security.rate_per_ip_per_min_realtime = 10
+    a = anon(env)
+    # the header without the secret, and the header with a wrong secret, stay in the users' bucket
+    for headers in (
+        {"X-Utubot-Client": "realtime"},
+        {"X-Utubot-Client": "realtime", "X-Utubot-Realtime-Secret": "guess"},
+    ):
+        env.svc.limiter._hits.clear()
+        assert [(await a.get("/v1/health", headers=headers)).status_code for _ in range(4)] == [
+            200,
+            200,
+            200,
+            429,
+        ], headers
+
+
+async def test_realtime_bucket_off_without_backend_secret(env, monkeypatch):
+    monkeypatch.delenv("UTUBOT_REALTIME_SECRET", raising=False)
+    env.cfg.security.rate_per_ip_per_min = 3
+    env.cfg.security.rate_per_ip_per_min_realtime = 10
+    a = anon(env)
+    headers = {"X-Utubot-Client": "realtime", "X-Utubot-Realtime-Secret": "anything"}
+    assert [(await a.get("/v1/health", headers=headers)).status_code for _ in range(4)] == [
+        200,
+        200,
+        200,
+        429,
+    ]
+
+
 async def test_admin_only_routes(env):
     partner = {"Authorization": f"Bearer {OTHER_TOKEN}"}
     a = anon(env)

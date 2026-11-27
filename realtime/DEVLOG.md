@@ -1,5 +1,15 @@
 # realtime/ devlog
 
+## 2026-11-27 (backend sign-in checks carry a shared secret, issue #252)
+
+- The backend counts the live server's `/v1/me` checks in its own realtime bucket only when they carry `X-Utubot-Realtime-Secret`
+  (the header alone grants nothing). `backend.Client.WithSecret` sets it on every backend call; `UTUBOT_RT_BACKEND_SECRET` (environment
+  only, same value as the backend's `UTUBOT_REALTIME_SECRET`) fills it in `cmd/utubot-rt`.
+- Tests: `internal/backend/backend_test.go` (header names the service, secret sent only when set), `internal/config` (secret from the
+  environment only).
+- Toolchain note: `go.mod` says 1.27, not installed on p100 (`go test` cannot fetch it). This checkout was tested with Go 1.25 from a
+  scratch copy whose `go` directive was lowered; the committed `go.mod` is unchanged.
+
 ## 2026-11-27 (checkpoint 2 of the voice plan, issue #181)
 
 - New Go module `realtime/` (`utubot-rt`), Go 1.27 and `github.com/coder/websocket` v1.8.15 (first written for 1.22 and 1.8.12; bumped in review), grown from the shape of R2T4's server

@@ -24,6 +24,12 @@ client_ip_header = ""             # example: "X-Utubot-Client-IP"
 client_ip_header_secret_env = "UTUBOT_PROXY_SECRET"
 rate_per_token_per_min = 240
 rate_per_ip_per_min = 600
+# The live server of voice control marks its GET /v1/me sign-in checks with X-Utubot-Client: realtime and
+# its shared secret (UTUBOT_RT_BACKEND_SECRET there) in X-Utubot-Realtime-Secret. Only both together use this
+# separate, larger bucket, so a flood of junk tokens cannot starve the users behind the proxy address.
+# Unset secret = the checks share the users' bucket (docs/server.md, The live server's rate-limit bucket).
+rate_per_ip_per_min_realtime = 6000
+realtime_secret_env = "UTUBOT_REALTIME_SECRET"
 rate_window_s = 60
 pair_code_digits = 6
 pair_code_ttl_s = 900             # one-time pairing codes live 15 minutes
