@@ -5,6 +5,18 @@
   `LedgerService` instead of two. The admin page and `GET /v1/admin/ledger` show the `youtube_forbidden` usage metric (#226) per day beside
   the ledger instead of duplicating it. The TV (`UtubotClient`) and the extension (`createClient`) report their own transport/5xx failures
   to `POST /v1/ledger`, throttled. Migration: `failures` is `CREATE TABLE IF NOT EXISTS` (test opens an old DB).
+## 2026-11-26 (fix the flaky `test_appsync::test_publishes_the_newest_release_and_verifies_every_apk`, issue #224)
+
+- Root cause: the test APK builder (`tests/axml.py::apk`) embedded the wall-clock second in the ZIP (`zipfile.ZipFile.writestr` with a
+  string arcname defaults to `date_time=time.localtime(time.time())[:6]`). The test builds the release APKs in `Github.add_release` and
+  later compares the published bytes against `apk_bytes(...)`; when the two generations fell in different seconds the ZIP bytes differed
+  and the byte-equality assertion failed (only under the full-suite load, so it ran alone fine).
+- Fix: write the manifest and payload with explicit `ZipInfo` objects at a fixed mtime (`1980-01-01`, the earliest date the ZIP format
+  represents), so the generated APKs are byte-for-byte reproducible. The binary manifest still parses identically and the length is
+  unchanged.
+- Verified: a standalone repro (`temp/verify_flaky.py`, gitignored) forces the assertion into a different second than the APK generation;
+  it fails before the fix (`published != expected (1550 vs 1550 bytes)`) and passes after. Full suite green (1505 passed); `ruff check`
+  and `ruff format --check` clean.
 
 ## 2026-11-26 (a refused download retries, then asks the TV for captions, issue #205)
 
