@@ -573,9 +573,13 @@ unavailable still reports its rule but runs `quick`.
   preset also becomes the preset used last for the user); filling a waiting request remembers it too.
   The caller's known video facts ride as query params (`title`, `channel`, `duration_s`,
   `is_live`) so the phone queue can show them before the backend learns them itself.
-  Optional `"force":true` builds the transcript from the audio even when YouTube captions exist,
-  as `force` does for transcribe and captions; it is not echoed in the request document, and a
-  forced request never joins an unforced active one.
+  Optional `"force":true` rebuilds the cut even when one is stored; it reuses the stored transcript
+  (captions the server fetched, the TV uploaded, or speech-to-text). Optional `"refetch":true` also drops the stored
+  captions and builds the transcript from the audio, as `force` does for transcribe and captions. Neither is echoed in the
+  request document, and a forced or refetching request never joins a request of another kind. Transcripts the TV uploaded
+  (`captions/client`) and speech-to-text ones never expire. When YouTube refuses the download (HTTP 403, "Requested
+  format is not available", "try again later") the server tries the next player client, then the cut waits for the TV's captions and says so
+  in `error`; removed, private or members-only videos fail at once.
   Duplicate active requests (same video + preset/prompt/waiting) return the existing row; a
   `failed` row never blocks a new request, so asking for the same preset again starts a fresh
   build and keeps the failure in the history. A per-user cap on concurrent builds answers `429`.

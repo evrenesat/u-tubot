@@ -1,3 +1,11 @@
+## 2026-11-27 (TV captions kept, refusals fall back, issue #261)
+
+- Cause: a forced cut dropped the stored captions row (`CutService._ensure_transcript` deleted it before queuing an audio rebuild), so the TV's captions were gone and the rebuild had to download, which failed with "Requested format is not available". That text also matched the "unavailable" pattern, so it failed fast with no fallback.
+- `force` on a cut now rebuilds the cut and reuses the stored transcript. New `refetch` (body field, `cut_requests.refetch`, additive column) drops it and builds from the audio. A forced and a refetching request never join another kind.
+- Transcripts with `origin = client` no longer expire (cannot be refetched when YouTube refuses the server).
+- `youtube.REFUSED_RE` ("requested format is not available", "try again later", "this content isn't available") on a media download is `REASON_FORBIDDEN_MEDIA`, and `is_forbidden_error` retries those with the next player client; private/removed/members-only never retry. The cut then waits for the TV's captions; its error text says to play the video on the TV for a few seconds.
+- Tests: `test_youtube_retry.py`, `test_cuts_api.py` (forced cut reuses TV captions, no expiry), `test_db_migrations.py` (old table gains `refetch`).
+
 ## 2026-11-27 (cuts: a model that ranks the whole video no longer loses the end, issue #255)
 
 - Cause: half cut 675edfafa45f ranked 38 scenes (4427 of 4889 s); ranks 20-38 were in film order, so the rank trim kept ranks 1-19 and dropped the end of the film.

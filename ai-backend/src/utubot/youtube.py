@@ -105,6 +105,13 @@ RATE_LIMIT_RE = re.compile(
 )
 FORBIDDEN_RE = re.compile(r"HTTP Error 403", re.IGNORECASE)
 GONE_RE = re.compile(r"HTTP Error 410", re.IGNORECASE)
+# A download refusal that is specific to one player client or a moment, not to the video: yt-dlp finds
+# no format for this client, or YouTube says to try again later. Another player client may resolve it;
+# otherwise the TV's own captions stand in. A removed, private or terminated video never matches.
+REFUSED_RE = re.compile(
+    r"requested format is not available|try again later|this content isn.t available",
+    re.IGNORECASE,
+)
 METADATA_REQUEST_RE = re.compile(
     r"unable to download (?:webpage|api page|json|player)|player response|watch page", re.IGNORECASE
 )
@@ -123,6 +130,11 @@ VIDEO_FAILURE_PATTERNS = (
             re.I,
         ),
     ),
+)
+GONE_PATTERN_RE = re.compile(
+    r"private video|this video is private|has been removed|no longer available|been terminated"
+    r"|members-only|members only|join this channel|confirm your age|age-restricted",
+    re.IGNORECASE,
 )
 NETWORK_RE = re.compile(
     r"timed out|timeout|connection (?:reset|refused|aborted|error)|name resolution"
@@ -255,6 +267,8 @@ def classify_failure(
         return YoutubeBlocked(REASON_BOT_CHECK, retry_after_s, klass)
     if RATE_LIMIT_RE.search(text):
         return YoutubeBlocked(REASON_RATE_LIMITED, retry_after_s, klass)
+    if media and REFUSED_RE.search(text) and not GONE_PATTERN_RE.search(text):
+        return YoutubeVideoError(REASON_FORBIDDEN_MEDIA, klass)
     for reason, pattern in VIDEO_FAILURE_PATTERNS:
         if pattern.search(text):
             return YoutubeVideoError(reason, klass)
@@ -295,11 +309,15 @@ def classify_status(
 
 
 def is_forbidden_error(exc: Exception) -> bool:
-    """True when `exc` is a yt-dlp HTTP 403: the one failure a different player client may resolve.
+    """True when `exc` is a yt-dlp HTTP 403 or a client-specific refusal (no such format, try again
+    later): the failures a different player client may resolve.
 
     A 403 is either a block (a metadata/classification request) or a refused download (media);
     retry both, because either can be specific to the player client that answered."""
-    return bool(FORBIDDEN_RE.search(str(exc)))
+    text = str(exc)
+    return bool(
+        FORBIDDEN_RE.search(text) or REFUSED_RE.search(text)
+    ) and not GONE_PATTERN_RE.search(text)
 
 
 def retry_forbidden(

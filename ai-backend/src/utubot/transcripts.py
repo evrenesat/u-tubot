@@ -486,7 +486,9 @@ class TranscriptService:
         if not row or not row["text"] or row["source"] == METADATA_ONLY:
             return None
         expired = time.time() - row["fetched_at"] > self.cfg.transcripts.cache_ttl_s
-        if expired and row["source"] != SOURCE_ASR:
+        # Speech-to-text costs real effort and captions the TV sent cannot be refetched when YouTube
+        # refuses the server, so neither expires; only captions the server fetched itself do.
+        if expired and row["source"] != SOURCE_ASR and row["origin"] != ORIGIN_CLIENT:
             return None
         return Transcript(
             video_id,

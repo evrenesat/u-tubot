@@ -834,7 +834,7 @@ class TestTranscriptPath:
         # The ASR transcript arrived through the transcript job; its unit came from the audio.
         assert doc["cut"]["transcript_hash"]
 
-    async def test_force_ignores_timed_captions_and_rebuilds_from_audio(self, cuts_env):
+    async def test_refetch_ignores_timed_captions_and_rebuilds_from_audio(self, cuts_env):
         set_transcript(cuts_env.fetcher)
         cuts_env.cfg.cuts.min_keep_frac = 0.0
         cuts_env.llm.cut_answer = {
@@ -842,7 +842,7 @@ class TestTranscriptPath:
             "summary": "s",
             "kept_s": 4,
         }
-        r = await post_cut(cuts_env, preset="cut-no-filler", force=True)
+        r = await post_cut(cuts_env, preset="cut-no-filler", force=True, refetch=True)
         rid = r.json()["request_id"]
         row = cuts_env.svc.db.one("SELECT force FROM cut_requests WHERE id=?", [rid])
         assert row["force"] == 1
@@ -1467,6 +1467,26 @@ class TestForbiddenTranscriptFallback:
         assert doc["cut"]["parts"][0]["label"] == "The demo"
         # The refusal was counted once for the day.
         assert cuts_env.svc.llm.usage.today().get(METRIC_YOUTUBE_FORBIDDEN) == 1
+
+    async def test_a_forced_cut_reuses_the_stored_tv_captions(self, cuts_env):
+        cuts_env.fetcher.meta_extra = {"duration_s": 60}
+        cuts_env.llm.cut_answer = {
+            "parts": [{"from": 2, "to": 4, "label": "The demo"}],
+            "summary": "The demo part.",
+            "kept_s": 15,
+        }
+        assert (await self._upload(cuts_env)).json()["stored"] is True
+        await self._forbidden(cuts_env)  # the server could not download anything now
+        r = await post_cut(cuts_env, preset="cut-demo", force=True)
+        doc = await wait_ready(cuts_env, r.json()["request_id"], wait_ms=5000)
+        assert doc["state"] == "ready", doc.get("error")
+        row = cuts_env.svc.db.one("SELECT source, origin FROM transcripts WHERE video_id=?", [VID])
+        assert (row["source"], row["origin"]) == ("youtube_captions", "client")
+
+    async def test_tv_captions_do_not_expire(self, cuts_env):
+        assert (await self._upload(cuts_env)).json()["stored"] is True
+        cuts_env.svc.db.execute("UPDATE transcripts SET fetched_at=1 WHERE video_id=?", [VID])
+        assert cuts_env.svc.transcripts.cached(VID) is not None
 
     async def test_a_forbidden_download_without_tv_captions_fails(self, cuts_env):
         cuts_env.fetcher.meta_extra = {"duration_s": 60}
