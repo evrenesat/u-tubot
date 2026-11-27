@@ -151,6 +151,7 @@
     <string name="utubot_web_admin_unpaired">Pair with the backend first to open the web admin</string>
     <string name="utubot_web_admin_qr_hint">Scan with your phone to open the web admin</string>
     <string name="utubot_cut">Director\'s cut</string>
+    <string name="utubot_cut_suggested"> (suggested)</string>
     <string name="utubot_cut_menu">Director\'s cut…</string>
     <string name="utubot_cut_ready">Director\'s cut ready: %1$s%2$s</string>
     <string name="utubot_cut_ready_choice">Director\'s cuts ready</string>

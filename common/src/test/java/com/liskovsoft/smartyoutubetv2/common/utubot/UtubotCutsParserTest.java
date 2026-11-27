@@ -103,6 +103,22 @@ public class UtubotCutsParserTest {
     }
 
     @Test
+    public void aLongVideoCarriesTheSuggestedTightPreset() throws Exception {
+        String cutsJson = "{\"configured\":true,\"suggested_preset\":\"cut-no-filler-tight\",\"presets\":[" +
+                "{\"id\":\"cut-no-filler-tight\",\"label\":\"No filler \u00b7 Tight\",\"suggested\":true," +
+                "\"state\":\"none\",\"by_mode\":{\"quick\":{\"state\":\"none\"}}}," +
+                "{\"id\":\"cut-no-filler\",\"label\":\"No filler\",\"suggested\":false,\"state\":\"none\"}" +
+                "]}";
+
+        CutList cuts = UtubotParser.parseCuts(cutsJson);
+
+        assertEquals("cut-no-filler-tight", cuts.suggestedPreset);
+        assertTrue(cuts.presets.get(0).suggested);
+        assertTrue(cuts.presets.get(0).forMode(CutMode.QUICK).suggested);
+        assertFalse(cuts.presets.get(1).suggested);
+    }
+
+    @Test
     public void everyReadyPresetCarriesItsOwnLength() throws Exception {
         String longer = CUT.replace("\"kept_ms\":192000", "\"kept_ms\":3723000");
         String cutsJson = "{\"configured\":true,\"presets\":[" +

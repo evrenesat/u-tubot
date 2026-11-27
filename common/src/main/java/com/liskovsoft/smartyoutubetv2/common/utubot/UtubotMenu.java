@@ -353,10 +353,13 @@ public final class UtubotMenu {
     }
 
     private static String presetTitle(Context context, CutPreset preset) {
+        String label = preset.suggested
+                ? preset.label + context.getString(R.string.utubot_cut_suggested)
+                : preset.label;
         if (!preset.isReady()) {
-            return preset.label;
+            return label;
         }
-        String title = UtubotCutController.presetTitle(preset.label, preset.cut.keptMs);
+        String title = UtubotCutController.presetTitle(label, preset.cut.keptMs);
         return CutMode.WATCHED.equals(preset.cut.mode)
                 ? title + context.getString(R.string.utubot_cut_watched_suffix)
                 : title;

@@ -556,9 +556,14 @@ unavailable still reports its rule but runs `quick`.
   `PUT /v1/cut-requests/{id}`; the picker answer adds `default_mode`, `mode_rule`, `channel_id`,
   `channel_name` and `channel_mode` (the owner's stored override, or `null`).
 
-- `GET /v1/videos/{id}/cuts` -> `{"configured":bool,"presets":[{"id","label","state",
-  "request_id"?,"error"?,"cut"?}],"selection":{...}|null}`. State is `none` | `waiting` | `building` |
+- `GET /v1/videos/{id}/cuts` -> `{"configured":bool,"suggested_preset":str|null,
+  "presets":[{"id","label","suggested":bool,"state","request_id"?,"error"?,"cut"?}],
+  "selection":{...}|null}`. State is `none` | `waiting` | `building` |
   `needs_transcript` | `ready` | `failed` for this video; `ready` carries the cut document.
+  `suggested` is present on every preset; `suggested_preset` names the one a client should
+  offer first (today `cut-no-filler-tight`, on videos longer than `[cuts] tight_suggest_after_s`,
+  30 min by default) or is `null`. A suggestion only changes order and marking; it never builds
+  or applies a cut by itself.
   `selection` is what the video opens with: the viewer's choice for this video (a preset, a typed
   request, or `off`), else the preset they used last when it has a ready cut here; `null` when
   neither does, so a client offers the ready cuts instead of picking one. Fields:
@@ -638,7 +643,9 @@ for a cut with a target length and for the presets that keep a small part by des
 short_presets`: just the answer, the demo, the highlights). Keeping over 95 % ("nothing to cut")
 is refused only for a typed prompt without a target: a named preset has no upper guard, because
 a removal preset that keeps nearly all of the video is a valid answer. The removal presets report the result in `summary` ("Removed 1:12
-of filler, 2 % of the video"); when nothing at all is removed that summary is "No filler found"
+of filler, 2 % of the video"), and the model may add a `removed` object of category seconds so the
+same summary names the largest categories ("Removed 9:40: tangents 5:10, repetition 3:00, plugs
+1:30"); when nothing at all is removed that summary is "No filler found"
 (or "Nothing was removed") and the cut is `ready`, not failed. A missing timed transcript
 queues a transcript job (`needs_transcript`) and the build waits for it (15 min); live streams
 are refused. Builds run

@@ -298,6 +298,7 @@ public final class UtubotParser {
         list.channelId = optString(json, "channel_id");
         list.channelName = optString(json, "channel_name");
         list.channelMode = optString(json, "channel_mode");
+        list.suggestedPreset = optString(json, "suggested_preset");
         JSONArray presets = json.optJSONArray("presets");
 
         if (presets != null) {
@@ -313,6 +314,7 @@ public final class UtubotParser {
                 String id = presetJson.optString("id", null);
                 String label = presetJson.optString("label", id);
                 CutPreset preset = parsePresetState(presetJson, id, label);
+                preset.suggested = presetJson.optBoolean("suggested");
                 JSONObject byMode = presetJson.optJSONObject("by_mode");
 
                 if (byMode != null) {
@@ -322,7 +324,9 @@ public final class UtubotParser {
                         String modeId = modeIds.next();
                         JSONObject modeJson = byMode.optJSONObject(modeId);
                         if (modeJson != null) {
-                            parsedByMode.put(modeId, parsePresetState(modeJson, id, label));
+                            CutPreset modePreset = parsePresetState(modeJson, id, label);
+                            modePreset.suggested = preset.suggested;
+                            parsedByMode.put(modeId, modePreset);
                         }
                     }
                     preset.byMode = parsedByMode;

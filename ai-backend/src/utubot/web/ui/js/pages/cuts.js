@@ -778,7 +778,7 @@ async function sheet(view, requestId) {
         "div",
         { class: "chips" },
         ((presets && presets.presets) || []).map((p) =>
-          h("button", { type: "button", class: "chip chip-btn", onclick: () => buildWithPreset(req, p.id).catch((err) => toast(errorText(err))) }, h("span", { class: "chip-text", text: p.label })),
+          h("button", { type: "button", class: "chip chip-btn", onclick: () => buildWithPreset(req, p.id).catch((err) => toast(errorText(err))) }, h("span", { class: "chip-text", text: p.label + (p.suggested ? " (suggested)" : "") })),
         ),
       );
       kids.push(
