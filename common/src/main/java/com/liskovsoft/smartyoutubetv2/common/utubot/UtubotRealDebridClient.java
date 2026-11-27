@@ -8,6 +8,7 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -154,6 +155,28 @@ public class UtubotRealDebridClient {
         return 0;
     }
 
+    /**
+     * The streams in the order of the list on this TV: those it shows in colour first, then by height and size, so the best stream is first.
+     * Streams it cannot show in colour come last. The input list is not changed.
+     */
+    public static List<Stream> sortedFor(List<Stream> streams, UtubotFilmFormat.Device device) {
+        List<Stream> sorted = new ArrayList<>(streams);
+
+        Collections.sort(sorted, (a, b) -> {
+            int verdict = a.format.verdict(device).compareTo(b.format.verdict(device));
+
+            if (verdict != 0) {
+                return verdict;
+            }
+
+            int resolution = Integer.compare(b.resolution, a.resolution);
+
+            return resolution != 0 ? resolution : Long.compare(b.sizeBytes, a.sizeBytes);
+        });
+
+        return sorted;
+    }
+
     private static String stripTrailingSlash(String url) {
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
@@ -171,12 +194,15 @@ public class UtubotRealDebridClient {
         public final String url;
         public final int resolution;
         public final long sizeBytes;
+        /** What the name says about the picture and sound */
+        public final UtubotFilmFormat format;
 
         public Stream(String name, String url, int resolution, long sizeBytes) {
             this.name = name;
             this.url = url;
             this.resolution = resolution;
             this.sizeBytes = sizeBytes;
+            this.format = UtubotFilmFormat.parse(name);
         }
 
         public String display() {
@@ -189,7 +215,7 @@ public class UtubotRealDebridClient {
             return text.length() == 0 ? "(unnamed stream)" : text.toString();
         }
 
-        private static String formatSize(long bytes) {
+        public static String formatSize(long bytes) {
             if (bytes < 1024L * 1024L) {
                 return String.format("%.1f KB", bytes / 1024.0);
             } else if (bytes < 1024L * 1024L * 1024L) {

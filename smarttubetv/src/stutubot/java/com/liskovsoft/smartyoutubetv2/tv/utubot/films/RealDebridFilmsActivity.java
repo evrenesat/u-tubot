@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -15,7 +16,11 @@ import android.widget.TextView;
 
 import androidx.annotation.Nullable;
 
+import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.SimpleExoPlayer;
+import com.google.android.exoplayer2.analytics.AnalyticsListener;
+import com.google.android.exoplayer2.video.ColorInfo;
 import com.google.android.exoplayer2.trackselection.AdaptiveTrackSelection;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.ui.PlayerView;
@@ -30,7 +35,11 @@ import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.renderer.CustomO
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.selector.RestoreTrackSelector;
 import com.liskovsoft.smartyoutubetv2.common.prefs.SponsorBlockData;
 import com.liskovsoft.smartyoutubetv2.common.R;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmDevice;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmFormat;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsDeveloperPresenter;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsKeys;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotKeys;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient.Stream;
@@ -80,12 +89,17 @@ public class RealDebridFilmsActivity extends Activity {
     private int mFocusedIndex = -1;
     private Disposable mLoadAction;
     private boolean mLoaded;
+    private boolean mPlaying;
+    private UtubotFilmDevice mDevice;
+    private SimpleExoPlayer mPlayer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         mSettings = UtubotSettings.instance(this);
+        mDevice = new UtubotFilmDevice(this);
+        Log.i(TAG, "This TV: " + mDevice.describe());
 
         if (!mSettings.isFilmsDeveloperEnabled()) {
             finish();
@@ -108,6 +122,8 @@ public class RealDebridFilmsActivity extends Activity {
         DefaultTrackSelector trackSelector = new RestoreTrackSelector(new AdaptiveTrackSelection.Factory());
         mController.setTrackSelector(trackSelector);
         SimpleExoPlayer player = mInitializer.createPlayer(this, new CustomOverridesRenderersFactory(this), trackSelector);
+        mPlayer = player;
+        player.addAnalyticsListener(new FormatLogger());
         mController.setPlayer(player);
         playerView.setPlayer(player);
 
@@ -162,7 +178,8 @@ public class RealDebridFilmsActivity extends Activity {
     }
 
     private void onStreamsLoaded(List<Stream> streams) {
-        mStreams = streams;
+        mStreams = UtubotRealDebridClient.sortedFor(streams, mDevice);
+        streams = mStreams;
         mLoaded = true;
 
         if (streams.isEmpty()) {
@@ -173,7 +190,7 @@ public class RealDebridFilmsActivity extends Activity {
         for (final Stream stream : streams) {
             final int position = mRows.size();
             TextView row = new TextView(this);
-            row.setText("  " + stream.display());
+            row.setText(rowText(stream));
             row.setTextColor(Color.WHITE);
             row.setTextSize(TEXT_SP - 1);
             row.setPadding(ROW_PADDING, 12, ROW_PADDING, 12);
@@ -217,6 +234,7 @@ public class RealDebridFilmsActivity extends Activity {
 
         Stream stream = mStreams.get(index);
         String url = stream.url;
+        Log.i(TAG, "Chosen stream: " + stream.format.describe() + " verdict=" + stream.format.verdict(mDevice) + " resolution=" + stream.resolution);
 
         dispatchNewVideo();
         mController.setVideo(mVideo);
@@ -230,7 +248,65 @@ public class RealDebridFilmsActivity extends Activity {
 
         mController.openProgressiveUrl(url);
         mController.setPlayWhenReady(true);
-        setStatus("Playing: " + stream.display());
+        mPlaying = true;
+        setOverlayVisible(false);
+        Log.i(TAG, "Playing: " + stream.display());
+    }
+
+    private String rowText(Stream stream) {
+        StringBuilder text = new StringBuilder("  ");
+        List<String> chips = stream.format.chips();
+
+        if (stream.resolution > 0) {
+            chips.add(0, stream.resolution == 2160 ? "4K" : stream.resolution + "p");
+        }
+
+        for (String chip : chips) {
+            text.append('[').append(chip).append("] ");
+        }
+
+        if (stream.sizeBytes > 0) {
+            text.append(Stream.formatSize(stream.sizeBytes));
+        }
+
+        String note = stream.format.note(mDevice);
+
+        if (!note.isEmpty()) {
+            text.append("   ! ").append(note);
+        }
+
+        return text.toString().trim().isEmpty() ? stream.display() : text.toString();
+    }
+
+    private void setOverlayVisible(boolean visible) {
+        mPanel.setVisibility(visible ? View.VISIBLE : View.GONE);
+        mStatus.setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+
+    private boolean isOverlayVisible() {
+        return mPanel.getVisibility() == View.VISIBLE;
+    }
+
+    /**
+     * Logs the video format the player really opened and the decoder it uses, so a wrong picture can be traced to the stream or to the TV.
+     */
+    private final class FormatLogger implements AnalyticsListener {
+        @Override
+        public void onDecoderInitialized(EventTime eventTime, int trackType, String decoderName, long initializationDurationMs) {
+            if (trackType == C.TRACK_TYPE_VIDEO) {
+                Log.i(TAG, "Video decoder: " + decoderName);
+            }
+        }
+
+        @Override
+        public void onDecoderInputFormatChanged(EventTime eventTime, int trackType, Format format) {
+            if (trackType == C.TRACK_TYPE_VIDEO) {
+                ColorInfo color = format.colorInfo;
+                Log.i(TAG, "Video format: mime=" + format.sampleMimeType + " codecs=" + format.codecs + " size=" + format.width + "x" + format.height
+                        + " colorSpace=" + (color == null ? "unset" : color.colorSpace) + " colorTransfer=" + (color == null ? "unset" : color.colorTransfer)
+                        + " colorRange=" + (color == null ? "unset" : color.colorRange));
+            }
+        }
     }
 
     private void enableSponsorBlockForSkips() {
@@ -259,6 +335,24 @@ public class RealDebridFilmsActivity extends Activity {
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        UtubotFilmsKeys.Result back = UtubotFilmsKeys.resolveBack(keyCode, event.getAction(), event.getRepeatCount(), isOverlayVisible(), mPlaying);
+
+        if (back == UtubotFilmsKeys.Result.HIDE_OVERLAY) {
+            setOverlayVisible(false);
+            return true;
+        } else if (back == UtubotFilmsKeys.Result.LEAVE) {
+            finish();
+            return true;
+        } else if (back == UtubotFilmsKeys.Result.CONSUME) {
+            return true;
+        }
+
+        if (mPlaying && !isOverlayVisible() && (UtubotKeys.actsOnFocus(keyCode) || keyCode == KeyEvent.KEYCODE_MENU)) {
+            setOverlayVisible(true);
+            setFocus(Math.max(mFocusedIndex, 0));
+            return true;
+        }
+
         if (mLoaded && !mRows.isEmpty()) {
             if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
                 setFocus(mFocusedIndex - 1);
@@ -279,6 +373,15 @@ public class RealDebridFilmsActivity extends Activity {
         }
 
         return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (UtubotKeys.isBackKey(keyCode)) {
+            return true; // the press decided; the default would call onBackPressed
+        }
+
+        return super.onKeyUp(keyCode, event);
     }
 
     @Override

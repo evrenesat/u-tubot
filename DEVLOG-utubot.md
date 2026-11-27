@@ -1,3 +1,12 @@
+## 2026-11-27 (films player: Back and colour, #289)
+
+- Back on the film screen (`UtubotFilmsKeys`): with the stream list up while a stream plays, Back closes the list and playback goes on; the next Back leaves the screen, like the YouTube player. OK, the D-pad and Menu bring the list back. Starting a stream hides the list. The Back release is consumed so the activity default never runs a second time.
+- Format (`UtubotFilmFormat`): codec, bit depth, HDR10 / HDR10+ / HLG / Dolby Vision, Dolby Vision profile (5, 7, 8), audio, channels and source are read from the stream name. The list shows them as chips with a note ("Dolby Vision 5: wrong colours on this TV", "Plays as HDR10 on this TV"). `UtubotFilmDevice` asks MediaCodecList for the HEVC, AVC, AV1 and Dolby Vision decoders and the display for HDR. Streams are sorted full colour, then reduced, then not in colour (Dolby Vision 5 without a Dolby Vision decoder, a codec the TV cannot decode), then by height and size.
+- Logging: the TV capabilities, the chosen stream's parsed format and verdict, and from the player the video format (mime, codecs, size, colour space/transfer/range) and the decoder name (tag `UtubotRealDebridFilms`, never an address).
+- Black and white picture: not reproduced (no TV). Findings: ExoPlayer 2.10.6 has no Dolby Vision to HEVC fallback and the Matroska extractor plays a Dolby Vision file as plain HEVC, so a profile 5 file (no HDR10 layer, IPT colour) on a TV without a Dolby Vision decoder shows wrong or grey colours; the film screen did not log or show the format. Profiles 7/8 are fine as HDR10. Sorting these last is the fix in this PR; the owner's log line will name the stream's format if it happens again.
+- Tests: `UtubotFilmsKeysTest`, `UtubotFilmFormatTest` (parsing, verdicts, sort order).
+- Not done: a Dolby Vision to HEVC decoder fallback for MP4 `dvh1` streams (needs a Dolby Vision test TV).
+
 ## 2026-11-27 (secrets in the web settings, plan checkpoint 6, #276)
 
 - The Settings page has "Accounts and services": Real-Debrid token and stream add-on address, write-only (set, last 4 characters or host, which TVs got it). The server keeps them AES-256-GCM encrypted; the TV fetches them (`GET /v1/device/secrets`) into the same entries the films developer entry already reads (`getFilmsRealDebridToken`, `getFilmsAddonUrl`), so nothing is typed. A removal on the web removes only what the server gave that TV.
