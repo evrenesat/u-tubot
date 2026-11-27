@@ -95,6 +95,7 @@ from .speech import SpeechError, SpeechService
 from .status import StatusService, UpdatesStatus
 from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
+from .urlguard import UrlRejected, assert_not_private
 from .usage import METRIC_YOUTUBE_FORBIDDEN, Usage
 from .userproviders import UserBudgetError, UserProvider, UserProviders, bind_call
 from .videoref import VIDEO_ID_RE
@@ -241,12 +242,12 @@ def build_services(
         gate=gate,
         archive=archive,
     )
-    jobs = JobQueue(cfg, db, pipeline, transcripts, ledger=ledger)
+    user_providers = UserProviders(db, secret_env=cfg.security.provider_secret_env)
+    jobs = JobQueue(cfg, db, pipeline, transcripts, ledger=ledger, user_providers=user_providers)
     reports = JobReports(cfg, db, jobs, transcripts)
     transcription = Transcription(cfg, transcripts, jobs)
     auth = Auth(cfg, db)
     catalog = ModelCatalog(cfg, db, llm)
-    user_providers = UserProviders(db)
     assessor = Assessor(cfg, db, llm, transcripts)
     content = ContentService(cfg, db, llm, transcripts, prompts, transcription)
     return Services(
@@ -504,10 +505,16 @@ def create_app(
         """
         user = await run_in_threadpool(authenticate, request, token)
         bind_class(user.klass)
-        limit = cfg.usage.user_requests_per_min
+        limit = cfg.per_user_requests_per_min(user.name)
         if limit > 0:
             svc.limiter.check(f"usr:{user.name}", limit)
-        live = svc.user_providers.get_live(user.name)
+        try:
+            live = svc.user_providers.get_live(user.name)
+        except ValueError:
+            log.warning(
+                "own upstream for %s unreadable at rest; using the server default", user.name
+            )
+            live = None
         bind_call(user.name, UserProvider(*live) if live else None)
         return user
 
@@ -782,7 +789,13 @@ def create_app(
     async def me_provider_set(body: ProviderBody, user: UserConfig = Depends(current_user)):
         """Store the caller's own upstream. Their next model calls run on it instead of the owner's
         modelgate budget, still under their per-user daily budget and request cap; clearing it returns
-        them to the server default."""
+        them to the server default. A non-admin base url must not resolve to a private or internal
+        address (SSRF); admins may point at a LAN upstream."""
+        if not user.admin:
+            try:
+                await assert_not_private(body.base_url)
+            except UrlRejected as exc:
+                raise HTTPException(400, str(exc)) from exc
         try:
             doc = svc.user_providers.set(user.name, body.base_url, body.api_key)
         except ValueError as exc:
@@ -832,6 +845,7 @@ def create_app(
 
     @app.get("/v1/admin/users")
     async def admin_users(admin: UserConfig = Depends(admin_user)):
+        window = {r["user"]: r for r in svc.llm.user_usage.for_admin(cfg.usage.window_days)}
         out = []
         for name in svc.auth.user_names():
             u = svc.auth.user_config(name)
@@ -844,6 +858,7 @@ def create_app(
                     "policy": u.policy.model_dump(),
                     "devices": svc.auth.list_devices(name),
                     "usage": svc.llm.user_usage.for_user(name),
+                    "usage_window": window.get(name, {"cost": 0, "calls": 0}),
                     "provider": svc.user_providers.describe(name) or {"configured": False},
                 }
             )

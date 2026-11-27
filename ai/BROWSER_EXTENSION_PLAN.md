@@ -456,6 +456,18 @@ The one-time web sign-in link (issue 203: `POST /v1/web-login`, `GET /web-login/
 options page links the same web admin the user signs into normally, so it has no equivalent entry; no `extension/` file and no matrix row
 change were needed. This note is the extension's side of the parity box for that pull request.
 
+## 3b. Parity note for the multi-user round (UTB-299)
+
+This round is a backend-only refinement of the `user-provider` matrix row (per-user AI provider key, daily cost budget and request cap): it
+adds per-user `user_budget_usd`/`user_requests_per_min` overrides in `users.toml`, encrypts a user's own provider key at rest with
+`security.provider_secret_env` (`UTUBOT_PROVIDER_SECRET`), reports each user's usage over the admin `usage_window`, refuses a non-admin's
+private/LAN own-provider base url (SSRF), and charges background jobs claimed by the worker to the bound user's budget and upstream. None of
+it changes a client-facing behaviour the TV app or the extension would render: a call past a user's budget still answers `429`, a refused
+base url still answers `400`, and `usage_window` is an additive field on the admin `GET /v1/admin/users` table (the web UI page, not a
+client). The user's own upstream routes their calls transparently under the same endpoints and bearer token, so no `extension/` file and no
+matrix row change were needed; the `user-provider` row already covers the feature. This note is the extension's side of the parity box for
+that pull request.
+
 ## 4. Architecture
 
 ```

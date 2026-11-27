@@ -854,10 +854,23 @@ class UserConfig(BaseModel):
     admin: bool = False
     prime: bool = False
     policy: UserPolicy = Field(default_factory=UserPolicy)
+    # Per-user overrides of the global `[usage]` limits (issue 247, follow-up to #212). Left null
+    # the server-wide value applies; a non-null value caps just this user, so an owner keeps the
+    # global key and issues one with a lower cap from users.toml.
+    user_budget_usd: float | None = Field(default=None, ge=0)
+    user_requests_per_min: int | None = Field(default=None, ge=0)
 
     @property
     def klass(self) -> str:
         return "prime" if self.prime else "normal"
+
+    def budget_usd(self, default: float) -> float:
+        """This user's daily cost ceiling: their override, else the server-wide default."""
+        return self.user_budget_usd if self.user_budget_usd is not None else default
+
+    def requests_per_min(self, default: int) -> int:
+        """This user's model-call cap: their override, else the server-wide default."""
+        return self.user_requests_per_min if self.user_requests_per_min is not None else default
 
 
 DEFAULT_PUBLIC_BASE_URL = "http://127.0.0.1:8790"
@@ -931,6 +944,9 @@ class SecurityConfig(BaseModel):
     max_sessions_per_user: int = 20
     password_min_chars: int = 10
     password_max_chars: int = 256
+    # Env var holding the secret that encrypts a user's own provider key at rest (`at_rest`). Kept
+    # outside the database and the repo; unset, the key is stored plain (the sqlite file is 0600).
+    provider_secret_env: str = "UTUBOT_PROVIDER_SECRET"
     scrypt_n: int = 2**17
     scrypt_max_concurrent: int = 2
     scrypt_r: int = 8
@@ -1087,6 +1103,25 @@ class Config(BaseModel):
         if not env:
             return None
         return os.environ.get(env) or None
+
+    def per_user_budget(self, name: str | None) -> float:
+        """A user's daily cost ceiling: their users.toml override, else the global `[usage]` value.
+        An unknown or anonymous name falls back to the global."""
+        if not name:
+            return self.usage.user_budget_usd
+        for u in self.users:
+            if u.name == name:
+                return u.budget_usd(self.usage.user_budget_usd)
+        return self.usage.user_budget_usd
+
+    def per_user_requests_per_min(self, name: str | None) -> int:
+        """A user's model-call cap: their users.toml override, else the global `[usage]` value."""
+        if not name:
+            return self.usage.user_requests_per_min
+        for u in self.users:
+            if u.name == name:
+                return u.requests_per_min(self.usage.user_requests_per_min)
+        return self.usage.user_requests_per_min
 
 
 def _merge_policy(default: UserPolicy, override: dict) -> UserPolicy:

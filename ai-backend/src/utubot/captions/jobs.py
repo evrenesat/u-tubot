@@ -29,6 +29,7 @@ from ..transcripts import (
     NoCaptions,
     TranscriptService,
 )
+from ..userproviders import UserProvider, bind_call, unbind_call
 from ..youtube import CLASS_MEDIA, FETCH_CLASSES, YoutubeDelayed, YoutubeVideoError
 from . import events
 from .asr import normalize_language
@@ -69,9 +70,11 @@ class JobQueue:
         pipeline: CaptionPipeline,
         transcripts: TranscriptService,
         ledger=None,
+        user_providers=None,
     ):
         self.cfg, self.db, self.pipeline, self.transcripts = cfg, db, pipeline, transcripts
         self.ledger = ledger
+        self.user_providers = user_providers
         self.events = events.JobEvents(db, cfg.captions)
         self.events.backfill()
         self._wake = asyncio.Event()
@@ -1037,6 +1040,9 @@ class JobQueue:
         began = time.monotonic()
         klass = normalize_class(job.get("klass"))
         class_token = bind_class(klass)
+        # A claimed job runs with its owner bound, so the model calls it makes are charged to that
+        # user's daily budget and run on their own upstream, not the server default.
+        provider_token = None
         trace.emit(
             events.STARTED,
             events.OK,
@@ -1046,6 +1052,7 @@ class JobQueue:
             **{"class": klass},
         )
         try:
+            provider_token = self._bind_user(job)
 
             def start_wait() -> None:
                 trace.emit(
@@ -1103,8 +1110,29 @@ class JobQueue:
             self._fail(job, MSG_TRANSCRIBE if job["kind"] == KIND_TRANSCRIPT else MSG_JOB, exc)
         finally:
             unbind_class(class_token)
+            if provider_token is not None:
+                unbind_call(provider_token)
             events.unbind(token)
         return True
+
+    def _bind_user(self, job: dict[str, Any]):
+        """Bind the claimed job's owner (and their own upstream, if any) so its model calls are
+        charged to that user's budget and run on their upstream. Returns the tokens to undo it.
+
+        A stored key that fails its MAC (the server secret was rotated, or a wrong secret was in
+        effect when it was stored) cannot be read: fall back to the server default upstream so the
+        job still runs and is still charged to this user's budget, instead of failing the job or
+        crashing the worker on a secret rotation."""
+        if self.user_providers is None:
+            return None
+        try:
+            live = self.user_providers.get_live(job["user"])
+        except ValueError:
+            log.warning(
+                "own upstream for %s unreadable at rest; using the server default", job["user"]
+            )
+            return bind_call(job["user"], None)
+        return bind_call(job["user"], UserProvider(*live) if live else None)
 
     async def _worker(self) -> None:
         while not self._stopping:

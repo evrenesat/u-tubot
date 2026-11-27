@@ -12,6 +12,41 @@
 - `cuts.ranked_tail_in_time_order` / `is_non_selection` / `choose_problem`: an answer is "not chosen" when it keeps more than `non_selection_factor` (2.5) times the target or maximum, or when its distinct ranks follow video order over `rank_tail_min` (6) parts while the total is over the asked amount plus the band. Tied ranks are not a judgement and never count.
 - One-pass, reduce and map excerpts re-ask once with "choose about N s (M min) ... rank only the parts you keep". If trimming is still needed, `spread_select` splits the video into windows of half `max_skip_s` (600) and trims inside each window by rank, so no stretch the trim removes exceeds `max_skip_s` (a gap the model itself left stays). Used by `select_for_target` and `trim_to_cap` for non-selection answers only; normal answers trim as before.
 - Tests: `tests/test_cuts_rank_trim.py` (a recorded answer shaped like the half cut, no real model; detection, spread, the re-ask once, a normal answer asked once).
+## 2026-11-27 (UTB-319, review r2 fixes for UTB-295)
+
+- Worker safety on secret rotation: `_bind_user` in `src/utubot/captions/jobs.py` now runs inside `run_one`'s `try` (with
+  `provider_token` initialised to `None`) and no longer raises when a stored own-upstream key fails its MAC. A rotated/wrong
+  `security.provider_secret_env` falls back to the server default upstream so the claimed job still runs and is still charged to
+  that user's budget, instead of killing the worker task, skipping `_fail`/retry, leaking the class context var and suppressing the
+  STARTED event. `authenticated()` in `src/utubot/app.py` handles the same decrypt failure the same way (no more `500` on every
+  authenticated request). Covered by `tests/test_userproviders.py`.
+- `GET /v1/users` now returns `usage_window` (`{cost, calls}`) via the new `PerUserUsage.for_user_window` used by `describe_user`,
+  so both user routes match `ai/CONTRACT.md` (only the admin route returned it before). The admin window (`for_admin` /
+  `for_user_window`) is exactly `window_days` calendar days (today included) instead of `window_days + 1`.
+- Tests: the two rotation paths (a claimed job falling back to the server default, and an authenticated request not `500`), the
+  `usage_window` field on `describe_user`, and the exact `window_days` boundary; `tests/test_webui.py` expected dict updated. Full
+  suite green (1617 passed).
+
+## 2026-11-27 (UTB-295, follow-up to #247)
+
+- Per-user overrides: each user in `users.toml` may set `user_budget_usd` / `user_requests_per_min` (leave `null` for the server value).
+  A user's own value overrides the `[usage]` global for just them, so an owner keeps the global key and issues a user a lower cap. The
+  per-user daily budget and request cap are read per caller. Background jobs claimed by the worker now run with their owner bound, so the
+  model calls they make are charged to that user's daily budget and run on their own upstream, not the server default.
+- Encryption at rest: a user's own provider key is stored encrypted with a server secret from `security.provider_secret_env` (default
+  `UTUBOT_PROVIDER_SECRET`), via a small encrypt-then-MAC stream cipher (`src/utubot/at_rest.py`, HMAC-SHA256, no third-party crypto). With
+  no secret set the key is stored as-is (the 0600 database file is the only protection) and old plain values stay readable; a stored value
+  is marked and one that fails its MAC (for example after the secret was rotated) is refused rather than mis-decrypted.
+- Admin page: `GET /v1/users` and `GET /v1/admin/users` now include per-user `usage_window` (`{cost, calls}`) over the last `[usage]
+  window_days` days, in addition to today's `usage`.
+- Own-provider base url: a non-admin's `PUT /v1/me/provider` base url must not point at a private, loopback or otherwise internal address
+  (SSRF) or it is refused with `400`; admins are exempt and may point at a LAN upstream (`src/utubot/urlguard.py`).
+- Tests: `tests/test_at_rest.py` (round-trip, no-secret passthrough, wrong-secret and tampered-value refusal); `tests/test_userproviders.py`
+  (per-user override resolution and route-level cap, admin window usage, SSRF guard for non-admins with admin exemption, a claimed job
+  running with its user and own upstream bound). Full suite green (1608 passed).
+- Contract/docs: `ai/CONTRACT.md` (per-user overrides, at-rest encryption, admin `usage_window`, SSRF refusal), `docs/server.md` (`[usage]`
+  per-user overrides, a *Per-user upstream* section with the SSRF and at-rest notes, `[security]` `provider_secret_env`) and
+  `config.example.toml` (`provider_secret_env`, per-user override fields) document the feature.
 
 ## 2026-11-26 (UTB-230 multi-user, per-user key, budget and rate limit)
 

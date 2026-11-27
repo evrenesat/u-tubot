@@ -243,6 +243,7 @@ async def test_admin_creates_users_and_sets_passwords(env):
         "prime": False,
         "class": "normal",
         "usage": {"cost": 0, "calls": 0, "day": PerUserUsage.today()},
+        "usage_window": {"cost": 0.0, "calls": 0},
         "provider": {"configured": False},
     }
     login = await anon_client(env).post(

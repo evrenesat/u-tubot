@@ -54,6 +54,10 @@ login_lockout_s = 900
 login_user_lockout_failures = 10  # failed sign-ins against one account (from anywhere) before it is locked
 login_global_failures = 200       # failed sign-ins from all IPs per window before sign-in locks globally
 login_global_window_s = 3600
+# A user's own provider key is encrypted at rest with the secret named by this environment variable.
+# Leave empty to store it as-is (the 0600 database file is then the only protection; old plain values
+# stay readable). Set it on any server that lets users store their own upstream (docs/server.md).
+provider_secret_env = "UTUBOT_PROVIDER_SECRET"
 
 # Sign in from a Tailscale Serve identity header instead of the password. Off by default; enable it
 # only on a tailnet-only listener. Tailscale Serve connects from loopback and sets
@@ -597,6 +601,8 @@ keep_days = 90
 [usage]
 user_budget_usd = 0         # daily (UTC) cost ceiling per user
 user_requests_per_min = 0   # requests per user per minute; 0 = follow the global limit
+# Each user in users.toml may override just their own limits (leave null for the server value), so an
+# owner keeps the global key and issues a user a lower cap. See [users] below for the per-user shape.
 # price_usd_per_million = { "worker" = 0.5 }
 
 # The landing page "/" shows a public Download section from `utubot app publish`.
@@ -652,6 +658,11 @@ update_checks = true              # TV: ask this server for newer app versions
 [[users]]
 name = "owner"
 admin = true
+# Per-user limits override [usage] for this user only; leave them unset to follow the
+# server-wide value. Shown commented: this file is parsed with tomllib, which cannot
+# represent the null literal, so an unset field is the way to say "follow the global".
+# user_budget_usd = null
+# user_requests_per_min = null
 [users.policy]
 hide_topics = ["reaction videos", "AI-generated narration slop"]
 mark_topics = ["celebrity gossip"]
