@@ -22,6 +22,7 @@ from utubot.cuts import (
     parse_chapters,
     parse_cut_answer,
     plan_chunks,
+    removal_summary,
     select_for_target,
     serialize_units,
     split_candidates,
@@ -364,6 +365,7 @@ class TestPromptFiltering:
         by_id = {p.id: p for p in BUILTIN_SET.prompts}
         assert set(p.id for p in by_id.values() if p.task == TASK_CUTS) == {
             "cut-no-filler",
+            "cut-no-filler-tight",
             "cut-answer",
             "cut-demo",
             "cut-highlights-5",
@@ -375,6 +377,13 @@ class TestPromptFiltering:
         text = by_id["cut-highlights-5"].template.lower()
         for word in ("payoff", "demos", "results", "conclusions", "intros", "sponsor", "recaps"):
             assert word in text, word
+
+    def test_the_tight_no_filler_preset_names_what_it_cuts(self):
+        by_id = {p.id: p for p in BUILTIN_SET.prompts}
+        text = by_id["cut-no-filler-tight"].template.lower()
+        for word in ("tangent", "repeated", "examples", "q&a", "thank", "removed"):
+            assert word in text, word
+        assert by_id["cut-no-filler-tight"].label == "No filler · Tight"
 
     def test_describe_hides_cut_presets_from_summary_pickers(self, tmp_path):
         from utubot.config import Config
@@ -393,6 +402,7 @@ class TestPromptFiltering:
         ids = [p.id for p in store.cut_prompts("owner")]
         assert ids == [
             "cut-no-filler",
+            "cut-no-filler-tight",
             "cut-answer",
             "cut-demo",
             "cut-highlights-5",
@@ -469,6 +479,36 @@ def ranked(units: list[Unit], spans: list[tuple[int, int, int | None]]) -> list[
         ]
     }
     return parse_cut_answer(answer, units)
+
+
+class TestRemovalSummary:
+    def test_it_breaks_the_removed_time_down_by_category(self):
+        parts = [Part("a", 0, 240_000)]
+        summary = removal_summary(
+            "cut-no-filler-tight",
+            parts,
+            600.0,
+            "fallback",
+            {"tangents": 120, "repetition": 60, "ads": 180},
+        )
+        assert summary == "Removed 6:00: plugs 3:00, tangents 2:00, repetition 1:00"
+
+    def test_the_breakdown_is_scaled_to_the_time_actually_removed(self):
+        parts = [Part("a", 0, 240_000)]
+        summary = removal_summary(
+            "cut-no-filler-tight", parts, 600.0, "fallback", {"tangents": 120, "repeat": 60}
+        )
+        assert summary == "Removed 6:00: tangents 4:00, repetition 2:00"
+
+    def test_an_empty_or_invalid_breakdown_falls_back_to_the_plain_summary(self):
+        parts = [Part("a", 0, 240_000)]
+        for removed in (None, {}, {"unknown": 10}, {"tangents": "no"}):
+            summary = removal_summary("cut-no-filler-tight", parts, 600.0, "fallback", removed)
+            assert summary == "Removed 6:00 of filler, 60 % of the video"
+
+    def test_a_tight_cut_that_removes_nothing_says_no_filler_found(self):
+        parts = [Part("a", 0, 600_000)]
+        assert removal_summary("cut-no-filler-tight", parts, 600.0, "fallback") == "No filler found"
 
 
 class TestTargetLength:

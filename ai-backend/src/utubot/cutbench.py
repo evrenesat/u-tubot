@@ -1,7 +1,9 @@
 """The offline test set for director's cuts and the scorer behind `scripts/cut_bench.py`.
 
-Five hand-written transcripts (caption-like fragments, invented content, no real video) with
-three or four requests each (16 requests), and hand-marked must-keep / must-skip time ranges. The scorer runs the
+Six hand-written transcripts (caption-like fragments, invented content, no real video) with
+three or four requests each (19 requests), and hand-marked must-keep / must-skip time ranges.
+One of them is talk-heavy, so the light and tight no-filler cuts can be compared on the same
+video. The scorer runs the
 real cut engine over a fixture (`build_units` -> the model -> `parse_cut_answer` ->
 `finalize_parts`) and measures how much of the must-keep time the finished cut kept and how
 much must-skip time leaked in. No network here: the model is a callable the caller supplies.
@@ -579,6 +581,122 @@ def _fixture_projector() -> BenchTranscript:
     )
 
 
+def _fixture_newsletter() -> BenchTranscript:
+    """A talk-heavy fixture: the light cut drops the obvious filler and keeps the stories and
+    Q&A; the tight cut also drops tangents, the long example, the recap and the repeated answer.
+    Both mark `thesis` / `point_two` / `point_three` as must-keep, so tight is shorter only by
+    cutting more of the marked filler."""
+    lay = _Layout(
+        {
+            "intro": [
+                "Hey everyone, welcome back to the newsletter show.",
+                "This is episode forty-one, the one about writing every week.",
+                "Grab a coffee, this one is a bit rambly.",
+            ],
+            "sponsor": [
+                "This episode is brought to you by Deadline Timer.",
+                "Deadline Timer keeps a visible countdown on your desk.",
+                "It is surprisingly good at stopping doomscrolling.",
+                "Use code WEEKLY at checkout and get two months free.",
+            ],
+            "thesis": [
+                "My whole system comes down to one rule.",
+                "A newsletter only survives if the next issue is already half written.",
+                "So I end every writing session by drafting the next opening line.",
+                "That single habit removes the blank-page problem entirely.",
+            ],
+            "tangent_one": [
+                "This reminds me of the time I tried to write a novel in a month.",
+                "I had a whiteboard with character arcs and a color-coded calendar.",
+                "The calendar lasted four days and the novel lasted about nine.",
+                "The lesson was not really about novels, honestly it was about sleep.",
+                "Anyway, back to newsletters, where the stakes are lower and the coffee is better.",
+            ],
+            "point_two": [
+                "The second rule is to keep one idea per issue.",
+                "If you have two ideas, you have two issues, not one longer one.",
+                "Readers finish short issues and save long ones for never.",
+                "One idea also makes the subject line obvious, which helps open rates.",
+            ],
+            "example": [
+                "Let me give you a long example from issue twenty-nine.",
+                "A reader wrote in about migrating a team wiki to a new tool.",
+                "The migration had three phases and a rollback plan and a training week.",
+                "I explained every phase in detail, with screenshots and a checklist.",
+                "It was the best thing I wrote that month and the least read.",
+                "People wanted the checklist, not the story around the checklist.",
+            ],
+            "recap": [
+                "So to recap what we said earlier: draft the next opening line.",
+                "Again, end the session with the next opening line already written.",
+                "That is the same point from the start, worth repeating once.",
+            ],
+            "qa": [
+                "A listener asks whether a weekly cadence burns you out.",
+                "My answer is that a weekly cadence burns you out if you start from zero.",
+                "Starting from a half-written next issue is the whole difference.",
+                "Another listener asks the same thing about burnout, so my answer is the same.",
+                "The cadence is fine, the blank page is the problem, draft the opening line.",
+            ],
+            "point_three": [
+                "The third rule is to publish even when the issue is not perfect.",
+                "A shipped B issue beats an unshipped A issue every single week.",
+                "Perfection is just procrastination with better vocabulary.",
+            ],
+            "thanks": [
+                "Thank you to the patrons who keep this show ad-free.",
+                "Thank you also to everyone who sent corrections last week.",
+                "Special thanks to the volunteer who fixed the transcript.",
+                "I read every reply, even when I answer late.",
+            ],
+            "outro": [
+                "That is the show for this week.",
+                "Next week I will answer the questions about paid subscriptions.",
+                "Links and the archive are in the description.",
+                "Thanks for listening, and write the opening line before you close the laptop.",
+            ],
+        }
+    )
+    light_keep = lay.span(
+        "thesis", "tangent_one", "point_two", "example", "recap", "qa", "point_three"
+    )
+    tight_keep = lay.span("thesis", "point_two", "point_three")
+    obvious_filler = lay.span("intro", "sponsor", "thanks", "outro")
+    tight_only_filler = lay.span("tangent_one", "example", "recap", "qa")
+    return _make(
+        "bench-newsletter",
+        "Three rules for a newsletter you can actually keep writing",
+        "The Weekly Desk",
+        "A talk about writing every week.\n00:00 Intro\nThe rules\nListener questions\n",
+        lay,
+        [
+            BenchRequest(
+                name="no-filler-light",
+                instruction=preset_instruction("cut-no-filler"),
+                preset_id="cut-no-filler",
+                keep=light_keep,
+                skip=obvious_filler,
+                budget_s=1.5 * sum(b - a for a, b in light_keep),
+            ),
+            BenchRequest(
+                name="no-filler-tight",
+                instruction=preset_instruction("cut-no-filler-tight"),
+                preset_id="cut-no-filler-tight",
+                keep=tight_keep,
+                skip=[*obvious_filler, *tight_only_filler],
+                budget_s=1.4 * sum(b - a for a, b in tight_keep),
+            ),
+            BenchRequest(
+                name="just-the-rules",
+                instruction="Only the three rules, with none of the stories or questions.",
+                preset_id=None,
+                keep=tight_keep,
+                skip=[*obvious_filler, *tight_only_filler],
+            ),
+        ],
+    )
+
+
 LONG_SECTION_LINES = 110
 LONG_FILLER_SECTIONS = 13
 LONG_KEY_LINES = 110
@@ -653,6 +771,7 @@ TRANSCRIPTS: list[BenchTranscript] = [
     _fixture_sleep(),
     _fixture_charger(),
     _fixture_projector(),
+    _fixture_newsletter(),
 ]
 
 LONG_TRANSCRIPT = _fixture_long()

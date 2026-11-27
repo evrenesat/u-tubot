@@ -608,7 +608,7 @@ the video facts). `GET|PUT|DELETE /v1/cut-channels` edit them.
 
 **Choosing the model**: `[llm.cuts]` has no default on purpose — quality matters and the
 feature stays off until an alias is named. Score the available aliases offline against the
-test set (5 hand-marked transcripts and 16 requests, must-keep/must-skip spans, no network):
+test set (6 hand-marked transcripts and 19 requests, must-keep/must-skip spans, no network):
 
     cd ai-backend && uv run python scripts/cut_bench.py --list --base-url http://gateway:8787/v1
     uv run python scripts/cut_bench.py --model <alias> --base-url ... --api-key-env KEY_ENV
