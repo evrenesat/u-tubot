@@ -508,7 +508,13 @@ def create_app(
         limit = cfg.per_user_requests_per_min(user.name)
         if limit > 0:
             svc.limiter.check(f"usr:{user.name}", limit)
-        live = svc.user_providers.get_live(user.name)
+        try:
+            live = svc.user_providers.get_live(user.name)
+        except ValueError:
+            log.warning(
+                "own upstream for %s unreadable at rest; using the server default", user.name
+            )
+            live = None
         bind_call(user.name, UserProvider(*live) if live else None)
         return user
 

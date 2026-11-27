@@ -206,12 +206,30 @@ class PerUserUsage:
         cost, calls = self.daily(user)
         return {"cost": round(cost, 6), "calls": calls, "day": self.today()}
 
+    def for_user_window(self, user: str, window_days: int) -> dict[str, Any]:
+        """`user`'s total cost and calls over the look-back window (today included), exactly
+        `window_days` calendar days."""
+        from datetime import datetime, timedelta
+
+        now_dt = datetime.now(UTC)
+        since = (now_dt - timedelta(days=max(0, window_days - 1))).strftime("%Y-%m-%d")
+        row = self._db.one(
+            "SELECT SUM(cost) AS cost, SUM(calls) AS calls FROM user_usage "
+            "WHERE user=? AND day >= ?",
+            [user, since],
+        )
+        return {
+            "cost": round(float((row and row["cost"]) or 0.0), 6),
+            "calls": int((row and row["calls"]) or 0),
+        }
+
     def for_admin(self, window_days: int, now: float | None = None) -> list[dict[str, Any]]:
-        """Every user's total cost and calls over the look-back window, most usage first."""
+        """Every user's total cost and calls over the look-back window (today included), exactly
+        `window_days` calendar days, most usage first."""
         from datetime import datetime, timedelta
 
         now_dt = datetime.now(UTC) if now is None else datetime.fromtimestamp(now, UTC)
-        since = (now_dt - timedelta(days=window_days)).strftime("%Y-%m-%d")
+        since = (now_dt - timedelta(days=max(0, window_days - 1))).strftime("%Y-%m-%d")
         rows = self._db.all(
             "SELECT user, SUM(cost) AS cost, SUM(calls) AS calls FROM user_usage "
             "WHERE day >= ? GROUP BY user ORDER BY 1",

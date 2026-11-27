@@ -12,6 +12,21 @@
 - `cuts.ranked_tail_in_time_order` / `is_non_selection` / `choose_problem`: an answer is "not chosen" when it keeps more than `non_selection_factor` (2.5) times the target or maximum, or when its distinct ranks follow video order over `rank_tail_min` (6) parts while the total is over the asked amount plus the band. Tied ranks are not a judgement and never count.
 - One-pass, reduce and map excerpts re-ask once with "choose about N s (M min) ... rank only the parts you keep". If trimming is still needed, `spread_select` splits the video into windows of half `max_skip_s` (600) and trims inside each window by rank, so no stretch the trim removes exceeds `max_skip_s` (a gap the model itself left stays). Used by `select_for_target` and `trim_to_cap` for non-selection answers only; normal answers trim as before.
 - Tests: `tests/test_cuts_rank_trim.py` (a recorded answer shaped like the half cut, no real model; detection, spread, the re-ask once, a normal answer asked once).
+## 2026-11-27 (UTB-319, review r2 fixes for UTB-295)
+
+- Worker safety on secret rotation: `_bind_user` in `src/utubot/captions/jobs.py` now runs inside `run_one`'s `try` (with
+  `provider_token` initialised to `None`) and no longer raises when a stored own-upstream key fails its MAC. A rotated/wrong
+  `security.provider_secret_env` falls back to the server default upstream so the claimed job still runs and is still charged to
+  that user's budget, instead of killing the worker task, skipping `_fail`/retry, leaking the class context var and suppressing the
+  STARTED event. `authenticated()` in `src/utubot/app.py` handles the same decrypt failure the same way (no more `500` on every
+  authenticated request). Covered by `tests/test_userproviders.py`.
+- `GET /v1/users` now returns `usage_window` (`{cost, calls}`) via the new `PerUserUsage.for_user_window` used by `describe_user`,
+  so both user routes match `ai/CONTRACT.md` (only the admin route returned it before). The admin window (`for_admin` /
+  `for_user_window`) is exactly `window_days` calendar days (today included) instead of `window_days + 1`.
+- Tests: the two rotation paths (a claimed job falling back to the server default, and an authenticated request not `500`), the
+  `usage_window` field on `describe_user`, and the exact `window_days` boundary; `tests/test_webui.py` expected dict updated. Full
+  suite green (1617 passed).
+
 ## 2026-11-27 (UTB-295, follow-up to #247)
 
 - Per-user overrides: each user in `users.toml` may set `user_budget_usd` / `user_requests_per_min` (leave `null` for the server value).

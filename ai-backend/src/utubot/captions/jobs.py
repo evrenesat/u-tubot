@@ -1042,7 +1042,7 @@ class JobQueue:
         class_token = bind_class(klass)
         # A claimed job runs with its owner bound, so the model calls it makes are charged to that
         # user's daily budget and run on their own upstream, not the server default.
-        provider_token = self._bind_user(job)
+        provider_token = None
         trace.emit(
             events.STARTED,
             events.OK,
@@ -1052,6 +1052,7 @@ class JobQueue:
             **{"class": klass},
         )
         try:
+            provider_token = self._bind_user(job)
 
             def start_wait() -> None:
                 trace.emit(
@@ -1116,10 +1117,21 @@ class JobQueue:
 
     def _bind_user(self, job: dict[str, Any]):
         """Bind the claimed job's owner (and their own upstream, if any) so its model calls are
-        charged to that user's budget and run on their upstream. Returns the tokens to undo it."""
+        charged to that user's budget and run on their upstream. Returns the tokens to undo it.
+
+        A stored key that fails its MAC (the server secret was rotated, or a wrong secret was in
+        effect when it was stored) cannot be read: fall back to the server default upstream so the
+        job still runs and is still charged to this user's budget, instead of failing the job or
+        crashing the worker on a secret rotation."""
         if self.user_providers is None:
             return None
-        live = self.user_providers.get_live(job["user"])
+        try:
+            live = self.user_providers.get_live(job["user"])
+        except ValueError:
+            log.warning(
+                "own upstream for %s unreadable at rest; using the server default", job["user"]
+            )
+            return bind_call(job["user"], None)
         return bind_call(job["user"], UserProvider(*live) if live else None)
 
     async def _worker(self) -> None:

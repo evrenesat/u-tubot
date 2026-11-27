@@ -561,3 +561,86 @@ async def test_a_claimed_job_without_its_user_runs_on_the_server_default(env):
     assert await env.svc.jobs.run_one() is True
     assert captured["user"] == "partner"
     assert captured["provider"] is None  # no own upstream -> the server default upstream
+
+
+# --- a bad MAC on rotation does not crash the worker or a request -----------------------
+
+
+async def test_a_claimed_job_with_an_unreadable_key_runs_on_the_server_default(env, monkeypatch):
+    # the server has an at-rest secret, partner stores a key, then the secret is rotated so the
+    # stored key now fails its MAC: the claimed job must not crash the worker, it runs on the
+    # server default upstream and is still bound to partner for the budget
+    monkeypatch.setenv("UTUBOT_PROVIDER_SECRET", "the-first-secret")
+    env.svc.user_providers.set("partner", "https://user-models.example.com/v1", "pk-partner")
+    monkeypatch.setenv("UTUBOT_PROVIDER_SECRET", "a-second-secret-value")  # rotated at rest
+    env.svc.jobs.enqueue_transcript("partner", VID, None)
+    captured: dict = {}
+
+    async def spy(job):
+        captured["user"] = current_user()
+        captured["provider"] = current_user_provider()
+
+    env.svc.jobs._run_transcript = spy
+    assert await env.svc.jobs.run_one() is True  # the worker survives the bad MAC
+    assert captured["user"] == "partner"
+    assert captured["provider"] is None  # unreadable key -> server default, still bound to partner
+
+
+async def test_a_request_does_not_500_when_the_stored_key_fails_its_mac(env, monkeypatch):
+    # server secret set, partner stores an own upstream, then the secret is rotated: an
+    # authenticated request must not 500, the unreadable key is treated as "no own upstream"
+    monkeypatch.setenv("UTUBOT_PROVIDER_SECRET", "the-first-secret")
+    env.svc.user_providers.set("partner", "https://user-models.example.com/v1", "pk-partner")
+    monkeypatch.setenv("UTUBOT_PROVIDER_SECRET", "a-second-secret-value")
+    partner = httpx.AsyncClient(
+        transport=env.client._transport,
+        base_url="http://utubot",
+        headers={"Authorization": f"Bearer {OTHER_TOKEN}"},
+    )
+    try:
+        assert (await partner.get("/v1/me")).status_code == 200
+    finally:
+        await partner.aclose()
+
+
+async def test_describe_user_does_not_raise_on_an_unreadable_key(env, monkeypatch):
+    # describe only shows the host and key fingerprint (never the key), so a rotated secret is
+    # not a problem there
+    monkeypatch.setenv("UTUBOT_PROVIDER_SECRET", "the-first-secret")
+    env.svc.user_providers.set("partner", "https://user-models.example.com/v1", "pk-partner")
+    monkeypatch.setenv("UTUBOT_PROVIDER_SECRET", "a-second-secret-value")
+    doc = env.svc.webauth.describe_user("partner")
+    assert doc["provider"] == {
+        "host": "https://user-models.example.com",
+        "key_sha256": _sha("pk-partner")[:KEY_HASH_PREFIX],
+    }
+
+
+# --- usage_window on the user view -------------------------------------------------------
+
+
+async def test_describe_user_reports_usage_over_the_window(env):
+    two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
+    env.svc.db.execute(
+        "INSERT INTO user_usage(user,day,cost,calls) VALUES('owner',?,0.5,2)",
+        [two_days_ago],
+    )
+    doc = env.svc.webauth.describe_user("owner")
+    assert doc["usage_window"] == {"cost": 0.5, "calls": 2}
+
+
+# --- the admin window is exactly window_days calendar days -----------------------------
+
+
+def test_for_admin_and_user_window_cover_exactly_the_window_days():
+    db = Database(":memory:")
+    usage = PerUserUsage(db)
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+    week_ago = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%d")
+    db.execute("INSERT INTO user_usage(user,day,cost,calls) VALUES('u',?,1.0,1)", [week_ago])
+    db.execute("INSERT INTO user_usage(user,day,cost,calls) VALUES('u',?,2.0,2)", [yesterday])
+    # the window is exactly 7 days (today + the 6 before): week_ago is outside, yesterday inside
+    row = {r["user"]: r for r in usage.for_admin(7)}["u"]
+    assert row["cost"] == 2.0
+    assert row["calls"] == 2
+    assert usage.for_user_window("u", 7) == {"cost": 2.0, "calls": 2}

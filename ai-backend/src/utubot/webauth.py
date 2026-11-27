@@ -374,6 +374,11 @@ class WebAuth:
             "usage": self.user_usage.for_user(name)
             if self.user_usage
             else {"cost": 0, "calls": 0, "day": ""},
+            "usage_window": (
+                self.user_usage.for_user_window(name, self.cfg.usage.window_days)
+                if self.user_usage
+                else {"cost": 0, "calls": 0}
+            ),
             "provider": (self.user_providers.describe(name) or {"configured": False})
             if self.user_providers
             else {"configured": False},
