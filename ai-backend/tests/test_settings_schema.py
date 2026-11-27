@@ -30,6 +30,7 @@ DEVICE_ONLY = {
     "films_developer",
     "films_skips",
     "films_imdb_id",
+    "films_catalog_url",
 }
 
 
