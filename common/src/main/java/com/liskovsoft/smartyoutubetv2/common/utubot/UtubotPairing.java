@@ -1,11 +1,9 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
-import android.content.ActivityNotFoundException;
 import android.content.Context;
-import android.content.Intent;
-import android.net.Uri;
 import android.os.Build;
 
+import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.sharedutils.rx.RxHelper;
@@ -125,8 +123,9 @@ public final class UtubotPairing {
 
     public static void showDialog(Context context) {
         String base = UtubotManager.instance(context).newClient().getBaseUrl();
-        String openLabel = base.isEmpty() ? null : context.getString(R.string.utubot_pair_open_browser);
-        Runnable openAction = base.isEmpty() ? null : () -> openInBrowser(context, base + "/#/tvs");
+        boolean offerBrowser = !base.isEmpty() && Helpers.isTouchSupported(context);
+        String openLabel = offerBrowser ? context.getString(R.string.utubot_pair_open_browser) : null;
+        Runnable openAction = offerBrowser ? () -> UtubotWebAdmin.openInBrowser(context, base + "/#/tvs") : null;
         SimpleEditDialog.showNumber(context, context.getString(R.string.utubot_pair), context.getString(R.string.utubot_pair_hint), code -> {
             if (!isValidCode(code)) {
                 MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_pair_invalid, CODE_LENGTH));
@@ -136,15 +135,6 @@ public final class UtubotPairing {
             pair(context, code.trim());
             return true;
         }, null, openLabel, openAction);
-    }
-
-    private static void openInBrowser(Context context, String url) {
-        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-        try {
-            context.startActivity(intent);
-        } catch (ActivityNotFoundException e) {
-            Utils.showMultiChooser(context, Uri.parse(url));
-        }
     }
 
     static void pair(Context context, String code) {

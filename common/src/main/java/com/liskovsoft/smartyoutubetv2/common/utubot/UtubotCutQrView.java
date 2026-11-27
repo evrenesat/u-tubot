@@ -1,18 +1,16 @@
 package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import android.app.Activity;
-import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.ContextWrapper;
-import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.net.Uri;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.ViewGroup;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -24,7 +22,6 @@ import androidx.annotation.Nullable;
 
 import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.utils.QrCodeEncoder;
-import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.CutRequest;
 import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
@@ -38,6 +35,7 @@ import io.reactivex.android.schedulers.AndroidSchedulers;
  * Back takes it away; the volume keys stay with the system.
  */
 public final class UtubotCutQrView extends FrameLayout {
+    private static final int MIN_FIELD_DP = 48;
     private static final int SCRIM = 0xD0000000;
     private static final int TEXT = 0xFFFFFFFF;
     private static final int TITLE_TEXT_SIZE_SP = 20;
@@ -163,10 +161,17 @@ public final class UtubotCutQrView extends FrameLayout {
         description.setTextColor(TEXT);
         description.setHintTextColor(0xB0FFFFFF);
         description.setTextSize(HINT_TEXT_SIZE_SP);
-        description.setMinHeight(Math.round(48 * getResources().getDisplayMetrics().density));
+        description.setMinHeight(Math.round(MIN_FIELD_DP * getResources().getDisplayMetrics().density));
         description.setPadding(PADDING_PX / 2, PADDING_PX / 2, PADDING_PX / 2, PADDING_PX / 2);
         description.setBackground(null);
         column.addView(description, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        description.post(() -> {
+            description.requestFocus();
+            InputMethodManager input = (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (input != null) {
+                input.showSoftInput(description, InputMethodManager.SHOW_IMPLICIT);
+            }
+        });
 
         LinearLayout buttons = new LinearLayout(getContext());
         buttons.setOrientation(LinearLayout.HORIZONTAL);
@@ -174,7 +179,7 @@ public final class UtubotCutQrView extends FrameLayout {
         column.addView(buttons, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         Button openSheet = makeButton(getContext().getString(R.string.utubot_cut_describe_open));
-        openSheet.setOnClickListener(v -> openInBrowser(getContext(), UtubotManager.instance(getContext()).cutRequestUrl(request.id)));
+        openSheet.setOnClickListener(v -> UtubotWebAdmin.openInBrowser(getContext(), UtubotManager.instance(getContext()).cutRequestUrl(request.id)));
         buttons.addView(openSheet, buttonLayoutParams());
 
         Button build = makeButton(getContext().getString(R.string.utubot_cut_describe_build));
@@ -220,14 +225,14 @@ public final class UtubotCutQrView extends FrameLayout {
         Button button = new Button(getContext());
         button.setText(label);
         button.setTextColor(TEXT);
-        button.setPadding(32, 16, 32, 16);
+        button.setPadding(PADDING_PX, PADDING_PX / 2, PADDING_PX, PADDING_PX / 2);
         return button;
     }
 
     private LinearLayout.LayoutParams buttonLayoutParams() {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.rightMargin = 16;
+        params.rightMargin = PADDING_PX / 2;
         return params;
     }
 
@@ -253,15 +258,6 @@ public final class UtubotCutQrView extends FrameLayout {
                         },
                         error -> MessageHelpers.showLongMessage(getContext(),
                                 getContext().getString(R.string.utubot_cut_describe_failed, describeError(error))));
-    }
-
-    private static void openInBrowser(Context context, String url) {
-        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-        try {
-            context.startActivity(intent);
-        } catch (ActivityNotFoundException e) {
-            Utils.showMultiChooser(context, Uri.parse(url));
-        }
     }
 
     private String describeError(Throwable error) {

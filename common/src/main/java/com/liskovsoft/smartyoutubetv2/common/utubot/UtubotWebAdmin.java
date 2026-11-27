@@ -11,6 +11,7 @@ import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.R;
+import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 
 import java.util.List;
 
@@ -103,6 +104,17 @@ public final class UtubotWebAdmin {
             }
         }
         return false;
+    }
+
+    /**
+     * Opens a page of the backend in the system browser (a chooser when nothing claims it); the touch sheets use it.
+     */
+    static void openInBrowser(Context context, String url) {
+        try {
+            context.startActivity(viewIntent(context, url));
+        } catch (android.content.ActivityNotFoundException e) {
+            Utils.showMultiChooser(context, Uri.parse(url));
+        }
     }
 
     private static Intent viewIntent(Context context, String url) {

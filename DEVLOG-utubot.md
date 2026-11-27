@@ -1,3 +1,8 @@
+## 2026-11-27 (tablet on-device flow, takeover of #237, issue #218)
+
+- Rebase onto main was already clean (#225 web admin and #196 voice are in the base). The tablet menu entry now reads "Describe the cut…" (the TV keeps "Describe on phone…"); "Describe by voice…" is the same on both.
+- The touch sheet puts the cursor in the description field and raises the keyboard; the two browser opens share `UtubotWebAdmin.openInBrowser` instead of two copies; the pairing dialog's "Open in browser" shows on touch devices only (the TV keeps the code flow). `temp/pr-body-r2.md` removed from the tree.
+
 ## 2026-11-27 (describe by voice on the TV, issue #176, takeover fixes)
 
 - The capture asked the recorder for 50 milliseconds (seconds passed as milliseconds), ran on the main thread (UI freeze, network on the main
