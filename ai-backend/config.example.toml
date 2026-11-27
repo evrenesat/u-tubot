@@ -658,9 +658,11 @@ update_checks = true              # TV: ask this server for newer app versions
 [[users]]
 name = "owner"
 admin = true
-# Per-user limits override [usage] for this user only; null follows the server-wide value.
-user_budget_usd = null
-user_requests_per_min = null
+# Per-user limits override [usage] for this user only; leave them unset to follow the
+# server-wide value. Shown commented: this file is parsed with tomllib, which cannot
+# represent the null literal, so an unset field is the way to say "follow the global".
+# user_budget_usd = null
+# user_requests_per_min = null
 [users.policy]
 hide_topics = ["reaction videos", "AI-generated narration slop"]
 mark_topics = ["celebrity gossip"]
