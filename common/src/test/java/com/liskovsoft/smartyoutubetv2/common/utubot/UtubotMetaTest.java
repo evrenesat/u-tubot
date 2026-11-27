@@ -49,6 +49,18 @@ public class UtubotMetaTest {
     }
 
     @Test
+    public void subscriptionIsSentOnlyWhenKnownTrue() throws Exception {
+        VideoMeta unknown = new VideoMeta();
+        unknown.videoId = "abc";
+        VideoMeta subscribed = new VideoMeta();
+        subscribed.videoId = "abc";
+        subscribed.isSubscribed = true;
+
+        assertTrue(!unknown.toJson().has("is_subscribed"));
+        assertTrue(subscribed.toJson().getBoolean("is_subscribed"));
+    }
+
+    @Test
     public void metaJsonSkipsEmptyFields() throws Exception {
         VideoMeta meta = new VideoMeta();
         meta.videoId = "abc";

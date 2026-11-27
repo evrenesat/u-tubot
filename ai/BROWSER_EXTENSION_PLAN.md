@@ -317,10 +317,11 @@ Existing extensions read for technique: section 15. Not verifiable from here: se
     `aria-label`), `channel` (text of the card's channel link), `channel_id` (only when that link is `/channel/UC…`),
     `duration_s` (the thumbnail's time badge parsed as a clock), `is_short` (a `/shorts/` link), `is_live` (a live badge the
     site layer recognises), `views` and `published` (the two parts of the card's metadata line, as on the TV), `description`
-    (search results only, the snippet). The assess prompt judges clickbait from this plus the channel/video context, so the
-    extension adds, each omitted when not found: `is_subscribed` (whether the signed-in user subscribes to the channel),
-    `upload_date`, `likes`/`dislikes` (the card's like count when shown), `subscriber_count` and the channel's `channel_description`
-    and a few recent `channel_titles` (from the channel's page/section when the extension reads one). On the watch page the
+    (search results only, the snippet). The backend's assess prompt also accepts optional context
+    (`is_subscribed`, `upload_date`, `likes`, `dislikes`, `subscriber_count`, `channel_description`, `channel_titles`; `ai/CONTRACT.md`).
+    The TV sends `is_subscribed` when its card knows it; the extension sends none of them yet, because YouTube's cards do not expose
+    them (the backend fills the channel's usual titles itself from what it has seen), so the assess row stays "same, without the extra
+    context" until the follow-up in u-tubot#243. On the watch page the
     playing video's own facts are `title` (document title without the site suffix), `channel` (the owner link's text) and
     `duration_s` (the video element), `is_live` when the duration is not finite.
 17. **Android differences are decided per row in the matrix**; code branches only on site kind and on

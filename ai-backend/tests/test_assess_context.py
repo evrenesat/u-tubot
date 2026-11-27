@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
 
-from utubot.assess import TRIAGE_SYSTEM
+from utubot.assess import TRIAGE_SYSTEM, topics_hash
 from utubot.models import VideoMeta
 
 EVAL_PATH = Path(__file__).parent.parent / "eval" / "assess_clickbait.json"
@@ -189,3 +190,20 @@ async def test_reassess_noop_when_no_subscribed_clickbait(env):
     )
     n = await env.svc.assessor.reassess_subscribed("owner", env.cfg.users[0].policy)
     assert n == 0
+
+
+async def test_triage_from_the_old_prompt_is_not_reused(env):
+    topics = [*env.cfg.users[0].policy.hide_topics, *env.cfg.users[0].policy.mark_topics]
+    legacy = hashlib.sha256(json.dumps(sorted(topics)).encode()).hexdigest()[:16]
+    assert topics_hash(topics) != legacy
+
+
+async def test_triage_gets_the_channels_usual_titles_from_stored_meta(env):
+    jimmy = next(c for c in load_eval() if c["video_id"] == "jimmycarr01")
+    env.svc.transcripts.store_meta(
+        "olderepisode", {"channel_id": jimmy["channel_id"], "title": "Older regular episode"}
+    )
+    meta = VideoMeta(video_id=jimmy["video_id"], channel_id=jimmy["channel_id"])
+
+    assert env.svc.assessor._recent_channel_titles(meta) == ["Older regular episode"]
+    assert env.svc.assessor._recent_channel_titles(VideoMeta(video_id="x")) is None

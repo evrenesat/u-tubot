@@ -15,6 +15,8 @@ from .models import Flag, Verdict, VideoMeta
 from .transcripts import NoCaptions, TranscriptService
 from .youtube import FETCH_CLASSES, YoutubeDelayed
 
+CHANNEL_TITLES_MAX = 5
+
 TRIAGE_SYSTEM = (
     "You triage YouTube videos for a TV viewer from the title, channel and all the context the app "
     "sends (channel name and id, subscriber count, channel description, whether the viewer is "
@@ -56,8 +58,13 @@ def fmt_duration(seconds: float) -> str:
     return f"{round(seconds / SEC_PER_MIN)}m"
 
 
+# Part of the triage cache key: bump it when the triage prompt changes meaning, so labels the old
+# prompt gave (a regular show called clickbait) are re-judged the next time the video appears.
+TRIAGE_VERSION = 2
+
+
 def topics_hash(topics: list[str]) -> str:
-    return hashlib.sha256(json.dumps(sorted(topics)).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps([TRIAGE_VERSION, sorted(topics)]).encode()).hexdigest()[:16]
 
 
 def policy_hash(policy: UserPolicy) -> str:
@@ -333,6 +340,20 @@ class Assessor:
                 if fut and not fut.done():
                     fut.set_result(None)
 
+    def _recent_channel_titles(self, video: VideoMeta) -> list[str] | None:
+        """The channel's usual format, from the titles of its other videos this server has seen:
+        the clients do not send them, so the prompt would otherwise never see the channel's format."""
+        if not video.channel_id:
+            return None
+        rows = self.db.all(
+            "SELECT json_extract(json,'$.title') AS title FROM video_meta"
+            " WHERE json_extract(json,'$.channel_id')=? AND video_id<>?"
+            " AND json_extract(json,'$.title') IS NOT NULL ORDER BY fetched_at DESC LIMIT ?",
+            [video.channel_id, video.video_id, CHANNEL_TITLES_MAX],
+        )
+        titles = [(row["title"] or "")[: self.cfg.assess.title_max_chars] for row in rows]
+        return titles or None
+
     async def _triage_call(
         self, batch: list[VideoMeta], topics: list[str], model: str | None = None
     ) -> dict[int, dict[str, Any]]:
@@ -357,7 +378,7 @@ class Assessor:
                     "upload_date": v.upload_date,
                     "duration_s": v.duration_s,
                     "published": v.published,
-                    "channel_titles": v.channel_titles,
+                    "channel_titles": v.channel_titles or self._recent_channel_titles(v),
                     "description": (v.description or "")[: cfg.description_max_chars] or None,
                 }
             )

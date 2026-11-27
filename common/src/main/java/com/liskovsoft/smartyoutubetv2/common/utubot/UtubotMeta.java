@@ -34,6 +34,7 @@ public final class UtubotMeta {
         meta.isShort = video.isShorts;
         meta.isLive = video.isLive;
         meta.description = video.description;
+        meta.isSubscribed = video.isSubscribed || video.belongsToSubscriptions();
         fillStats(meta, video.getSecondTitle());
         return meta;
     }
