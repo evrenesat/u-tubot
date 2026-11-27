@@ -63,6 +63,27 @@ not remembered as a failure: record the cassette (or turn offline off) and the v
 the E2E run at this backend instead of `scripts/emulator_mock_backend.py` when you want the real routes;
 the mock script stays the lighter stand-in for panel checks.
 
+### Tests without YouTube: the guard and recorded fixtures
+
+`ai-backend/tests/conftest.py` runs an autouse fixture for every test. It refuses any request to `youtube.com`, `youtu.be`,
+`googlevideo.com`, `ytimg.com` and `youtube-nocookie.com` (and their subdomains) at three points: the yt-dlp `YoutubeDL`
+methods `extract_info`, `download`, `urlopen` and `process_ie_result`; the httpx sync and async transports; and name resolution
+(`socket.getaddrinfo` and `socket.gethostbyname`). Each refusal is recorded in `VIOLATIONS`, so the test errors at teardown even
+when the code under test caught the error (a broad `except` cannot hide it). The guard does not see raw IP literals, subprocesses such as an
+`ffmpeg -i <url>`, or a stand-in `yt_dlp.YoutubeDL` a test installs itself, so keep those out of tests.
+
+To test code that fetches a video, use a stand-in, not the network:
+
+- Caption and metadata fetches: the `fetcher` fixture (`tests/conftest.py`, `FakeFetcher`), or `OfflineYoutubeFetcher` over a
+  cassette written with `save_cassette(tmp_path, VID, info, track)` (see `tests/test_caption_words.py`).
+- Audio and video downloads: a fake `downloader` passed to `create_app`, as the `env` fixture does.
+- yt-dlp itself: monkeypatch `pipeline_mod.yt_dlp.YoutubeDL` with a class that runs the match filter and hooks (see `tests/test_media.py`).
+
+A test that must replay a recorded cassette through a transport that does touch a YouTube host opts out of the guard for that
+test only, with `@pytest.mark.youtube_fixture` (registered in `ai-backend/pyproject.toml`). Nothing uses it yet; the cassettes in
+`ai-backend/fixtures/youtube/` need no opt-out because the replay path makes no request. Recording a cassette
+(`utubot youtube-record`) stays an owner action, run by hand.
+
 The web UI (`ai-backend/src/utubot/web/`) is plain HTML, CSS and ES modules served as they are: edit, reload, no build. To look at it
 without a real LLM or YouTube, run `uv run python tests/webui_demo.py temp/webui-demo [PORT]` (mock LLM, canned data, owner password in
 its first output line) and, for the screenshots in `docs/screenshots/webui/`,
