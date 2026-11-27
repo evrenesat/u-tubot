@@ -205,16 +205,21 @@ public class UtubotClient {
 
     /**
      * The settings this TV should use (ai/CONTRACT.md, "Web settings"): the document, or {@code {"unchanged":true}} when
-     * {@code have} is the current version. Answers 404 while the backend has the feature off.
+     * {@code have} is the current version. Answers 404 while the backend has the feature off. With {@code waitMs} above 0 the
+     * server may hold the request until the version changes (the long poll); the timeout then also covers the wait.
      */
-    public String deviceSettings(int have, int schemaVersion, int timeoutMs) throws IOException {
+    public String deviceSettings(int have, int schemaVersion, int waitMs, int timeoutMs) throws IOException {
         HttpUrl.Builder url = urlBuilder("/device/settings").addQueryParameter("schema", String.valueOf(schemaVersion));
 
         if (have >= 0) {
             url.addQueryParameter("have", String.valueOf(have));
+
+            if (waitMs > 0) {
+                url.addQueryParameter("wait_ms", String.valueOf(waitMs));
+            }
         }
 
-        return send(authorized(url), timeoutMs);
+        return send(authorized(url), timeoutMs + Math.max(0, waitMs));
     }
 
     /**

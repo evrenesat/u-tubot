@@ -7,6 +7,7 @@ release key; the certificate SHA-256 is in each release's notes on GitHub. User-
 
 ## Unreleased
 
+- Settings from the web reach the TV within seconds while the app is open (it keeps one request open at the server). The web Settings page now also sets the update check interval, development mode, browse refresh, text scroll speed and the keys that jump between cut parts for each TV, and "Check for u·tubot updates" (Settings, Updates) follows the server too. A TV keeps the values it already had.
 - Caption storage in Settings, u·tubot: the HQ captions kept on the TV now show their size, videos and tracks, with a warning past
   200 MiB. "Delete old captions" removes tracks older than 30 days, 90 days or 1 year, or all of them, after a confirmation and reports
   how many went. The store still never deletes or replaces a track by itself.

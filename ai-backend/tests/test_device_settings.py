@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import time
@@ -62,8 +63,8 @@ async def test_off_leaves_me_and_the_document_unchanged(cfg, env):
 
 async def test_schema_route_has_an_etag(env):
     r = await env.client.get("/v1/settings/schema")
-    assert r.status_code == 200 and r.headers["etag"] == '"1"'
-    assert r.json()["schema_version"] == 1
+    assert r.status_code == 200 and r.headers["etag"] == '"2"'
+    assert r.json()["schema_version"] == 2
     me = (await env.client.get("/v1/me")).json()
     assert me["features"]["settings_sync"] is True
 
@@ -477,3 +478,171 @@ async def test_a_key_without_device_override_is_not_a_tv_change(env, monkeypatch
     monkeypatch.setitem(schema.by_key["ai.wait_ms"], "device_override", False)
     r = await tv.post("/v1/device/settings", json={"changes": [change("ai.wait_ms", 900, 0)]})
     assert r.json()["results"][0]["outcome"] == "not_remote"
+
+
+# ---- checkpoint 5: per-TV keys, schema upgrade, long poll -------------------------------------------
+
+
+async def test_a_per_tv_key_is_set_from_the_web_and_reaches_that_tv_only(env):
+    device_id, tv = await setup_tv(env)
+    _, other = await setup_tv(env, "Bedroom TV")
+    await tv.get("/v1/device/settings", params={"schema": 2})
+    r = await env.client.put(
+        f"/v1/me/devices/{device_id}/settings",
+        json={"version": await version(env), "settings": {"updates.interval_minutes": 60}},
+    )
+    assert r.status_code == 200
+    mine = (await tv.get("/v1/device/settings", params={"schema": 2})).json()["settings"]
+    theirs = (await other.get("/v1/device/settings", params={"schema": 2})).json()["settings"]
+    assert (
+        mine["updates.interval_minutes"]["v"] == 60
+        and mine["updates.interval_minutes"]["from"] == "device"
+    )
+    assert theirs["updates.interval_minutes"]["v"] == 5
+
+
+async def test_a_per_tv_key_has_no_user_level_value(env):
+    doc = (await env.client.get("/v1/me/settings")).json()
+    assert "ai.cut_jump" not in doc["values"] and "ai.assess" in doc["values"]
+    bad = await web_put(env, {"ai.cut_jump": "off"})
+    assert bad.status_code == 400
+
+
+async def test_the_update_check_switch_is_a_user_value_a_tv_may_override(env):
+    device_id, tv = await setup_tv(env)
+    assert (await web_put(env, {"updates.checks": False})).status_code == 200
+    got = (await tv.get("/v1/device/settings", params={"schema": 2})).json()["settings"]
+    assert got["updates.checks"]["v"] is False and got["updates.checks"]["from"] == "user"
+    assert (await env.client.get("/v1/me/settings")).json()["settings"]["tv"][
+        "update_checks"
+    ] is False
+
+
+async def test_a_value_outside_the_choices_is_invalid(env):
+    device_id, tv = await setup_tv(env)
+    r = await tv.post(
+        "/v1/device/settings",
+        json={"schema_version": 2, "changes": [change("updates.interval_minutes", 7)]},
+    )
+    assert r.json()["results"][0]["outcome"] == "invalid"
+
+
+async def test_a_schema_one_tv_does_not_see_or_get_the_new_keys(env):
+    device_id, tv = await setup_tv(env)
+    doc = (await tv.get("/v1/device/settings", params={"schema": 1})).json()
+    assert "ai.cut_jump" not in doc["settings"] and "updates.checks" not in doc["settings"]
+    r = await env.client.put(
+        f"/v1/me/devices/{device_id}/settings",
+        json={"version": await version(env), "settings": {"ai.cut_jump": "off"}},
+    )
+    assert r.status_code == 400
+    view = (await env.client.get(f"/v1/me/devices/{device_id}/settings")).json()
+    assert "ai.cut_jump" not in view["settings"]
+
+
+async def test_a_synced_tv_updated_to_schema_two_keeps_its_own_new_values(env):
+    """The app update brings six keys; the values the TV already had win, the old ten stay base-checked."""
+    device_id, tv = await setup_tv(env)
+    first = {"schema_version": 1, "initial": True, "changes": [change("ai.assess", True, 0)]}
+    assert (await tv.post("/v1/device/settings", json=first)).status_code == 200
+    await web_put(env, {"ai.summary_panel": True})
+    assert (await tv.get("/v1/device/settings", params={"schema": 1, "have": 0})).status_code == 200
+    upgrade = {
+        "schema_version": 2,
+        "from_schema": 1,
+        "initial": True,
+        "changes": [
+            {**change("updates.interval_minutes", 360, 0), "user_set": True},
+            {**change("ai.cut_jump", "up_down", 0), "user_set": True},
+            {**change("ai.summary_panel", False, 0), "user_set": True},  # an old key: not trusted
+        ],
+    }
+    r = await tv.post("/v1/device/settings", json=upgrade)
+    got = {x["key"]: x["outcome"] for x in r.json()["results"]}
+    assert got == {
+        "updates.interval_minutes": "applied",
+        "ai.cut_jump": "applied",
+        "ai.summary_panel": "superseded",
+    }
+    settings = r.json()["settings"]
+    assert (
+        settings["updates.interval_minutes"]["v"] == 360
+        and settings["ai.cut_jump"]["v"] == "up_down"
+    )
+    assert settings["ai.summary_panel"]["v"] is True
+    rows = [row for row in audit_rows(env) if row["device_id"] and row["outcome"] == "applied"]
+    assert {row["via"] for row in rows} == {"migration"}
+
+
+async def test_a_plain_second_initial_without_from_schema_stays_a_normal_sync(env):
+    device_id, tv = await setup_tv(env)
+    await tv.post("/v1/device/settings", json={"schema_version": 2, "initial": True, "changes": []})
+    await web_put(env, {"ai.summary_panel": True})
+    r = await tv.post(
+        "/v1/device/settings",
+        json={
+            "schema_version": 2,
+            "initial": True,
+            "changes": [{**change("ai.summary_panel", False, 0), "user_set": True}],
+        },
+    )
+    assert r.json()["results"][0]["outcome"] == "superseded"
+
+
+async def test_the_status_of_an_old_tv_does_not_wait_for_keys_it_cannot_take(env):
+    device_id, tv = await setup_tv(env)
+    await tv.get("/v1/device/settings", params={"schema": 1})
+    await web_put(env, {"updates.checks": False})
+    dev = (await env.client.get("/v1/me/settings/status")).json()["devices"][0]
+    assert "updates.checks" not in dev["pending"] and dev["schema_version"] == 1
+
+
+async def test_long_poll_answers_at_once_when_the_version_moves(env):
+    _, tv = await setup_tv(env)
+    have = (await tv.get("/v1/device/settings", params={"schema": 2})).json()["version"]
+
+    async def change_soon():
+        await asyncio.sleep(0.3)
+        await web_put(env, {"ai.summary_panel": True})
+
+    started = time.monotonic()
+    task = asyncio.create_task(change_soon())
+    r = await tv.get("/v1/device/settings", params={"have": have, "schema": 2, "wait_ms": 10000})
+    await task
+    took = time.monotonic() - started
+    body = r.json()
+    assert "unchanged" not in body and body["settings"]["ai.summary_panel"]["v"] is True
+    assert 0.25 < took < 1.5
+
+
+async def test_long_poll_ends_unchanged_at_wait_ms(env):
+    _, tv = await setup_tv(env)
+    have = (await tv.get("/v1/device/settings", params={"schema": 2})).json()["version"]
+    started = time.monotonic()
+    r = await tv.get("/v1/device/settings", params={"have": have, "wait_ms": 600})
+    took = time.monotonic() - started
+    assert r.json() == {"version": have, "unchanged": True} and 0.55 < took < 1.5
+
+
+async def test_long_poll_wait_is_capped_and_needs_have(env):
+    env.cfg.settings_sync.long_poll_max_ms = 300
+    _, tv = await setup_tv(env)
+    have = (await tv.get("/v1/device/settings")).json()["version"]
+    started = time.monotonic()
+    await tv.get("/v1/device/settings", params={"have": have, "wait_ms": 60000})
+    assert time.monotonic() - started < 1.2
+    started = time.monotonic()
+    r = await tv.get("/v1/device/settings", params={"wait_ms": 5000})
+    assert time.monotonic() - started < 1.0 and "settings" in r.json()
+
+
+async def test_long_poll_is_for_a_paired_tv_only(env):
+    r = await env.client.get("/v1/device/settings", params={"have": 1, "wait_ms": 1000})
+    assert r.status_code == 400
+
+
+async def test_an_unchanged_answer_stays_small(env):
+    _, tv = await setup_tv(env)
+    have = (await tv.get("/v1/device/settings")).json()["version"]
+    r = await tv.get("/v1/device/settings", params={"have": have, "schema": 2})
+    assert len(r.content) <= 300

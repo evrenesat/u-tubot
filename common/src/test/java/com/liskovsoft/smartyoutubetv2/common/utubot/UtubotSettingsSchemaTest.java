@@ -74,7 +74,7 @@ public class UtubotSettingsSchemaTest {
     }
 
     @Test
-    public void theSyncedKeysAreTheSchemasPhaseOneTvKeys() throws Exception {
+    public void theSyncedKeysAreTheSchemasTvKeysUpToPhaseTwo() throws Exception {
         JSONArray settings = schema();
         int found = 0;
 
@@ -82,7 +82,7 @@ public class UtubotSettingsSchemaTest {
             JSONObject setting = settings.getJSONObject(i);
             boolean isTv = setting.getJSONArray("clients").toString().contains("\"tv\"");
 
-            if (!isTv || setting.getInt("phase") != 1 || !setting.getString("remote").equals("rw")) {
+            if (!isTv || setting.getInt("phase") > 2 || !setting.getString("remote").equals("rw")) {
                 continue;
             }
 
@@ -90,11 +90,25 @@ public class UtubotSettingsSchemaTest {
 
             assertEquals(setting.getString("key"), key.key);
             assertEquals(setting.getString("tv_pref"), key.pref);
-            assertEquals(setting.getString("type").equals("bool"), key.isBool);
+            assertEquals(setting.getString("key"), kindOf(setting), key.kind);
+            assertEquals(setting.getString("key"), setting.getInt("since"), key.since);
             assertEquals(setting.get("default"), defaultOf(key));
         }
 
         assertEquals(UtubotSettingsSync.KEYS.length, found);
+    }
+
+    private static UtubotSettingsSync.Kind kindOf(JSONObject setting) throws Exception {
+        switch (setting.getString("type")) {
+            case "bool":
+                return UtubotSettingsSync.Kind.BOOL;
+            case "int":
+                return UtubotSettingsSync.Kind.INT;
+            default:
+                // an enum is a number when its choices are numbers (minutes, px/s), text otherwise
+                return setting.getJSONArray("choices").getJSONObject(0).get("value") instanceof Integer
+                        ? UtubotSettingsSync.Kind.INT : UtubotSettingsSync.Kind.STRING;
+        }
     }
 
     private static Object defaultOf(UtubotSettingsSync.Key key) {
@@ -107,10 +121,80 @@ public class UtubotSettingsSchemaTest {
             case "summary_panel":
             case "auto_cuts":
                 return false;
+            case "update_checks":
+            case "development_mode":
+                return true;
             case "panel_delay_ms":
                 return UtubotSettings.DEFAULT_PANEL_DELAY_MS;
+            case "auto_scroll_speed":
+                return UtubotSettings.DEFAULT_AUTO_SCROLL_SPEED_PX_PER_SEC;
+            case "cut_jump":
+                return "left_right";
+            case "update_interval_minutes":
+                return UtubotSettings.DEFAULT_UPDATE_INTERVAL_MINUTES;
+            case "browse_refresh_minutes":
+                return BrowseCachePolicy.DEFAULT_REFRESH_MINUTES;
             default:
                 return UtubotSettings.DEFAULT_WAIT_MS;
         }
+    }
+
+    @Test
+    public void theSchemaVersionIsTheAppsAndEveryChoiceIsOneTheAppTakes() throws Exception {
+        JSONObject doc = new JSONObject(read("ai/settings/schema.json"));
+
+        assertEquals(doc.getInt("schema_version"), UtubotSettingsSync.SCHEMA_VERSION);
+
+        for (UtubotSettingsSync.Key key : UtubotSettingsSync.KEYS) {
+            assertTrue(key.key, key.since <= UtubotSettingsSync.SCHEMA_VERSION);
+        }
+
+        JSONArray settings = doc.getJSONArray("settings");
+        Set<Object> seen = new HashSet<>();
+
+        for (int i = 0; i < settings.length(); i++) {
+            JSONObject setting = settings.getJSONObject(i);
+            JSONArray choices = setting.optJSONArray("choices");
+
+            if (choices == null || !setting.optString("tv_pref").equals("cut_jump")) {
+                continue;
+            }
+
+            for (int j = 0; j < choices.length(); j++) {
+                Object name = choices.getJSONObject(j).get("value");
+                seen.add(name);
+                assertEquals(name, UtubotSettings.cutJumpName(UtubotSettings.cutJumpBinding((String) name)));
+            }
+        }
+
+        assertEquals(3, seen.size());
+    }
+
+    @Test
+    public void theIntegerChoicesAreExactlyWhatTheSettersTake() throws Exception {
+        assertChoices("auto_scroll_speed", UtubotSettings.AUTO_SCROLL_SPEEDS_PX_PER_SEC);
+        assertChoices("update_interval_minutes", UtubotSettings.UPDATE_INTERVAL_CHOICES_MINUTES);
+        assertChoices("browse_refresh_minutes", BrowseCachePolicy.REFRESH_MINUTES_CHOICES);
+    }
+
+    private static void assertChoices(String pref, int[] expected) throws Exception {
+        JSONArray settings = schema();
+
+        for (int i = 0; i < settings.length(); i++) {
+            JSONObject setting = settings.getJSONObject(i);
+
+            if (setting.optString("tv_pref").equals(pref)) {
+                JSONArray choices = setting.getJSONArray("choices");
+                assertEquals(pref, expected.length, choices.length());
+
+                for (int j = 0; j < expected.length; j++) {
+                    assertEquals(pref, expected[j], choices.getJSONObject(j).getInt("value"));
+                }
+
+                return;
+            }
+        }
+
+        throw new AssertionError("no schema key for " + pref);
     }
 }

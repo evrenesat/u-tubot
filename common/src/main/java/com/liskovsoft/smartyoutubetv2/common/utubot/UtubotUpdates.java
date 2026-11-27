@@ -34,7 +34,8 @@ public final class UtubotUpdates {
         if (sSchedule == null) {
             Context appContext = context.getApplicationContext();
             sSchedule = new UtubotUpdateSchedule(UtubotScheduler.mainThread(), () -> check(appContext),
-                    () -> UtubotSettings.instance(appContext).getUpdateIntervalMinutes() * UtubotUpdateSchedule.MS_PER_MINUTE);
+                    () -> UtubotSettings.instance(appContext).getUpdateIntervalMinutes() * UtubotUpdateSchedule.MS_PER_MINUTE,
+                    () -> UtubotSettings.instance(appContext).isUpdateChecksEnabled());
         }
 
         sSchedule.start();

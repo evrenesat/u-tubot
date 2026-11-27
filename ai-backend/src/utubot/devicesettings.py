@@ -9,6 +9,7 @@ Conflicts are decided by arrival order and revisions, never by a device clock.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -20,12 +21,13 @@ from .auth import Forbidden
 from .config import Config, UserConfig
 from .db import Database
 from .settings import SettingsError, SettingsService, configured_models, resolved_fields
-from .settingsschema import InvalidValue, Schema, check_value
+from .settingsschema import SYNCED_PHASE, InvalidValue, Schema, check_value
 
 USER_DEVICE = ""
 APPLIED, SUPERSEDED, INVALID, NOT_REMOTE = "applied", "superseded", "invalid", "not_remote"
 VIA_WEB, VIA_TV, VIA_ADMIN, VIA_MIGRATION = "web", "tv", "admin", "migration"
 SECONDS_PER_DAY = 86400
+LONG_POLL_STEP_S = 0.2
 MAX_REPORT_ENTRIES = 20
 MAX_REPORT_KEY_CHARS = 40
 MAX_REPORT_VALUE_CHARS = 100
@@ -69,7 +71,7 @@ class DeviceSettings:
         return int(row["rev"]) if row else 0
 
     def user_layer(self, name: str) -> dict[str, dict[str, Any]]:
-        """`{key: {"v", "rev", "from"}}` for every phase-1 key at the user level."""
+        """`{key: {"v", "rev", "from"}}` for every synced key at the user level."""
         user = self.auth.user_config(name)
         if user is None:
             raise SettingsError(404, "unknown user")
@@ -80,7 +82,7 @@ class DeviceSettings:
         models = configured_models(self.cfg)
         out: dict[str, dict[str, Any]] = {}
         for key, s in self.schema.by_key.items():
-            if s.get("phase", 1) > 1 or s["remote"] == "none":
+            if s.get("phase", 1) > SYNCED_PHASE or s["remote"] == "none":
                 continue
             store = s["store"]
             if store.startswith("policy:"):
@@ -108,6 +110,14 @@ class DeviceSettings:
             rev = int(revs[key]["rev"]) if key in revs else 0
             out[key] = {"v": value, "rev": rev, "from": src}
         return out
+
+    def document_values(self, name: str) -> dict[str, dict[str, Any]]:
+        """The user's own level as the settings document shows it: no setting that belongs to one TV."""
+        return {
+            k: v
+            for k, v in self.user_layer(name).items()
+            if self.schema.by_key[k]["scope"] != "device"
+        }
 
     def _values_default(self, s: dict[str, Any]) -> Any:
         name = s.get("setup_default")
@@ -189,8 +199,10 @@ class DeviceSettings:
         values: dict[str, Any] = {}
         for key, value in dotted.items():
             s = self.schema.by_key.get(key)
-            if s is None or s["remote"] != "rw" or s.get("phase", 1) > 1:
+            if s is None or s["remote"] != "rw" or s.get("phase", 1) > SYNCED_PHASE:
                 raise SettingsError(400, f"unknown setting {key}")
+            if s["scope"] == "device":
+                raise SettingsError(400, f"{key} belongs to one TV; change it on that TV's tab")
             if s["store"] == "values":
                 values[key] = self._checked(key, s, value)
             elif key in policy_map:
@@ -299,6 +311,7 @@ class DeviceSettings:
         }
 
     def pull(self, name: str, device_id: str, have: int | None, schema_version: int | None):
+        """One answer: the document, or `unchanged` when `have` is the current version."""
         version = self.auth.settings_version(name)[0]
         state = self._state(device_id)
         applied = None
@@ -318,7 +331,19 @@ class DeviceSettings:
         if not isinstance(schema_version, int):
             schema_version = None
         state = self._state(device_id)
-        first = bool(body.get("initial")) and (state is None or state["migrated_at"] is None)
+        from_schema = body.get("from_schema")
+        upgrade = (
+            isinstance(from_schema, int)
+            and not isinstance(from_schema, bool)
+            and schema_version is not None
+            and from_schema < schema_version
+        )
+        first = bool(body.get("initial")) and (
+            state is None or state["migrated_at"] is None or upgrade
+        )
+        # a TV that was in step before an app update sends the keys that update brought with
+        # `from_schema`: only those keys take its own values, the rest is a normal sync
+        newer_than = from_schema if upgrade and state is not None and state["migrated_at"] else None
         results: list[dict[str, Any]] = []
         keys = {s["key"]: s for s in self.schema.synced(schema_version)}
         for change in changes:
@@ -326,7 +351,7 @@ class DeviceSettings:
                 results.append({"key": None, "outcome": INVALID})
                 continue
             key = change.get("key")
-            outcome = self._apply_change(name, device_id, keys, change, first)
+            outcome = self._apply_change(name, device_id, keys, change, first, newer_than)
             results.append({"key": key, "outcome": outcome})
         applied = body.get("applied_version")
         version = self.auth.settings_version(name)[0]
@@ -348,7 +373,13 @@ class DeviceSettings:
         return doc
 
     def _apply_change(
-        self, name: str, device_id: str, keys: dict[str, Any], change: dict[str, Any], first: bool
+        self,
+        name: str,
+        device_id: str,
+        keys: dict[str, Any],
+        change: dict[str, Any],
+        first: bool,
+        newer_than: int | None = None,
     ) -> str:
         key = change.get("key")
         s = keys.get(key) if isinstance(key, str) else None
@@ -362,7 +393,11 @@ class DeviceSettings:
         base = change.get("base_rev")
         # First sync: a value the user set on the TV is the TV's real behaviour and wins; an untouched
         # default is base-checked like any change, so it never replaces a newer web value.
-        trusted = first and change.get("user_set") is True
+        trusted = (
+            first
+            and change.get("user_set") is True
+            and (newer_than is None or s["since"] > newer_than)
+        )
         if not trusted and (not isinstance(base, int) or base != current["rev"]):
             if value != current["v"]:
                 self._audit(
@@ -408,9 +443,16 @@ class DeviceSettings:
     def device_view(self, user: UserConfig, device_id: str) -> dict[str, Any]:
         device = self.owned_device(user, device_id)
         state = self._state(device_id)
-        doc = self.document_for(user.name, device_id, None)
+        doc = self.document_for(user.name, device_id, self._device_schema(state))
         doc["device"] = {"id": device_id, "name": device["device"], **self._state_view(state)}
         return doc
+
+    @staticmethod
+    def _device_schema(state: Any) -> int | None:
+        """The schema version a TV last reported (`None` for one that never synced: it may get any key)."""
+        return (
+            int(state["schema_version"]) if state is not None and state["schema_version"] else None
+        )
 
     def _state_view(self, state: Any) -> dict[str, Any]:
         if state is None:
@@ -436,7 +478,8 @@ class DeviceSettings:
             overrides = sorted(self._rows("settings_values", user.name, device["id"]))
             pending: list[str] = []
             if state is not None and view["syncs"]:
-                for key, entry in self.resolve(user.name, device["id"]).items():
+                resolved = self.resolve(user.name, device["id"], self._device_schema(state))
+                for key, entry in resolved.items():
                     if entry["rev"] > int(state["applied_version"] or 0):
                         pending.append(key)
             devices.append(
@@ -469,12 +512,14 @@ class DeviceSettings:
             raise SettingsError(
                 409, "settings changed since you loaded them; reload", version=current
             )
-        keys = {s["key"]: s for s in self.schema.synced()}
+        keys = {
+            s["key"]: s for s in self.schema.synced(self._device_schema(self._state(device_id)))
+        }
         staged: dict[str, Any] = {}
         for key, value in body["settings"].items():
             s = keys.get(key)
             if s is None or not s.get("device_override"):
-                raise SettingsError(400, f"{key} is not a TV setting")
+                raise SettingsError(400, f"{key} is not a setting this TV can follow")
             staged[key] = self._checked(key, s, value)
         before = self.resolve(name, device_id)
         if staged:
@@ -584,10 +629,24 @@ def install_settings_routes(app: FastAPI, d: Any) -> None:
         request: Request,
         have: int | None = Query(None, ge=0),
         schema: int | None = Query(None, ge=0),
+        wait_ms: int | None = Query(None, ge=0),
         user: UserConfig = Depends(current_user),
     ):
         on()
-        resp = JSONResponse(ds.pull(user.name, device_of(request), have, schema))
+        device_id = device_of(request)
+        answer = ds.pull(user.name, device_id, have, schema)
+        wait_s = min(wait_ms or 0, cfg.settings_sync.long_poll_max_ms) / 1000.0
+        if answer.get("unchanged") and wait_s > 0:
+            # the long poll: hold the request until the user's version moves, then answer at once
+            deadline = time.monotonic() + wait_s
+            while time.monotonic() < deadline:
+                await asyncio.sleep(min(LONG_POLL_STEP_S, max(0.0, deadline - time.monotonic())))
+                if ds.auth.settings_version(user.name)[0] != have:
+                    answer = ds.document_for(user.name, device_id, schema)
+                    break
+                if await request.is_disconnected():
+                    break
+        resp = JSONResponse(answer)
         resp.headers["Cache-Control"] = "no-store"
         return resp
 

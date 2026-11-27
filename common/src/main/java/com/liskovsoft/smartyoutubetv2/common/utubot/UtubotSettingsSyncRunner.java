@@ -29,6 +29,8 @@ public final class UtubotSettingsSyncRunner {
     public static final long BACKOFF_MAX_MS = 600_000;
     public static final long START_DELAY_MS = 3_000;
     public static final long CHANGE_DELAY_MS = 500;
+    /** How long the server may hold the "anything new?" request; a change on the web reaches the TV the moment it is saved */
+    public static final int WATCH_WAIT_MS = 20_000;
     private static final String STATE_PREFS = "utubot_settings_sync";
     private static final String COPY_PREFS = "utubot_settings_pre_sync";
     @SuppressLint("StaticFieldLeak")
@@ -42,7 +44,13 @@ public final class UtubotSettingsSyncRunner {
         thread.setDaemon(true);
         return thread;
     });
+    private final ExecutorService mWatcher = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "utubot-settings-watch");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final AtomicBoolean mIsRunning = new AtomicBoolean();
+    private final AtomicBoolean mIsWatching = new AtomicBoolean();
     private final Runnable mTick = this::tick;
     private long mBackoffMs = POLL_MS;
 
@@ -53,8 +61,8 @@ public final class UtubotSettingsSyncRunner {
         SharedPreferences copy = mContext.getSharedPreferences(COPY_PREFS, Context.MODE_PRIVATE);
         mSync = new UtubotSettingsSync(mSettings, state, copy, new UtubotSettingsSync.Transport() {
             @Override
-            public String get(int have, int schemaVersion) throws IOException {
-                return client().deviceSettings(have, schemaVersion, UtubotSettingsSync.REQUEST_TIMEOUT_MS);
+            public String get(int have, int schemaVersion, int waitMs) throws IOException {
+                return client().deviceSettings(have, schemaVersion, waitMs, UtubotSettingsSync.REQUEST_TIMEOUT_MS);
             }
 
             @Override
@@ -141,8 +149,37 @@ public final class UtubotSettingsSyncRunner {
         }
 
         mBackoffMs = POLL_MS;
+
+        if (status == UtubotSettingsSync.Status.SYNCED) {
+            armWatch();
+        }
+
         // The sync stays quiet when the server has no web settings: it looks again only after a restart or a new connection
         mMain.postDelayed(mTick, status == UtubotSettingsSync.Status.OFF ? BACKOFF_MAX_MS : POLL_MS);
+    }
+
+    /**
+     * Keeps one "anything new?" request open at the server while the app is in front. It answers the moment the web saves a
+     * change; the timer stays as the fallback (a server that does not hold requests, a failed request).
+     */
+    private void armWatch() {
+        if (!Utils.isAppInForegroundFixed() || !mIsWatching.compareAndSet(false, true)) {
+            return;
+        }
+
+        mWatcher.execute(() -> {
+            UtubotSettingsSync.Watch result = mSync.watch(WATCH_WAIT_MS);
+            mIsWatching.set(false);
+            mMain.post(() -> afterWatch(result));
+        });
+    }
+
+    private void afterWatch(UtubotSettingsSync.Watch result) {
+        if (result == UtubotSettingsSync.Watch.CHANGED) {
+            requestSoon(0);
+        } else if (result == UtubotSettingsSync.Watch.HELD) {
+            armWatch();
+        }
     }
 
     private void showSuperseded(List<String> keys) {
@@ -171,6 +208,18 @@ public final class UtubotSettingsSyncRunner {
                 return R.string.utubot_auto_captions;
             case "ai.auto_cuts":
                 return R.string.utubot_auto_cuts;
+            case "updates.checks":
+                return R.string.utubot_update_checks;
+            case "ai.auto_scroll_speed":
+                return R.string.utubot_auto_scroll;
+            case "ai.cut_jump":
+                return R.string.utubot_cut_jump;
+            case "updates.interval_minutes":
+                return R.string.utubot_update_interval;
+            case "updates.development_mode":
+                return R.string.utubot_development_mode;
+            case "browse.refresh_minutes":
+                return R.string.utubot_browse_refresh;
             default:
                 return 0;
         }
