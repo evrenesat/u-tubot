@@ -446,6 +446,7 @@
     <string name="action_playlist_add">Add to playlist</string>
     <string name="action_video_stats">Video stats</string>
     <string name="action_subscribe">Subscribe</string>
+    <string name="action_unsubscribe">Unsubscribe</string>
     <string name="action_channel">Open channel</string>
     <string name="action_pip">PIP</string>
     <string name="action_video_info">Video description</string>
