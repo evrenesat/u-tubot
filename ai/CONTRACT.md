@@ -1115,9 +1115,12 @@ are additive and need a signed-in caller.
   `applied`, `superseded`, `invalid` or `not_remote`. At most 200 changes and 64 KiB. A TV change lands as that TV's own value, never as
   the user's (the web page offers "Use for all my TVs"). `base_rev` is the `rev` the TV last saw: equal to the key's current `rev`
   -> applied; different -> `superseded`, the server's value stays (the arrival order decides, never a device clock) and the lost value
-  stays in the history. **First sync** (`initial: true`, once per device): for every key the server compares the TV's value with the
-  value it would give; equal -> nothing stored, different -> the TV's value becomes this TV's own value (`via: migration`), so
-  the TV keeps what it had. A second `initial` is a normal sync.
+  stays in the history. **First sync** (`initial: true`, once per device): each change may carry `"user_set": true` (the value was
+  chosen on the TV). For every key the server compares the TV's value with the value it would give; equal -> nothing stored;
+  different and `user_set` -> the TV's value becomes this TV's own value (`via: migration`), so the TV keeps what it chose;
+  different and not `user_set` (an untouched default) -> checked against `base_rev` like any change, so it never replaces a newer
+  web value. A second `initial` is a normal sync. `report` keeps at most 20 short scalar entries; a body over 64 KiB is `413`.
+- The routes below this one (status, history, a TV's document and `PUT`) are for a browser session or config token: a paired TV's token gets `403`, so a TV cannot read or change its sibling TVs.
 - `GET /v1/me/settings/status` -> `{"version","now","devices":[{"id","device","last_used","syncs","applied_version","applied_at",
   "last_sync_at","schema_version","app_version","migrated","report","overrides":[key],"pending":[key]}]}`; `pending` is every key whose `rev`
   is above the TV's `applied_version`.

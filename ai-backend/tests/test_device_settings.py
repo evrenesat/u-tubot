@@ -236,7 +236,7 @@ async def test_first_sync_keeps_what_the_tv_has(env):
         json={
             "schema_version": 1,
             "initial": True,
-            "changes": [change(k, v, 0) for k, v in tv_values.items()],
+            "changes": [{**change(k, v, 0), "user_set": True} for k, v in tv_values.items()],
         },
     )
     got = {k: e["v"] for k, e in r.json()["settings"].items()}
@@ -255,7 +255,7 @@ async def test_first_sync_keeps_what_the_tv_has(env):
 
 async def test_a_second_initial_is_a_normal_sync(env):
     device_id, tv = await setup_tv(env)
-    body = {"initial": True, "changes": [change("ai.wait_ms", 1500, 0)]}
+    body = {"initial": True, "changes": [{**change("ai.wait_ms", 1500, 0), "user_set": True}]}
     await tv.post("/v1/device/settings", json=body)
     await web_put(env, {"ai.auto_cuts": True})
     r = await tv.post(
@@ -268,7 +268,8 @@ async def test_a_second_initial_is_a_normal_sync(env):
 async def test_use_my_default_removes_the_override_and_the_tv_learns_it(env):
     device_id, tv = await setup_tv(env)
     await tv.post(
-        "/v1/device/settings", json={"initial": True, "changes": [change("ai.wait_ms", 1500, 0)]}
+        "/v1/device/settings",
+        json={"initial": True, "changes": [{**change("ai.wait_ms", 1500, 0), "user_set": True}]},
     )
     doc = (await tv.get("/v1/device/settings")).json()
     await tv.get("/v1/device/settings", params={"have": doc["version"]})
@@ -351,7 +352,8 @@ async def test_admin_edits_are_named_in_the_history(env):
 async def test_revoking_a_device_removes_its_settings(env):
     device_id, tv = await setup_tv(env)
     await tv.post(
-        "/v1/device/settings", json={"initial": True, "changes": [change("ai.wait_ms", 1500, 0)]}
+        "/v1/device/settings",
+        json={"initial": True, "changes": [{**change("ai.wait_ms", 1500, 0), "user_set": True}]},
     )
     assert (await env.client.delete(f"/v1/me/devices/{device_id}")).status_code == 200
     db = env.svc.db
@@ -389,7 +391,8 @@ def test_a_database_from_before_opens_with_its_data(tmp_path):
 async def test_a_web_change_does_not_touch_a_tv_that_holds_its_own_value(env):
     device_id, tv = await setup_tv(env)
     await tv.post(
-        "/v1/device/settings", json={"initial": True, "changes": [change("ai.wait_ms", 1500, 0)]}
+        "/v1/device/settings",
+        json={"initial": True, "changes": [{**change("ai.wait_ms", 1500, 0), "user_set": True}]},
     )
     doc = (await tv.get("/v1/device/settings")).json()
     await tv.get("/v1/device/settings", params={"have": doc["version"]})
@@ -401,3 +404,76 @@ async def test_a_web_change_does_not_touch_a_tv_that_holds_its_own_value(env):
         json={"changes": [change("ai.wait_ms", 1700, doc["settings"]["ai.wait_ms"]["rev"])]},
     )
     assert r.json()["results"][0]["outcome"] == "applied"
+
+
+async def test_a_tv_cannot_read_or_change_settings_through_the_browser_routes(env):
+    first, tv1 = await setup_tv(env, "One")
+    second, _ = await setup_tv(env, "Two")
+    v = await version(env)
+    for method, path, kw in [
+        ("get", "/v1/me/settings/status", {}),
+        ("get", "/v1/me/settings/history", {}),
+        ("get", f"/v1/me/devices/{second}/settings", {}),
+        (
+            "put",
+            f"/v1/me/devices/{second}/settings",
+            {"json": {"version": v, "settings": {"ai.assess": False}}},
+        ),
+    ]:
+        assert (await getattr(tv1, method)(path, **kw)).status_code == 403, path
+    assert audit_rows(env) == []
+
+
+async def test_an_untouched_default_never_replaces_a_newer_web_value_on_first_sync(env):
+    _, tv = await setup_tv(env)
+    await web_put(env, {"ai.auto_cuts": True})
+    r = await tv.post(
+        "/v1/device/settings",
+        json={
+            "initial": True,
+            "changes": [change("ai.auto_cuts", False, 0)],
+        },  # not flagged: a default
+    )
+    assert r.json()["results"][0]["outcome"] == "superseded"
+    assert r.json()["settings"]["ai.auto_cuts"]["v"] is True
+    assert r.json()["settings"]["ai.auto_cuts"]["from"] == "user"
+
+
+async def test_an_untouched_default_the_web_never_changed_is_kept_and_a_user_set_value_wins(env):
+    _, tv = await setup_tv(env)
+    await web_put(env, {"ai.auto_cuts": True})
+    r = await tv.post(
+        "/v1/device/settings",
+        json={
+            "initial": True,
+            "changes": [
+                {**change("ai.auto_cuts", False, 0), "user_set": True},  # the TV's real choice
+                change(
+                    "ai.panel_delay_ms", 1000, 0
+                ),  # default of another build, web never touched it
+            ],
+        },
+    )
+    got = {k: e["v"] for k, e in r.json()["settings"].items()}
+    assert got["ai.auto_cuts"] is False and got["ai.panel_delay_ms"] == 1000
+
+
+async def test_a_large_report_is_summarised_and_status_still_answers(env):
+    device_id, tv = await setup_tv(env)
+    report = {"caption_store_bytes": 123, "blob": "x" * 5000, "nested": {"a": 1}, "ok": "fine"}
+    r = await tv.post("/v1/device/settings", json={"changes": [], "report": report})
+    assert r.status_code == 200
+    status = await env.client.get("/v1/me/settings/status")
+    assert status.status_code == 200
+    assert status.json()["devices"][0]["report"] == {"caption_store_bytes": 123, "ok": "fine"}
+    big = {"changes": [], "report": {f"k{i}": i for i in range(50000)}}
+    assert (await tv.post("/v1/device/settings", json=big)).status_code == 413
+    assert (await env.client.get("/v1/me/settings/status")).status_code == 200
+
+
+async def test_a_key_without_device_override_is_not_a_tv_change(env, monkeypatch):
+    _, tv = await setup_tv(env)
+    schema = env.svc.device_settings.schema
+    monkeypatch.setitem(schema.by_key["ai.wait_ms"], "device_override", False)
+    r = await tv.post("/v1/device/settings", json={"changes": [change("ai.wait_ms", 900, 0)]})
+    assert r.json()["results"][0]["outcome"] == "not_remote"

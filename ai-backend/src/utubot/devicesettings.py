@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
+from .auth import Forbidden
 from .config import Config, UserConfig
 from .db import Database
 from .settings import SettingsError, SettingsService, configured_models, resolved_fields
@@ -25,7 +26,23 @@ USER_DEVICE = ""
 APPLIED, SUPERSEDED, INVALID, NOT_REMOTE = "applied", "superseded", "invalid", "not_remote"
 VIA_WEB, VIA_TV, VIA_ADMIN, VIA_MIGRATION = "web", "tv", "admin", "migration"
 SECONDS_PER_DAY = 86400
-MAX_REPORT_CHARS = 2000
+MAX_REPORT_ENTRIES = 20
+MAX_REPORT_KEY_CHARS = 40
+MAX_REPORT_VALUE_CHARS = 100
+
+
+def clean_report(report: dict) -> dict[str, Any]:
+    """A bounded summary of what a TV reports: a few short scalar entries, always valid JSON."""
+    out: dict[str, Any] = {}
+    for key, value in report.items():
+        if len(out) >= MAX_REPORT_ENTRIES:
+            break
+        scalar = isinstance(value, bool | int | float) or (
+            isinstance(value, str) and len(value) <= MAX_REPORT_VALUE_CHARS
+        )
+        if isinstance(key, str) and len(key) <= MAX_REPORT_KEY_CHARS and scalar:
+            out[key] = value
+    return out
 
 
 def _dumps(value: Any) -> str:
@@ -264,7 +281,7 @@ class DeviceSettings:
             params.append(app_version[:64])
         if report is not None:
             sets.append("report_json=?")
-            params.append(_dumps(report)[:MAX_REPORT_CHARS])
+            params.append(_dumps(clean_report(report)))
         if migrated:
             sets.append("migrated_at=?")
             params.append(now)
@@ -335,7 +352,7 @@ class DeviceSettings:
     ) -> str:
         key = change.get("key")
         s = keys.get(key) if isinstance(key, str) else None
-        if s is None:
+        if s is None or not s.get("device_override"):
             return NOT_REMOTE
         try:
             value = check_value(s, change.get("value"))
@@ -343,7 +360,10 @@ class DeviceSettings:
             return INVALID
         current = self.resolve(name, device_id)[key]
         base = change.get("base_rev")
-        if not first and (not isinstance(base, int) or base != current["rev"]):
+        # First sync: a value the user set on the TV is the TV's real behaviour and wins; an untouched
+        # default is base-checked like any change, so it never replaces a newer web value.
+        trusted = first and change.get("user_set") is True
+        if not trusted and (not isinstance(base, int) or base != current["rev"]):
             if value != current["v"]:
                 self._audit(
                     name,
@@ -547,6 +567,11 @@ def install_settings_routes(app: FastAPI, d: Any) -> None:
             raise HTTPException(400, NO_DEVICE)
         return device_id
 
+    def browser_only(request: Request) -> None:
+        """A paired TV's token must not read or change its sibling TVs' settings."""
+        if svc.auth.device_id_of(getattr(request.state, "principal", None)) is not None:
+            raise Forbidden
+
     @app.get("/v1/settings/schema")
     async def settings_schema(user: UserConfig = Depends(current_user)):
         on()
@@ -570,9 +595,15 @@ def install_settings_routes(app: FastAPI, d: Any) -> None:
     async def device_settings_post(request: Request, user: UserConfig = Depends(current_user)):
         on()
         device_id = device_of(request)
-        raw = await request.body()
-        if len(raw) > cfg.settings_sync.max_body_bytes:
+        limit = cfg.settings_sync.max_body_bytes
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > limit:
             raise HTTPException(413, "too many changes")
+        raw = b""
+        async for chunk in request.stream():
+            raw += chunk
+            if len(raw) > limit:
+                raise HTTPException(413, "too many changes")
         try:
             body = json.loads(raw or b"{}")
         except ValueError:
@@ -584,28 +615,38 @@ def install_settings_routes(app: FastAPI, d: Any) -> None:
         return resp
 
     @app.get("/v1/me/settings/status")
-    async def settings_status(user: UserConfig = Depends(current_user)):
+    async def settings_status(request: Request, user: UserConfig = Depends(current_user)):
         on()
+        browser_only(request)
         return ds.status(user)
 
     @app.get("/v1/me/settings/history")
     async def settings_history(
+        request: Request,
         limit: int = Query(50, ge=1),
         key: str | None = None,
         device: str | None = None,
         user: UserConfig = Depends(current_user),
     ):
         on()
+        browser_only(request)
         return {"entries": ds.history(user, limit=limit, key=key, device=device)}
 
     @app.get("/v1/me/devices/{device_id}/settings")
-    async def device_settings_view(device_id: str, user: UserConfig = Depends(current_user)):
+    async def device_settings_view(
+        device_id: str, request: Request, user: UserConfig = Depends(current_user)
+    ):
         on()
+        browser_only(request)
         return ds.device_view(user, device_id)
 
     @app.put("/v1/me/devices/{device_id}/settings")
     async def device_settings_put(
-        device_id: str, body: dict[str, Any], user: UserConfig = Depends(current_user)
+        device_id: str,
+        body: dict[str, Any],
+        request: Request,
+        user: UserConfig = Depends(current_user),
     ):
         on()
+        browser_only(request)
         return ds.put_device(user, device_id, body, via=VIA_WEB)

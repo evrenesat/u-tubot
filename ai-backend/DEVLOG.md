@@ -1,3 +1,11 @@
+## 2026-11-27 (web settings review fixes)
+
+- Status, history, a TV's document and its `PUT` answer 403 to a paired TV's token (they are browser routes; a TV could read and change its siblings).
+- First sync: only a value flagged `user_set` skips the `base_rev` check; an untouched default is base-checked, so it cannot replace a newer web value (D1). Tests for both.
+- A TV's `report` is reduced to at most 20 short scalar entries before it is stored (it was cut at 2000 characters and then failed to parse, which broke `/v1/me/settings/status`); the POST body is read with a size cap (413).
+- A change for a key without `device_override` is `not_remote`.
+- `summary_delay_ms` default 1800: only the old "TV settings" card of the web UI showed the value (as a default); the TV, the extension and the API never acted on it. No change needed when sync is off.
+
 ## 2026-11-27 (web settings: schema and device channel, plan checkpoints 1 and 2)
 
 - `ai/settings/schema.json` (38 keys, `schema_version` 1) is the one list of settings; `settingsschema.py` loads and validates it, `GET /v1/settings/schema` serves it, the wheel packs it as `utubot/settings_schema.json`.
