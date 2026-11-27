@@ -66,9 +66,10 @@ the mock script stays the lighter stand-in for panel checks.
 ### Tests without YouTube: the guard and recorded fixtures
 
 `ai-backend/tests/conftest.py` runs an autouse fixture for every test. It refuses any request to `youtube.com`, `youtu.be`,
-`googlevideo.com`, `ytimg.com` and `youtube-nocookie.com` (and their subdomains) at four points: yt-dlp's extract, download and
-urlopen, the httpx transports, and name resolution. Each refusal is recorded in `VIOLATIONS`, so a test fails even when the code
-under test caught the error (a broad `except` cannot hide it). The guard does not see raw IP literals, subprocesses such as an
+`googlevideo.com`, `ytimg.com` and `youtube-nocookie.com` (and their subdomains) at three points: the yt-dlp `YoutubeDL`
+methods `extract_info`, `download`, `urlopen` and `process_ie_result`; the httpx sync and async transports; and name resolution
+(`socket.getaddrinfo` and `socket.gethostbyname`). Each refusal is recorded in `VIOLATIONS`, so the test errors at teardown even
+when the code under test caught the error (a broad `except` cannot hide it). The guard does not see raw IP literals, subprocesses such as an
 `ffmpeg -i <url>`, or a stand-in `yt_dlp.YoutubeDL` a test installs itself, so keep those out of tests.
 
 To test code that fetches a video, use a stand-in, not the network:

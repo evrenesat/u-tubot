@@ -36,8 +36,17 @@ YOUTUBE_FIXTURE_MARK = "youtube_fixture"
 VIOLATIONS: list[str] = []
 
 
+def normal_host(host: str) -> str:
+    """Lowercase ASCII (IDNA) form without the trailing dot; a fullwidth or other IDNA-equivalent name maps to ASCII."""
+    try:
+        ascii_host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        ascii_host = host  # not a valid IDNA name: judge the raw text
+    return ascii_host.lower().rstrip(".")  # a trailing dot is a valid absolute DNS name
+
+
 def is_youtube_host(host: str) -> bool:
-    name = host.lower().rstrip(".")  # a trailing dot is a valid absolute DNS name
+    name = normal_host(host)
     return any(name == s or name.endswith("." + s) for s in YOUTUBE_HOST_SUFFIXES)
 
 

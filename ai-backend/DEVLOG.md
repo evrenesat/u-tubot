@@ -2,7 +2,8 @@
 
 - The no-YouTube guard in `tests/conftest.py` already refused yt-dlp, httpx and DNS lookups, but a refusal the code under test caught
   (a broad `except`) passed silently. Every refusal now lands in `VIOLATIONS`, and the autouse fixture fails the test at teardown.
-- Host match is exact or a subdomain (`notyoutube.com` is not blocked).
+- Host match is exact or a subdomain after IDNA normalisation (`notyoutube.com` is not blocked; fullwidth `ｙｏｕｔｕｂｅ.com` is).
+  Parametrised tests in `test_network_guard.py` cover both sides.
 - Opt-out for a test that replays a recorded cassette and must touch a YouTube host: `@pytest.mark.youtube_fixture` (registered in
   `pyproject.toml`). No test uses it.
 - Audit: the full suite (1607 tests) makes no YouTube request with the recording guard on; no leak was found.
