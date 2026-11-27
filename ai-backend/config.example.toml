@@ -213,6 +213,7 @@ max_tokens = 2000
 # over_ask_frac = 0.2              # the model is asked for this much more than the target
 # preset_target_s = { "cut-highlights-5" = 300 }   # target kept seconds per preset id
 # preset_target_frac = { "cut-skim-film" = 0.5 }   # target kept = duration * frac, for a film-length cut (0 < frac < 1)
+# tight_suggest_after_s = 1800    # a video longer than this lists "No filler · Tight" first and marks it suggested
 # repair_near_full_frac = 0.9      # repair: an old map/reduce cut with no target that kept more is rebuilt once
 # repair_min_duration_s = 1800     # ... when its transcript is gone, treat a video this long as map/reduce
 # repair_on_start = true           # run the repair when the server starts (idempotent); `utubot cuts repair` also does it

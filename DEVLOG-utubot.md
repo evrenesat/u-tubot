@@ -1,3 +1,15 @@
+## 2026-11-27 (no-filler strength and removed-time breakdown, issue #102)
+
+- "No filler · Tight" is a second removal preset: it also cuts tangents, repeated points, examples that only illustrate something
+  already said, Q&A answers that repeat the question, and long thank-yous. On a video longer than `[cuts] tight_suggest_after_s`
+  (30 min by default) the backend lists it first and marks it (`presets[].suggested`, `suggested_preset`); the TV picker appends
+  " (suggested)" and the web cut sheet marks its chip. The suggestion never builds or applies a cut by itself.
+- A ready no-filler cut's summary now names the largest removed categories ("Removed 9:40: tangents 5:10, repetition 3:00, plugs
+  1:30"), scaled to the time actually removed; without a model breakdown it keeps the old line. `ai/CONTRACT.md`, the extension
+  parity matrix and `ai/APP_INTEGRATION.md` are updated.
+- Tests: backend cuts API/service/summary, the cut bench fixture with light and tight requests, the TV parser suggestion fields;
+  the full common suite is green (1969 tests). No test contacts YouTube.
+
 ## 2026-11-27 (live server without models, voice plan checkpoint 2, issue #181)
 
 - New `realtime/` (Go, `utubot-rt`): the control channel of `ai/VOICE_CONTROL_PLAN.md` 2.3 with the backend check, focus store, target choice, typed

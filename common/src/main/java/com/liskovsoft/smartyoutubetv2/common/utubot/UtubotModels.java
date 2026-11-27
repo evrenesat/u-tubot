@@ -381,6 +381,8 @@ public final class UtubotModels {
     public static final class CutPreset {
         public String id;
         public String label;
+        /** The backend's pick for a long video: the tighter no-filler cut is offered first */
+        public boolean suggested;
         public String state = CutState.NONE;
         @Nullable public String requestId;
         @Nullable public String error;
@@ -419,6 +421,8 @@ public final class UtubotModels {
         @Nullable public String channelName;
         /** The channel's own mode, null when it follows the user default; it wins over the user's choice */
         @Nullable public String channelMode;
+        /** The preset to put first, when the video is long enough to suggest one; null otherwise */
+        @Nullable public String suggestedPreset;
         public List<CutPreset> presets = Collections.emptyList();
         /**
          * What the video opens with: the viewer's choice for it, else the preset used last. Null when there is none, so

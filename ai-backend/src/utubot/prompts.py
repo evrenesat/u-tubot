@@ -75,6 +75,7 @@ CUT_SYSTEM = (
 # cut preset is never offered as a summary prompt (`PromptStore.describe` filters task=cut out).
 PRETTY_CUT_LABELS = {
     "no-filler": "No filler",
+    "no-filler-tight": "No filler · Tight",
     "answer": "Just the answer",
     "demo": "Only the demo",
     "highlights-5": "Highlights in 5 min",
@@ -85,7 +86,21 @@ CUT_PRESET_INSTRUCTIONS = {
         "Remove everything that is not the actual content of the video: intros, outros, channel "
         "plugs, 'like and subscribe' asks, sponsor segments and ads read aloud, dead air, "
         "repetition and small talk that adds nothing. Keep the substance from start to finish, "
-        "in the original order."
+        'in the original order. In "removed", report the seconds cut per category '
+        '("tangents", "repetition", "examples", "qa", "plugs", "recaps", '
+        '"dead_air", "intro", "outro", "other").'
+    ),
+    "no-filler-tight": (
+        "Remove everything that is not the actual content, more aggressively than the usual "
+        "no-filler cut: intros, outros, channel plugs, 'like and subscribe' asks, sponsor "
+        "segments and ads read aloud, dead air, repetition and small talk that adds nothing, "
+        "plus tangents and digressions, points repeated after they were already made (keep one "
+        "telling), long examples and anecdotes that only illustrate something already said, "
+        "interview or Q&A answers that repeat the question or the previous answer, and long "
+        "thank-yous and credit reads. Keep the substance from start to finish, in the original "
+        'order, and never cut the answer itself. In "removed", report the seconds cut per '
+        'category ("tangents", "repetition", "examples", "qa", "plugs", "recaps", '
+        '"dead_air", "intro", "outro", "other").'
     ),
     "skim-film": (
         "Skim the film: follow the story beat by beat and keep the best scenes, scene by scene, "
@@ -365,6 +380,7 @@ BUILTIN_SET = PromptSet(
             max_tokens=700,
         ),
         cut_preset_prompt("no-filler"),
+        cut_preset_prompt("no-filler-tight"),
         cut_preset_prompt("answer"),
         cut_preset_prompt("demo"),
         cut_preset_prompt("highlights-5"),

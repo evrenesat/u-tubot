@@ -226,6 +226,10 @@ so the other flavors behave as before.
   the others. Without a backend the menu row is not shown.
 - Director's cuts, real length (issue 82): a ready preset's row in the picker is titled with the cut's real length
   ("Highlights in 5 min · 5:02", `UtubotCutController.presetTitle` from `kept_ms`). Only `UtubotMenu` changed, no upstream file.
+- Director's cuts, no-filler strength (issue 102): the picker lists the server's order, so "No filler · Tight" comes first on a
+  video the backend suggests it for, and its title ends with " (suggested)" (`UtubotMenu.presetTitle` from
+  `presets[].suggested`; `UtubotParser` also keeps the top-level `suggested_preset`). A ready removal cut's summary now names the
+  largest removed categories. Only `UtubotMenu`, `UtubotModels`, `UtubotParser` and `utubot_strings.xml` changed, no upstream file.
 - Director's cuts (checkpoint 4): a ready preset also appends a read-only "Kept parts" category under the preset row: the cut's
   summary and one line per kept part ("2:10 - 3:05  The demo", `UtubotCutController.formatPart`), so the owner judges the cut on
   the TV before applying it (the phone sheet's parts list is the same information). Saved presets and the Android Share target are

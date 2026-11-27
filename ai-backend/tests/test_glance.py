@@ -101,6 +101,7 @@ async def test_glance_prompt_text_and_budget():
         "worth-it",
         "eli-new",
         "cut-no-filler",
+        "cut-no-filler-tight",
         "cut-answer",
         "cut-demo",
         "cut-highlights-5",

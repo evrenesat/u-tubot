@@ -1,3 +1,15 @@
+## 2026-11-27 (no-filler strength and removed-time breakdown, issue #102)
+
+- New built-in `cut-no-filler-tight` ("No filler · Tight") joins the no-filler removal presets; both are in `REMOVAL_PRESET_IDS`
+  and `NO_FILLER_PRESET_IDS`, and prompts now ask for an optional `"removed":{category:<seconds>}` breakdown.
+- `CutService.presets_state` marks the tight preset `suggested` and sorts it first when the video is longer than
+  `[cuts] tight_suggest_after_s` (default 1800 s), and returns `suggested_preset`; nothing is built or applied by the suggestion.
+- `removal_summary` normalises the categories, scales them to the actual removed seconds, keeps the top three plus `other`, and
+  falls back to the old summary when the model gives no usable breakdown.
+- Tests: service/API suggestion and preset ordering, removal summary scaling/fallback, prompt list, and a new cut-bench
+  newsletter fixture with light and tight requests (6 transcripts, 19 requests). Full suite green.
+- Docs: `ai/CONTRACT.md`, `docs/server.md`, `scripts/cut_bench.py` counts.
+
 ## 2026-11-26 (UTB-230 multi-user, per-user key, budget and rate limit)
 
 - Per-user AI provider key: a user stores their own OpenAI-compatible upstream with `PUT /v1/me/provider`, reads it back with

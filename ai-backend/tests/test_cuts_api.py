@@ -330,6 +330,7 @@ class TestCreateAndBuild:
         assert entry["cut-no-filler"]["state"] == "none"
         assert [p["label"] for p in state["presets"]] == [
             "No filler",
+            "No filler · Tight",
             "Just the answer",
             "Only the demo",
             "Highlights in 5 min",
@@ -342,6 +343,15 @@ class TestCreateAndBuild:
         assert entry["cut-no-filler"]["state"] == "ready"
         assert entry["cut-no-filler"]["cut"]["kept_ms"] > 0
         assert entry["cut-answer"]["state"] == "none"
+
+    async def test_a_long_video_suggests_the_tight_no_filler_cut(self, cuts_env, monkeypatch):
+        monkeypatch.setattr(cuts_env.svc.cuts, "_meta", lambda video_id: {"duration_s": 2400})
+        state = (await cuts_env.client.get(f"/v1/videos/{VID}/cuts")).json()
+        assert state["suggested_preset"] == "cut-no-filler-tight"
+        assert state["presets"][0]["id"] == "cut-no-filler-tight"
+        entry = {p["id"]: p for p in state["presets"]}
+        assert entry["cut-no-filler-tight"]["suggested"] is True
+        assert entry["cut-no-filler"]["suggested"] is False
 
     async def test_typed_prompt_builds(self, cuts_env):
         set_transcript(cuts_env.fetcher)

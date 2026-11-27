@@ -378,6 +378,9 @@ class CutsConfig(BaseModel):
     # transcript is treated as long above `repair_min_duration_s`.
     repair_near_full_frac: float = Field(default=0.90, gt=0.0, le=1.0)
     repair_min_duration_s: float = Field(default=1800.0, ge=0.0)
+    # A long video (over this many seconds) suggests the tight no-filler preset first: on a long
+    # talk the aggressive cut is usually the one the viewer wants, and it can be picked in one tap.
+    tight_suggest_after_s: float = Field(default=1800.0, ge=0.0)
     repair_on_start: bool = True
     # Presets with a target kept length (s); typed prompts and saved presets have none.
     preset_target_s: dict[str, int] = Field(default_factory=lambda: {"cut-highlights-5": 300})

@@ -46,8 +46,8 @@ def fake_model(answer_text: str, *, usage: dict | None = None, calls: list | Non
 
 
 class TestFixtures:
-    def test_five_transcripts_with_three_or_more_requests_each(self):
-        assert len(TRANSCRIPTS) == 5
+    def test_six_transcripts_with_three_or_more_requests_each(self):
+        assert len(TRANSCRIPTS) == 6
         for transcript in TRANSCRIPTS:
             assert len(transcript.requests) >= 3
             assert transcript.duration_s > 60
@@ -78,6 +78,37 @@ class TestFixtures:
         for transcript in TRANSCRIPTS:
             units = build_units(transcript.segments, CFG)
             assert 10 <= len(units) <= 200, (transcript.id, len(units))
+
+
+class TestNoFillerStrength:
+    def test_the_talk_fixture_offers_the_light_and_the_tight_cut(self):
+        transcript = next(t for t in TRANSCRIPTS if t.id == "bench-newsletter")
+        by_name = {r.name: r for r in transcript.requests}
+        assert by_name["no-filler-light"].preset_id == "cut-no-filler"
+        assert by_name["no-filler-tight"].preset_id == "cut-no-filler-tight"
+        light, tight = by_name["no-filler-light"], by_name["no-filler-tight"]
+        assert sum(b - a for a, b in tight.keep) < 0.75 * sum(b - a for a, b in light.keep)
+        assert sum(b - a for a, b in tight.skip) > sum(b - a for a, b in light.skip)
+
+    def test_a_perfect_tight_cut_keeps_less_than_a_perfect_light_cut(self):
+        transcript = next(t for t in TRANSCRIPTS if t.id == "bench-newsletter")
+        by_name = {r.name: r for r in transcript.requests}
+        units = build_units(transcript.segments, CFG)
+        by_start = sorted(units, key=lambda u: u.start)
+
+        def perfect(request):
+            parts = []
+            for a, b in request.keep:
+                first = next(u.n for u in by_start if u.start >= a - 0.01)
+                last = next(u.n for u in reversed(by_start) if u.end <= b + 0.01)
+                parts.append((first, last))
+            return score_request(transcript, request, fake_model(answer(parts)), "fake")
+
+        light, tight = perfect(by_name["no-filler-light"]), perfect(by_name["no-filler-tight"])
+        assert light.format_error is None and tight.format_error is None
+        assert light.keep > 0.9 and tight.keep > 0.9
+        assert light.skip > 0.95 and tight.skip > 0.95
+        assert tight.kept_s < 0.75 * light.kept_s
 
 
 class TestScorer:
@@ -227,7 +258,7 @@ class TestScorer:
             for request in transcript.requests:
                 results.append(score_request(transcript, request, good, "perfect-ish"))
         summary = summarize(results)
-        assert summary["requests"] == 16
+        assert summary["requests"] == 19
         assert summary["format_errors"] == 0
         assert summary["mean_keep"] > 0.6
 

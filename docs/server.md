@@ -533,8 +533,13 @@ the video facts). `GET|PUT|DELETE /v1/cut-channels` edit them.
   with a target length and the `short_presets` (a targeted answer or demo may be short), and
   `max_keep_frac` ("nothing to cut") refuses only a typed prompt without a target: a named
   preset is a removal instruction, so keeping nearly all of the video is a valid result. A removal preset puts the
-  result in the cut's `summary` ("Removed 1:12 of filler, 2 % of the video"); when nothing is
-  removed the summary says so ("No filler found") and the request is still `ready`. A failed
+  result in the cut's `summary` ("Removed 1:12 of filler, 2 % of the video"), and the no-filler presets name the
+  largest removed categories ("Removed 9:40: tangents 5:10, repetition 3:00, plugs 1:30") when the model gives a
+  breakdown; when nothing is removed the summary says so ("No filler found") and the request is still `ready`.
+  "No filler" has two strengths: the standard removal and a tighter one that also cuts tangents, repeated points,
+  examples that only illustrate something already said, Q&A answers that repeat the question, and long thank-yous.
+  Above `tight_suggest_after_s` (30 min by default) the tight preset is listed first and marked suggested; the
+  suggestion only orders and marks it and never builds or applies a cut. A failed
   request never blocks a new one: asking for the same preset again builds a fresh request and
   keeps the failure in the history (the picker shows it with a Retry). One finished cut is
   shared per (video, preset or prompt, model, transcript) cache key, so a second identical request is
@@ -608,7 +613,7 @@ the video facts). `GET|PUT|DELETE /v1/cut-channels` edit them.
 
 **Choosing the model**: `[llm.cuts]` has no default on purpose — quality matters and the
 feature stays off until an alias is named. Score the available aliases offline against the
-test set (5 hand-marked transcripts and 16 requests, must-keep/must-skip spans, no network):
+test set (6 hand-marked transcripts and 19 requests, must-keep/must-skip spans, no network):
 
     cd ai-backend && uv run python scripts/cut_bench.py --list --base-url http://gateway:8787/v1
     uv run python scripts/cut_bench.py --model <alias> --base-url ... --api-key-env KEY_ENV

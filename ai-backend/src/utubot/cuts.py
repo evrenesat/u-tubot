@@ -90,6 +90,7 @@ MAP_RETRIES = 1  # a failed excerpt is asked once more, then the cut fails
 CANDIDATES_MARK = "Candidate parts (each line starts with its id and time range):"
 PRESET_LABELS = {
     "cut-no-filler": "No filler",
+    "cut-no-filler-tight": "No filler · Tight",
     "cut-answer": "Just the answer",
     "cut-demo": "Only the demo",
     "cut-highlights-5": "Highlights in 5 min",
@@ -102,8 +103,10 @@ CUT_SKIM_FILM_PRESET_ID = "cut-skim-film"
 # Removal presets keep whatever the video has left worth keeping; keeping nearly all of it is a
 # valid result ("little or no filler"), so a named preset has no upper keep guard. Only the broad
 # no-filler preset has the lower guard; a targeted answer or demo may legitimately be short.
-REMOVAL_PRESET_IDS = frozenset({"cut-no-filler", "cut-answer", "cut-demo"})
+REMOVAL_PRESET_IDS = frozenset({"cut-no-filler", "cut-no-filler-tight", "cut-answer", "cut-demo"})
 NO_FILLER_PRESET_ID = "cut-no-filler"
+NO_FILLER_TIGHT_PRESET_ID = "cut-no-filler-tight"
+NO_FILLER_PRESET_IDS = frozenset({NO_FILLER_PRESET_ID, NO_FILLER_TIGHT_PRESET_ID})
 
 
 def source_ref(row: dict[str, Any]) -> dict[str, Any]:
@@ -160,8 +163,137 @@ def cut_clock(ms: int) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
+# The model may break the removed seconds down by category. Map its wording onto the small set
+# of names the summary shows, so "sponsor" and "ads" count as one line, not two.
+_REMOVED_LABELS = {
+    "tangents": "tangents",
+    "repetition": "repetition",
+    "examples": "examples",
+    "qa": "Q&A",
+    "plugs": "plugs",
+    "recaps": "recaps",
+    "dead_air": "dead air",
+    "intro": "intro",
+    "outro": "outro",
+    "other": "other",
+}
+_REMOVED_ALIASES = {
+    "tangent": "tangents",
+    "digression": "tangents",
+    "digressions": "tangents",
+    "offtopic": "tangents",
+    "off_topic": "tangents",
+    "sidenote": "tangents",
+    "sidenotes": "tangents",
+    "repeat": "repetition",
+    "repeats": "repetition",
+    "repeated": "repetition",
+    "repeating": "repetition",
+    "duplicate": "repetition",
+    "duplicates": "repetition",
+    "example": "examples",
+    "anecdote": "examples",
+    "anecdotes": "examples",
+    "story": "examples",
+    "stories": "examples",
+    "q_and_a": "qa",
+    "questions": "qa",
+    "interview": "qa",
+    "interviews": "qa",
+    "plug": "plugs",
+    "sponsor": "plugs",
+    "sponsors": "plugs",
+    "sponsorship": "plugs",
+    "ad": "plugs",
+    "ads": "plugs",
+    "promo": "plugs",
+    "promos": "plugs",
+    "promotion": "plugs",
+    "promotions": "plugs",
+    "selfpromotion": "plugs",
+    "self_promotion": "plugs",
+    "merch": "plugs",
+    "newsletter": "plugs",
+    "recap": "recaps",
+    "summary": "recaps",
+    "summaries": "recaps",
+    "deadair": "dead_air",
+    "silence": "dead_air",
+    "pauses": "dead_air",
+    "filler": "dead_air",
+    "intros": "intro",
+    "introduction": "intro",
+    "outros": "outro",
+    "credits": "outro",
+    "signoff": "outro",
+    "thanks": "outro",
+    "thank_you": "outro",
+    "thank_yous": "outro",
+}
+
+
+def _removed_key(raw: Any) -> str | None:
+    key = re.sub(r"[^a-z0-9]+", "_", str(raw).lower().replace("&", "and")).strip("_")
+    key = _REMOVED_ALIASES.get(key, key)
+    return key if key in _REMOVED_LABELS else None
+
+
+def _removed_seconds(raw: Any) -> float:
+    if isinstance(raw, bool):
+        return 0.0
+    if isinstance(raw, (int, float)):
+        return max(0.0, float(raw))
+    text = str(raw).strip()
+    if ":" in text:
+        try:
+            parts = [int(p) for p in text.split(":")]
+        except ValueError:
+            return 0.0
+        seconds = 0
+        for part in parts:
+            seconds = seconds * 60 + part
+        return float(max(0, seconds))
+    try:
+        return max(0.0, float(text))
+    except ValueError:
+        return 0.0
+
+
+def _removed_breakdown(removed: Any, removed_ms: int) -> list[tuple[str, int]]:
+    """`removed` as `[(label, seconds)]`, largest first, scaled to the actual removed time."""
+    if not isinstance(removed, dict):
+        return []
+    totals: dict[str, float] = {}
+    for raw_key, raw_value in removed.items():
+        key = _removed_key(raw_key)
+        seconds = _removed_seconds(raw_value)
+        if key is None or seconds <= 0:
+            continue
+        totals[key] = totals.get(key, 0.0) + seconds
+    total_s = sum(totals.values())
+    if total_s <= 0:
+        return []
+    factor = max(0.0, removed_ms / 1000.0) / total_s
+    rows = sorted(
+        ((_REMOVED_LABELS[key], int(round(value * factor))) for key, value in totals.items()),
+        key=lambda row: (-row[1], row[0]),
+    )
+    rows = [row for row in rows if row[1] > 0]
+    if not rows:
+        return []
+    if len(rows) > 4:
+        kept, rest = rows[:3], rows[3:]
+        other = sum(seconds for _, seconds in rest)
+        rows = [*kept, ("other", other)]
+    return rows
+
+
 def removal_summary(
-    preset_id: str | None, parts: list[Part], duration_s: float | None, fallback: str
+    preset_id: str | None,
+    parts: list[Part],
+    duration_s: float | None,
+    fallback: str,
+    removed: Any = None,
 ) -> str:
     """The one-line result of a removal preset: what it removed, or that there was nothing to."""
     if preset_id not in REMOVAL_PRESET_IDS or not duration_s:
@@ -170,9 +302,15 @@ def removal_summary(
     kept_ms = sum(p.end_ms - p.start_ms for p in parts)
     removed_ms = max(0, duration_ms - kept_ms)
     if removed_ms <= 0:
-        return "No filler found" if preset_id == NO_FILLER_PRESET_ID else "Nothing was removed"
+        return "No filler found" if preset_id in NO_FILLER_PRESET_IDS else "Nothing was removed"
     percent = max(1, round(removed_ms / duration_ms * 100))
-    if preset_id == NO_FILLER_PRESET_ID:
+    breakdown = _removed_breakdown(removed, removed_ms)
+    if breakdown:
+        categories = ", ".join(
+            f"{label} {cut_clock(seconds * 1000)}" for label, seconds in breakdown
+        )
+        return f"Removed {cut_clock(removed_ms)}: {categories}"
+    if preset_id in NO_FILLER_PRESET_IDS:
         return f"Removed {cut_clock(removed_ms)} of filler, {percent} % of the video"
     return f"Removed {cut_clock(removed_ms)}, {percent} % of the video"
 
@@ -188,6 +326,8 @@ CUT_SYSTEM = (
     '"from" and "to" are the first and last unit id of one kept part. Ranges never overlap, ids '
     "must exist, and parts stay in video order. When the task gives a target length, add "
     '"rank":<int> to every part (1 = the most important part, every part its own number). '
+    'When the task asks for a breakdown, add "removed":{category:<seconds>} with the seconds '
+    "cut per category and use only the category names the task lists. "
     "Be faithful to the transcript; never invent "
     "content and never add commentary."
 )
@@ -203,6 +343,8 @@ REDUCE_SYSTEM = (
     "are merely content, context or filler, and prefer the task's own definition of the cut over "
     "completeness. When the task gives a target length or a maximum, add "
     '"rank":<int> to every part (1 = the most important part, every part its own number). '
+    'When the task asks for a breakdown, add "removed":{category:<seconds>} with the seconds '
+    "cut per category and use only the category names the task lists. "
     "Each candidate shows its rank inside its own excerpt; ranks of different excerpts are not "
     "comparable, so judge by the label and the text. Be faithful to the candidates; never "
     "invent content and never add commentary."
@@ -1980,6 +2122,11 @@ class CutService:
 
         ok, reason = watched_available(self.cfg)
         minutes = self._meta(video_id).get("duration_s")
+        try:
+            duration_s = float(minutes) if minutes else 0.0
+        except (TypeError, ValueError):
+            duration_s = 0.0
+        tight_suggested = duration_s > self.cfg.cuts.tight_suggest_after_s
         eta = None
         if ok and minutes:
             watched = self.cfg.cuts.watched
@@ -2010,10 +2157,14 @@ class CutService:
             entry: dict[str, Any] = {
                 "id": prompt.id,
                 "label": prompt.label,
+                "suggested": tight_suggested and prompt.id == NO_FILLER_TIGHT_PRESET_ID,
                 **top,
                 "by_mode": {"quick": quick, "watched": watched},
             }
             out.append(entry)
+        suggested_preset = next((entry["id"] for entry in out if entry["suggested"]), None)
+        if suggested_preset is not None:
+            out.sort(key=lambda entry: entry["id"] != suggested_preset)
         by_id = {entry["id"]: entry for entry in out}
         state = {
             "configured": self.configured,
@@ -2023,6 +2174,7 @@ class CutService:
             "channel_name": channel_name,
             "channel_mode": self._channel_mode_value(user, channel_id),
             "modes": modes,
+            "suggested_preset": suggested_preset,
             "presets": out,
             "selection": self._selection(user, video_id, by_id),
         }
@@ -2579,7 +2731,11 @@ class CutService:
                     guard_max=guard_max,
                 )
                 summary = removal_summary(
-                    preset_id, parts, duration_s, str(data.get("summary") or "")
+                    preset_id,
+                    parts,
+                    duration_s,
+                    str(data.get("summary") or ""),
+                    data.get("removed"),
                 )
                 doc = cut_document(
                     video_id=video_id,
