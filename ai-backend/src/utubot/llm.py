@@ -389,7 +389,7 @@ class LLMClient:
         chain = self.chain(task, model, feature)
         last: LLMError | None = None
         caller = current_user()
-        budget = self.cfg.usage.user_budget_usd
+        budget = self.cfg.per_user_budget(caller)
         for idx, (provider, name) in enumerate(chain):
             body: dict[str, Any] = {
                 "model": name,

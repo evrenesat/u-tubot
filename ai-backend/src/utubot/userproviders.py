@@ -5,7 +5,8 @@ cuts and answers then run on it instead of the owner's modelgate budget, and the
 budget and request cap (``[usage]``) still apply. The key is needed to make the call, so it is stored
 on the server (never logged, never returned in an API response or a log line) exactly like the env-var
 provider keys are held in memory: the self-hosted backend is trusted, and the key travels to the
-upstream either way.
+upstream either way. It is also stored in the sqlite file, so it is encrypted at rest with a server
+secret (`UTUBOT_PROVIDER_SECRET`, see `at_rest`): no secret, the key stays plain (the file is 0600).
 
 Two things ride a per-request context variable (mirroring ``classes.bind_class``): the caller's user
 name and, when they have one, their upstream. Both are bound at the top of a request and at the top of
@@ -22,6 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from .at_rest import decrypt, encrypt
 from .db import Database
 
 # The provider identity the LLM router uses while a user upstream is active: it is not in
@@ -110,12 +112,19 @@ def current_user_provider() -> UserProvider | None:
 class UserProviders:
     """The one upstream each user has stored, and the live key used to run their calls."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, secret_env: str = "UTUBOT_PROVIDER_SECRET"):
         self._db = db
+        self._secret_env = secret_env
+
+    def _secret(self) -> str | None:
+        import os
+
+        return os.environ.get(self._secret_env) or None
 
     def set(self, user: str, base_url: str, api_key: str) -> dict[str, Any]:
         """Store (or replace) a user's upstream. `base_url` is trimmed of surrounding spaces; the
-        key is stored and hashed, never returned."""
+        key is hashed for the fingerprint and stored encrypted at rest (or plain when no server
+        secret is configured), never returned."""
         base = base_url.strip().rstrip("/")
         if not base:
             raise ValueError("a base url is required")
@@ -128,7 +137,7 @@ class UserProviders:
             "INSERT INTO user_providers(user,base_url,api_key_hash,api_key,updated_at)"
             " VALUES(?,?,?,?,?) ON CONFLICT(user) DO UPDATE SET base_url=excluded.base_url,"
             " api_key_hash=excluded.api_key_hash, api_key=excluded.api_key, updated_at=excluded.updated_at",
-            [user, base, _hash_key(api_key), api_key, now],
+            [user, base, _hash_key(api_key), encrypt(self._secret(), api_key), now],
         )
         return self.describe(user)
 
@@ -138,7 +147,9 @@ class UserProviders:
     def get_live(self, user: str) -> tuple[str, str] | None:
         """The live `(base url, api key)` a call uses for `user`, or None when they have none."""
         row = self._db.one("SELECT base_url, api_key FROM user_providers WHERE user=?", [user])
-        return (row["base_url"], row["api_key"]) if row else None
+        if not row:
+            return None
+        return row["base_url"], decrypt(self._secret(), row["api_key"])
 
     def describe(self, user: str) -> dict[str, Any] | None:
         """What the UI can show for a user's upstream: the host and a short key fingerprint, never

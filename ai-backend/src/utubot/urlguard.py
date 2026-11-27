@@ -95,6 +95,32 @@ async def validate_url(
     return addrs[0]
 
 
+async def assert_not_private(url: str, *, resolver: Resolver = system_resolver) -> None:
+    """A user-supplied provider base url must not point at a private, loopback, link-local, or
+    otherwise internal address (SSRF). A literal host is checked directly; a hostname is resolved
+    through `resolver`. Admins call `set` with the check skipped, so they may reach a LAN upstream.
+    """
+    parsed = httpx.URL(url)
+    if parsed.scheme not in DEFAULT_PORTS:
+        raise UrlRejected("the base url must be http(s)")
+    host = parsed.host
+    if not host:
+        raise UrlRejected("the base url has no host")
+    port = parsed.port or DEFAULT_PORTS[parsed.scheme]
+    try:
+        literal = [str(ipaddress.ip_address(host))]
+    except ValueError:
+        literal = []
+    addrs = literal or await resolver(host, port)
+    for addr in addrs:
+        try:
+            blocked = is_blocked_ip(ipaddress.ip_address(addr))
+        except ValueError:
+            blocked = True
+        if blocked:
+            raise UrlRejected("the base url points at a private or internal address")
+
+
 def guarded_get(
     url: str,
     *,

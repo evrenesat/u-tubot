@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
-from tests.conftest import anon_client
+from tests.conftest import OTHER_TOKEN, anon_client
+from utubot.at_rest import MARKER
 from utubot.db import Database
 from utubot.llm import INTERACTIVE
 from utubot.userproviders import (
@@ -85,6 +88,70 @@ def test_list_reports_which_users_have_an_upstream():
     assert sorted(ups.list()) == ["owner", "partner"]
     ups.remove("partner")
     assert ups.list() == ["owner"]
+
+
+# --- encryption at rest --------------------------------------------------------------------
+
+
+def test_a_key_is_stored_encrypted_when_a_secret_is_configured(monkeypatch):
+    monkeypatch.setenv("UTUBOT_PROVIDER_SECRET", "a-long-server-secret-value")
+    db = Database(":memory:")
+    ups = UserProviders(db, secret_env="UTUBOT_PROVIDER_SECRET")
+    ups.set("owner", "https://h.example.com", "pk-secret")
+    # the stored api_key is the cipher, not the plaintext key
+    stored = db.one("SELECT api_key FROM user_providers WHERE user='owner'")["api_key"]
+    assert stored != "pk-secret"
+    assert stored.startswith(MARKER)
+    # get_live still returns the plaintext key to the router
+    assert ups.get_live("owner") == ("https://h.example.com", "pk-secret")
+
+
+def test_a_key_without_a_secret_is_stored_plain(monkeypatch):
+    monkeypatch.delenv("UTUBOT_PROVIDER_SECRET", raising=False)
+    db = Database(":memory:")
+    ups = UserProviders(db, secret_env="UTUBOT_PROVIDER_SECRET")
+    ups.set("owner", "https://h.example.com", "pk-secret")
+    stored = db.one("SELECT api_key FROM user_providers WHERE user='owner'")["api_key"]
+    assert stored == "pk-secret"
+    assert ups.get_live("owner") == ("https://h.example.com", "pk-secret")
+
+
+def test_a_rotated_secret_cannot_read_the_old_key(monkeypatch):
+    monkeypatch.setenv("UTUBOT_PROVIDER_SECRET", "the-first-secret")
+    db = Database(":memory:")
+    ups = UserProviders(db, secret_env="UTUBOT_PROVIDER_SECRET")
+    ups.set("owner", "https://h.example.com", "pk-secret")
+    # the secret changes: the stored value now fails its MAC and cannot be read
+    monkeypatch.setenv("UTUBOT_PROVIDER_SECRET", "a-second-secret-value")
+    ups2 = UserProviders(db, secret_env="UTUBOT_PROVIDER_SECRET")
+    with pytest.raises(ValueError):
+        ups2.get_live("owner")
+
+
+# --- per-user limits -----------------------------------------------------------------------
+
+
+def test_per_user_limits_use_the_override_then_the_global():
+    from utubot.config import Config, UserConfig
+
+    cfg = Config()
+    cfg.usage.user_budget_usd = 10.0
+    cfg.usage.user_requests_per_min = 100
+    cfg.users = [
+        UserConfig(name="owner", admin=True),  # no override -> the global value
+        UserConfig(
+            name="limited", user_budget_usd=1.0, user_requests_per_min=5
+        ),  # their own cap
+    ]
+    # an override wins over the global ceiling
+    assert cfg.per_user_budget("limited") == 1.0
+    assert cfg.per_user_requests_per_min("limited") == 5
+    # a user with no override falls back to the server-wide value
+    assert cfg.per_user_budget("owner") == 10.0
+    assert cfg.per_user_requests_per_min("owner") == 100
+    # an unknown or anonymous name also falls back to the global
+    assert cfg.per_user_budget(None) == 10.0
+    assert cfg.per_user_requests_per_min("nobody") == 100
 
 
 # --- per-request context -------------------------------------------------------------------
@@ -348,3 +415,155 @@ def test_own_upstreams_get_one_limiter_per_user(env):
     finally:
         unbind_call(t2)
     assert a is not b
+
+
+# --- per-user limits on the routes ---------------------------------------------------------
+
+
+async def test_a_user_override_caps_that_user_when_the_global_is_higher(env):
+    # the global cap is generous; partner carries a lower per-user override from users.toml
+    env.cfg.usage.user_requests_per_min = 100
+    env.cfg.users = [
+        u.model_copy(update={"user_requests_per_min": 1})
+        if u.name == "partner"
+        else u
+        for u in env.cfg.users
+    ]
+    partner = httpx.AsyncClient(
+        transport=env.client._transport,
+        base_url="http://utubot",
+        headers={"Authorization": f"Bearer {OTHER_TOKEN}"},
+    )
+    try:
+        assert (await partner.get("/v1/me")).status_code == 200
+        assert (await partner.get("/v1/me")).status_code == 429  # over their own override
+    finally:
+        await partner.aclose()
+    # the owner, on the global cap, is not affected by partner's override
+    assert (await env.client.get("/v1/me")).status_code == 200
+
+
+# --- admin usage over the window -----------------------------------------------------------
+
+
+async def test_admin_users_report_usage_over_the_window(env):
+    two_days_ago = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
+    env.svc.db.execute(
+        "INSERT INTO user_usage(user,day,cost,calls) VALUES('owner',?,0.5,2)",
+        [two_days_ago, 0.5, 2],
+    )
+    users = {u["name"]: u for u in (await env.client.get("/v1/admin/users")).json()["users"]}
+    owner = users["owner"]
+    # today's usage is still reported separately
+    assert owner["usage"] == {"cost": 0, "calls": 0, "day": PerUserUsage.today()}
+    # usage from two days ago is reported over the admin window (7 days)
+    assert owner["usage_window"]["cost"] == 0.5
+    assert owner["usage_window"]["calls"] == 2
+    assert owner["usage_window"]["user"] == "owner"
+
+
+# --- own-provider base url guard -----------------------------------------------------------
+
+
+async def test_a_non_admin_cannot_set_a_private_base_url(env):
+    partner = httpx.AsyncClient(
+        transport=env.client._transport,
+        base_url="http://utubot",
+        headers={"Authorization": f"Bearer {OTHER_TOKEN}"},
+    )
+    try:
+        r = await partner.put(
+            "/v1/me/provider",
+            json={"base_url": "http://127.0.0.1:8000/v1", "api_key": "pk-partner"},
+        )
+        assert r.status_code == 400
+        # nothing was stored for the refused address
+        assert (await partner.get("/v1/me/provider")).json() == {"configured": False}
+    finally:
+        await partner.aclose()
+
+
+async def test_an_admin_may_set_a_private_base_url(env):
+    # the admin is exempt from the SSRF guard, so a LAN address is accepted
+    r = await env.client.put(
+        "/v1/me/provider",
+        json={"base_url": "http://127.0.0.1:8000/v1", "api_key": "pk-owner"},
+    )
+    assert r.status_code == 200
+    assert (await env.client.get("/v1/me/provider")).json()["host"] == "http://127.0.0.1:8000/v1"
+
+
+async def test_a_non_admin_may_set_a_public_base_url(env):
+    # a public literal IP is allowed for a non-admin: no DNS is touched for a literal IP
+    partner = httpx.AsyncClient(
+        transport=env.client._transport,
+        base_url="http://utubot",
+        headers={"Authorization": f"Bearer {OTHER_TOKEN}"},
+    )
+    try:
+        r = await partner.put(
+            "/v1/me/provider",
+            json={"base_url": "http://93.184.216.34/v1", "api_key": "pk-partner"},
+        )
+        assert r.status_code == 200
+        assert (await partner.get("/v1/me/provider")).json()["host"] == "http://93.184.216.34/v1"
+    finally:
+        await partner.aclose()
+
+
+async def test_assert_not_private_rejects_a_hostname_that_resolves_private():
+    from utubot.urlguard import assert_not_private, UrlRejected
+
+    async def resolver(host, port):
+        return ["192.168.1.10"]
+
+    with pytest.raises(UrlRejected):
+        await assert_not_private("https://lan.example/v1", resolver=resolver)
+
+
+async def test_assert_not_private_allows_a_public_hostname():
+    from utubot.urlguard import assert_not_private
+
+    async def resolver(host, port):
+        return ["93.184.216.34"]
+
+    # must not raise for a public resolution
+    await assert_not_private("https://example.com/v1", resolver=resolver)
+
+
+# --- the bound user on a claimed job -------------------------------------------------------
+
+
+async def test_a_claimed_job_runs_with_its_user_bound(env):
+    # partner stores their own upstream, then asks for a transcript
+    env.svc.user_providers.set("partner", "https://user-models.example.com/v1", "pk-partner")
+    env.svc.jobs.enqueue_transcript("partner", VID, None)
+    # capture the bound user/provider while the runner runs
+    captured: dict = {}
+
+    async def spy(job):
+        captured["user"] = current_user()
+        captured["provider"] = current_user_provider()
+
+    env.svc.jobs._run_transcript = spy
+    assert await env.svc.jobs.run_one() is True
+    # the job ran as partner, on partner's own upstream, not the server default
+    assert captured["user"] == "partner"
+    assert captured["provider"] == UserProvider(
+        "https://user-models.example.com/v1", "pk-partner"
+    )
+
+
+async def test_a_claimed_job_without_its_user_runs_on_the_server_default(env):
+    # a job with no owner of its own (none stored) still runs, on the server default
+    env.svc.jobs.enqueue_transcript("partner", VID, None)
+    captured: dict = {}
+
+    async def spy(job):
+        captured["user"] = current_user()
+        captured["provider"] = current_user_provider()
+
+    env.svc.jobs._run_transcript = spy
+    assert await env.svc.jobs.run_one() is True
+    assert captured["user"] == "partner"
+    assert captured["provider"] is None  # no own upstream -> the server default upstream
