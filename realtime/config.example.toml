@@ -1,0 +1,32 @@
+# utubot-rt: the live server of u·tubot voice control. Copy to /etc/utubot/realtime.toml.
+# Secrets come from the environment, never from this file: UTUBOT_RT_ADMIN_TOKEN (the stats route).
+# UTUBOT_RT_LISTEN and UTUBOT_RT_BACKEND_URL override the two keys of the same name below.
+
+[server]
+listen = "127.0.0.1:8791"                     # behind the reverse proxy; /rt/ is passed with the WebSocket upgrade
+path = "/rt"                                   # must match [voice] realtime_path of the backend
+backend_url = "http://127.0.0.1:8790"          # the Python backend, for GET /v1/me and POST /v1/voice/commands
+origins = ["utubot.example.com"]               # host patterns a browser's Origin may carry; native clients send none
+
+[timing]
+hello_timeout = "5s"
+ping_interval = "20s"
+idle_timeout = "45s"
+auth_cache = "60s"                             # a revoked device or a voice switch-off is out within this
+ack_timeout = "2s"                             # no "received" from the screen in this time: the command is dead
+done_timeout = "30s"
+command_expiry = "10s"
+confirm_window = "15s"
+ask_window = "30s"
+recent_focus = "10m"
+
+[limits]
+max_connections_per_user = 8
+utterances_per_minute = 20
+audio_seconds_per_day = 1800
+max_frame_bytes = 65536
+max_utterance_bytes = 2097152
+max_utterance_seconds = 30
+max_waiting = 3                                # commands waiting behind the one a screen is handling
+max_text_chars = 2000
+stats_window = 1000
