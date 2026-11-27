@@ -22,6 +22,8 @@ const (
 	stateOffline   = "offline"
 	stateNone      = "none"
 	stateClarify   = "clarify"
+	// stateRateLimited is told to the user but neither filed nor counted: a flood must not fill the history or the statistics.
+	stateRateLimited = "rate_limited"
 )
 
 // apiOutcome maps a state to the history route's outcome vocabulary.
@@ -29,7 +31,7 @@ func apiOutcome(state string) string {
 	switch state {
 	case stateOK:
 		return proto.OutcomeOK
-	case stateRefused, stateBusy:
+	case stateRefused, stateBusy, stateRateLimited:
 		return proto.OutcomeRefused
 	case stateCancelled:
 		return proto.OutcomeCancelled
@@ -79,6 +81,7 @@ type pending struct {
 type askOption struct{ label, deviceID string }
 
 type askState struct {
+	clarify bool
 	id      string
 	options []askOption
 	req     request
@@ -122,8 +125,11 @@ func (h *Hub) handleFocus(s *Session, raw []byte) {
 	}
 	s.focusSeq = f.Seq
 	previous := s.summary
-	s.focus, s.focusRaw = &f, append(json.RawMessage(nil), raw...)
 	now := time.Now()
+	s.focus, s.focusAt, s.focusRaw = &f, now, nil
+	if len(raw) <= maxFocusRelayBytes {
+		s.focusRaw = append(json.RawMessage(nil), raw...)
+	}
 	s.summary = focusSummary(&f)
 	if s.summary != previous {
 		s.focusChanged = now
@@ -143,6 +149,26 @@ func focusSummary(f *proto.Focus) string {
 	}
 	b, _ := json.Marshal([]any{f.Screen, id, f.Playing, cut, f.View})
 	return string(b)
+}
+
+// playingLocked is the screen's playing state as of now: a screen that has not reported for FocusMaxAge (it sends
+// every 5 s while playing) is frozen or gone, and no longer counts as playing.
+func (h *Hub) playingLocked(s *Session, now time.Time) bool {
+	return s.focus != nil && s.focus.Playing && now.Sub(s.focusAt) < h.cfg.FocusMaxAge
+}
+
+// currentFocus is a copy of the screen's focus brought up to now: the playing state aged and the position
+// extrapolated from the time the frame was received (the screen's own at_ms is not trusted).
+func (h *Hub) currentFocus(s *Session, now time.Time) *proto.Focus {
+	if s == nil || s.focus == nil {
+		return nil
+	}
+	cp := *s.focus
+	cp.Playing = h.playingLocked(s, now)
+	if cp.Playing {
+		cp.PositionS = PositionAt(s.focus, s.focusAt, now)
+	}
+	return &cp
 }
 
 // PositionAt extrapolates the screen's position from its last report, as the plan describes.
@@ -182,28 +208,53 @@ func (h *Hub) handleSay(s *Session, m proto.Say, tIn time.Time) {
 		id = h.newID("s")
 	}
 	r := request{origin: s, sayID: id, text: text, kind: KindText, tIn: tIn, pin: m.Target}
-	if !h.allowUtteranceLocked(u, tIn) {
+	if m.ID != "" && h.seenSayLocked(u.name, s.DeviceID, id, tIn) {
+		return
+	}
+	if !h.allowUtteranceLocked(u.name, tIn) {
 		h.errorLocked(s, proto.ErrRateLimited, MsgRateLimited)
-		h.failRequestLocked(u, r, stateRefused, MsgRateLimited)
+		h.failRequestLocked(u, r, stateRateLimited, MsgRateLimited)
 		return
 	}
 	h.processLocked(u, r)
 }
 
-func (h *Hub) allowUtteranceLocked(u *user, now time.Time) bool {
+func (h *Hub) allowUtteranceLocked(name string, now time.Time) bool {
+	l := h.limiterLocked(name, now)
 	cutoff := now.Add(-time.Minute)
-	kept := u.utterances[:0]
-	for _, t := range u.utterances {
+	kept := l.utterances[:0]
+	for _, t := range l.utterances {
 		if t.After(cutoff) {
 			kept = append(kept, t)
 		}
 	}
-	u.utterances = kept
-	if len(u.utterances) >= h.cfg.UtterancesPerMin {
+	l.utterances = kept
+	if len(l.utterances) >= h.cfg.UtterancesPerMin {
 		return false
 	}
-	u.utterances = append(u.utterances, now)
+	l.utterances = append(l.utterances, now)
 	return true
+}
+
+// seenSayLocked remembers say ids per user, so a frame resent after a reconnect does not run twice.
+func (h *Hub) seenSayLocked(name, device, id string, now time.Time) bool {
+	l := h.limiterLocked(name, now)
+	key := device + "/" + id
+	if at, ok := l.sayIDs[key]; ok && now.Sub(at) < h.cfg.DedupeWindow {
+		return true
+	}
+	if len(l.sayIDs) >= maxRememberedSayIDs {
+		for k, at := range l.sayIDs {
+			if now.Sub(at) >= h.cfg.DedupeWindow {
+				delete(l.sayIDs, k)
+			}
+		}
+		if len(l.sayIDs) >= maxRememberedSayIDs {
+			l.sayIDs = map[string]time.Time{}
+		}
+	}
+	l.sayIDs[key] = now
+	return false
 }
 
 // processLocked runs the words of a command: a pending question first, then the phrase matcher.
@@ -211,10 +262,8 @@ func (h *Hub) processLocked(u *user, r request) {
 	if h.answerByWordsLocked(u, r) {
 		return
 	}
-	var focus *proto.Focus
-	if guess, _, _ := h.chooseTargetLocked(u, "", r.pin); guess != nil {
-		focus = guess.focus
-	}
+	guess, _, _ := h.chooseTargetLocked(u, "", r.pin)
+	focus := h.currentFocus(guess, time.Now())
 	dec := h.understand(r.text, focus)
 	r.dec = dec
 	_, known := intent.Lookup(dec.Tool)
@@ -254,9 +303,12 @@ func (h *Hub) clarifyLocked(u *user, r request) {
 	if len(options) > intent.MaxOptions {
 		options = options[:intent.MaxOptions]
 	}
+	asks := make([]askOption, len(options))
+	for i, o := range options {
+		asks[i] = askOption{label: o}
+	}
 	text, _ := args["text"].(string)
-	h.sendAllLocked(u, proto.New(proto.TAsk).With("id", h.newID("q")).With("text", text).With("options", options).
-		With("expires_ms", time.Now().Add(h.cfg.AskWindow).UnixMilli()))
+	h.openAskLocked(u, r, text, asks)
 	h.emitLocked(u, &r, "", intent.Clarify, args, settle{stateClarify, ""}, map[string]time.Duration{})
 }
 
@@ -266,8 +318,7 @@ func (h *Hub) cancelPendingLocked(u *user, r request) bool {
 	if u.ask != nil {
 		h.dropAskLocked(u, "")
 	} else if p := h.confirmingLocked(u); p != nil {
-		p.answered = true
-		p.target.conn.Send(proto.New(proto.TAnswer).With("id", p.id).With("option", "no"))
+		h.forwardAnswerLocked(p, false)
 	} else {
 		return false
 	}
@@ -341,6 +392,9 @@ func (h *Hub) handleAnswer(s *Session, m proto.Answer) {
 		}
 		return
 	}
+	if !s.Roles[proto.RoleController] {
+		return // a confirmation is answered on the screen itself (its ack) or by a controller
+	}
 	for _, screen := range u.sessions {
 		p := screen.inflight
 		if p == nil || p.id != m.ID || !p.confirmShown || p.answered || screen == s {
@@ -395,7 +449,7 @@ func (h *Hub) chooseTargetLocked(u *user, tool, pin string) (*Session, []askOpti
 	}
 	var playing []*Session
 	for _, s := range candidates {
-		if s.focus != nil && s.focus.Playing {
+		if h.playingLocked(s, time.Now()) {
 			playing = append(playing, s)
 		}
 	}
@@ -456,7 +510,8 @@ func (h *Hub) dispatchRequestLocked(u *user, r request) {
 		h.askTargetLocked(u, r, options)
 		return
 	}
-	args, err := intent.Validate(r.dec, target.focus)
+	focus := h.currentFocus(target, time.Now())
+	args, err := intent.Validate(r.dec, focus)
 	if err != nil {
 		h.failRequestLocked(u, r, stateRefused, err.Error())
 		return
@@ -468,6 +523,17 @@ func (h *Hub) dispatchRequestLocked(u *user, r request) {
 }
 
 func (h *Hub) askTargetLocked(u *user, r request, options []askOption) {
+	labels := make([]string, len(options))
+	for i, o := range options {
+		labels[i] = o.label
+	}
+	h.openAskLocked(u, r, strings.Join(labels, " or ")+"?", options)
+}
+
+// openAskLocked asks every device of the user a question and keeps it for the ask window. Options with a device id
+// choose a screen for the request; options without one are the answers of a clarifying question and are read as the
+// user's next command.
+func (h *Hub) openAskLocked(u *user, r request, text string, options []askOption) {
 	if u.ask != nil {
 		h.dropAskLocked(u, "")
 	}
@@ -475,7 +541,7 @@ func (h *Hub) askTargetLocked(u *user, r request, options []askOption) {
 	for i, o := range options {
 		labels[i] = o.label
 	}
-	ask := &askState{id: h.newID("q"), options: options, req: r}
+	ask := &askState{id: h.newID("q"), options: options, req: r, clarify: len(options) > 0 && options[0].deviceID == ""}
 	ask.timer = time.AfterFunc(h.cfg.AskWindow, func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -484,7 +550,7 @@ func (h *Hub) askTargetLocked(u *user, r request, options []askOption) {
 		}
 	})
 	u.ask = ask
-	h.sendAllLocked(u, proto.New(proto.TAsk).With("id", ask.id).With("text", strings.Join(labels, " or ")+"?").
+	h.sendAllLocked(u, proto.New(proto.TAsk).With("id", ask.id).With("text", text).
 		With("options", labels).With("expires_ms", time.Now().Add(h.cfg.AskWindow).UnixMilli()))
 }
 
@@ -493,8 +559,13 @@ func (h *Hub) resolveAskLocked(u *user, idx int) {
 	ask.timer.Stop()
 	u.ask = nil
 	r := ask.req
-	r.pin = ask.options[idx].deviceID
 	r.tIn = time.Now()
+	if ask.options[idx].deviceID == "" { // a clarifying question: the chosen option is the new command
+		r.text = ask.options[idx].label
+		h.processLocked(u, r)
+		return
+	}
+	r.pin = ask.options[idx].deviceID
 	h.dispatchRequestLocked(u, r)
 }
 
@@ -505,6 +576,9 @@ func (h *Hub) dropAskLocked(u *user, message string) {
 	}
 	ask.timer.Stop()
 	u.ask = nil
+	if ask.clarify { // its request already ended as "clarify"
+		return
+	}
 	h.emitLocked(u, &ask.req, "", ask.req.dec.Tool, ask.req.dec.Args, settle{stateCancelled, message}, map[string]time.Duration{})
 }
 
@@ -542,7 +616,7 @@ func (h *Hub) sendLocked(u *user, p *pending) {
 	frame := proto.New(proto.TCommand).With("id", p.id).With("tool", p.tool).With("args", p.args).
 		With("origin", map[string]any{"device_id": p.origin.DeviceID, "kind": p.kind}).
 		With("expires_ms", p.expiresAt.UnixMilli())
-	if text, eta, need := intent.Confirm(p.tool, p.args, t.focus); need {
+	if text, eta, need := intent.Confirm(p.tool, p.args, h.currentFocus(t, now)); need {
 		confirm := map[string]any{"text": text}
 		if eta > 0 {
 			confirm["eta_s"] = eta
@@ -553,7 +627,7 @@ func (h *Hub) sendLocked(u *user, p *pending) {
 	}
 	if !t.conn.Send(frame) {
 		h.finishLocked(u, p, settle{stateFailed, MsgNoAnswer})
-		t.conn.Close(proto.ErrBusy, "too slow")
+		t.conn.Close(proto.ErrSlowConsumer, "too slow")
 		return
 	}
 	p.ackTimer = time.AfterFunc(h.cfg.AckTimeout, func() { h.onAckTimeout(p) })
@@ -609,6 +683,11 @@ func (h *Hub) handleAck(s *Session, a proto.Ack) {
 	u := h.users[s.User]
 	p := s.inflight
 	if u == nil || u.sessions[s.DeviceID] != s || p == nil || p.id != a.ID || p.ended {
+		return
+	}
+	switch a.State {
+	case proto.AckReceived, proto.AckConfirmShown, proto.AckStarted, proto.AckDone, proto.AckFailed, proto.AckRefused:
+	default:
 		return
 	}
 	if !p.received {
@@ -705,6 +784,9 @@ func (h *Hub) emitLocked(u *user, r *request, commandID, tool string, args map[s
 	h.sendAllLocked(u, frame)
 	if hops == nil {
 		hops = map[string]time.Duration{}
+	}
+	if st.state == stateRateLimited {
+		return
 	}
 	hops[stats.HopTotal] = time.Since(r.tIn)
 	h.stats.Add(stats.Record{Tool: tool, Family: intent.Family(tool), Outcome: apiOutcome(st.state), Hops: hops})

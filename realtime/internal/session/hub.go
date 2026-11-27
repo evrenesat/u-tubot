@@ -46,6 +46,7 @@ const (
 	MsgCancelled    = "Cancelled"
 	MsgNotFinished  = "The TV did not finish"
 	MsgScreenGone   = "That screen is not connected"
+	MsgListenEnded  = "Listening ended"
 )
 
 // Conn is a device's connection as the hub sees it.
@@ -81,23 +82,46 @@ type Hub struct {
 	understand Understander
 	log        *slog.Logger
 
-	mu    sync.Mutex
-	users map[string]*user
-	seq   uint64
+	mu      sync.Mutex
+	users   map[string]*user
+	limits  map[string]*limiter
+	seq     uint64
+	closing bool
 
 	recMu   sync.Mutex
 	recN    int
 	recDone *sync.Cond
+	recQ    chan recJob
+	quit    chan struct{}
+	quitOne sync.Once
+}
+
+type recJob struct {
+	token string
+	rec   backend.Record
 }
 
 type user struct {
-	name       string
-	sessions   map[string]*Session
-	ask        *askState
+	name     string
+	sessions map[string]*Session
+	ask      *askState
+}
+
+// limiter is a user's rate state. It lives apart from the connected user so that reconnecting does not reset it, and
+// is evicted once it has been quiet for a day.
+type limiter struct {
 	utterances []time.Time
 	audioDay   string
 	audioSecs  float64
+	sayIDs     map[string]time.Time
+	touched    time.Time
 }
+
+const limiterIdle = 26 * time.Hour
+const maxRememberedSayIDs = 512
+
+// maxFocusRelayBytes bounds the focus frame relayed to other devices in welcome and peers.
+const maxFocusRelayBytes = 8 * 1024
 
 // Session is one connected device.
 type Session struct {
@@ -118,6 +142,7 @@ type Session struct {
 	focus        *proto.Focus
 	focusRaw     json.RawMessage
 	focusSeq     int64
+	focusAt      time.Time
 	focusChanged time.Time
 	summary      string
 	inflight     *pending
@@ -148,8 +173,12 @@ func NewSession(h proto.Hello, id backend.Identity, deviceID, name string, conn 
 
 // New builds a hub.
 func New(o Options) *Hub {
-	h := &Hub{cfg: o.Config, rec: o.Recorder, stats: o.Stats, understand: o.Understand, log: o.Log, users: map[string]*user{}}
+	h := &Hub{cfg: o.Config, rec: o.Recorder, stats: o.Stats, understand: o.Understand, log: o.Log, users: map[string]*user{}, limits: map[string]*limiter{}, quit: make(chan struct{})}
 	h.recDone = sync.NewCond(&h.recMu)
+	h.recQ = make(chan recJob, h.cfg.RecordQueue)
+	for i := 0; i < h.cfg.RecordWorkers; i++ {
+		go h.recordWorker()
+	}
 	if h.understand == nil {
 		h.understand = Stage1Only
 	}
@@ -195,6 +224,10 @@ func (h *Hub) Connections() int {
 func (h *Hub) Join(s *Session) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closing {
+		return proto.ErrServerShutdown
+	}
+	h.sweepLimitsLocked(time.Now())
 	u := h.users[s.User]
 	if u == nil {
 		u = &user{name: s.User, sessions: map[string]*Session{}}
@@ -242,6 +275,7 @@ func (h *Hub) Kick(s *Session, code, message string) {
 // CloseAll ends every connection (shutdown).
 func (h *Hub) CloseAll(code, message string) {
 	h.mu.Lock()
+	h.closing = true
 	var all []*Session
 	for _, u := range h.users {
 		for _, s := range u.sessions {
@@ -256,7 +290,7 @@ func (h *Hub) CloseAll(code, message string) {
 
 func (h *Hub) removeLocked(u *user, s *Session, why string) {
 	delete(u.sessions, s.DeviceID)
-	s.listen = nil
+	h.endListenLocked(u, s, MsgListenEnded)
 	for _, p := range append(append([]*pending(nil), s.inflight), s.waiting...) {
 		if p != nil {
 			h.finishLocked(u, p, settle{state: stateFailed, message: why})
@@ -390,21 +424,57 @@ func (h *Hub) record(origin *Session, text, tool string, args map[string]any, ou
 	if rec.Args == nil {
 		rec.Args = map[string]any{}
 	}
-	token := origin.token
 	h.recMu.Lock()
 	h.recN++
 	h.recMu.Unlock()
-	go func() {
-		defer func() {
-			h.recMu.Lock()
-			h.recN--
-			h.recDone.Broadcast()
-			h.recMu.Unlock()
-		}()
-		ctx, cancel := context.WithTimeout(context.Background(), recordTimeout)
-		defer cancel()
-		if err := h.rec.Record(ctx, token, rec); err != nil {
-			h.log.Warn("history record failed", "err", err)
+	select {
+	case h.recQ <- recJob{token: origin.token, rec: rec}:
+	default:
+		h.recordDone()
+		h.log.Warn("history queue full, record dropped")
+	}
+}
+
+func (h *Hub) recordDone() {
+	h.recMu.Lock()
+	h.recN--
+	h.recDone.Broadcast()
+	h.recMu.Unlock()
+}
+
+func (h *Hub) recordWorker() {
+	for {
+		select {
+		case <-h.quit:
+			return
+		case job := <-h.recQ:
+			ctx, cancel := context.WithTimeout(context.Background(), recordTimeout)
+			if err := h.rec.Record(ctx, job.token, job.rec); err != nil {
+				h.log.Warn("history record failed", "err", err)
+			}
+			cancel()
+			h.recordDone()
 		}
-	}()
+	}
+}
+
+// Close stops the history workers. Call Wait first to let queued records go out.
+func (h *Hub) Close() { h.quitOne.Do(func() { close(h.quit) }) }
+
+func (h *Hub) limiterLocked(name string, now time.Time) *limiter {
+	l := h.limits[name]
+	if l == nil {
+		l = &limiter{sayIDs: map[string]time.Time{}}
+		h.limits[name] = l
+	}
+	l.touched = now
+	return l
+}
+
+func (h *Hub) sweepLimitsLocked(now time.Time) {
+	for name, l := range h.limits {
+		if _, online := h.users[name]; !online && now.Sub(l.touched) > limiterIdle {
+			delete(h.limits, name)
+		}
+	}
 }

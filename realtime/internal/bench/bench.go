@@ -29,7 +29,7 @@ const DefaultMaxP99 = 20 * time.Millisecond
 const (
 	warmup        = 50
 	stepTimeout   = 5 * time.Second
-	benchSecret   = "bench-token"
+	benchSecret   = "utb_bench"
 	hubListenHost = "127.0.0.1:0"
 )
 
@@ -69,7 +69,7 @@ func (r Result) Table() string {
 type fakeBackend struct{ users int }
 
 func (f fakeBackend) Check(_ context.Context, token string) (backend.Identity, error) {
-	// Tokens look like "bench-token:<user>:<device>".
+	// Tokens look like "utb_bench:<user>:<device>".
 	parts := strings.Split(token, ":")
 	if len(parts) != 3 || parts[0] != benchSecret {
 		return backend.Identity{}, backend.ErrUnauthorized
@@ -119,6 +119,8 @@ func Run(o Options) (Result, error) {
 	// The benchmark measures the server, not its limits.
 	cfg.UtterancesPerMin = o.Commands*2 + 1000
 	cfg.MaxConnsPerUser = o.Idle + 16
+	cfg.HellosPerIPPerMin = o.Idle + 4*o.Users + 100
+	cfg.MaxPreAuth = o.Idle + 4*o.Users + 100
 	store := stats.New(o.Commands + warmup*o.Users + 10)
 	hub := session.New(session.Options{Config: cfg, Stats: store})
 	srv := ws.New(cfg, hub, fakeBackend{users: o.Users}, nil)
@@ -133,6 +135,7 @@ func Run(o Options) (Result, error) {
 		defer cancel()
 		srv.Shutdown(ctx)
 		_ = httpServer.Shutdown(ctx)
+		hub.Close()
 	}()
 	addr := ln.Addr().String()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

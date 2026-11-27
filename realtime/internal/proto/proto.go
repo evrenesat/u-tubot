@@ -52,6 +52,8 @@ const (
 	ErrHelloTimeout   = "hello_timeout"
 	ErrIdleTimeout    = "idle_timeout"
 	ErrServerShutdown = "shutdown"
+	ErrSlowConsumer   = "slow_consumer"
+	ErrNotVerified    = "not_verified"
 )
 
 // Envelope reads only the type of a frame.

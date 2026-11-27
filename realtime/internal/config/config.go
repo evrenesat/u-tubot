@@ -46,6 +46,18 @@ const (
 	DefaultStatsWindow        = 1000
 	DefaultOutQueue           = 64
 	DefaultShutdownGrace      = 10 * time.Second
+	DefaultHellosPerIPPerMin  = 30
+	DefaultMaxPreAuth         = 64
+	DefaultMaxUnverified      = 10 * time.Minute
+	DefaultFocusMaxAge        = 15 * time.Second
+	DefaultDedupeWindow       = 2 * time.Minute
+	DefaultRecordQueue        = 256
+	DefaultRecordWorkers      = 2
+	DefaultProxyHeader        = "X-Forwarded-For"
+	// DefaultMaxTokenChars bounds a token before it is looked at: real ones are 47 characters.
+	DefaultMaxTokenChars = 128
+	// TokenPrefix is the shape of a device token (ai-backend auth.py); anything else is refused without asking the backend.
+	TokenPrefix = "utb_"
 )
 
 // Config is the whole configuration.
@@ -80,6 +92,16 @@ type Config struct {
 	StatsWindow   int
 	OutQueue      int
 	ShutdownGrace time.Duration
+
+	// Protection of the backend's sign-in budget: the token check is the only unauthenticated path to it.
+	HellosPerIPPerMin int
+	MaxPreAuth        int
+	MaxUnverified     time.Duration
+	ProxyHeader       string
+	FocusMaxAge       time.Duration
+	DedupeWindow      time.Duration
+	RecordQueue       int
+	RecordWorkers     int
 }
 
 // Default returns the plan's values.
@@ -109,6 +131,14 @@ func Default() Config {
 		StatsWindow:        DefaultStatsWindow,
 		OutQueue:           DefaultOutQueue,
 		ShutdownGrace:      DefaultShutdownGrace,
+		HellosPerIPPerMin:  DefaultHellosPerIPPerMin,
+		MaxPreAuth:         DefaultMaxPreAuth,
+		MaxUnverified:      DefaultMaxUnverified,
+		ProxyHeader:        DefaultProxyHeader,
+		FocusMaxAge:        DefaultFocusMaxAge,
+		DedupeWindow:       DefaultDedupeWindow,
+		RecordQueue:        DefaultRecordQueue,
+		RecordWorkers:      DefaultRecordWorkers,
 	}
 }
 
@@ -154,7 +184,8 @@ func (c *Config) Validate() error {
 	positive := map[string]int{
 		"max_waiting": c.MaxWaiting, "max_connections_per_user": c.MaxConnsPerUser, "utterances_per_minute": c.UtterancesPerMin,
 		"audio_seconds_per_day": c.AudioSecondsPerDay, "max_frame_bytes": c.MaxFrameBytes, "max_utterance_bytes": c.MaxUtteranceBytes,
-		"max_utterance_seconds": c.MaxUtteranceSecs, "stats_window": c.StatsWindow, "out_queue": c.OutQueue, "max_text_chars": c.MaxTextChars,
+		"max_utterance_seconds": c.MaxUtteranceSecs, "hellos_per_ip_per_minute": c.HellosPerIPPerMin, "max_preauth_sockets": c.MaxPreAuth,
+		"record_queue": c.RecordQueue, "record_workers": c.RecordWorkers, "stats_window": c.StatsWindow, "out_queue": c.OutQueue, "max_text_chars": c.MaxTextChars,
 	}
 	for name, v := range positive {
 		if v <= 0 {
@@ -209,6 +240,7 @@ func apply(cfg *Config, doc map[string]map[string]any) error {
 	str(&cfg.Listen, "server", "listen")
 	str(&cfg.Path, "server", "path")
 	str(&cfg.BackendURL, "server", "backend_url")
+	str(&cfg.ProxyHeader, "server", "proxy_header")
 	if v, ok := doc["server"]["origins"]; ok {
 		list, isList := v.([]string)
 		if !isList {
@@ -227,6 +259,9 @@ func apply(cfg *Config, doc map[string]map[string]any) error {
 	dur(&cfg.ConfirmWindow, "timing", "confirm_window")
 	dur(&cfg.AskWindow, "timing", "ask_window")
 	dur(&cfg.RecentFocus, "timing", "recent_focus")
+	dur(&cfg.MaxUnverified, "timing", "max_unverified")
+	dur(&cfg.FocusMaxAge, "timing", "focus_max_age")
+	dur(&cfg.DedupeWindow, "timing", "dedupe_window")
 	num(&cfg.MaxWaiting, "limits", "max_waiting")
 	num(&cfg.MaxConnsPerUser, "limits", "max_connections_per_user")
 	num(&cfg.UtterancesPerMin, "limits", "utterances_per_minute")
@@ -236,6 +271,10 @@ func apply(cfg *Config, doc map[string]map[string]any) error {
 	num(&cfg.MaxUtteranceSecs, "limits", "max_utterance_seconds")
 	num(&cfg.MaxTextChars, "limits", "max_text_chars")
 	num(&cfg.StatsWindow, "limits", "stats_window")
+	num(&cfg.HellosPerIPPerMin, "limits", "hellos_per_ip_per_minute")
+	num(&cfg.MaxPreAuth, "limits", "max_preauth_sockets")
+	num(&cfg.RecordQueue, "limits", "record_queue")
+	num(&cfg.RecordWorkers, "limits", "record_workers")
 	return firstErr
 }
 

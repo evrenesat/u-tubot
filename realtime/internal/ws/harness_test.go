@@ -28,6 +28,7 @@ type fakePython struct {
 	records []fakeRecord
 	down    bool
 	meCalls int
+	headers []string
 }
 
 type fakeMe struct {
@@ -57,6 +58,7 @@ func (f *fakePython) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/v1/me":
 		f.meCalls++
+		f.headers = append(f.headers, r.Header.Get("X-Utubot-Client"))
 		body := map[string]any{"user": me.user, "features": map[string]any{"voice": me.voiceFeature}}
 		if me.voiceFeature {
 			body["device"] = map[string]any{"id": me.device, "name": me.name}
@@ -128,6 +130,7 @@ func newEnv(t *testing.T, tune func(*config.Config), understand session.Understa
 		ctx, cancel := context.WithTimeout(context.Background(), waitFor)
 		defer cancel()
 		srv.Shutdown(ctx)
+		hub.Close()
 		httpSrv.Close()
 		pySrv.Close()
 	})

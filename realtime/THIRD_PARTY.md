@@ -16,7 +16,7 @@ The MIT notice of R2T4 applies to that origin:
 > rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to
 > whom the Software is furnished to do so, subject to the conditions of the MIT licence as in the repository's `LICENSE`.
 
-## github.com/coder/websocket v1.8.12 (ISC)
+## github.com/coder/websocket v1.8.15 (ISC)
 
 The one dependency besides the standard library: the WebSocket server and client (`internal/ws`, tests and the benchmark). Pinned in
 `go.mod` and `go.sum`; no cgo.

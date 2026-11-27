@@ -1,5 +1,5 @@
 module github.com/evrenesat/u-tubot/realtime
 
-go 1.22
+go 1.27
 
-require github.com/coder/websocket v1.8.12
+require github.com/coder/websocket v1.8.15

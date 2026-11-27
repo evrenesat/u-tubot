@@ -16,12 +16,12 @@ import (
 
 func twoDevices(t *testing.T, e *env) (screen, phone *tc) {
 	t.Helper()
-	e.py.add("tv-token", "owner", "dev-tv", "Living room TV")
-	e.py.add("phone-token", "owner", "dev-phone", "Phone")
-	screen = e.screen("tv-token", "")
+	e.py.add("utb_tv-token", "owner", "dev-tv", "Living room TV")
+	e.py.add("utb_phone-token", "owner", "dev-phone", "Phone")
+	screen = e.screen("utb_tv-token", "")
 	screen.send(playing(1, "v1", true))
 	screen.sync()
-	phone = e.controller("phone-token", "")
+	phone = e.controller("utb_phone-token", "")
 	return
 }
 
@@ -33,21 +33,21 @@ func (d *tc) ack(id, state string) {
 
 func TestHelloRefusals(t *testing.T) {
 	e := newEnv(t, nil, nil)
-	e.py.add("good", "owner", "d1", "TV")
-	e.py.tokens["off"] = fakeMe{user: "owner", device: "d2", name: "TV 2", voiceFeature: true, on: false}
-	e.py.tokens["novoice"] = fakeMe{user: "owner", device: "d3", name: "TV 3"}
+	e.py.add("utb_good", "owner", "d1", "TV")
+	e.py.tokens["utb_off"] = fakeMe{user: "owner", device: "d2", name: "TV 2", voiceFeature: true, on: false}
+	e.py.tokens["utb_novoice"] = fakeMe{user: "owner", device: "d3", name: "TV 3"}
 
 	cases := []struct {
 		name  string
 		hello map[string]any
 		code  string
 	}{
-		{"unknown token", map[string]any{"t": "hello", "v": 1, "token": "nope", "roles": []string{"screen"}}, "unauthorized"},
+		{"unknown token", map[string]any{"t": "hello", "v": 1, "token": "utb_nope", "roles": []string{"screen"}}, "unauthorized"},
 		{"no token", map[string]any{"t": "hello", "v": 1, "roles": []string{"screen"}}, "unauthorized"},
-		{"device has not switched voice on", map[string]any{"t": "hello", "v": 1, "token": "off", "roles": []string{"screen"}}, "voice_off"},
-		{"server has voice off", map[string]any{"t": "hello", "v": 1, "token": "novoice", "roles": []string{"screen"}}, "voice_off"},
-		{"wrong version", map[string]any{"t": "hello", "v": 2, "token": "good", "roles": []string{"screen"}}, "unsupported_version"},
-		{"no roles", map[string]any{"t": "hello", "v": 1, "token": "good", "roles": []string{"toaster"}}, "bad_hello"},
+		{"device has not switched voice on", map[string]any{"t": "hello", "v": 1, "token": "utb_off", "roles": []string{"screen"}}, "voice_off"},
+		{"server has voice off", map[string]any{"t": "hello", "v": 1, "token": "utb_novoice", "roles": []string{"screen"}}, "voice_off"},
+		{"wrong version", map[string]any{"t": "hello", "v": 2, "token": "utb_good", "roles": []string{"screen"}}, "unsupported_version"},
+		{"no roles", map[string]any{"t": "hello", "v": 1, "token": "utb_good", "roles": []string{"toaster"}}, "bad_hello"},
 		{"first frame is not hello", map[string]any{"t": "focus"}, "bad_hello"},
 	}
 	for _, c := range cases {
@@ -68,12 +68,12 @@ func TestHelloTimeoutAndBackendDown(t *testing.T) {
 	if got := silent.closedWith(); got != "hello_timeout" {
 		t.Fatalf("code %q", got)
 	}
-	e.py.add("good", "owner", "d1", "TV")
+	e.py.add("utb_good", "owner", "d1", "TV")
 	e.py.mu.Lock()
 	e.py.down = true
 	e.py.mu.Unlock()
 	d, _ := e.rawDial(nil)
-	d.send(map[string]any{"t": "hello", "v": 1, "token": "good", "roles": []string{"screen"}})
+	d.send(map[string]any{"t": "hello", "v": 1, "token": "utb_good", "roles": []string{"screen"}})
 	if got := d.closedWith(); got != "backend_unavailable" {
 		t.Fatalf("code %q", got)
 	}
@@ -83,7 +83,7 @@ func TestWelcomeCarriesConsentPeersAndClock(t *testing.T) {
 	e := newEnv(t, nil, nil)
 	_, phone := twoDevices(t, e)
 	_ = phone
-	d, w := e.connect("phone-token", helloOpts{roles: []string{"controller"}, name: "Phone 2"})
+	d, w := e.connect("utb_phone-token", helloOpts{roles: []string{"controller"}, name: "Phone 2"})
 	_ = d
 	if w["user"] != "owner" || w["device_id"] != "dev-phone" {
 		t.Fatalf("welcome %v", w)
@@ -139,7 +139,7 @@ func TestScriptedControllerPausesScriptedScreen(t *testing.T) {
 	// The history record is filed with the speaker's own token, after the command ended, with the marks and no audio.
 	e.hub.Wait()
 	records := e.py.recordsSnapshot()
-	if len(records) != 1 || records[0].token != "phone-token" {
+	if len(records) != 1 || records[0].token != "utb_phone-token" {
 		t.Fatalf("records %v", records)
 	}
 	body := records[0].body
@@ -199,8 +199,8 @@ func TestUnknownPhraseAndNoVideo(t *testing.T) {
 
 func TestOfflineScreen(t *testing.T) {
 	e := newEnv(t, nil, nil)
-	e.py.add("phone-token", "owner", "dev-phone", "Phone")
-	phone := e.controller("phone-token", "")
+	e.py.add("utb_phone-token", "owner", "dev-phone", "Phone")
+	phone := e.controller("utb_phone-token", "")
 	phone.send(map[string]any{"t": "say", "id": "o1", "text": "pause"})
 	reply := phone.expect("reply")
 	out := phone.outcome("o1")
@@ -307,14 +307,14 @@ func TestReconnectNeverReplaysACommand(t *testing.T) {
 	if out := phone.outcome("r1"); out["state"] != "failed" || out["message"] != "The TV disconnected" {
 		t.Fatalf("%v", out)
 	}
-	again := e.screen("tv-token", "")
+	again := e.screen("utb_tv-token", "")
 	again.none(ofType("command"), 150*time.Millisecond)
 }
 
 func TestSecondSocketOfADeviceReplacesTheFirst(t *testing.T) {
 	e := newEnv(t, nil, nil)
 	first, _ := twoDevices(t, e)
-	second := e.screen("tv-token", "")
+	second := e.screen("utb_tv-token", "")
 	if code := first.closedWith(); code != "replaced" {
 		t.Fatalf("code %q", code)
 	}
@@ -329,10 +329,10 @@ func TestSecondSocketOfADeviceReplacesTheFirst(t *testing.T) {
 func TestEveryDeviceOfTheUserSeesHeardOutcomeAndReply(t *testing.T) {
 	e := newEnv(t, nil, nil)
 	screen, phone := twoDevices(t, e)
-	e.py.add("tablet-token", "owner", "dev-tablet", "Tablet")
-	tablet := e.controller("tablet-token", "")
-	e.py.add("other-token", "stranger", "dev-x", "Other TV")
-	stranger := e.screen("other-token", "")
+	e.py.add("utb_tablet-token", "owner", "dev-tablet", "Tablet")
+	tablet := e.controller("utb_tablet-token", "")
+	e.py.add("utb_other-token", "stranger", "dev-x", "Other TV")
+	stranger := e.screen("utb_other-token", "")
 
 	phone.send(map[string]any{"t": "say", "id": "a1", "text": "pause"})
 	cmd := screen.expect("command")
@@ -404,15 +404,15 @@ type twoScreens struct {
 
 func twoScreenSetup(t *testing.T, e *env, livingPlaying, bedroomPlaying bool) twoScreens {
 	t.Helper()
-	e.py.add("living", "owner", "dev-living", "Living room")
-	e.py.add("bedroom", "owner", "dev-bedroom", "Bedroom")
-	e.py.add("phone-token", "owner", "dev-phone", "Phone")
-	s := twoScreens{living: e.screen("living", ""), bedroom: e.screen("bedroom", "")}
+	e.py.add("utb_living", "owner", "dev-living", "Living room")
+	e.py.add("utb_bedroom", "owner", "dev-bedroom", "Bedroom")
+	e.py.add("utb_phone-token", "owner", "dev-phone", "Phone")
+	s := twoScreens{living: e.screen("utb_living", ""), bedroom: e.screen("utb_bedroom", "")}
 	s.living.send(playing(1, "v1", livingPlaying))
 	s.bedroom.send(playing(1, "v2", bedroomPlaying))
 	s.living.sync()
 	s.bedroom.sync()
-	s.phone = e.controller("phone-token", "")
+	s.phone = e.controller("utb_phone-token", "")
 	return s
 }
 
@@ -489,8 +489,8 @@ func TestAPinnedTargetAndToolLists(t *testing.T) {
 	}
 
 	// A screen only receives tools it listed in hello.
-	e.py.add("kiosk", "owner", "dev-kiosk", "Kiosk")
-	kiosk, _ := e.connect("kiosk", helloOpts{roles: []string{"screen"}, tools: []string{"play"}, name: "Kiosk"})
+	e.py.add("utb_kiosk", "owner", "dev-kiosk", "Kiosk")
+	kiosk, _ := e.connect("utb_kiosk", helloOpts{roles: []string{"screen"}, tools: []string{"play"}, name: "Kiosk"})
 	kiosk.send(playing(1, "v3", false))
 	kiosk.sync()
 	s.phone.send(map[string]any{"t": "say", "id": "p3", "text": "pause", "target": "dev-kiosk"})
@@ -571,18 +571,18 @@ func TestANoAnswerGoesToTheScreen(t *testing.T) {
 
 func TestConnectionLimitPerUser(t *testing.T) {
 	e := newEnv(t, func(c *config.Config) { c.MaxConnsPerUser = 2 }, nil)
-	e.py.add("a", "owner", "da", "A")
-	e.py.add("b", "owner", "db", "B")
-	e.py.add("c", "owner", "dc", "C")
-	e.py.add("z", "someone", "dz", "Z")
-	e.controller("a", "")
-	e.controller("b", "")
+	e.py.add("utb_a", "owner", "da", "A")
+	e.py.add("utb_b", "owner", "db", "B")
+	e.py.add("utb_c", "owner", "dc", "C")
+	e.py.add("utb_z", "someone", "dz", "Z")
+	e.controller("utb_a", "")
+	e.controller("utb_b", "")
 	d, _ := e.rawDial(nil)
-	d.send(map[string]any{"t": "hello", "v": 1, "token": "c", "roles": []string{"controller"}})
+	d.send(map[string]any{"t": "hello", "v": 1, "token": "utb_c", "roles": []string{"controller"}})
 	if got := d.closedWith(); got != "too_many" {
 		t.Fatalf("code %q", got)
 	}
-	e.controller("z", "") // another user is not affected
+	e.controller("utb_z", "") // another user is not affected
 }
 
 func TestUtteranceRateLimit(t *testing.T) {
@@ -681,7 +681,7 @@ func TestLongTextIsRefused(t *testing.T) {
 func TestARevokedDeviceIsOutWithinTheCacheWindow(t *testing.T) {
 	e := newEnv(t, func(c *config.Config) { c.AuthCache = 200 * time.Millisecond }, nil)
 	_, phone := twoDevices(t, e)
-	e.py.edit("phone-token", func(m *fakeMe) { m.revoked = true })
+	e.py.edit("utb_phone-token", func(m *fakeMe) { m.revoked = true })
 	if code := phone.closedWith(); code != "revoked" {
 		t.Fatalf("code %q", code)
 	}
@@ -690,7 +690,7 @@ func TestARevokedDeviceIsOutWithinTheCacheWindow(t *testing.T) {
 func TestSwitchingVoiceOffEndsTheSocket(t *testing.T) {
 	e := newEnv(t, func(c *config.Config) { c.AuthCache = 200 * time.Millisecond }, nil)
 	screen, _ := twoDevices(t, e)
-	e.py.edit("tv-token", func(m *fakeMe) { m.on = false })
+	e.py.edit("utb_tv-token", func(m *fakeMe) { m.on = false })
 	if code := screen.closedWith(); code != "voice_off" {
 		t.Fatalf("code %q", code)
 	}
@@ -713,9 +713,9 @@ func TestAnUnreachableBackendKeepsTheSockets(t *testing.T) {
 
 func TestTheTokenCheckIsCached(t *testing.T) {
 	e := newEnv(t, nil, nil)
-	e.py.add("t", "owner", "d", "TV")
+	e.py.add("utb_t", "owner", "d", "TV")
 	for i := 0; i < 5; i++ {
-		e.screen("t", "")
+		e.screen("utb_t", "")
 	}
 	e.py.mu.Lock()
 	calls := e.py.meCalls
@@ -743,8 +743,8 @@ func TestPingAnswersAndSilentSocketsAreDropped(t *testing.T) {
 		c.IdleTimeout = 300 * time.Millisecond
 		c.PingInterval = 100 * time.Millisecond
 	}, nil)
-	e.py.add("t", "owner", "d", "TV")
-	d, _ := e.connect("t", helloOpts{roles: []string{"screen"}})
+	e.py.add("utb_t", "owner", "d", "TV")
+	d, _ := e.connect("utb_t", helloOpts{roles: []string{"screen"}})
 	d.send(map[string]any{"t": "ping", "ts": 42})
 	if p := d.expect("pong"); p["ts"].(float64) != 42 {
 		t.Fatal(p)
@@ -806,7 +806,7 @@ func TestStatsRoute(t *testing.T) {
 	resp, _ := http.Get(e.http.URL + e.cfg.Path + "/v1/health")
 	hb, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(hb), `"ok":true`) || !strings.Contains(string(hb), `"connections":2`) {
+	if !strings.Contains(string(hb), `"ok":true`) || strings.Contains(string(hb), "connections") {
 		t.Fatalf("health %s", hb)
 	}
 }

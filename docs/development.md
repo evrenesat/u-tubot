@@ -188,7 +188,7 @@ replay the same defaults.
 
 `realtime/` is a Go module (no cgo, one dependency). `cd realtime && go vet ./... && go test -race -count=1 ./...` runs the unit and socket tests
 (a fake Python backend, scripted screens and controllers, no model, no microphone, no YouTube); `go run ./cmd/utubot-rt bench` runs the loopback
-benchmark and prints the server's own time per hop. Any Go 1.22 or newer works locally; CI pins the version in `utubot-ci.yml`. Deployment is the
+benchmark and prints the server's own time per hop. Go 1.27 or newer is needed locally; CI pins the version in `utubot-ci.yml`. Deployment is the
 owner's pipeline (`realtime/config.example.toml` shows the settings).
 
 ### Extension build and tests
@@ -365,7 +365,7 @@ deployment can wait for the green commit). A first job lists the changed files t
 
 - the **backend** job (installs `ffmpeg`, then `uv sync --frozen`, `ruff check`, `ruff format --check`, `pytest -q`) runs when `ai-backend/`, `ai/`, `docs/`
   or `scripts/utubot_release.py` changed;
-- the **realtime** job (Go 1.22.12 from `actions/setup-go`: `gofmt -l`, `go vet`, `go test -race`, then the loopback benchmark that fails when the live
+- the **realtime** job (Go 1.27.4 from `actions/setup-go`: `gofmt -l`, `go vet`, `go test -race`, then the loopback benchmark that fails when the live
   server's own time is over 20 ms at the 99th percentile) runs when `realtime/` or the pipeline changed; a change under `realtime/` does not start the
   app job or a release;
 - the **app** job (`:common:testStutubotDebugUnitTest` and a compile of the TV module, with the pinned sibling checkouts, JDK 25

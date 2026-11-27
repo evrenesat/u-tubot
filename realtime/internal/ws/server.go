@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -29,6 +30,8 @@ const (
 	maxNameRunes   = 64
 	maxClientRunes = 32
 	randomIDBytes  = 6
+	// maxTrackedAddresses bounds the per-address limiter's memory.
+	maxTrackedAddresses = 10000
 )
 
 // Server is the HTTP side of the live server.
@@ -40,8 +43,10 @@ type Server struct {
 
 	mu       sync.Mutex
 	active   int
+	preAuth  int
 	stopping bool
 	drained  chan struct{}
+	upgrades map[string][]time.Time
 }
 
 // New builds the server around a hub and a token checker.
@@ -49,7 +54,7 @@ func New(cfg config.Config, hub *session.Hub, checker backend.Checker, log *slog
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{cfg: cfg, hub: hub, checker: checker, log: log, drained: make(chan struct{})}
+	return &Server{cfg: cfg, hub: hub, checker: checker, log: log, drained: make(chan struct{}), upgrades: map[string][]time.Time{}}
 }
 
 // Handler returns the routes under the configured path (default /rt).
@@ -74,6 +79,67 @@ func (s *Server) Shutdown(ctx context.Context) {
 	case <-s.drained:
 	case <-ctx.Done():
 	}
+}
+
+// clientIP is the address a limit is counted against: the last entry of the proxy header (the one the proxy itself saw),
+// else the socket's address.
+func (s *Server) clientIP(r *http.Request) string {
+	if s.cfg.ProxyHeader != "" {
+		if v := r.Header.Get(s.cfg.ProxyHeader); v != "" {
+			parts := strings.Split(v, ",")
+			if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
+				return ip
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// allowUpgrade limits upgrade attempts per client address; every one that carries a well-formed token costs the
+// backend a sign-in check, and the backend counts those against one shared bucket.
+func (s *Server) allowUpgrade(ip string, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := now.Add(-time.Minute)
+	kept := s.upgrades[ip][:0]
+	for _, t := range s.upgrades[ip] {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= s.cfg.HellosPerIPPerMin {
+		s.upgrades[ip] = kept
+		return false
+	}
+	s.upgrades[ip] = append(kept, now)
+	if len(s.upgrades) > maxTrackedAddresses {
+		for k, v := range s.upgrades {
+			if len(v) == 0 || !v[len(v)-1].After(cutoff) {
+				delete(s.upgrades, k)
+			}
+		}
+	}
+	return true
+}
+
+func (s *Server) enterPreAuth() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.preAuth >= s.cfg.MaxPreAuth {
+		return false
+	}
+	s.preAuth++
+	return true
+}
+
+func (s *Server) leavePreAuth() {
+	s.mu.Lock()
+	s.preAuth--
+	s.mu.Unlock()
 }
 
 func (s *Server) enter() bool {
@@ -103,7 +169,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func (s *Server) serveHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "connections": s.hub.Connections()})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) serveStats(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +278,20 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.exit()
+	if !s.allowUpgrade(s.clientIP(r), time.Now()) {
+		http.Error(w, "too many connection attempts", http.StatusTooManyRequests)
+		return
+	}
+	if !s.enterPreAuth() {
+		http.Error(w, "busy", http.StatusServiceUnavailable)
+		return
+	}
+	authed := false
+	defer func() {
+		if !authed {
+			s.leavePreAuth()
+		}
+	}()
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.cfg.Origins})
 	if err != nil {
 		return
@@ -232,6 +312,8 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	authed = true
+	s.leavePreAuth()
 	defer s.hub.Leave(sess)
 	recheckCtx, stopRecheck := context.WithCancel(ctx)
 	defer stopRecheck()
@@ -260,7 +342,8 @@ func (s *Server) hello(ctx context.Context, ws *websocket.Conn, c *conn) (*sessi
 	if h.V != proto.TProtocol {
 		return nil, proto.ErrVersion
 	}
-	if h.Token == "" {
+	// A token that cannot be one is refused here: the backend is only asked about plausible ones.
+	if !strings.HasPrefix(h.Token, config.TokenPrefix) || len(h.Token) > config.DefaultMaxTokenChars {
 		return nil, proto.ErrUnauthorized
 	}
 	roles := h.Roles[:0:0]
@@ -340,10 +423,12 @@ func (s *Server) readLoop(ctx context.Context, ws *websocket.Conn, c *conn, sess
 }
 
 // recheck asks the backend again twice per cache window, so a revoked device or a switched-off voice setting is
-// out within one window. An unreachable backend keeps the socket (player tools still work).
+// out within one window. An unreachable (or rate-limiting) backend keeps the socket, because player tools still
+// work, but not forever: a device that could not be verified for max_unverified is closed.
 func (s *Server) recheck(ctx context.Context, sess *session.Session) {
 	t := time.NewTicker(s.cfg.AuthCache / 2)
 	defer t.Stop()
+	lastOK := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -360,6 +445,13 @@ func (s *Server) recheck(ctx context.Context, sess *session.Session) {
 		case errors.Is(err, backend.ErrVoiceOff):
 			s.hub.Kick(sess, proto.ErrVoiceOff, "voice was switched off for this device")
 			return
+		case err != nil:
+			if time.Since(lastOK) > s.cfg.MaxUnverified {
+				s.hub.Kick(sess, proto.ErrNotVerified, "this device could not be verified")
+				return
+			}
+		default:
+			lastOK = time.Now()
 		}
 	}
 }

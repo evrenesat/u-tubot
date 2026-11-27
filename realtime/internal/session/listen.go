@@ -12,6 +12,7 @@ type listenState struct {
 	started time.Time
 	bytes   int
 	pin     string
+	timer   *time.Timer
 }
 
 func (h *Hub) handleListen(s *Session, m proto.Listen) {
@@ -36,19 +37,11 @@ func (h *Hub) handleListen(s *Session, m proto.Listen) {
 			h.errorLocked(s, proto.ErrNoListen, "no utterance is open")
 			return
 		}
-		s.listen = nil
-		secs := now.Sub(l.started).Seconds()
-		if secs > float64(h.cfg.MaxUtteranceSecs) {
-			h.failListenLocked(u, l, MsgTooLong)
-			return
-		}
-		h.addAudioLocked(u, secs, now)
-		// Checkpoint 2 has no speech engine: the audio is dropped here, never stored, and the user is told so.
-		h.failListenLocked(u, l, MsgNoSpeech)
+		// Checkpoint 2 has no speech engine: the audio is dropped, never stored, and the user is told so.
+		h.finishListenLocked(u, s, MsgNoSpeech)
 	case proto.ListenCancel:
 		if l := s.listen; l != nil && l.id == id {
-			s.listen = nil
-			h.sendAllLocked(u, proto.New(proto.THeard).With("id", l.id).With("state", proto.HeardFailed).With("message", MsgCancelled))
+			h.finishListenLocked(u, s, MsgCancelled)
 		}
 	}
 }
@@ -57,27 +50,67 @@ func (h *Hub) startListenLocked(u *user, s *Session, id string, m proto.Listen, 
 	if id == "" {
 		id = h.newID("l")
 	}
-	if l := s.listen; l != nil && now.Sub(l.started) < time.Duration(h.cfg.MaxUtteranceSecs)*time.Second {
+	if s.listen != nil {
 		h.errorLocked(s, proto.ErrBusy, "one utterance at a time")
 		return
 	}
-	if h.audioTodayLocked(u, now) >= float64(h.cfg.AudioSecondsPerDay) {
+	lim := h.limiterLocked(u.name, now)
+	if h.audioTodayLocked(lim, now) >= float64(h.cfg.AudioSecondsPerDay) {
 		h.errorLocked(s, proto.ErrDailyAudio, MsgDailyAudio)
 		h.sendAllLocked(u, proto.New(proto.THeard).With("id", id).With("state", proto.HeardFailed).With("message", MsgDailyAudio))
 		return
 	}
-	if !h.allowUtteranceLocked(u, now) {
+	if !h.allowUtteranceLocked(u.name, now) {
 		h.errorLocked(s, proto.ErrRateLimited, MsgRateLimited)
 		h.sendAllLocked(u, proto.New(proto.THeard).With("id", id).With("state", proto.HeardFailed).With("message", MsgRateLimited))
 		return
 	}
-	s.listen = &listenState{id: id, format: m.Format, started: now, pin: m.Target}
+	l := &listenState{id: id, format: m.Format, started: now, pin: m.Target}
+	// A recording that is never ended must not hold the microphone indicator or the day's budget: it ends itself.
+	l.timer = time.AfterFunc(time.Duration(h.cfg.MaxUtteranceSecs)*time.Second, func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if uu := h.users[s.User]; uu != nil && s.listen == l {
+			h.errorLocked(s, proto.ErrTooLong, MsgTooLong)
+			h.finishListenLocked(uu, s, MsgTooLong)
+		}
+	})
+	s.listen = l
 	h.sendAllLocked(u, proto.New(proto.THeard).With("id", id).With("state", proto.HeardListening))
 }
 
-func (h *Hub) failListenLocked(u *user, l *listenState, message string) {
+// endListenLocked closes an open utterance on every exit path: the elapsed time (at most the utterance limit) is
+// charged to the day's budget and the user's devices are told it failed, so no screen keeps a microphone indicator on.
+func (h *Hub) endListenLocked(u *user, s *Session, message string) {
+	l := s.listen
+	if l == nil {
+		return
+	}
+	s.listen = nil
+	if l.timer != nil {
+		l.timer.Stop()
+	}
+	now := time.Now()
+	secs := now.Sub(l.started).Seconds()
+	if max := float64(h.cfg.MaxUtteranceSecs); secs > max {
+		secs = max
+	}
+	lim := h.limiterLocked(u.name, now)
+	h.audioTodayLocked(lim, now)
+	lim.audioSecs += secs
 	h.sendAllLocked(u, proto.New(proto.THeard).With("id", l.id).With("state", proto.HeardFailed).With("message", message))
-	h.sendAllLocked(u, proto.New(proto.TReply).With("id", l.id).With("text", message).With("more", false).With("speak", false))
+}
+
+// finishListenLocked is endListenLocked plus a reply the user can read.
+func (h *Hub) finishListenLocked(u *user, s *Session, message string) {
+	l := s.listen
+	if l == nil {
+		return
+	}
+	h.endListenLocked(u, s, message)
+	if message != MsgCancelled {
+		h.sendAllLocked(u, proto.New(proto.TReply).With("id", l.id).With("text", message).With("more", false).With("speak", false))
+	}
 }
 
 // HandleBinary takes an audio frame of the open utterance. The bytes are counted and dropped: this checkpoint has
@@ -96,22 +129,16 @@ func (h *Hub) HandleBinary(s *Session, data []byte) {
 	}
 	l.bytes += len(data)
 	if l.bytes > h.cfg.MaxUtteranceBytes {
-		s.listen = nil
 		h.errorLocked(s, proto.ErrTooLong, MsgTooLong)
-		h.failListenLocked(u, l, MsgTooLong)
+		h.finishListenLocked(u, s, MsgTooLong)
 	}
 }
 
 func dayKey(t time.Time) string { return t.UTC().Format("2006-01-02") }
 
-func (h *Hub) audioTodayLocked(u *user, now time.Time) float64 {
-	if u.audioDay != dayKey(now) {
-		u.audioDay, u.audioSecs = dayKey(now), 0
+func (h *Hub) audioTodayLocked(l *limiter, now time.Time) float64 {
+	if l.audioDay != dayKey(now) {
+		l.audioDay, l.audioSecs = dayKey(now), 0
 	}
-	return u.audioSecs
-}
-
-func (h *Hub) addAudioLocked(u *user, secs float64, now time.Time) {
-	h.audioTodayLocked(u, now)
-	u.audioSecs += secs
+	return l.audioSecs
 }

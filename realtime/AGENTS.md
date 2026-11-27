@@ -1,6 +1,6 @@
 # realtime/ agent guidance
 
-`utubot-rt`: the live server of voice control (`ai/VOICE_CONTROL_PLAN.md`, sections 2.1 to 2.5). Go, standard library plus
+`utubot-rt`: the live server of voice control (`ai/VOICE_CONTROL_PLAN.md`, sections 2.1 to 2.5). Go (1.27), standard library plus
 `github.com/coder/websocket`. Read the plan, `ai/CONTRACT.md` ("Live server") and `DEVLOG.md` first.
 
 - Layout: `cmd/utubot-rt` (serve, bench), `internal/{config,backend,proto,intent,session,ws,stats,bench}`. `session` holds all state behind one

@@ -24,6 +24,11 @@ var (
 
 const maxMeBytes = 1 << 20
 
+// ClientHeader names this service to the backend, so its sign-in checks can be rate limited apart from the users'
+// own addresses (ai/CONTRACT.md, "Live server").
+const ClientHeader = "X-Utubot-Client"
+const ClientName = "realtime"
+
 // Identity is what the live server keeps of a token's owner.
 type Identity struct {
 	User          string
@@ -99,8 +104,8 @@ func New(base string, timeout, cacheTTL time.Duration) *Client {
 }
 
 // Check returns the identity behind a token, from the cache when it is younger than the cache window.
-// Refusals (unauthorized, voice off) are cached too; an unreachable backend is not, and an older good answer
-// is kept in use while the backend is unreachable.
+// Refusals (unauthorized, voice off) are cached too. An unreachable or rate-limited backend is an error and is not
+// cached: the caller decides how long an unverified device may stay (the server closes it after max_unverified).
 func (c *Client) Check(ctx context.Context, token string) (Identity, error) {
 	key := sha256.Sum256([]byte(token))
 	c.mu.Lock()
@@ -111,9 +116,6 @@ func (c *Client) Check(ctx context.Context, token string) (Identity, error) {
 	}
 	id, err := c.fetch(ctx, token)
 	if errors.Is(err, ErrUnavailable) {
-		if ok && hit.err == nil {
-			return hit.id, nil
-		}
 		return Identity{}, err
 	}
 	c.mu.Lock()
@@ -133,6 +135,7 @@ func (c *Client) fetch(ctx context.Context, token string) (Identity, error) {
 		return Identity{}, ErrUnavailable
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set(ClientHeader, ClientName)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return Identity{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
@@ -174,6 +177,7 @@ func (c *Client) Record(ctx context.Context, token string, rec Record) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(ClientHeader, ClientName)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
