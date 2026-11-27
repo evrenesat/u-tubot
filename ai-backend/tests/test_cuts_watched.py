@@ -119,7 +119,9 @@ class TestWatchedBuild:
         )
         assert vision_rows, "the watched vision calls should record feature_calls rows"
         assert vision_rows[0]["alias"] == "visionmodel"
-        cut_rows = watched_env.svc.db.all("SELECT feature, alias FROM feature_calls WHERE feature=?", ["cuts"])
+        cut_rows = watched_env.svc.db.all(
+            "SELECT feature, alias FROM feature_calls WHERE feature=?", ["cuts"]
+        )
         assert cut_rows, "the watched text cut should record a feature_calls row"
         assert cut_rows[0]["alias"] == "cutmodel"
 

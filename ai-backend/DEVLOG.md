@@ -1,3 +1,9 @@
+## 2026-11-27 (cut model calls recorded in feature_calls, issue #256)
+
+- Cause: a cut model call is recorded under `task.feature`, and `FeatureStore.record` skips the row when the feature is `None` (feature.py). The feature is attached to a task only as a side effect of config validation (`LLMConfig._tag_features`, config.py); a task built directly (the test fixtures, or any path that bypasses full config loading) carries no feature, so quick and watched cut model calls recorded nothing in `feature_calls`.
+- Fix: pin the feature at each cut call site so it is always set — `cuts.py` quick cut and `watch/service.py` (the watched text cut, both rounds) use `task.feature or "cuts"`, and `watch/describe.py` uses `task.feature or "cuts_vision"`. When the task is already tagged (the loaded config) the value is unchanged.
+- Tests: `test_quick_cut_build_records_its_feature_call` (tests/test_cuts_api.py) and `test_watched_build_records_its_feature_calls` (tests/test_cuts_watched.py) build a quick and a watched cut and assert the `feature_calls` row carries the right `feature` and `alias`; both fail on the previous code (no row).
+
 ## 2026-11-27 (tests never reach YouTube: refusals are recorded and fail the test, issue #35)
 
 - The no-YouTube guard in `tests/conftest.py` already refused yt-dlp, httpx and DNS lookups, but a refusal the code under test caught
