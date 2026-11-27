@@ -11,17 +11,23 @@ import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
 
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 
 import com.liskovsoft.sharedutils.helpers.MessageHelpers;
+import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+import com.liskovsoft.smartyoutubetv2.common.app.models.data.VideoGroup;
 import com.liskovsoft.smartyoutubetv2.common.misc.MotherActivity;
 import com.liskovsoft.smartyoutubetv2.common.utubot.PanelCoordinator;
 import com.liskovsoft.smartyoutubetv2.common.utubot.FocusDebouncer;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotAnswerModel;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutFocus;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotInboxNavigation;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotInboxOpen;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotKeys;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotMenu;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.InboxKind;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Prompt;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotOpenRequests;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPanelModel;
@@ -31,6 +37,8 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUiHost;
 import com.liskovsoft.smartyoutubetv2.tv.R;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The u-tubot overlays of an activity (browse, search, channel). Hooked into LeanbackActivity: resume attaches it, pause hides
@@ -59,6 +67,10 @@ public class UtubotPanelController implements UtubotUiHost.Host {
     private WeakReference<View> mReturnFocus = new WeakReference<>(null);
     private WeakReference<View> mWatchedCard = new WeakReference<>(null);
     private Video mFocusedVideo;
+    /** The result the Summary view or the answer shows, while it is up (the Inbox moves from it, see stepInbox) */
+    private Video mOverlayVideo;
+    /** The Inbox's tiles in their order, copied when the result opens: the group's weak reference may be gone by the next key */
+    private List<Video> mOverlayTiles;
     private int mSwallowedKey = KeyEvent.KEYCODE_UNKNOWN;
     private boolean mIsCreated;
     private final View.OnAttachStateChangeListener mCardWatcher = new View.OnAttachStateChangeListener() {
@@ -224,6 +236,18 @@ public class UtubotPanelController implements UtubotUiHost.Host {
                 mSwallowedKey = key;
             }
 
+            return true;
+        }
+
+        // The Inbox's next and previous from an opened result: used only when a neighbour exists (at the ends the key goes on)
+        int step = UtubotInboxNavigation.stepOf(key);
+
+        if (isViewOpen && step != UtubotInboxNavigation.NONE && inboxNeighbour(step) != null) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                stepInbox(step);
+            }
+
+            mSwallowedKey = key;
             return true;
         }
 
@@ -410,15 +434,81 @@ public class UtubotPanelController implements UtubotUiHost.Host {
     }
 
     private void openSummary(Video video) {
+        openSummary(video, tilesOf(video));
+    }
+
+    private void openSummary(Video video, @Nullable List<Video> tiles) {
         beginOverlay();
+        mOverlayVideo = video;
+        mOverlayTiles = tiles;
         mOverlay.open(false);
         mViewModel.show(video);
     }
 
     private void openAnswer(Video video) {
+        openAnswer(video, tilesOf(video));
+    }
+
+    private void openAnswer(Video video, @Nullable List<Video> tiles) {
         beginOverlay();
+        mOverlayVideo = video;
+        mOverlayTiles = tiles;
         mOverlay.open(true);
         mAnswerModel.show(video);
+    }
+
+    /**
+     * The result one step away in the Inbox's copied order, null when there is none
+     */
+    @Nullable
+    private Video inboxNeighbour(int step) {
+        return UtubotInboxNavigation.neighbour(mOverlayTiles, mOverlayVideo, step);
+    }
+
+    /**
+     * Opens the Inbox result one step away from the one the view shows (u-tubot #223): a summary or an answer replaces the view, a cut or
+     * a caption result closes it and opens the video. The landed result is marked read; at the ends nothing happens.
+     */
+    private void stepInbox(int step) {
+        Video landed = inboxNeighbour(step);
+
+        if (landed == null) {
+            return;
+        }
+
+        List<Long> ids = UtubotInboxNavigation.idsToMarkRead(landed);
+
+        if (!ids.isEmpty()) {
+            RxHelper.execute(mManager.readInbox(ids));
+        }
+
+        if (InboxKind.SUMMARY.equals(landed.inboxKind)) {
+            openSummary(landed, mOverlayTiles);
+        } else if (InboxKind.RESEARCH.equals(landed.inboxKind)) {
+            openAnswer(landed, mOverlayTiles);
+        } else {
+            closeOverlay(false);
+            UtubotInboxOpen.open(mActivity, landed);
+        }
+    }
+
+    /**
+     * A copy of the Inbox's tiles in their order: the group the shown result belongs to, read now
+     */
+    @Nullable
+    private static List<Video> tilesOf(@Nullable Video video) {
+        VideoGroup group = video != null ? video.getGroup() : null;
+
+        return group != null && group.getVideos() != null ? new ArrayList<>(group.getVideos()) : null;
+    }
+
+    /**
+     * The result the Summary view or the answer shows, null when none is up (for tests)
+     */
+    @Nullable
+    @VisibleForTesting
+    Video overlayVideo() {
+        return mOverlayVideo;
     }
 
     private void beginOverlay() {
@@ -438,6 +528,9 @@ public class UtubotPanelController implements UtubotUiHost.Host {
      * @param restoreFocus the focus goes back to the card it came from
      */
     private void closeOverlay(boolean restoreFocus) {
+        mOverlayVideo = null;
+        mOverlayTiles = null;
+
         if (mOverlay == null || !mOverlay.isOpen()) {
             return;
         }

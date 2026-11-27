@@ -9,6 +9,8 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+import com.liskovsoft.smartyoutubetv2.common.app.models.data.VideoGroup;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.InboxKind;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotOpenRequests;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUiHost;
@@ -24,6 +26,8 @@ import org.robolectric.annotation.Config;
 import org.robolectric.annotation.ConscryptMode;
 import org.robolectric.shadows.ShadowLooper;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
@@ -307,6 +311,96 @@ public class UtubotPanelControllerTest {
 
         assertEquals(View.VISIBLE, panel().getVisibility());
         assertSame(mSecondCard, focus());
+    }
+
+    /**
+     * An Inbox list of summary tiles on one group, newest first, as the Inbox section builds it
+     */
+    private static List<Video> inboxTiles() {
+        List<Video> tiles = new ArrayList<>();
+        tiles.add(inboxTile(3, "ccccccccccc"));
+        tiles.add(inboxTile(2, "bbbbbbbbbbb"));
+        tiles.add(inboxTile(1, "aaaaaaaaaaa"));
+        VideoGroup.from(tiles);
+
+        return tiles;
+    }
+
+    private static Video inboxTile(long id, String videoId) {
+        Video video = video(videoId, "Result " + id);
+        video.inboxId = id;
+        video.inboxKind = InboxKind.SUMMARY;
+
+        return video;
+    }
+
+    /**
+     * Opens the Inbox result as the Inbox section does: a request posted for the summary view
+     */
+    private void openInboxResult(Video tile) {
+        UtubotUiHost.request(UtubotOpenRequests.Kind.SUMMARY, tile);
+        idle(0);
+        assertSame(tile, mController.overlayVideo());
+    }
+
+    @Test
+    public void stepKeysMoveToTheNeighbourOnlyWhileAnInboxResultIsOpen() {
+        resume();
+        List<Video> tiles = inboxTiles();
+
+        assertFalse("no view is up: the key is the app's", mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_MEDIA_NEXT)));
+
+        openInboxResult(tiles.get(0));
+
+        assertTrue(mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_MEDIA_NEXT)));
+        mController.dispatchKeyEvent(up(KeyEvent.KEYCODE_MEDIA_NEXT));
+        idle(0);
+        assertSame(tiles.get(1), mController.overlayVideo());
+
+        assertTrue(mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_CHANNEL_UP)));
+        mController.dispatchKeyEvent(up(KeyEvent.KEYCODE_CHANNEL_UP));
+        idle(0);
+        assertSame(tiles.get(0), mController.overlayVideo());
+    }
+
+    @Test
+    public void theMoveStopsAtTheEndsAndTheKeyGoesOn() {
+        resume();
+        List<Video> tiles = inboxTiles();
+        openInboxResult(tiles.get(0));
+
+        assertFalse("the newest result has no previous", mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_MEDIA_PREVIOUS)));
+        assertSame(tiles.get(0), mController.overlayVideo());
+
+        openInboxResult(tiles.get(2));
+
+        assertFalse("the oldest result has no next", mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_MEDIA_NEXT)));
+        assertSame(tiles.get(2), mController.overlayVideo());
+    }
+
+    @Test
+    public void aNormalResultDoesNotRouteStepKeys() {
+        resume();
+        Video card = video("ddddddddddd", "Plain");
+        openInboxResult(card);
+
+        assertFalse(mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_MEDIA_NEXT)));
+    }
+
+    @Test
+    public void theTilesStayOrderedWhenTheGroupIsGoneAfterOpening() {
+        resume();
+        List<Video> tiles = inboxTiles();
+        openInboxResult(tiles.get(0));
+
+        // A refresh drops the group the tiles belonged to while the view is still open
+        for (Video tile : tiles) {
+            tile.setGroup(null);
+        }
+
+        assertTrue(mController.dispatchKeyEvent(down(KeyEvent.KEYCODE_MEDIA_NEXT)));
+        idle(0);
+        assertSame(tiles.get(1), mController.overlayVideo());
     }
 
     private UtubotSummaryOverlay overlay() {
