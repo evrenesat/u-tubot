@@ -120,6 +120,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     private final Runnable mUpdateSections = this::updateSections;
     private final Runnable mReplayCachedGroups = this::replayCachedGroups;
     private final UtubotBrowseCache mBrowseCache;
+    /** The u-tubot connection listener, registered while the Processed section's cache is live: removed when unheld (see unhold) */
+    private Runnable mConnectionListener;
     /**
      * The section shows the videos of one of its channels: a load error doesn't reload the whole section, in a skin that keeps
      * it (see SkinTraits)
@@ -176,7 +178,8 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
         mBrowseCache = UtubotSettings.isBuiltIn() ? UtubotBrowseCache.instance(context) : null;
         if (mBrowseCache != null) {
             // The Processed section's cards come from the backend: another backend or token makes them another user's (see onUtubotConnectionChanged)
-            UtubotSettings.instance(context).addConnectionListener(this::onUtubotConnectionChanged);
+            mConnectionListener = this::onUtubotConnectionChanged;
+            UtubotSettings.instance(context).addConnectionListener(mConnectionListener);
         }
         WatchLaterManager.instance(context).setOnEdited(this::onWatchLaterEdited);
         initSectionMappings();
@@ -197,6 +200,9 @@ public class BrowsePresenter extends BasePresenter<BrowseView> implements Sectio
     }
 
     public static void unhold() {
+        if (sInstance != null && sInstance.mConnectionListener != null) {
+            UtubotSettings.instance(sInstance.getContext()).removeConnectionListener(sInstance.mConnectionListener);
+        }
         sInstance = null;
     }
 
