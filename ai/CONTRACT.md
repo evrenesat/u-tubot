@@ -494,6 +494,13 @@ The extension sends the bearer token from its background context only, to the ba
 - A user's own daily cost budget (`[usage] user_budget_usd`, `0` = unlimited) is checked before each of their calls; a call past it is refused with
   `429 {"error": ...}` and a `Retry-After` (seconds to the next UTC day). `[usage] user_requests_per_min` (`0` = follow the global limit) caps their
   requests the same way. A user's own upstream (see `/v1/me/provider`) is where their calls run; without one they use the server default.
+  Each user in `users.toml` may override just their own limits with `user_budget_usd` / `user_requests_per_min` (leave `null` for the server value),
+  so an owner keeps the global key and issues a user a lower cap. Background jobs claimed by the worker run with their owner bound, so the model
+  calls they make are charged to that user's daily budget and run on their own upstream, not the server default. The user's own provider key is
+  encrypted at rest with a server secret from `security.provider_secret_env` (default `UTUBOT_PROVIDER_SECRET`); with no secret set it is stored
+  as-is (the sqlite file stays `0600`). A stored value is marked and a value that fails its MAC (for example after the secret was rotated) is
+  refused rather than mis-decrypted. A non-admin's `PUT /v1/me/provider` base url must not point at a private, loopback or otherwise internal
+  address (SSRF); admins may point at a LAN upstream.
 - Video ids must match `^[A-Za-z0-9_-]{11}$`, else `400`.
 - `POST /v1/pair` `{"code":"123456","device":"Living room TV"}` -> `{"token":"utb_...","user":"owner"}`.
   Codes are single use, valid 15 minutes, created by `utubot user pair NAME` or the admin UI.
@@ -1128,22 +1135,23 @@ when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-adm
 - `GET /v1/me/devices` -> `{"devices":[{"id","user","device","created_at","last_used"}]}`, `DELETE /v1/me/devices/{id}` (own devices
   only), `POST /v1/me/pair` -> `{"user","code","expires_in_s"}` (a one-time pairing code for the caller).
 - `GET /v1/me/provider` -> the caller's own upstream as `{"host","key_sha256"}` (a short key fingerprint, never the key) or
-  `{"configured": false}`; `PUT /v1/me/provider` `{"base_url","api_key"}` stores it and returns that plus `"configured": true`
-  (`400` for a base url without a scheme or an empty key); `DELETE /v1/me/provider` clears it (`404` when none) and returns the
-  server default for the caller's next calls. The key is stored on the server, never returned.
+   `{"configured": false}`; `PUT /v1/me/provider` `{"base_url","api_key"}` stores it and returns that plus `"configured": true`
+   (`400` for a base url without a scheme, an empty key, or one that points a non-admin at a private/internal address; admins are exempt);
+   `DELETE /v1/me/provider` clears it (`404` when none) and returns the server default for the caller's next calls. The key is stored on
+   the server, encrypted at rest when `security.provider_secret_env` is set, never returned.
 - `POST /v1/prompts/validate` with a prompt set -> `{"ok":true,"id","name","prompts":2}` or `400` with the validator's messages.
 - `POST /v1/videos/resolve` `{"text":"https://youtu.be/..."}` -> `{"video_id":"..."}` (an id, or a watch, shorts, live, embed or
-  youtu.be link; `400` otherwise; nothing is fetched).
+   youtu.be link; `400` otherwise; nothing is fetched).
 
 ### User administration (admin only)
 
-`GET /v1/users` -> `{"users":[{"name","admin","prime","class","has_password","has_token","devices","sessions","admin_editable","usage","provider"}]}`;
+`GET /v1/users` -> `{"users":[{"name","admin","prime","class","has_password","has_token","devices","sessions","admin_editable","usage","usage_window","provider"}]}`;
 `POST /v1/users` `{"name","admin":false,"prime":false,"password":null}` (a user without a token; `409` if it exists, `400` for a bad name or a short
 password); `PUT /v1/users/{name}` `{"admin":true,"prime":true}` (either field optional; `409` for a user declared in `config.toml` or for your own `admin` flag);
 `PUT /v1/users/{name}/password` `{"password"}`; `GET/PUT /v1/users/{name}/settings` as above. The older `GET /v1/admin/users`,
 `POST /v1/admin/pair`, `DELETE /v1/admin/devices/{id}` and `PUT /v1/admin/users/{name}/policy` stay. Each user also carries `usage`
-(`{"cost","calls","day"}`, the caller's own cost and calls for the UTC day) and `provider` (`{"host","key_sha256"}` or `{"configured": false}`);
-neither carries a key.
+(`{"cost","calls","day"}`, the caller's own cost and calls for the UTC day), `usage_window` (`{"cost","calls"}`, the same over the last
+`[usage] window_days` days, for the owner's page) and `provider` (`{"host","key_sha256"}` or `{"configured": false}`); neither carries a key.
 
 ### Media archive (admin only)
 

@@ -61,7 +61,9 @@ published in `/setup.json` and in APK download links), `users_file` (default `da
 `client_ip_header_secret_env` (name the real client through a second proxy hop, see [Reverse proxy and TLS](#reverse-proxy-and-tls)),
 `rate_per_token_per_min`, `rate_per_ip_per_min`, `rate_window_s`, pairing limits (`pair_code_digits`, `pair_code_ttl_s`,
 `pair_attempts_per_ip_per_min`, `pair_lockout_failures`, `pair_lockout_s`, `pair_global_failures`, `pair_global_window_s`),
-`max_body_bytes`, `max_device_name_chars`, `max_devices_per_user`; web sign-in: `session_cookie`, `session_ttl_s` (30 days),
+`max_body_bytes`, `max_device_name_chars`, `max_devices_per_user`; a user's own provider key is encrypted at rest with the secret named by
+`provider_secret_env` (default `UTUBOT_PROVIDER_SECRET`; unset stores it as-is, and the 0600 database file is the only protection); web
+sign-in: `session_cookie`, `session_ttl_s` (30 days),
 `session_refresh_s`, `max_sessions_per_user`, `password_min_chars` (10), `password_max_chars`, `scrypt_n` (2^17)/`scrypt_r`/`scrypt_p`/`scrypt_max_concurrent`,
 `login_attempts_per_ip_per_min`, `login_lockout_failures` (5), `login_lockout_s` (15 min), `login_user_lockout_failures` (10),
 `login_global_failures`, `login_global_window_s` (see [Web UI](#web-ui)).
@@ -76,8 +78,10 @@ case).
 **`[usage]`**: per-feature cost/time telemetry behind the admin *Features* page: `price_usd_per_million` (a map from alias to
 dollars per 1M prompt+completion tokens; cost is estimated since this server has no modelgate, and is unknown for an alias with no
 price), `window_days` (7: the look-back for calls, tokens, cost and median/p90 time), `keep_days` (30: how long per-call rows are
-kept). The same section also carries the per-user limits: `user_budget_usd` (a daily UTC cost ceiling for each user's own upstream;
-`0` = unlimited) and `user_requests_per_min` (a per-user request cap; `0` = follow the global limit).
+ kept). The same section also carries the per-user limits: `user_budget_usd` (a daily UTC cost ceiling for each user's own upstream;
+ `0` = unlimited) and `user_requests_per_min` (a per-user request cap; `0` = follow the global limit). Either limit may also be set
+ per user in `users.toml` (`user_budget_usd` / `user_requests_per_min`); a user's own value overrides the server-wide one, so an owner
+ keeps the global key and issues a user a lower cap.
 
 **`[llm]`**: `default_provider`, `timeout_s`, `retries_on_bad_json`, `json_retry_max_tokens`, `reasoning_headroom_tokens`, `retry_max_attempts`, `retry_base_s`, `retry_max_s`,
 `deadline_interactive_s`, `deadline_background_s`; `[llm.providers.NAME]` with `base_url`, `api_key_env`, `max_concurrent`,
@@ -481,17 +485,22 @@ their key and budget instead of this server's. They store it with `PUT /v1/me/pr
 (host and a short key fingerprint, never the key, or `{"configured": false}`), and clear it with
 `DELETE /v1/me/provider` (back to the server default). The key is needed to make the call, so it is
 stored on the server, never returned in a response or a log line, exactly like the `[llm.providers]`
-env-var keys. A base url that is not `http(s)://host` or an empty key is refused with `400`. The database file is owner-only (0600); keep backups of it equally private.
+env-var keys. A base url that is not `http(s)://host` or an empty key is refused with `400`; a non-admin's base url must not point at a
+private, loopback or otherwise internal address (SSRF) or it is refused with `400` too, while admins may point at a LAN upstream. The key is
+stored on the server; with `security.provider_secret_env` set (default `UTUBOT_PROVIDER_SECRET`) it is encrypted at rest (encrypt-then-MAC,
+no third-party crypto), and a value that fails its MAC is refused rather than mis-decrypted; with no secret it is stored as-is and the
+0600 database file is the only protection. The database file is owner-only (0600); keep backups of it equally private.
 
-Their calls still run under their own limits: `user_budget_usd` (`[usage]`, a daily UTC cost ceiling,
-`0` = unlimited) is checked before each send and a `UserBudgetError` surfaces as `429` with a
-`Retry-After`; `user_requests_per_min` (`[usage]`) caps their requests and also returns `429`. The
-router sends their calls to their upstream (the model is requested as before, any `provider:` prefix
-dropped since the endpoint is fixed) and falls back on the server default when they have none.
+Their calls still run under their own limits: `user_budget_usd` (`[usage]`, a daily UTC cost ceiling, `0` = unlimited) is checked before each
+send and a `UserBudgetError` surfaces as `429` with a `Retry-After`; `user_requests_per_min` (`[usage]`) caps their requests and also returns
+`429`. Either limit may be overridden for just one user in `users.toml` (`user_budget_usd` / `user_requests_per_min`), which caps only that
+user. Background jobs claimed by the worker run with their owner bound, so the model calls they make are charged to that user's daily budget
+and run on their own upstream, not the server default. The router sends their calls to their upstream (the model is requested as before, any
+`provider:` prefix dropped since the endpoint is fixed) and falls back on the server default when they have none.
 
-The admin page shows each user's own upstream and their cost/calls for the day; both `GET /v1/users`
-and `GET /v1/admin/users` include a `provider` (host + key fingerprint, or `{"configured": false}`) and
-a `usage` (`{cost, calls, day}`) per user.
+The admin page shows each user's own upstream and their cost/calls for the day, and over the last `[usage] window_days` days; both `GET /v1/users`
+and `GET /v1/admin/users` include a `provider` (host + key fingerprint, or `{"configured": false}`), a `usage` (`{cost, calls, day}`) and a
+`usage_window` (`{cost, calls}`) per user.
 
 ## Director's cuts
 

@@ -1,11 +1,12 @@
-## 2026-11-27 (live server without models, voice plan checkpoint 2, issue #181)
+## 2026-11-27 (UTB-295, follow-up to #247)
 
-- New `realtime/` (Go, `utubot-rt`): the control channel of `ai/VOICE_CONTROL_PLAN.md` 2.3 with the backend check, focus store, target choice, typed
-  `say` through the phrase matcher, `command` / `ack` / expiry / confirmation, several devices, offline answers, limits, statistics. No model, no
-  microphone, nothing deployed (evrenesat/evreniops#250). Details and numbers in `realtime/DEVLOG.md`: 56 socket tests, server's own time p50
-  0.008 ms and p99 0.08 ms on loopback against a 20 ms budget.
-- `ai/CONTRACT.md` gains "Live server"; CI gains the `realtime` job (Go 1.27.4, race tests, the benchmark as a gate) and `scripts/utubot_ci_changes.py`
-  classifies `realtime/` (it no longer counts as an app change); the plan's status line and the live-server row of 2.5 are updated.
+- Backend: per-user `user_budget_usd` / `user_requests_per_min` overrides in `users.toml`; a user's own provider key is encrypted at rest
+  with a server secret (`security.provider_secret_env`, default `UTUBOT_PROVIDER_SECRET`, encrypt-then-MAC, no third-party crypto, stored
+  plain when unset); the admin page shows per-user usage over the `[usage] window_days` window; a non-admin's own-provider base url must
+  not point at a private/internal address (SSRF, admins exempt); claimed background jobs run with their owner bound so their model calls
+  are charged to that user's budget and upstream. Details in `ai-backend/DEVLOG.md`.
+
+## 2026-11-27 (live server without models, voice plan checkpoint 2, issue #181)
 
 ## 2026-11-27 (tablet on-device flow, takeover of #237, issue #218)
 
