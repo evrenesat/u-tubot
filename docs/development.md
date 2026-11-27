@@ -396,6 +396,41 @@ Everything in `main` that CI accepts is shipped, so protect `main` (pull request
 The workflows check out `SharedModules` and `MediaServiceCore` at the commits pinned in `.github/actions/android-env/action.yml`;
 update them when you merge the base app.
 
+### Fast dev install for the owner's devices
+
+The app already updates itself after a release (development mode), but right after a release the fastest way to get the new APK on your own
+devices is a small script that pushes it over wireless ADB. It is optional — off by default, never run in CI or by the release workflow —
+and runs only when you ask for it:
+
+```sh
+scripts/dev_install.py                                  # universal APK of the latest release
+scripts/dev_install.py --release utubot-v0.3.4          # a specific release
+scripts/dev_install.py --apk <path to a debug APK>      # install a local build instead
+```
+
+The devices come from the gitignored file `adb-devices` in the repository root (one `host:port` per line, `#` for comments). The file is
+never committed, so no personal host ever ends up in the tree:
+
+```
+# adb-devices
+10.0.0.20:5555
+10.0.0.21:5555
+```
+
+For every device the script runs `adb connect <host>:<port>` and then `adb -s <host>:<port> install -r` (the `-s` picks the device when
+several are connected); a failing device does not stop the others, and the script exits non-zero when any of them fails. The release APK
+is checked against the release's `SHA256SUMS` before it is installed, and the download goes to the gitignored `temp/`.
+
+The tablet needs wireless debugging:
+
+1. Settings, System, About the tablet: tap Build number seven times to enable developer options.
+2. Settings, Developer options: enable Wireless debugging; the screen shows the pairing code and the port.
+3. On the computer: `adb pair <host>:<port>` (enter the pairing code), then `adb connect <host>:<port>`.
+4. The device shows up in `adb devices` as `host:port` — put it in `adb-devices` and the script installs to it.
+
+Devices before Android 11 have no wireless debugging: connect over USB once, run `adb tcpip 5555`, unplug the cable and use
+`host:5555` in `adb-devices` instead.
+
 ## Brand assets
 
 The symbol (a play triangle holding a lowercase u, with the interpunct as a lime ball on its tip), the banner and the wordmark are SVGs in

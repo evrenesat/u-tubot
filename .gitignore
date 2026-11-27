@@ -84,6 +84,7 @@ changelog_override.txt
 .settings/
 utubot.properties
 temp/
+adb-devices
 
 temp-*
 .kotlin/
