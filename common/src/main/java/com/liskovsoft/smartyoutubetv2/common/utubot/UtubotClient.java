@@ -223,6 +223,32 @@ public class UtubotClient {
     }
 
     /**
+     * The user's secrets this TV may hold (Real-Debrid token, add-on address), for this paired TV only: {@code {"rev","secrets":{},
+     * "set":[]}} or {@code {"unchanged":true}} when {@code have} is the current revision. 503 while the server has no master key.
+     * The answer holds secret values: never log it.
+     */
+    public String deviceSecrets(int have, int timeoutMs) throws IOException {
+        HttpUrl.Builder url = urlBuilder("/device/secrets");
+
+        if (have >= 0) {
+            url.addQueryParameter("have", String.valueOf(have));
+        }
+
+        return send(authorized(url), timeoutMs);
+    }
+
+    /**
+     * Keeps this TV's own secret on the server (after its owner agreed on the TV). 409 when the server already has one.
+     */
+    public void putDeviceSecret(String name, String value, int timeoutMs) throws IOException {
+        try {
+            send(builder("/device/secrets/" + name, true).put(json(new JSONObject().put("value", value))), timeoutMs);
+        } catch (org.json.JSONException e) {
+            throw new IOException("bad secret body");
+        }
+    }
+
+    /**
      * Reports what this TV applied and sends its own changes; the answer is the document plus the result of each change
      */
     public String postDeviceSettings(JSONObject body, int timeoutMs) throws IOException {

@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from .auth import Forbidden
 from .config import Config, UserConfig
 from .db import Database
+from .secretstore import NOT_SET_UP, InvalidSecret, SecretsUnavailable
 from .settings import SettingsError, SettingsService, configured_models, resolved_fields
 from .settingsschema import SYNCED_PHASE, InvalidValue, Schema, check_value
 
@@ -56,6 +57,7 @@ class DeviceSettings:
         self.cfg, self.db, self.auth, self.settings, self.schema = cfg, db, auth, settings, schema
         self.opts = cfg.settings_sync
         settings.sync = self
+        self.secrets: Any = None  # SecretStore, set by the app
 
     # ---- layers -------------------------------------------------------------------------
 
@@ -308,6 +310,7 @@ class DeviceSettings:
             "version": version,
             "schema_version": self.schema.version,
             "settings": self.resolve(name, device_id, schema_version),
+            "secrets_rev": self.secrets.rev(name) if self.secrets is not None else 0,
         }
 
     def pull(self, name: str, device_id: str, have: int | None, schema_version: int | None):
@@ -589,6 +592,8 @@ class DeviceSettings:
         for table in ("settings_values", "settings_rev"):
             self.db.execute(f"DELETE FROM {table} WHERE device_id=?", [device_id])
         self.db.execute("DELETE FROM device_settings_state WHERE device_id=?", [device_id])
+        if self.secrets is not None:
+            self.secrets.forget_device(device_id)
 
 
 SETTINGS_OFF = "web settings are not switched on on this server"
@@ -672,6 +677,109 @@ def install_settings_routes(app: FastAPI, d: Any) -> None:
         resp = JSONResponse(ds.push(user.name, device_id, body))
         resp.headers["Cache-Control"] = "no-store"
         return resp
+
+    # ---- secrets (plan section 6): write-only for the web, delivered to the user's own TVs ----
+
+    def secret_names() -> dict[str, str]:
+        """URL name -> schema key of every secret a TV is given."""
+        return {
+            k.split(".", 1)[1]: k
+            for k, s in ds.schema.by_key.items()
+            if s["type"] == "secret" and s.get("deliver") == "tv" and s["remote"] == "rw"
+        }
+
+    def store():
+        if ds.secrets is None or not ds.secrets.available:
+            raise HTTPException(503, NOT_SET_UP)
+        return ds.secrets
+
+    def known(name: str) -> str:
+        if name not in secret_names():
+            raise HTTPException(404, "unknown secret")
+        return name
+
+    @app.get("/v1/me/secrets")
+    async def secrets_list(request: Request, user: UserConfig = Depends(current_user)):
+        on()
+        browser_only(request)
+        st = ds.secrets
+        if st is None or not st.available:
+            return {"available": False, "secrets": []}
+        devices = {d["id"]: d["device"] for d in svc.auth.list_devices(user.name)}
+        delivered = st.delivered_to(user.name, devices)
+        out = []
+        for name in secret_names():
+            row = st.describe_one(user.name, name)
+            out.append({**row, "delivered_to": delivered if row["set"] else []})
+        return {"available": True, "secrets": out}
+
+    @app.put("/v1/me/secrets/{name}")
+    async def secrets_put(
+        name: str, body: dict[str, Any], request: Request, user: UserConfig = Depends(current_user)
+    ):
+        on()
+        browser_only(request)
+        st, known_name = store(), known(name)
+        try:
+            return st.set(user.name, known_name, body.get("value"), via="web", by=user.name)
+        except InvalidSecret as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.delete("/v1/me/secrets/{name}")
+    async def secrets_delete(name: str, request: Request, user: UserConfig = Depends(current_user)):
+        on()
+        browser_only(request)
+        st, known_name = store(), known(name)
+        if not st.delete(user.name, known_name, via="web", by=user.name):
+            raise HTTPException(404, "not set")
+        return {"key": known_name, "set": False}
+
+    @app.get("/v1/device/secrets")
+    async def device_secrets_get(
+        request: Request,
+        have: int | None = Query(None, ge=0),
+        user: UserConfig = Depends(current_user),
+    ):
+        on()
+        device_id = device_of(request)
+        st = store()
+        rev = st.rev(user.name)
+        names = list(secret_names())
+        have_names = [n for n in names if n in st.names(user.name)]
+        if have is not None and have == rev:
+            body: dict[str, Any] = {"rev": rev, "unchanged": True, "set": have_names}
+        else:
+            try:
+                delivered = st.deliver(user.name, device_id, names)
+            except SecretsUnavailable as exc:
+                raise HTTPException(503, str(exc)) from exc
+            body = {"rev": rev, "secrets": delivered, "set": have_names}
+        resp = JSONResponse(body)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @app.put("/v1/device/secrets/{name}")
+    async def device_secrets_put(
+        name: str, body: dict[str, Any], request: Request, user: UserConfig = Depends(current_user)
+    ):
+        """A TV keeps its own token on the server, once it asked its owner (D2). The server's value wins."""
+        on()
+        device_id = device_of(request)
+        st, known_name = store(), known(name)
+        if known_name in st.names(user.name):
+            raise HTTPException(409, "the server already has this secret")
+        try:
+            st.set(
+                user.name,
+                known_name,
+                body.get("value"),
+                via="tv",
+                by=user.name,
+                device_id=device_id,
+            )
+        except InvalidSecret as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"key": known_name, "set": True}
 
     @app.get("/v1/me/settings/status")
     async def settings_status(request: Request, user: UserConfig = Depends(current_user)):

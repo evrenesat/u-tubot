@@ -80,6 +80,88 @@ def cmd_user_passwd(args: argparse.Namespace) -> int:
     return 0
 
 
+def _secret_store(args: argparse.Namespace):
+    from .secretstore import SecretStore
+
+    cfg = load_config(args.config)
+    db = Database(cfg.db_path)
+    auth = Auth(cfg, db)
+
+    def touch(name: str) -> int:
+        auth.touch_settings(name)
+        return auth.settings_version(name)[0]
+
+    return cfg, db, auth, SecretStore.from_env(db, cfg.security.secrets_key_env, touch)
+
+
+def cmd_user_secret_set(args: argparse.Namespace) -> int:
+    """Store one of a user's secrets; the value comes from stdin, never from the command line."""
+    from .secretstore import InvalidSecret
+    from .settingsschema import default_schema
+
+    cfg, _db, auth, store = _secret_store(args)
+    if auth.user_config(args.user) is None:
+        print(f"error: unknown user {args.user!r}", file=sys.stderr)
+        return 1
+    names = {
+        k.split(".", 1)[1] for k, s in default_schema().by_key.items() if s["type"] == "secret"
+    }
+    name = args.name.removeprefix("secrets.")
+    if name not in names:
+        print(
+            f"error: unknown secret {args.name!r} (one of: {', '.join(sorted(names))})",
+            file=sys.stderr,
+        )
+        return 1
+    if not store.available:
+        print(
+            f"error: secret storage is not set up: set {cfg.security.secrets_key_env} to a base64 32-byte key",
+            file=sys.stderr,
+        )
+        return 1
+    value = sys.stdin.readline().rstrip("\r\n")
+    try:
+        store.set(args.user, name, value, via="cli", by="cli")
+    except InvalidSecret as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"{name} stored for {args.user}")
+    return 0
+
+
+def cmd_secrets_check(args: argparse.Namespace) -> int:
+    _cfg, _db, _auth, store = _secret_store(args)
+    if not store.available:
+        print("error: secret storage is not set up", file=sys.stderr)
+        return 1
+    result = store.check()
+    print(f"secrets: {result['ok']} decrypt, {result['failed']} fail")
+    return 0 if not result["failed"] else 1
+
+
+def cmd_secrets_rotate(args: argparse.Namespace) -> int:
+    """Re-encrypt every secret with the key in another environment variable (the new key is never printed)."""
+    import os
+
+    from .secretstore import SecretsUnavailable, parse_master_key
+
+    _cfg, _db, _auth, store = _secret_store(args)
+    new_key = parse_master_key(os.environ.get(args.new_key_env))
+    if not store.available or new_key is None:
+        print(
+            "error: the current key and the new key (--new-key-env) must both be set",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        count = store.rotate(new_key)
+    except SecretsUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"re-encrypted {count} secret(s); now set {_cfg.security.secrets_key_env} to the new key")
+    return 0
+
+
 def cmd_user_pair(args: argparse.Namespace) -> int:
     try:
         code, ttl = _auth(args).create_pair_code(args.name)
@@ -461,6 +543,26 @@ def main(argv: list[str] | None = None) -> int:
         "--stdin", action="store_true", help="read the password from stdin (one line), no prompt"
     )
     passwd.set_defaults(func=cmd_user_passwd)
+    secret = user.add_parser("secret", help="a user's secrets").add_subparsers(
+        dest="secret_sub", required=True
+    )
+    secret_set = secret.add_parser(
+        "set", help="store a secret for a user; the value is read from stdin (one line)"
+    )
+    secret_set.add_argument("user")
+    secret_set.add_argument("name", help="films_rd_token or films_addon_url")
+    secret_set.set_defaults(func=cmd_user_secret_set)
+    secrets_cmd = sub.add_parser("secrets", help="secret storage").add_subparsers(
+        dest="sub", required=True
+    )
+    secrets_cmd.add_parser("check", help="decrypt every secret and print counts").set_defaults(
+        func=cmd_secrets_check
+    )
+    rotate = secrets_cmd.add_parser("rotate", help="re-encrypt every secret with a new master key")
+    rotate.add_argument(
+        "--new-key-env", required=True, help="environment variable with the new key"
+    )
+    rotate.set_defaults(func=cmd_secrets_rotate)
     pair = user.add_parser("pair", help="create a one-time pairing code for a user")
     pair.add_argument("name")
     pair.set_defaults(func=cmd_user_pair)

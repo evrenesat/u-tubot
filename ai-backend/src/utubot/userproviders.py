@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .db import Database
+from .secretstore import PROVIDER_KEY
 
 # The provider identity the LLM router uses while a user upstream is active: it is not in
 # ``[llm.providers]``, so the router must treat it as "use the bound base url and key".
@@ -110,8 +111,47 @@ def current_user_provider() -> UserProvider | None:
 class UserProviders:
     """The one upstream each user has stored, and the live key used to run their calls."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, store: Any = None):
         self._db = db
+        self._store = store  # SecretStore: with its master key the api key is kept encrypted there
+
+    def _encrypting(self) -> bool:
+        return self._store is not None and self._store.available
+
+    def migrate_keys(self) -> int:
+        """Move every clear-text key into the secret store and blank the old column (idempotent).
+
+        A row is blanked only after its key decrypts back to the same value. Returns how many moved.
+        Without a master key nothing moves and the column stays as it was.
+        """
+        if not self._encrypting():
+            return 0
+        moved = 0
+        for row in self._db.all("SELECT user, api_key FROM user_providers WHERE api_key != ''"):
+            key = row["api_key"]
+            self._store.set(
+                row["user"], PROVIDER_KEY, key, via="migration", audit=False, quiet=True
+            )
+            if self._store.get(row["user"], PROVIDER_KEY) == key:
+                self._db.execute("UPDATE user_providers SET api_key='' WHERE user=?", [row["user"]])
+                moved += 1
+        if moved:
+            self._db.scrub()
+        return moved
+
+    def restore_clear_keys(self) -> int:
+        """Rollback: write every encrypted key back to the old column (needs the master key)."""
+        if not self._encrypting():
+            return 0
+        restored = 0
+        for row in self._db.all("SELECT user FROM user_providers WHERE api_key = ''"):
+            key = self._store.get(row["user"], PROVIDER_KEY)
+            if key:
+                self._db.execute(
+                    "UPDATE user_providers SET api_key=? WHERE user=?", [key, row["user"]]
+                )
+                restored += 1
+        return restored
 
     def set(self, user: str, base_url: str, api_key: str) -> dict[str, Any]:
         """Store (or replace) a user's upstream. `base_url` is trimmed of surrounding spaces; the
@@ -124,21 +164,33 @@ class UserProviders:
         if not api_key:
             raise ValueError("an api key is required")
         now = datetime.now(UTC).timestamp()
+        encrypted = self._encrypting()
+        if encrypted:
+            self._store.set(
+                user, PROVIDER_KEY, api_key, via="web", by=user, audit=False, quiet=True
+            )
         self._db.execute(
             "INSERT INTO user_providers(user,base_url,api_key_hash,api_key,updated_at)"
             " VALUES(?,?,?,?,?) ON CONFLICT(user) DO UPDATE SET base_url=excluded.base_url,"
             " api_key_hash=excluded.api_key_hash, api_key=excluded.api_key, updated_at=excluded.updated_at",
-            [user, base, _hash_key(api_key), api_key, now],
+            [user, base, _hash_key(api_key), "" if encrypted else api_key, now],
         )
         return self.describe(user)
 
     def remove(self, user: str) -> bool:
+        if self._encrypting():
+            self._store.delete(user, PROVIDER_KEY, via="web", audit=False, quiet=True)
         return self._db.execute_rc("DELETE FROM user_providers WHERE user=?", [user]) > 0
 
     def get_live(self, user: str) -> tuple[str, str] | None:
         """The live `(base url, api key)` a call uses for `user`, or None when they have none."""
         row = self._db.one("SELECT base_url, api_key FROM user_providers WHERE user=?", [user])
-        return (row["base_url"], row["api_key"]) if row else None
+        if row is None:
+            return None
+        key = row["api_key"]
+        if not key and self._encrypting():
+            key = self._store.get(user, PROVIDER_KEY) or ""
+        return (row["base_url"], key) if key else None
 
     def describe(self, user: str) -> dict[str, Any] | None:
         """What the UI can show for a user's upstream: the host and a short key fingerprint, never
@@ -164,8 +216,47 @@ class PerUserUsage:
     page. Cost is estimated from tokens and ``[usage] price_usd_per_million`` like the per-feature
     telemetry; an alias with no price adds nothing."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, store: Any = None):
         self._db = db
+        self._store = store  # SecretStore: with its master key the api key is kept encrypted there
+
+    def _encrypting(self) -> bool:
+        return self._store is not None and self._store.available
+
+    def migrate_keys(self) -> int:
+        """Move every clear-text key into the secret store and blank the old column (idempotent).
+
+        A row is blanked only after its key decrypts back to the same value. Returns how many moved.
+        Without a master key nothing moves and the column stays as it was.
+        """
+        if not self._encrypting():
+            return 0
+        moved = 0
+        for row in self._db.all("SELECT user, api_key FROM user_providers WHERE api_key != ''"):
+            key = row["api_key"]
+            self._store.set(
+                row["user"], PROVIDER_KEY, key, via="migration", audit=False, quiet=True
+            )
+            if self._store.get(row["user"], PROVIDER_KEY) == key:
+                self._db.execute("UPDATE user_providers SET api_key='' WHERE user=?", [row["user"]])
+                moved += 1
+        if moved:
+            self._db.scrub()
+        return moved
+
+    def restore_clear_keys(self) -> int:
+        """Rollback: write every encrypted key back to the old column (needs the master key)."""
+        if not self._encrypting():
+            return 0
+        restored = 0
+        for row in self._db.all("SELECT user FROM user_providers WHERE api_key = ''"):
+            key = self._store.get(row["user"], PROVIDER_KEY)
+            if key:
+                self._db.execute(
+                    "UPDATE user_providers SET api_key=? WHERE user=?", [key, row["user"]]
+                )
+                restored += 1
+        return restored
 
     @staticmethod
     def today() -> str:

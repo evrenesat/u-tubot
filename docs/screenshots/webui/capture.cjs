@@ -190,6 +190,11 @@ async function checkOverflow(browser) {
 
     await go(page, "settings");
     await shot(page, "25-settings");
+    const accounts = page.getByText("Accounts and services", { exact: true });
+    if (await accounts.count()) {
+      await scrollTo(page, accounts);
+      await shot(page, "29-settings-accounts");
+    }
     await go(page, "settings/history");
     await shot(page, "26-settings-history");
     // a TV on a current app (its own update interval and cut keys, copy from another TV) and one on an old app

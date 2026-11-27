@@ -927,6 +927,8 @@ class AuthConfig(BaseModel):
 
 
 class SecurityConfig(BaseModel):
+    # the environment variable holding the base64 master key of the secret store (never in this file)
+    secrets_key_env: str = "UTUBOT_SECRETS_KEY"
     trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1", "::1"])
     client_ip_header: str = ""
     client_ip_header_secret_env: str = "UTUBOT_PROXY_SECRET"

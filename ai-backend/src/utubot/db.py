@@ -99,6 +99,13 @@ CREATE TABLE IF NOT EXISTS settings_audit(
   key TEXT NOT NULL, old_json TEXT, new_json TEXT, by_user TEXT, via TEXT NOT NULL,
   actor_device_id TEXT, at REAL NOT NULL, outcome TEXT NOT NULL DEFAULT 'applied');
 CREATE INDEX IF NOT EXISTS settings_audit_user ON settings_audit(user, id);
+CREATE TABLE IF NOT EXISTS user_secrets(
+  user TEXT NOT NULL, key TEXT NOT NULL, nonce BLOB NOT NULL, ciphertext BLOB NOT NULL,
+  key_id TEXT NOT NULL, last4 TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL, rev INTEGER NOT NULL,
+  PRIMARY KEY(user, key));
+CREATE TABLE IF NOT EXISTS user_secret_rev(user TEXT PRIMARY KEY, rev INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS user_secret_deliveries(
+  user TEXT NOT NULL, device_id TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY(user, device_id));
 CREATE TABLE IF NOT EXISTS user_passwords(
   user TEXT PRIMARY KEY, hash TEXT NOT NULL, updated_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(
@@ -281,6 +288,9 @@ class Database:
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._conn.execute(
+                "PRAGMA secure_delete=ON"
+            )  # a blanked secret leaves no copy in a free page
             self._conn.executescript(SCHEMA)
             self._migrate()
             self._conn.commit()
@@ -358,6 +368,14 @@ class Database:
         with self._lock:
             self._conn.execute(sql, tuple(params))
             self._conn.commit()
+
+    def scrub(self) -> None:
+        """Rewrite the file and truncate the WAL, so values that were blanked or deleted leave no trace in it."""
+        with self._lock:
+            self._conn.commit()
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._conn.execute("VACUUM")
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
     def execute_rc(self, sql: str, params: Iterable[Any] = ()) -> int:
         with self._lock:

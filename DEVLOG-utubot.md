@@ -1,3 +1,10 @@
+## 2026-11-27 (secrets in the web settings, plan checkpoint 6, #276)
+
+- The Settings page has "Accounts and services": Real-Debrid token and stream add-on address, write-only (set, last 4 characters or host, which TVs got it). The server keeps them AES-256-GCM encrypted; the TV fetches them (`GET /v1/device/secrets`) into the same entries the films developer entry already reads (`getFilmsRealDebridToken`, `getFilmsAddonUrl`), so nothing is typed. A removal on the web removes only what the server gave that TV.
+- D2: a TV that holds a token the server does not have asks once ("Keep this Real-Debrid token on your server so your other TVs get it?", `UtubotSecretOffer`); "Not now" is remembered, "Keep it on my server" sends it once (`PUT /v1/device/secrets/{name}`, the server's value wins on a clash). Nothing is sent without the answer.
+- Not done: the TV keeps the values in its private preferences, not wrapped with an Android Keystore key; the IMDb part of #276 (decision D4).
+- Tests: `UtubotSettingsSyncTest` (fetch once per revision, removal, offer, decline, accept sends once, 503 and old server leave the TV alone), `settings.test.mjs` (write-only section), `ai-backend/tests/test_secrets.py`.
+
 ## 2026-11-27 (per-TV settings, speed and the update switch, web settings plan checkpoint 5)
 
 - Schema 2 (`ai/settings/schema.json`): six keys join the sync: `updates.checks` (user value, a TV may override), and the per-TV `ai.auto_scroll_speed`, `ai.cut_jump`, `updates.interval_minutes`, `updates.development_mode`, `browse.refresh_minutes`. They are `since: 2`, so an app on schema 1 never sees them and the web page says "update the app". The numeric choices are enums with the exact values the app accepts, so the web cannot save a value the TV would refuse.

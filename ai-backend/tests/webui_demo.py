@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import threading
 import time
@@ -29,6 +30,7 @@ from utubot.app import create_app  # noqa: E402
 from utubot.auth import hash_token  # noqa: E402
 from utubot.config import Config, LLMTask, UserConfig, UserPolicy  # noqa: E402
 from utubot.prompts import validate_prompt_set  # noqa: E402
+from utubot.secretstore import new_master_key  # noqa: E402
 
 APP_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8791
 LLM_PORT = APP_PORT + 1
@@ -119,6 +121,9 @@ def build(data: Path):
     cfg.speech.per_user_per_min = 20
     cfg.voice.enabled = True
     cfg.settings_sync.enabled = True
+    os.environ.setdefault(
+        cfg.security.secrets_key_env, new_master_key()
+    )  # demo only: a throwaway key
     cfg.security.scrypt_n = 2**12
     # The seeded "running" job parks its worker on the never-downloading fake; a second worker
     # keeps the queue alive for the cut builds the pages show live.
@@ -321,6 +326,10 @@ def seed_settings(svc, now: float) -> None:
     svc.db.execute(
         "UPDATE device_settings_state SET applied_version=4 WHERE device_id=?", [bedroom]
     )
+    svc.secrets.set(
+        "owner", "films_rd_token", "rd-demo-token-not-a-real-key-ab12", via="web", by="owner"
+    )
+    svc.secrets.deliver("owner", living, ["films_rd_token"])
     rows = svc.db.all("SELECT id FROM settings_audit ORDER BY id")
     for i, row in enumerate(rows):
         svc.db.execute(

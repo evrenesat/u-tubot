@@ -1,6 +1,6 @@
 # Web settings: change every setting from the web app, the TV follows (plan, draft)
 
-Status: draft 1, 27 November 2026. Checkpoints 1 to 5 are implemented (PRs #278 to #280 and the checkpoint 5 pull request); 6 to 8 are not.
+Status: draft 1, 27 November 2026. Checkpoints 1 to 6 are implemented (PRs #278 to #280 and the checkpoint 5 and 6 pull requests); 7 and 8 are not. Checkpoint 6 keeps the secrets in the settings page, not the Account page.
 Owner request (27 November 2026): "Once I paired with the web app, I should be able to configure all settings from the
 web app. Start with AI-related features, but even per-TV settings should be synced with the web. Full TV settings can
 wait a little."

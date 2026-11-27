@@ -746,6 +746,32 @@ public class UtubotSettings {
         mPrefs.edit().putString(KEY_FILMS_RD_TOKEN, value == null ? "" : value.trim()).apply();
     }
 
+    /** The secrets the server may give this TV, by their name on the server (see {@link UtubotSettingsSync#SECRET_NAMES}) */
+    public String getSecretValue(String name) {
+        switch (name) {
+            case "films_rd_token":
+                return getFilmsRealDebridToken();
+            case "films_addon_url":
+                return getFilmsAddonUrl();
+            default:
+                return "";
+        }
+    }
+
+    /** An empty value clears it */
+    public void setSecretValue(String name, String value) {
+        switch (name) {
+            case "films_rd_token":
+                setFilmsRealDebridToken(value);
+                break;
+            case "films_addon_url":
+                setFilmsAddonUrl(value);
+                break;
+            default:
+                break;
+        }
+    }
+
     public String getFilmsImdbId() {
         return mPrefs.getString(KEY_FILMS_IMDB, "");
     }

@@ -80,6 +80,7 @@ from .models import (
 )
 from .processed import ProcessedService
 from .prompts import PANEL_ALIAS, TASK_CUTS, Prompt, PromptError, PromptStore, validate_prompt_set
+from .secretstore import SecretStore
 from .security import (
     CLIENT_HEADER,
     PROXY_SECRET_HEADER,
@@ -215,6 +216,7 @@ class Services:
     ledger: LedgerService
     user_providers: UserProviders
     device_settings: Any = None
+    secrets: Any = None
     build: buildinfo.Build = field(default_factory=buildinfo.detect)
 
 
@@ -253,7 +255,19 @@ def build_services(
     transcription = Transcription(cfg, transcripts, jobs)
     auth = Auth(cfg, db)
     catalog = ModelCatalog(cfg, db, llm)
-    user_providers = UserProviders(db)
+
+    def touch_settings(name: str) -> int:
+        auth.touch_settings(name)
+        return auth.settings_version(name)[0]
+
+    secret_store = SecretStore.from_env(db, cfg.security.secrets_key_env, touch_settings)
+    if not secret_store.available:
+        log.info(
+            "secret storage is off: the master key variable %s is missing or malformed",
+            cfg.security.secrets_key_env,
+        )
+    user_providers = UserProviders(db, secret_store)
+    user_providers.migrate_keys()
     assessor = Assessor(cfg, db, llm, transcripts)
     content = ContentService(cfg, db, llm, transcripts, prompts, transcription)
     return Services(
@@ -284,6 +298,7 @@ def build_services(
         artifacts=ArtifactCache(db, transcripts, content, assessor, archive),
         ledger=ledger,
         user_providers=user_providers,
+        secrets=secret_store,
     )
 
 
@@ -1659,6 +1674,7 @@ def create_app(
         return {"ok": True}
 
     svc.device_settings = DeviceSettings(cfg, svc.db, svc.auth, svc.settings, default_schema())
+    svc.device_settings.secrets = svc.secrets
     deps = Deps(
         svc=svc,
         current_user=current_user,

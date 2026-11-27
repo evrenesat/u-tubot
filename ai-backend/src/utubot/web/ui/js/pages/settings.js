@@ -101,6 +101,16 @@ export function tooNewFor(schema, device) {
   return schema.settings.filter((s) => s.remote === "rw" && (s.since || 1) > (device.schema_version || 1) && (s.clients || []).includes("tv"));
 }
 
+// "Set" with the hint the server keeps: the last 4 characters of a token, only the host of an address.
+export function secretState(state, name) {
+  if (!state.set) return "Not set";
+  return name.endsWith("addon_url") ? "Set, host " + state.last4 : "Set, ends in " + state.last4;
+}
+
+export function secretSettings(schema) {
+  return schema.settings.filter((s) => s.type === "secret" && s.remote === "rw");
+}
+
 export function whoWhere(entry) {
   if (entry.via === "tv") return entry.device || "a TV";
   if (entry.via === "migration") return "First sync of " + (entry.device || "a TV");
@@ -177,7 +187,7 @@ function control(setting, value, onChange, disabled) {
 
 export async function render(view, { rest = [] } = {}) {
   const where = parseRest(rest);
-  const S = { schema: null, doc: null, status: null, devDocs: {}, history: null, query: "", signature: "" };
+  const S = { schema: null, doc: null, status: null, devDocs: {}, history: null, query: "", signature: "", secrets: null };
   const host = h("div", { class: "stack" });
   const bar = h("div", { class: "stage-host" });
   let stopPoll = null;
@@ -192,6 +202,11 @@ export async function render(view, { rest = [] } = {}) {
     S.doc = doc;
     S.status = status;
     S.devDocs = {};
+    try {
+      S.secrets = await api("/v1/me/secrets");
+    } catch {
+      S.secrets = null; // a server without secrets: the section is not drawn
+    }
     await Promise.all(
       status.devices.map(async (d) => {
         try {
@@ -393,12 +408,58 @@ export async function render(view, { rest = [] } = {}) {
   function myBody() {
     const settings = pageSettings(S.schema, S.doc.values);
     const groups = groupSettings(S.schema, settings, S.query);
-    if (!groups.length) return [empty("No setting matches \"" + S.query + "\".")];
-    return groups.map(({ group, rows }) =>
-      card(
-        group.title,
-        rows.map((s) => row(s, { base: S.doc.values[s.key].v, from: S.doc.values[s.key].from, scope: "my" })),
+    const accounts = secretsCard();
+    if (!groups.length && !accounts) return [empty("No setting matches \"" + S.query + "\".")];
+    return [
+      ...groups.map(({ group, rows }) =>
+        card(
+          group.title,
+          rows.map((s) => row(s, { base: S.doc.values[s.key].v, from: S.doc.values[s.key].from, scope: "my" })),
+        ),
       ),
+      accounts,
+    ];
+  }
+
+  // Accounts and services (plan section 6): write-only. The page never holds a value it was not just given.
+  function secretsCard() {
+    if (!S.secrets) return null;
+    const defs = secretSettings(S.schema).filter((s) => matches(s, S.query));
+    if (!defs.length) return null;
+    if (!S.secrets.available) return card("Accounts and services", note("Secret storage is not set up on this server. The server's owner has to give it a master key first.", "warn"));
+    return card("Accounts and services", defs.map(secretRow));
+  }
+
+  function secretRow(s) {
+    const name = s.key.split(".")[1];
+    const state = S.secrets.secrets.find((x) => x.key === name) || { set: false };
+    const input = h("input", { type: "password", autocomplete: "new-password", spellcheck: "false", placeholder: state.set ? "New value" : "Value", "aria-label": s.title });
+    const save = async () => {
+      if (!input.value.trim()) return;
+      try {
+        await api("/v1/me/secrets/" + name, { method: "PUT", body: { value: input.value } });
+      } catch (err) {
+        toast(err instanceof ApiError ? errorText(err) : "Could not save", "bad");
+        return;
+      }
+      input.value = "";
+      toast(s.title + " saved. Your TVs get it within a few seconds.");
+      await refresh();
+    };
+    const remove = async () => {
+      if (!window.confirm("Remove " + s.title + " from the server and from your TVs?")) return;
+      await api("/v1/me/secrets/" + name, { method: "DELETE" });
+      toast(s.title + " removed.");
+      await refresh();
+    };
+    return h(
+      "div",
+      { class: "set-row", id: "set-" + s.key, dataset: { key: s.key } },
+      h("div", { class: "set-head" }, h("strong", { text: s.title }), h("small", { class: "muted", text: s.description })),
+      h("div", { class: "row" }, pill(secretState(state, name), state.set ? "ok" : ""), state.set ? h("button", { type: "button", class: "linklike", text: "Remove", onClick: remove }) : null),
+      state.set && state.delivered_to && state.delivered_to.length ? h("small", { class: "muted", text: "Given to " + state.delivered_to.map((d) => d.device + " (" + fmtAgo(d.at) + ")").join(", ") }) : null,
+      h("div", { class: "row nowrap" }, input, button("Save", save, { kind: "primary" })),
+      h("small", { class: "muted", text: "Write-only: the value is never shown here again." }),
     );
   }
 
