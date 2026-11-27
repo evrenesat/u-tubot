@@ -1186,19 +1186,44 @@ public class VideoMenuPresenter extends BaseMenuPresenter {
         // Until synced we won't really know weather we subscribed to a channel.
         // Exclusion: channel item (can't be synced)
         // Note, regular items (from subscribed section etc) aren't contain channel id
-        if (mVideo.isSynced || mVideo.isSubscribed || mVideo.isChannel() || (!getSignInService().isSigned() && mVideo.channelId != null)) {
-            toggleSubscribe(mVideo);
+        if (canToggleSubscribe(mVideo)) {
+            toggleSubscribe(mVideo, mCallback);
         } else {
             MessageHelpers.showMessage(getContext(), R.string.wait_data_loading);
 
             mServiceManager.loadMetadata(mVideo, metadata -> {
                 mVideo.sync(metadata);
-                toggleSubscribe(mVideo);
+                toggleSubscribe(mVideo, mCallback);
             });
         }
     }
 
-    private void toggleSubscribe(Video video) {
+    public void toggleSubscribe(Video video, Runnable onToggled) {
+        if (video == null) {
+            return;
+        }
+
+        if (canToggleSubscribe(video)) {
+            toggleSubscribe(video, null, onToggled);
+        } else {
+            MessageHelpers.showMessage(getContext(), R.string.wait_data_loading);
+
+            mServiceManager.loadMetadata(video, metadata -> {
+                video.sync(metadata);
+                toggleSubscribe(video, null, onToggled);
+            });
+        }
+    }
+
+    private boolean canToggleSubscribe(Video video) {
+        return video.isSynced || video.isSubscribed || video.isChannel() || (!getSignInService().isSigned() && video.channelId != null);
+    }
+
+    private void toggleSubscribe(Video video, VideoMenuCallback callback) {
+        toggleSubscribe(video, callback, null);
+    }
+
+    private void toggleSubscribe(Video video, VideoMenuCallback callback, Runnable onToggled) {
         if (video == null) {
             return;
         }
@@ -1212,8 +1237,12 @@ public class VideoMenuPresenter extends BaseMenuPresenter {
 
         video.isSubscribed = !video.isSubscribed;
 
-        if (!video.isSubscribed && mCallback != null) {
-            mCallback.onItemAction(video, VideoMenuCallback.ACTION_UNSUBSCRIBE);
+        if (!video.isSubscribed && callback != null) {
+            callback.onItemAction(video, VideoMenuCallback.ACTION_UNSUBSCRIBE);
+        }
+
+        if (onToggled != null) {
+            onToggled.run();
         }
 
         MessageHelpers.showMessage(getContext(), getContext().getString(!video.isSubscribed ? R.string.unsubscribed_from_channel : R.string.subscribed_to_channel));

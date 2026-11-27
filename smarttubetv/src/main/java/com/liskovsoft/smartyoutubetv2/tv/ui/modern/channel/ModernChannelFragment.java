@@ -40,6 +40,9 @@ import com.liskovsoft.smartyoutubetv2.tv.ui.modern.widgets.ModernCardPresenter;
  */
 public class ModernChannelFragment extends Fragment implements ChannelView {
     private LinearLayout mActions;
+    private ImageView mSubscribeIcon;
+    private TextView mSubscribeText;
+    private boolean mSubscriptionResolved;
     private ChannelPresenter mPresenter;
     private CrashRestorer mCrashRestorer;
     private View mPage;
@@ -96,7 +99,16 @@ public class ModernChannelFragment extends Fragment implements ChannelView {
                 mPresenter.onVideoItemClicked(mFirstVideo);
             }
         });
-        addAction(inflater, actions, R.drawable.modern_ic_notifications, R.string.action_subscribe).setOnClickListener(v -> {
+        View subscribe = addAction(inflater, actions, R.drawable.modern_ic_notifications, R.string.action_subscribe);
+        mSubscribeIcon = subscribe.findViewById(R.id.modern_pill_icon);
+        mSubscribeText = subscribe.findViewById(R.id.modern_pill_text);
+        subscribe.setOnClickListener(v -> {
+            Video channel = mPresenter.getChannel();
+            if (channel != null) {
+                VideoMenuPresenter.instance(getContext()).toggleSubscribe(channel, this::updateHeader);
+            }
+        });
+        addAction(inflater, actions, R.drawable.modern_ic_more_vert, R.string.context_menu).setOnClickListener(v -> {
             if (mPresenter.getChannel() != null) {
                 VideoMenuPresenter.instance(getContext()).showMenu(mPresenter.getChannel());
             }
@@ -192,6 +204,7 @@ public class ModernChannelFragment extends Fragment implements ChannelView {
     @Override
     public void clear() {
         mFirstVideo = null;
+        mSubscriptionResolved = false;
         mRows.clear();
         mArt.setImageDrawable(null);
     }
@@ -210,10 +223,25 @@ public class ModernChannelFragment extends Fragment implements ChannelView {
         mName.setText(Helpers.firstNonNull(channel.getAuthor(), channel.getTitle()));
         mInfo.setText(channel.subscriberCount);
         mInfo.setVisibility(TextUtils.isEmpty(channel.subscriberCount) ? View.GONE : View.VISIBLE);
+        updateSubscription(channel);
 
         if (channel.getCardImageUrl() != null) {
             Glide.with(this).load(channel.getCardImageUrl()).transform(new CircleCrop()).into(mAvatar);
         }
+    }
+
+    private void updateSubscription(Video channel) {
+        if (mSubscribeIcon == null || mSubscribeText == null) {
+            return;
+        }
+
+        if (!mSubscriptionResolved) {
+            channel.isSubscribed = ModernChannelSubscription.isSubscribed(channel);
+            mSubscriptionResolved = true;
+        }
+
+        mSubscribeIcon.setImageResource(ModernChannelSubscription.iconOf(channel.isSubscribed));
+        mSubscribeText.setText(ModernChannelSubscription.titleOf(channel.isSubscribed));
     }
 
     private static View addAction(LayoutInflater inflater, LinearLayout parent, int iconResId, int textResId) {
