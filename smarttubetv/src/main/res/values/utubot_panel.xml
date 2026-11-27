@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="utubot_card_video" type="id" />
-    <item name="utubot_card_utubot_summary" type="id" />
     <item name="utubot_overlay_list" type="id" />
     <item name="utubot_overlay_text" type="id" />
     <item name="utubot_overlay_retry" type="id" />

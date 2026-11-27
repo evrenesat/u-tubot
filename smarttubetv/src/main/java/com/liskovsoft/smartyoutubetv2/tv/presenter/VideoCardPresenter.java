@@ -7,9 +7,6 @@ import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Build.VERSION;
-import android.view.Gravity;
-import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.TextUtils;
@@ -18,6 +15,8 @@ import android.text.style.StyleSpan;
 import android.util.Pair;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
+import android.widget.RelativeLayout;
 import android.widget.TextView;
 
 import java.util.List;
@@ -256,8 +255,8 @@ public class VideoCardPresenter extends LongClickPresenter {
         ComplexImageCardView cardView = (ComplexImageCardView) viewHolder.view;
 
         View control = cardView.findViewWithTag(UTUBOT_SUMMARY_TAG);
-        if (control != null) {
-            cardView.removeView(control);
+        if (control != null && control.getParent() instanceof ViewGroup) {
+            ((ViewGroup) control.getParent()).removeView(control);
         }
 
         if (mHold != null) {
@@ -283,9 +282,16 @@ public class VideoCardPresenter extends LongClickPresenter {
     private void setupUtubotSummaryControl(ComplexImageCardView card, Video video, Context context) {
         if (!Helpers.isTouchSupported(context)) {
             View existing = card.findViewWithTag(UTUBOT_SUMMARY_TAG);
-            if (existing != null) {
-                card.removeView(existing);
+            if (existing != null && existing.getParent() instanceof ViewGroup) {
+                ((ViewGroup) existing.getParent()).removeView(existing);
             }
+            return;
+        }
+
+        // The card is a BaseCardView that stacks its children by view type and ignores gravity: the symbol goes into the
+        // thumbnail's own layout (a RelativeLayout) so it sits in the thumb's corner instead of becoming a stacked row
+        ViewGroup thumb = card.findViewById(R.id.main_image_wrapper);
+        if (thumb == null) {
             return;
         }
 
@@ -302,8 +308,9 @@ public class VideoCardPresenter extends LongClickPresenter {
 
         int size = context.getResources().getDimensionPixelSize(R.dimen.utubot_card_control_size);
         int margin = context.getResources().getDimensionPixelSize(R.dimen.utubot_card_control_margin);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size);
-        params.gravity = Gravity.TOP | Gravity.END;
+        RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(size, size);
+        params.addRule(RelativeLayout.ALIGN_PARENT_TOP);
+        params.addRule(RelativeLayout.ALIGN_PARENT_END);
         params.setMargins(margin, margin, margin, margin);
         control.setLayoutParams(params);
         control.setOnClickListener(v -> {
@@ -311,7 +318,7 @@ public class VideoCardPresenter extends LongClickPresenter {
                 UtubotUiHost.request(UtubotOpenRequests.Kind.SUMMARY, video);
             }
         });
-        card.addView(control);
+        thumb.addView(control);
     }
 
     /**

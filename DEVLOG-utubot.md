@@ -92,6 +92,8 @@
   `UtubotUiHost.request(SUMMARY, video)` — the same call the Info key and the menu's "u·tubot summary" item make — prompts on the left, the
   text on the right, Back closing it with the focus back on the card. The long press of a card still opens the u·tubot menu (`LongClickPresenter`), so the cut picker and the AI answer stay reachable by touch. `UtubotPanelControllerTest`.
 - Parity box (UTB-260 r1): the commit touches `common/utubot/` and `smarttubetv/utubot/` without an extension file or the plan, so `parity-box` failed. The touch entry is TV-tablet only — the browser has no keyboard, so its card chip is already the touch entry for the Summary view (row `summary-view`) and there is no D-pad/tablet split. Added the row `card-summary-touch` to `ai/BROWSER_EXTENSION_PLAN.md` as the extension's side of the parity box; `UtubotPanelControllerTest` passes.
+- Takeover fix: the classic card is a leanback `BaseCardView` that stacks children by view type and ignores gravity, so the symbol added to the card itself
+  would have become a stacked row under the thumb; it is now added to the thumb's own layout (`main_image_wrapper`, top-end). Unused id removed.
 
 ## 2026-11-26 (voice plan checkpoint 0: gates, issue #180)
 
