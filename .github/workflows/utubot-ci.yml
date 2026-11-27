@@ -31,6 +31,7 @@ jobs:
       release: ${{ steps.scan.outputs.release }}
       extension: ${{ steps.scan.outputs.extension }}
       extension_release: ${{ steps.scan.outputs.extension_release }}
+      realtime: ${{ steps.scan.outputs.realtime }}
     steps:
       - name: Checkout u-tubot
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -195,6 +196,40 @@ jobs:
       - name: End-to-end tests
         working-directory: extension/tests/e2e
         run: uv run pytest -q
+
+  realtime:
+    # The live server of the voice plan (ai/VOICE_CONTROL_PLAN.md): Go, no models, no microphone, no YouTube.
+    needs: changes
+    if: needs.changes.outputs.realtime == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: realtime
+    steps:
+      - name: Checkout u-tubot
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.22.12
+          cache-dependency-path: realtime/go.sum
+
+      - name: Check the formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      - name: Loopback benchmark
+        # Fails when the server's own time is over 20 ms at the 99th percentile (plan 2.5).
+        run: go run ./cmd/utubot-rt bench -max-p99 20ms
 
   release:
     # Hosted by this repository only: forks do not hold the signing key.
