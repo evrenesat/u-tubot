@@ -111,6 +111,10 @@ public class UtubotSettings {
         mConnectionListeners.add(listener);
     }
 
+    public void removeConnectionListener(Runnable listener) {
+        mConnectionListeners.remove(listener);
+    }
+
     private void notifyConnectionChanged() {
         for (Runnable listener : mConnectionListeners) {
             listener.run();
