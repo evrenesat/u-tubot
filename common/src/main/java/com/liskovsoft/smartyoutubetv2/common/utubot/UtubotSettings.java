@@ -21,6 +21,7 @@ public class UtubotSettings {
     public static final int NETWORK_SLACK_MS = 500;
     /** How long a card keeps the focus before the passive panel asks for its summary (Settings choices) */
     public static final int DEFAULT_PANEL_DELAY_MS = 1800;
+    public static final int MAX_PANEL_DELAY_MS = 10_000;
     public static final int[] PANEL_DELAY_CHOICES_MS = {1000, DEFAULT_PANEL_DELAY_MS, 3000, 5000};
     /** How long the prompt highlight rests in the Summary view before its summary loads */
     public static final int VIEW_PROMPT_DELAY_MS = 400;
@@ -67,6 +68,18 @@ public class UtubotSettings {
     private final SharedPreferences mPrefs;
     private final List<Runnable> mPanelListeners = new CopyOnWriteArrayList<>();
     private final List<Runnable> mConnectionListeners = new CopyOnWriteArrayList<>();
+    private final ThreadLocal<Boolean> mIsRemote = new ThreadLocal<>();
+    private volatile ChangeListener mChangeListener;
+
+    /**
+     * Told when the user changes one of the settings that follow the server (a local change, not one the sync applied)
+     */
+    public interface ChangeListener {
+        /**
+         * @param prefKey the preference key, also the schema's {@code tv_pref}
+         */
+        void onChanged(String prefKey);
+    }
 
     private UtubotSettings(Context context) {
         mPrefs = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -344,6 +357,7 @@ public class UtubotSettings {
 
     public void setAssessEnabled(boolean enabled) {
         mPrefs.edit().putBoolean(KEY_ASSESS, enabled).apply();
+        changed(KEY_ASSESS);
     }
 
     public boolean isMarkOnly() {
@@ -352,6 +366,7 @@ public class UtubotSettings {
 
     public void setMarkOnly(boolean markOnly) {
         mPrefs.edit().putBoolean(KEY_MARK_ONLY, markOnly).apply();
+        changed(KEY_MARK_ONLY);
     }
 
     public boolean isAnswerInMenuEnabled() {
@@ -360,6 +375,7 @@ public class UtubotSettings {
 
     public void setAnswerInMenuEnabled(boolean enabled) {
         mPrefs.edit().putBoolean(KEY_ANSWER_IN_MENU, enabled).apply();
+        changed(KEY_ANSWER_IN_MENU);
     }
 
     public boolean isSummaryPanelEnabled() {
@@ -372,6 +388,8 @@ public class UtubotSettings {
         for (Runnable listener : new ArrayList<>(mPanelListeners)) {
             listener.run();
         }
+
+        changed(KEY_PANEL);
     }
 
     /**
@@ -391,6 +409,7 @@ public class UtubotSettings {
 
     public void setAutoCaptionsEnabled(boolean enabled) {
         mPrefs.edit().putBoolean(KEY_AUTO_CAPTIONS, enabled).apply();
+        changed(KEY_AUTO_CAPTIONS);
     }
 
     public boolean isApplyReadyCutsEnabled() {
@@ -399,6 +418,7 @@ public class UtubotSettings {
 
     public void setApplyReadyCutsEnabled(boolean enabled) {
         mPrefs.edit().putBoolean(KEY_AUTO_CUTS, enabled).apply();
+        changed(KEY_AUTO_CUTS);
     }
 
     /**
@@ -455,22 +475,136 @@ public class UtubotSettings {
 
     public void setWaitMs(int waitMs) {
         mPrefs.edit().putInt(KEY_WAIT_MS, Math.max(0, Math.min(waitMs, MAX_WAIT_MS))).apply();
+        changed(KEY_WAIT_MS);
     }
 
     /**
-     * The pause before the passive panel summarizes the focused card: one of {@link #PANEL_DELAY_CHOICES_MS}
+     * The pause before the passive panel summarizes the focused card: any value from 0 to {@link #MAX_PANEL_DELAY_MS} (the web page
+     * can set one that is not in {@link #PANEL_DELAY_CHOICES_MS}; the Settings screen offers the choices)
      */
     public int getPanelDelayMs() {
         int stored = mPrefs.getInt(KEY_PANEL_DELAY_MS, DEFAULT_PANEL_DELAY_MS);
 
-        return isPanelDelayChoice(stored) ? stored : DEFAULT_PANEL_DELAY_MS;
+        return isPanelDelayInRange(stored) ? stored : DEFAULT_PANEL_DELAY_MS;
     }
 
     public void setPanelDelayMs(int delayMs) {
-        if (isPanelDelayChoice(delayMs)) {
+        if (isPanelDelayInRange(delayMs)) {
             mPrefs.edit().putInt(KEY_PANEL_DELAY_MS, delayMs).apply();
+            changed(KEY_PANEL_DELAY_MS);
         }
     }
+
+    public static boolean isPanelDelayChoice(int delayMs) {
+        for (int choice : PANEL_DELAY_CHOICES_MS) {
+            if (choice == delayMs) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean isPanelDelayInRange(int delayMs) {
+        return delayMs >= 0 && delayMs <= MAX_PANEL_DELAY_MS;
+    }
+
+    //region Settings sync (ai/WEB_SETTINGS_PLAN.md)
+
+    public void setChangeListener(ChangeListener listener) {
+        mChangeListener = listener;
+    }
+
+    private void changed(String prefKey) {
+        ChangeListener listener = mChangeListener;
+
+        if (listener != null && mIsRemote.get() == null) {
+            listener.onChanged(prefKey);
+        }
+    }
+
+    /**
+     * Runs the changes the sync applies: they are not the user's, so they are not sent back
+     */
+    public void applyRemote(Runnable changes) {
+        mIsRemote.set(Boolean.TRUE);
+
+        try {
+            changes.run();
+        } finally {
+            mIsRemote.remove();
+        }
+    }
+
+    /**
+     * The stored value of a synced setting as the sync sees it: the preference itself, not what a feature makes of it (the assess
+     * switch also needs a token). A Boolean or an Integer; null for a key that does not follow the server.
+     */
+    public Object getSyncedValue(String prefKey) {
+        switch (prefKey) {
+            case KEY_ASSESS:
+                return mPrefs.getBoolean(KEY_ASSESS, true);
+            case KEY_MARK_ONLY:
+                return isMarkOnly();
+            case KEY_ANSWER_IN_MENU:
+                return mPrefs.getBoolean(KEY_ANSWER_IN_MENU, true);
+            case KEY_PANEL:
+                return mPrefs.getBoolean(KEY_PANEL, false);
+            case KEY_PANEL_DELAY_MS:
+                return getPanelDelayMs();
+            case KEY_AUTO_CAPTIONS:
+                return isAutoCaptionsEnabled();
+            case KEY_AUTO_CUTS:
+                return isApplyReadyCutsEnabled();
+            case KEY_WAIT_MS:
+                return getWaitMs();
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * True when the value was chosen on this TV or imported, false while the preference was never written (the built-in default)
+     */
+    public boolean isSyncedValueSet(String prefKey) {
+        return mPrefs.contains(prefKey);
+    }
+
+    /**
+     * Stores a synced value through its setter (so the panel switch tells its listeners). Call it inside {@link #applyRemote}.
+     */
+    public void setSyncedValue(String prefKey, Object value) {
+        switch (prefKey) {
+            case KEY_ASSESS:
+                setAssessEnabled((Boolean) value);
+                break;
+            case KEY_MARK_ONLY:
+                setMarkOnly((Boolean) value);
+                break;
+            case KEY_ANSWER_IN_MENU:
+                setAnswerInMenuEnabled((Boolean) value);
+                break;
+            case KEY_PANEL:
+                setSummaryPanelEnabled((Boolean) value);
+                break;
+            case KEY_PANEL_DELAY_MS:
+                setPanelDelayMs((Integer) value);
+                break;
+            case KEY_AUTO_CAPTIONS:
+                setAutoCaptionsEnabled((Boolean) value);
+                break;
+            case KEY_AUTO_CUTS:
+                setApplyReadyCutsEnabled((Boolean) value);
+                break;
+            case KEY_WAIT_MS:
+                setWaitMs((Integer) value);
+                break;
+            default:
+                break;
+        }
+    }
+
+    //endregion
 
     /**
      * Minutes between two automatic update checks while the app is open
@@ -596,15 +730,5 @@ public class UtubotSettings {
      */
     public static String formatBrowseRefresh(Context context, int minutes) {
         return context.getString(R.string.utubot_browse_refresh_value, String.valueOf(minutes));
-    }
-
-    private static boolean isPanelDelayChoice(int delayMs) {
-        for (int choice : PANEL_DELAY_CHOICES_MS) {
-            if (choice == delayMs) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

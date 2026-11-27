@@ -60,15 +60,26 @@ public class UtubotPanelSettingsTest {
     }
 
     @Test
-    public void aValueThatIsNoChoiceChangesNothing() {
+    public void anyValueInRangeIsKeptAndOneOutsideChangesNothing() {
         mSettings.setPanelDelayMs(3000);
         mSettings.setPanelDelayMs(700);
+
+        assertEquals(700, mSettings.getPanelDelayMs());
+
         mSettings.setPanelDelayMs(0);
+        assertEquals(0, mSettings.getPanelDelayMs());
 
-        assertEquals(3000, mSettings.getPanelDelayMs());
+        mSettings.setPanelDelayMs(10_001);
+        mSettings.setPanelDelayMs(-5);
+        assertEquals(0, mSettings.getPanelDelayMs());
 
-        StoredSettings.prefsOf(mSettings).edit().putInt("panel_delay_ms", 700).commit();
+        StoredSettings.prefsOf(mSettings).edit().putInt("panel_delay_ms", 99_999).commit();
         assertEquals(1800, mSettings.getPanelDelayMs());
+    }
+
+    @Test
+    public void aDelayThatIsNoChoiceReadsAsCustom() {
+        assertEquals("Custom (700 ms)", UtubotSettingsPresenter.formatDelay(mActivity, 700));
     }
 
     @Test

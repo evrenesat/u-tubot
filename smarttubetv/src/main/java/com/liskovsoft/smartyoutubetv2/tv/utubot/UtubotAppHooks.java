@@ -7,6 +7,7 @@ import android.os.Bundle;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutNotices;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotScreen;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettingsSyncRunner;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUiHost;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUpdates;
 import com.liskovsoft.smartyoutubetv2.tv.ui.dialogs.AppDialogActivity;
@@ -45,6 +46,7 @@ public final class UtubotAppHooks {
                     if (!(activity instanceof PlaybackActivity)) {
                         // The player closed or the app came back: an update that was found meanwhile is offered now
                         UtubotUpdates.onScreenAvailable();
+                        UtubotSettingsSyncRunner.requestNow(activity);
                     }
 
                     // A cut or its failure that arrived while no screen was up is shown on this one

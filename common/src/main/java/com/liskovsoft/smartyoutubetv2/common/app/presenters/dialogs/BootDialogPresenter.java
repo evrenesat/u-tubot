@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.base.BasePresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettingsSyncRunner;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUpdates;
 
 /**
@@ -39,6 +40,7 @@ public class BootDialogPresenter extends BasePresenter<Void> {
         // u-tubot: a delayed check, then one every few hours while the app runs
         if (UtubotSettings.isBuiltIn()) {
             UtubotUpdates.start(getContext());
+            UtubotSettingsSyncRunner.start(getContext());
             return;
         }
 
