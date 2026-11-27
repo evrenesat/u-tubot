@@ -36,6 +36,10 @@
   category rows. The row now uses `td` cells and a `th.num, td.num { text-align: right; }` rule, so every number in the table is
   right-aligned.
 - Tests: service-level paging (with the category filter) and the endpoint with `offset`, including the rejection of a negative offset.
+- Frontend fix: the "Newest failures" card crashed on load — it was given the page's entries array but read `.recent` off it, so the
+  page never mounted. It now consumes the entries and closes over the page state so Older/Newer advance the page the loader reads.
+- Web UI JS tests: `node --test` with a minimal DOM stub, no build step and no network. The CI backend job sets up Node 22 and runs
+  `node --test tests/js/*.test.mjs`.
 
 ## 2026-11-26 (error ledger review pass, issue #206)
 
