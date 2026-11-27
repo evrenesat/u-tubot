@@ -40,11 +40,10 @@ def test_a_wrong_secret_is_refused():
 def test_a_tampered_value_fails_its_mac():
     secret = "a-long-server-secret-value"
     value = encrypt(secret, "pk-secret-key")
-    # flip a byte in the ciphertext body: the MAC no longer verifies
-    body = value[len(MARKER) :]
-    raw = bytearray(body.encode())
+    # flip a byte in the decoded ciphertext body, then re-encode: the MAC no longer verifies
+    raw = bytearray(base64.b64decode(value[len(MARKER) :]))
     raw[-1] ^= 0x01
-    tampered = MARKER + bytes(raw).decode()
+    tampered = MARKER + base64.b64encode(bytes(raw)).decode()
     with pytest.raises(ValueError):
         decrypt(secret, tampered)
 

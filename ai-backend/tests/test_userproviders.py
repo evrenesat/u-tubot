@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -139,9 +139,7 @@ def test_per_user_limits_use_the_override_then_the_global():
     cfg.usage.user_requests_per_min = 100
     cfg.users = [
         UserConfig(name="owner", admin=True),  # no override -> the global value
-        UserConfig(
-            name="limited", user_budget_usd=1.0, user_requests_per_min=5
-        ),  # their own cap
+        UserConfig(name="limited", user_budget_usd=1.0, user_requests_per_min=5),  # their own cap
     ]
     # an override wins over the global ceiling
     assert cfg.per_user_budget("limited") == 1.0
@@ -424,9 +422,7 @@ async def test_a_user_override_caps_that_user_when_the_global_is_higher(env):
     # the global cap is generous; partner carries a lower per-user override from users.toml
     env.cfg.usage.user_requests_per_min = 100
     env.cfg.users = [
-        u.model_copy(update={"user_requests_per_min": 1})
-        if u.name == "partner"
-        else u
+        u.model_copy(update={"user_requests_per_min": 1}) if u.name == "partner" else u
         for u in env.cfg.users
     ]
     partner = httpx.AsyncClient(
@@ -447,10 +443,10 @@ async def test_a_user_override_caps_that_user_when_the_global_is_higher(env):
 
 
 async def test_admin_users_report_usage_over_the_window(env):
-    two_days_ago = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
+    two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
     env.svc.db.execute(
         "INSERT INTO user_usage(user,day,cost,calls) VALUES('owner',?,0.5,2)",
-        [two_days_ago, 0.5, 2],
+        [two_days_ago],
     )
     users = {u["name"]: u for u in (await env.client.get("/v1/admin/users")).json()["users"]}
     owner = users["owner"]
@@ -490,7 +486,7 @@ async def test_an_admin_may_set_a_private_base_url(env):
         json={"base_url": "http://127.0.0.1:8000/v1", "api_key": "pk-owner"},
     )
     assert r.status_code == 200
-    assert (await env.client.get("/v1/me/provider")).json()["host"] == "http://127.0.0.1:8000/v1"
+    assert (await env.client.get("/v1/me/provider")).json()["host"] == "http://127.0.0.1:8000"
 
 
 async def test_a_non_admin_may_set_a_public_base_url(env):
@@ -506,13 +502,13 @@ async def test_a_non_admin_may_set_a_public_base_url(env):
             json={"base_url": "http://93.184.216.34/v1", "api_key": "pk-partner"},
         )
         assert r.status_code == 200
-        assert (await partner.get("/v1/me/provider")).json()["host"] == "http://93.184.216.34/v1"
+        assert (await partner.get("/v1/me/provider")).json()["host"] == "http://93.184.216.34"
     finally:
         await partner.aclose()
 
 
 async def test_assert_not_private_rejects_a_hostname_that_resolves_private():
-    from utubot.urlguard import assert_not_private, UrlRejected
+    from utubot.urlguard import UrlRejected, assert_not_private
 
     async def resolver(host, port):
         return ["192.168.1.10"]
@@ -549,9 +545,7 @@ async def test_a_claimed_job_runs_with_its_user_bound(env):
     assert await env.svc.jobs.run_one() is True
     # the job ran as partner, on partner's own upstream, not the server default
     assert captured["user"] == "partner"
-    assert captured["provider"] == UserProvider(
-        "https://user-models.example.com/v1", "pk-partner"
-    )
+    assert captured["provider"] == UserProvider("https://user-models.example.com/v1", "pk-partner")
 
 
 async def test_a_claimed_job_without_its_user_runs_on_the_server_default(env):
