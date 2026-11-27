@@ -18,7 +18,8 @@
 - `WatchedBuilder.prepare` now runs the transcript phase (length, timed transcript, duration and live limits) before the slot is acquired. `_run_build` then waits for prime, takes the slot and calls `build(prepared)`, which holds the slot only for video, grids, descriptions and the model. The transcript stage is still recorded once, by `prepare`.
 - Not changed: `WatchedBuilder.prepare` still calls `ensure_length` (up to 15 s, metadata only) before the slot is taken; the transcript job itself still queues behind other transcript work (`captions.job_concurrency`, default 1), which is a separate wait.
 - Ordering changed: the slot is now taken after the transcript, so cuts for one video (which become ready together) no longer take the slot in request order; the first posted may wait in line behind the second. `test_a_second_watched_build_waits_in_line` asserts that one of the two waits, not which one.
-- Tests: `TestTranscriptWaitHoldsNoSlot` in `tests/test_cuts_watched.py` holds one video's caption fetch and checks the slot is free while that cut waits, and that a prime watched cut on another video builds meanwhile. It fails on the previous code (slot held, `1 == 0`).
+- A request dismissed while it yields to prime now stops the build (`yield_check` raises `CutRefused`); before, the build went on without the slot.
+- Tests: `TestWatchedSlotLifecycle` (the dismissal during a yield; a refused `prepare` leaves no slot and the next build runs), `TestTranscriptWaitHoldsNoSlot` in `tests/test_cuts_watched.py` holds one video's caption fetch and checks the slot is free while that cut waits, and that a prime watched cut on another video builds meanwhile. It fails on the previous code (slot held, `1 == 0`).
 
 ## 2026-11-27 (TV captions kept, refusals fall back, issue #261)
 

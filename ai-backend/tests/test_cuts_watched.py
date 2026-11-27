@@ -196,7 +196,7 @@ class TestWatchedBuild:
         for jid in (first_doc["job_id"], second_doc["job_id"]):
             job = (await watched_env.client.get(f"/v1/jobs/{jid}")).json()
             stages.append({event["stage"] for event in job["events"]})
-        assert any("in_line" in s for s in stages), stages
+        assert sum("in_line" in s for s in stages) == 1, stages
 
     async def test_failure_offers_quick_instead(self, watched_env, tmp_path):
         await store_video(watched_env, tmp_path)
@@ -299,6 +299,7 @@ class TestWatchedBuild:
 
 OTHER_VID = "bbbbbbbbbbb"
 PRIME_DEADLINE_S = 30
+LONG_POLL_MS = 1000
 
 
 async def store_video_as(env, tmp_path, video_id: str):
@@ -318,7 +319,9 @@ async def wait_until(env, request_id: str, states, deadline_s: float):
     deadline = time.monotonic() + deadline_s
     doc: dict = {}
     while time.monotonic() < deadline:
-        doc = (await env.client.get(f"/v1/cuts/{request_id}", params={"wait_ms": 1000})).json()
+        doc = (
+            await env.client.get(f"/v1/cuts/{request_id}", params={"wait_ms": LONG_POLL_MS})
+        ).json()
         if doc.get("state") in states:
             return doc
     return doc
@@ -390,5 +393,72 @@ class TestTranscriptWaitHoldsNoSlot:
         finally:
             held.release.set()
         doc = await wait_ready(watched_env, normal)
+        assert doc["state"] == "ready", doc.get("error")
+        assert watched_env.svc.cuts._watched_running == 0
+
+
+class TestWatchedSlotLifecycle:
+    async def test_a_dismissal_during_a_prime_yield_stops_the_build(
+        self, watched_env, tmp_path, monkeypatch
+    ):
+        from utubot.cuts import CutRefused
+        from utubot.watch.service import WatchedBuilder
+
+        await store_video(watched_env, tmp_path)
+        set_transcript(watched_env.fetcher)
+        cuts = watched_env.svc.cuts
+        # The yield sees a prime job once, then none: `_wait_for_prime` waits, then tries the slot.
+        armed = {"on": False}
+        prime_answers = [True, False]
+
+        def prime_active(exclude_job=None):
+            if not armed["on"] or not prime_answers:
+                return False
+            return prime_answers.pop(0)
+
+        monkeypatch.setattr(watched_env.svc.jobs.class_gate, "prime_active", prime_active)
+        outcomes = {"raised": 0, "continued": 0}
+
+        async def build(self_builder, cuts_, request_id, row, trace, prepared, yield_check=None):
+            armed["on"] = True
+            # Dismissed without cancelling this task (`dismiss` would cancel it): the state alone
+            # is what the yield must notice.
+            cuts_._set_state(request_id, "dismissed", finished=True)
+            try:
+                await yield_check()
+            except CutRefused:
+                outcomes["raised"] += 1
+                raise
+            outcomes["continued"] += 1
+            return {}, "unused"
+
+        monkeypatch.setattr(WatchedBuilder, "build", build)
+        request_id = (await post_watched(watched_env)).json()["request_id"]
+        deadline = time.monotonic() + WAIT_DEADLINE_S
+        while request_id in cuts._tasks and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        assert outcomes == {"raised": 1, "continued": 0}
+        assert cuts._watched_running == 0
+
+    async def test_a_refused_prepare_leaves_no_slot_and_the_next_build_runs(
+        self, watched_env, tmp_path
+    ):
+        # A live video is refused in `prepare`, before the watched slot is taken.
+        await store_video(watched_env, tmp_path)
+        await store_video_as(watched_env, tmp_path, OTHER_VID)
+        set_transcript(watched_env.fetcher)
+        watched_env.llm.cut_answer = {
+            "parts": [{"from": 1, "to": 3, "label": "Start"}],
+            "summary": "s",
+            "kept_s": 15,
+        }
+        watched_env.svc.transcripts.store_meta(VID, {"is_live": True})
+        refused = (await post_watched(watched_env, preset="cut-demo")).json()["request_id"]
+        refused_doc = await wait_ready(watched_env, refused)
+        assert refused_doc["state"] == "failed", refused_doc
+        assert watched_env.svc.cuts._watched_running == 0
+
+        second = (await post_watched_for(watched_env, OTHER_VID, "cut-highlights-5")).json()
+        doc = await wait_ready(watched_env, second["request_id"])
         assert doc["state"] == "ready", doc.get("error")
         assert watched_env.svc.cuts._watched_running == 0

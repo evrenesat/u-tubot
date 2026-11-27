@@ -2588,6 +2588,10 @@ class CutService:
                 await self._wait_for_prime(
                     row, trace, row.get("klass"), release_slot_request_id=request_id
                 )
+                # The slot is not given back when the request was dismissed while it waited:
+                # building on without it would run two watched builds at once.
+                if self._dismissed(request_id):
+                    raise CutRefused("The cut request was dismissed.")
 
             doc, cache_key = await builder.build(
                 self, request_id, row, trace, prepared, yield_check=yield_check
