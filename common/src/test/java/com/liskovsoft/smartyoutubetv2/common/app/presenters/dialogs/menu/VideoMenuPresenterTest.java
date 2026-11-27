@@ -11,12 +11,18 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
 public class VideoMenuPresenterTest {
+    /**
+     * A Video holds its group weakly: without a strong reference here a GC between the setup and the assert drops the group
+     */
+    private static final List<VideoGroup> sGroups = new ArrayList<>();
+
     /**
      * The row of Subscriptions added to Home is the same group as the section (see BrowsePresenter.createAddedHomeRowObserve)
      */
@@ -62,6 +68,7 @@ public class VideoMenuPresenterTest {
         group.setType(type);
         Video video = new Video();
         video.videoId = "video";
+        sGroups.add(group);
         video.setGroup(group);
         return video;
     }
