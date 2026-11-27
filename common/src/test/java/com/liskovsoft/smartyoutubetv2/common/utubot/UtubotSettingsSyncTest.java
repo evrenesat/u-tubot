@@ -56,14 +56,18 @@ public class UtubotSettingsSyncTest {
         final Map<String, String> outcomes = new HashMap<>();
         final Map<String, Object> overrides = new HashMap<>();
         Thread lastThread;
+        int lastWaitMs = -1;
+        Runnable clockAdvanceOnUnchanged = () -> { };
 
         @Override
-        public String get(int have, int schemaVersion) throws IOException {
+        public String get(int have, int schemaVersion, int waitMs) throws IOException {
             lastThread = Thread.currentThread();
             gets.incrementAndGet();
+            lastWaitMs = waitMs;
             check();
 
             if (have == version) {
+                clockAdvanceOnUnchanged.run();
                 return "{\"version\":" + version + ",\"unchanged\":true}";
             }
 
@@ -176,6 +180,12 @@ public class UtubotSettingsSyncTest {
         mServer.values.put("ai.auto_captions", true);
         mServer.values.put("ai.auto_cuts", false);
         mServer.values.put("ai.wait_ms", 1200);
+        mServer.values.put("updates.checks", true);
+        mServer.values.put("ai.auto_scroll_speed", 45);
+        mServer.values.put("ai.cut_jump", "left_right");
+        mServer.values.put("updates.interval_minutes", 5);
+        mServer.values.put("updates.development_mode", mSettings.getSyncedValue("development_mode"));
+        mServer.values.put("browse.refresh_minutes", 10);
 
         for (String key : mServer.values.keySet()) {
             mServer.revs.put(key, 0);
@@ -447,5 +457,149 @@ public class UtubotSettingsSyncTest {
 
         assertFalse(mSync.hasPendingChanges());
         assertNotNull(mSettings.getSyncedValue("mark_only"));
+    }
+
+    // ---- checkpoint 5: the per-TV keys, the schema upgrade and the long poll
+
+    @Test
+    public void aPulledPerTvValueReachesItsGetter() {
+        syncFirst();
+        mServer.values.put("updates.checks", false);
+        mServer.values.put("ai.auto_scroll_speed", 60);
+        mServer.values.put("ai.cut_jump", "off");
+        mServer.values.put("updates.interval_minutes", 60);
+        mServer.values.put("updates.development_mode", false);
+        mServer.values.put("browse.refresh_minutes", 30);
+
+        for (String key : mServer.values.keySet()) {
+            mServer.revs.put(key, 12);
+        }
+
+        mServer.version = 12;
+        assertEquals(UtubotSettingsSync.Status.SYNCED, mSync.syncOnce());
+
+        assertFalse(mSettings.isUpdateChecksEnabled());
+        assertEquals(60, mSettings.getAutoScrollSpeedPxPerSec());
+        assertEquals(UtubotSettings.CUT_JUMP_OFF, mSettings.getCutJumpBinding());
+        assertEquals(60, mSettings.getUpdateIntervalMinutes());
+        assertFalse(mSettings.isDevelopmentMode());
+        assertEquals(30, mSettings.getBrowseRefreshMinutes());
+        assertFalse("a pulled value is not sent back", mSync.hasPendingChanges());
+    }
+
+    @Test
+    public void aLocalPerTvChangeGoesToTheOutboxAndIsSentOnce() {
+        syncFirst();
+
+        mSettings.setUpdateIntervalMinutes(15);
+        mSettings.setCutJumpBinding(UtubotSettings.CUT_JUMP_UP_DOWN);
+        mSettings.setUpdateChecksEnabled(false);
+
+        assertTrue(mSync.hasPendingChanges());
+        mSync.syncOnce();
+
+        JSONObject upload = mServer.posts.get(mServer.posts.size() - 1);
+        Map<String, Object> sent = new HashMap<>();
+
+        for (int i = 0; i < upload.optJSONArray("changes").length(); i++) {
+            JSONObject change = upload.optJSONArray("changes").optJSONObject(i);
+            sent.put(change.optString("key"), change.opt("value"));
+        }
+
+        assertEquals(15, sent.get("updates.interval_minutes"));
+        assertEquals("up_down", sent.get("ai.cut_jump"));
+        assertEquals(false, sent.get("updates.checks"));
+        assertFalse(mSync.hasPendingChanges());
+    }
+
+    @Test
+    public void aTvThatSyncedBeforeTheNewKeysKeepsItsOwnValuesForThem() {
+        // Synced under schema 1: the state has no schema number
+        syncFirst();
+        mState.edit().remove("migrated_schema").commit();
+        // an app of schema 1 had no copy of the newer keys
+        SharedPreferences.Editor copy = mCopy.edit();
+
+        for (UtubotSettingsSync.Key key : UtubotSettingsSync.KEYS) {
+            if (key.since > 1) {
+                copy.remove("pre." + key.pref);
+            }
+        }
+
+        copy.commit();
+        mSettings.applyRemote(() -> {
+            mSettings.setUpdateIntervalMinutes(360);
+            mSettings.setCutJumpBinding(UtubotSettings.CUT_JUMP_UP_DOWN);
+            mSettings.setAutoScrollSpeedPxPerSec(60);
+        });
+        Map<String, Object> before = tvValues();
+        int posts = mServer.posts.size();
+
+        assertEquals(UtubotSettingsSync.Status.SYNCED, mSync.syncOnce());
+
+        assertEquals(before, tvValues());
+        JSONObject post = mServer.posts.get(posts);
+        assertTrue(post.optBoolean("initial"));
+        assertEquals(1, post.optInt("from_schema"));
+        assertEquals(2, post.optInt("schema_version"));
+        JSONArray changes = post.optJSONArray("changes");
+        assertEquals(6, changes.length());
+
+        for (int i = 0; i < changes.length(); i++) {
+            JSONObject change = changes.optJSONObject(i);
+            boolean set = change.optString("key").equals("updates.interval_minutes") || change.optString("key").equals("ai.cut_jump")
+                    || change.optString("key").equals("ai.auto_scroll_speed");
+            assertEquals(change.optString("key"), set, change.optBoolean("user_set"));
+        }
+
+        assertEquals(2, mState.getInt("migrated_schema", 0));
+        assertEquals("360", mCopy.getString("pre.update_interval_minutes", null));
+        // It happens once
+        int after = mServer.posts.size();
+        mSync.syncOnce();
+        assertEquals(after, mServer.posts.size());
+    }
+
+    @Test
+    public void aFreshTvSendsEveryKeyOnItsFirstSyncAndIsAtTheCurrentSchema() {
+        syncFirst();
+
+        assertEquals(UtubotSettingsSync.KEYS.length, mServer.posts.get(0).optJSONArray("changes").length());
+        assertFalse(mServer.posts.get(0).has("from_schema"));
+        assertEquals(UtubotSettingsSync.SCHEMA_VERSION, mState.getInt("migrated_schema", 0));
+    }
+
+    @Test
+    public void theLongPollReportsAChangeAnUnchangedWaitAndAServerThatAnswersAtOnce() {
+        syncFirst();
+        mServer.clockAdvanceOnUnchanged = () -> mNow += 20_000;
+
+        assertEquals(UtubotSettingsSync.Watch.HELD, mSync.watch(20_000));
+        assertEquals(20_000, mServer.lastWaitMs);
+
+        mServer.clockAdvanceOnUnchanged = () -> mNow += 40;
+        assertEquals(UtubotSettingsSync.Watch.ANSWERED_AT_ONCE, mSync.watch(20_000));
+
+        mServer.version++;
+        assertEquals(UtubotSettingsSync.Watch.CHANGED, mSync.watch(20_000));
+    }
+
+    @Test
+    public void theLongPollFailsQuietlyAndTakesNothingIn() {
+        assertEquals("not synced yet: no watch", UtubotSettingsSync.Watch.FAILED, mSync.watch(1000));
+        syncFirst();
+        Map<String, Object> before = tvValues();
+        mServer.version += 3;
+        mServer.values.put("ai.summary_panel", true);
+
+        assertEquals(UtubotSettingsSync.Watch.CHANGED, mSync.watch(1000));
+        assertEquals("the watch only reports; the round applies", before, tvValues());
+
+        mServer.isDown = true;
+        assertEquals(UtubotSettingsSync.Watch.FAILED, mSync.watch(1000));
+        mServer.isDown = false;
+        mServer.status = 404;
+        assertEquals(UtubotSettingsSync.Watch.FAILED, mSync.watch(1000));
+        assertEquals(UtubotSettingsSync.Status.OFF, mSync.syncOnce());
     }
 }

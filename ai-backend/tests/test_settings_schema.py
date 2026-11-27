@@ -73,17 +73,45 @@ def test_titles_and_descriptions_are_short_and_present(schema):
         assert 0 < len(s["description"]) <= ss.MAX_DESCRIPTION_CHARS
 
 
-def test_the_mvp_keys_are_the_eight_ai_switches(schema):
+MVP_PREFS = [
+    "assess",
+    "mark_only",
+    "answer_in_menu",
+    "summary_panel",
+    "panel_delay_ms",
+    "auto_captions",
+    "auto_cuts",
+    "wait_ms",
+]
+
+
+def test_a_schema_one_client_still_gets_the_eight_ai_switches(schema):
+    assert [s["tv_pref"] for s in schema.synced(1)] == MVP_PREFS
+
+
+def test_a_schema_two_client_also_gets_the_per_tv_keys(schema):
     assert [s["tv_pref"] for s in schema.synced()] == [
-        "assess",
-        "mark_only",
-        "answer_in_menu",
-        "summary_panel",
-        "panel_delay_ms",
-        "auto_captions",
-        "auto_cuts",
-        "wait_ms",
+        *MVP_PREFS,
+        "update_checks",
+        "auto_scroll_speed",
+        "cut_jump",
+        "update_interval_minutes",
+        "development_mode",
+        "browse_refresh_minutes",
     ]
+
+
+def test_every_key_brought_by_a_version_says_so(schema):
+    for s in schema.doc["settings"]:
+        assert 1 <= s["since"] <= schema.version, s["key"]
+    assert {s["key"] for s in schema.doc["settings"] if s["since"] == 2} == {
+        "updates.checks",
+        "ai.auto_scroll_speed",
+        "ai.cut_jump",
+        "updates.interval_minutes",
+        "updates.development_mode",
+        "browse.refresh_minutes",
+    }
 
 
 def test_a_validator_rejects_a_broken_schema(schema):

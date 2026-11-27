@@ -1106,10 +1106,15 @@ are additive and need a signed-in caller.
   (`min`, `max`, `step`, `presets`, `choices`, `max_items`, `max_len`), `scope` (`user` or `device`), `device_override` (one TV may hold
   its own value), `remote` (`rw`, `ro`, `none`), `confirm`, `clients` (`tv`, `extension`, `web`), `since`, `phase`, `store`, `tv_pref`.
   A client sends its schema version and ignores keys it does not know; the server never sends a key with a higher `since`.
-- `GET /v1/device/settings?have=<version>&schema=<n>` (a paired device's token; a browser session or config token gets `400`) ->
-  `{"version":41,"schema_version":1,"settings":{"ai.summary_panel":{"v":true,"rev":39,"from":"user"}}}`, every key this client may see,
+- `GET /v1/device/settings?have=<version>&schema=<n>&wait_ms=<ms>` (a paired device's token; a browser session or config token gets `400`) ->
+  `{"version":41,"schema_version":2,"settings":{"ai.summary_panel":{"v":true,"rev":39,"from":"user"}}}`, every key this client may see,
   resolved for this device (`from`: `device`, `user`, `default`). `have` is the version the TV has applied; the server records it.
   When `have` equals the current version the answer is `{"version":41,"unchanged":true}` (under 300 bytes). `Cache-Control: no-store`.
+  **Long poll (schema 2):** with `have` and `wait_ms` (capped by `[settings_sync] long_poll_max_ms`, default 20000) an `unchanged` answer
+  is held until the user's settings version differs from `have` or the wait ends; a change answers at once with the full document, and
+  the wait ends `unchanged` when nothing moved. Without `have`, or with `wait_ms` 0 or absent, nothing changes. A server older than this
+  ignores `wait_ms` and answers at once; a client takes an `unchanged` that came back in under half the wait as "this server does not
+  hold requests" and polls on a timer instead.
 - `POST /v1/device/settings` `{"schema_version","app_version","applied_version","initial":false,
   "changes":[{"key","value","base_rev"}],"report":{...}}` -> the same document plus `"results":[{"key","outcome"}]` with `outcome`
   `applied`, `superseded`, `invalid` or `not_remote`. At most 200 changes and 64 KiB. A TV change lands as that TV's own value, never as
@@ -1119,11 +1124,20 @@ are additive and need a signed-in caller.
   chosen on the TV). For every key the server compares the TV's value with the value it would give; equal -> nothing stored;
   different and `user_set` -> the TV's value becomes this TV's own value (`via: migration`), so the TV keeps what it chose;
   different and not `user_set` (an untouched default) -> checked against `base_rev` like any change, so it never replaces a newer
-  web value. A second `initial` is a normal sync. `report` keeps at most 20 short scalar entries; a body over 64 KiB is `413`.
+  web value. A second `initial` is a normal sync, except after an app update that brought new keys (schema 2): the TV then sends
+  `"initial": true` with `"from_schema": <the schema it had synced at>` and only the keys newer than that; those keys take its
+  own `user_set` values as above (`via: migration`) and every older key stays a normal base-checked sync. `report` keeps at most 20 short scalar entries; a body over 64 KiB is `413`.
 - The routes below this one (status, history, a TV's document and `PUT`) are for a browser session or config token: a paired TV's token gets `403`, so a TV cannot read or change its sibling TVs.
+- **Schema 2** (per-TV settings): `updates.checks` (user value, a TV may override; `tv_pref` `update_checks`) and the keys of scope
+  `device`: `ai.auto_scroll_speed`, `ai.cut_jump`, `updates.interval_minutes`, `updates.development_mode`, `browse.refresh_minutes`.
+  They have `since: 2`, so a client that sends `schema=1` never receives them and the web page shows "update the app" for that TV. A key of
+  scope `device` has no user-level value: it is not in `GET /v1/me/settings` `values` and a `PUT` of it there is `400`; it is set per TV
+  (`PUT /v1/me/devices/{id}/settings`, `400` for a key the TV's reported schema is too old for). The numeric choices (scroll speed,
+  update interval, browse refresh) are `enum` keys with number values, the exact set the app accepts; `ai.cut_jump` values are
+  `left_right`, `up_down`, `off`.
 - `GET /v1/me/settings/status` -> `{"version","now","devices":[{"id","device","last_used","syncs","applied_version","applied_at",
   "last_sync_at","schema_version","app_version","migrated","report","overrides":[key],"pending":[key]}]}`; `pending` is every key whose `rev`
-  is above the TV's `applied_version`.
+  is above the TV's `applied_version` among the keys that TV's schema may see.
 - `GET /v1/me/devices/{id}/settings` -> the device document with `device` (state). `PUT /v1/me/devices/{id}/settings`
   `{"version","settings":{key:value|null}}` sets or (`null`) removes a TV's own values; `version` is required (`428`, `409` as for the
   document).

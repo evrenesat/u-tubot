@@ -262,8 +262,9 @@ def seed_voice(db, now: float) -> None:
 
 
 def seed_settings(svc, now: float) -> None:
-    """Two TVs on the Settings page: one in step with the server and one that has been off for days,
-    with its own values, waiting changes and a history of ten rows."""
+    """Two TVs on the Settings page: one in step with the server (an app of schema 2, with its own
+    update interval and cut keys) and one that has been off for days on an app of schema 1, with its
+    own values, waiting changes and a history of ten rows."""
     sync = svc.device_settings
     ids = {
         r["device"]: r["id"]
@@ -275,14 +276,26 @@ def seed_settings(svc, now: float) -> None:
         return {"key": key, "value": value, "base_rev": base}
 
     first = {
-        "schema_version": 1,
-        "app_version": "0.9.12",
+        "schema_version": 2,
+        "app_version": "0.9.14",
         "initial": True,
-        "changes": [change("ai.mark_only", True), change("ai.panel_delay_ms", 3000)],
+        "changes": [
+            change("ai.mark_only", True),
+            change("ai.panel_delay_ms", 3000),
+            change("updates.interval_minutes", 60),
+            change("ai.cut_jump", "up_down"),
+        ],
     }
     sync.push("owner", living, first)
     sync.push(
-        "owner", bedroom, {**first, "app_version": "0.9.12", "changes": [change("ai.wait_ms", 800)]}
+        "owner",
+        bedroom,
+        {
+            "schema_version": 1,
+            "app_version": "0.9.12",
+            "initial": True,
+            "changes": [change("ai.wait_ms", 800)],
+        },
     )
     steps = [
         {"ai.summary_panel": True},
@@ -296,11 +309,11 @@ def seed_settings(svc, now: float) -> None:
     ]
     for step in steps:
         asyncio.run(svc.settings.update("owner", {"settings": step}, by="owner"))
-    doc = sync.pull("owner", living, None, 1)
-    sync.pull("owner", living, doc["version"], 1)
+    doc = sync.pull("owner", living, None, 2)
+    sync.pull("owner", living, doc["version"], 2)
     asyncio.run(svc.settings.update("owner", {"settings": {"ai.panel_delay_ms": 2400}}, by="owner"))
-    sync.pull("owner", living, None, 1)
-    sync.pull("owner", living, svc.auth.settings_version("owner")[0], 1)
+    sync.pull("owner", living, None, 2)
+    sync.pull("owner", living, svc.auth.settings_version("owner")[0], 2)
     svc.db.execute(
         "UPDATE device_settings_state SET last_sync_at=?, applied_at=? WHERE device_id=?",
         [now - 3 * 86400 + 60, now - 3 * 86400, bedroom],

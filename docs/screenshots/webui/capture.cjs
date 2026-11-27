@@ -192,6 +192,16 @@ async function checkOverflow(browser) {
     await shot(page, "25-settings");
     await go(page, "settings/history");
     await shot(page, "26-settings-history");
+    // a TV on a current app (its own update interval and cut keys, copy from another TV) and one on an old app
+    const tvs = await page.evaluate(async () => (await (await fetch("/v1/me/settings/status")).json()).devices.map((d) => [d.device, d.id]));
+    for (const [device, name] of [["Living room TV", "27-settings-tv"], ["Bedroom Fire Stick", "28-settings-tv-old-app"]]) {
+      const found = tvs.find(([n]) => n === device);
+      if (!found) continue;
+      await go(page, "settings/tv/" + encodeURIComponent(found[1]));
+      const own = page.getByText("This TV only", { exact: true });
+      if (await own.count()) await scrollTo(page, own);
+      await shot(page, name);
+    }
 
     await go(page, "updates");
     await shot(page, "16-updates");

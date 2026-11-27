@@ -7,7 +7,7 @@ import { button, card, chipEditor, empty, errorText, every, fmtAgo, fmtTime, not
 // GET /v1/settings/schema lists.
 
 const POLL_MS = 5000;
-const MAX_PHASE = 1;
+const MAX_PHASE = 2;
 const HISTORY_LIMIT = 100;
 const SEARCHABLE = ["title", "description", "key"];
 const LINKED_PAGES = { model: ["#/models", "Models"], prompt: ["#/prompts", "Prompts"] };
@@ -57,7 +57,7 @@ export function stage(map, key, value, base) {
 }
 
 export function pageSettings(schema, values) {
-  return schema.settings.filter((s) => (s.phase || 1) <= MAX_PHASE && s.remote === "rw" && s.type !== "secret" && values && s.key in values);
+  return schema.settings.filter((s) => (s.phase || 1) <= MAX_PHASE && s.scope !== "device" && s.remote === "rw" && s.type !== "secret" && values && s.key in values);
 }
 
 export function groupSettings(schema, settings, query) {
@@ -70,11 +70,35 @@ export function groupSettings(schema, settings, query) {
 }
 
 // One chip per TV for a setting that a TV may hold its own value of.
-export function chipFor(device, key, ownValue, fmt) {
-  if (!device.syncs) return { kind: "warn", text: device.device + " cannot sync yet (update the app)" };
+export function chipFor(device, key, ownValue, fmt, since = 1) {
+  if (!device.syncs || (device.schema_version || 1) < since) return { kind: "warn", text: device.device + " cannot sync yet (update the app)" };
   if (device.overrides.includes(key)) return { kind: "", text: device.device + " has its own value: " + fmt(ownValue), own: true };
   if (device.pending.includes(key)) return { kind: "warn", text: "Waiting for " + device.device + " (last seen " + fmtAgo(device.last_sync_at) + ")" };
   return { kind: "ok", text: "Applied on " + device.device + ", " + fmtAgo(device.applied_at || device.last_sync_at) };
+}
+
+// What to stage on a TV so that it matches another TV: only keys a TV may hold its own value of, only the
+// ones that differ. A source that follows the user's default makes the target follow it too (null).
+export function copyChanges(schema, sourceDoc, targetDoc) {
+  const out = new Map();
+  for (const s of schema.settings) {
+    if (s.remote !== "rw" || !s.device_override || s.type === "secret") continue;
+    const from = sourceDoc.settings[s.key];
+    const to = targetDoc.settings[s.key];
+    if (!from || !to) continue;
+    if (from.from !== "device") {
+      if (to.from === "device") out.set(s.key, null);
+    } else if (!sameValue(from.v, to.v) || to.from !== "device") {
+      out.set(s.key, from.v);
+    }
+  }
+  return out;
+}
+
+// Settings a TV cannot take yet because its app is older than the key.
+export function tooNewFor(schema, device) {
+  if (!device.syncs) return [];
+  return schema.settings.filter((s) => s.remote === "rw" && (s.since || 1) > (device.schema_version || 1) && (s.clients || []).includes("tv"));
 }
 
 export function whoWhere(entry) {
@@ -125,8 +149,9 @@ function control(setting, value, onChange, disabled) {
       return { el: wrap, inline: true };
     }
     case "enum": {
-      const choices = setting.choices.map((c) => ({ value: c.value, label: c.label }));
-      const sel = select(choices, value, onChange);
+      // option values are text in a select; choices may be numbers (minutes), so map back to the typed value
+      const choices = setting.choices.map((c) => ({ value: String(c.value), label: c.label }));
+      const sel = select(choices, String(value), (text) => onChange(setting.choices.find((c) => String(c.value) === text).value));
       sel.disabled = !!disabled;
       return { el: sel };
     }
@@ -227,7 +252,7 @@ export async function render(view, { rest = [] } = {}) {
       const chips = h("div", { class: "chips-row" });
       for (const d of S.status.devices) {
         const own = (S.devDocs[d.id] || { settings: {} }).settings[s.key];
-        const chip = chipFor(d, s.key, own ? own.v : null, (v) => fmtValue(s, v));
+        const chip = chipFor(d, s.key, own ? own.v : null, (v) => fmtValue(s, v), s.since || 1);
         chips.appendChild(
           h(
             "span",
@@ -336,7 +361,7 @@ export async function render(view, { rest = [] } = {}) {
     }
     clearStaged(scope);
     reviewOpen = false;
-    toast(scope === "my" ? "Saved. Your TVs get it within about 30 seconds." : "Saved for " + deviceName(scope) + ".");
+    toast(scope === "my" ? "Saved. Your TVs that are open get it within a few seconds." : "Saved for " + deviceName(scope) + ".");
     await refresh();
   }
 
@@ -382,9 +407,12 @@ export async function render(view, { rest = [] } = {}) {
     const doc = S.devDocs[where.id];
     if (!dev || !doc) return [empty("This TV is not linked any more.")];
     const synced = S.schema.settings.filter((s) => doc.settings[s.key] && matches(s, S.query));
+    const hidden = tooNewFor(S.schema, dev);
     const facts = card(
       dev.device,
       dev.syncs ? null : note("This TV cannot sync yet. Update the app on it, then it shows up here.", "warn"),
+      hidden.length ? note("This TV's app is older: " + hidden.length + " setting" + (hidden.length === 1 ? "" : "s") + " appear here once you update it.", "warn") : null,
+      copyControl(dev),
       h(
         "dl",
         { class: "kv" },
@@ -410,6 +438,33 @@ export async function render(view, { rest = [] } = {}) {
         ),
       ),
     ];
+  }
+
+  // "Copy from another TV": stages the other TV's values here; nothing is saved until you review and press Save.
+  function copyControl(dev) {
+    const others = S.status.devices.filter((d) => d.id !== dev.id && d.syncs);
+    if (!dev.syncs || !others.length) return null;
+    const pick = select(others.map((d) => ({ value: d.id, label: d.device })), others[0].id);
+    return h(
+      "div",
+      { class: "row copy-from" },
+      h("label", { class: "muted", text: "Copy from another TV" }),
+      pick,
+      button("Stage the copy", () => {
+        const sourceId = pick.value || others[0].id;
+        const source = S.devDocs[sourceId];
+        const changes = source ? copyChanges(S.schema, source, S.devDocs[dev.id]) : new Map();
+        if (!changes.size) {
+          toast(deviceName(sourceId) + " already matches " + dev.device + ".");
+          return;
+        }
+        const map = stagedFor(dev.id);
+        for (const [key, value] of changes) stage(map, key, value, S.devDocs[dev.id].settings[key].v);
+        reviewOpen = true;
+        draw();
+        toast(changes.size + " change" + (changes.size === 1 ? "" : "s") + " staged from " + deviceName(sourceId) + ". Review and save.");
+      }, { kind: "sec" }),
+    );
   }
 
   function fact(label, value) {

@@ -162,7 +162,7 @@ class SettingsService:
                 "auto_transcribe": ["off", "on_dwell", "on_open"],
                 "cut_mode": ["quick", "watched"],
             },
-            **({"values": self.sync.user_layer(name)} if self.sync is not None else {}),
+            **({"values": self.sync.document_values(name)} if self.sync is not None else {}),
         }
 
     def _parse(

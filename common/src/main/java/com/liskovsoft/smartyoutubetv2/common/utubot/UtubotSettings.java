@@ -56,6 +56,7 @@ public class UtubotSettings {
     private static final String KEY_DISMISSED_UPDATE_CODE = "dismissed_update_code";
     private static final String KEY_UPDATE_INTERVAL_MINUTES = "update_interval_minutes";
     private static final String KEY_DEVELOPMENT_MODE = "development_mode";
+    private static final String KEY_UPDATE_CHECKS = "update_checks";
     private static final String KEY_FILMS_DEV = "films_developer";
     private static final String KEY_FILMS_ADDON = "films_addon_url";
     private static final String KEY_FILMS_RD_TOKEN = "films_rd_token";
@@ -434,6 +435,7 @@ public class UtubotSettings {
     public void setCutJumpBinding(int binding) {
         if (isCutJumpChoice(binding)) {
             mPrefs.edit().putInt(KEY_CUT_JUMP, binding).apply();
+            changed(KEY_CUT_JUMP);
         }
     }
 
@@ -558,6 +560,18 @@ public class UtubotSettings {
                 return isApplyReadyCutsEnabled();
             case KEY_WAIT_MS:
                 return getWaitMs();
+            case KEY_UPDATE_CHECKS:
+                return isUpdateChecksEnabled();
+            case KEY_AUTO_SCROLL_SPEED:
+                return getAutoScrollSpeedPxPerSec();
+            case KEY_CUT_JUMP:
+                return cutJumpName(getCutJumpBinding());
+            case KEY_UPDATE_INTERVAL_MINUTES:
+                return getUpdateIntervalMinutes();
+            case KEY_DEVELOPMENT_MODE:
+                return isDevelopmentMode();
+            case KEY_BROWSE_REFRESH_MINUTES:
+                return getBrowseRefreshMinutes();
             default:
                 return null;
         }
@@ -599,8 +613,52 @@ public class UtubotSettings {
             case KEY_WAIT_MS:
                 setWaitMs((Integer) value);
                 break;
+            case KEY_UPDATE_CHECKS:
+                setUpdateChecksEnabled((Boolean) value);
+                break;
+            case KEY_AUTO_SCROLL_SPEED:
+                setAutoScrollSpeedPxPerSec((Integer) value);
+                break;
+            case KEY_CUT_JUMP:
+                setCutJumpBinding(cutJumpBinding((String) value));
+                break;
+            case KEY_UPDATE_INTERVAL_MINUTES:
+                setUpdateIntervalMinutes((Integer) value);
+                break;
+            case KEY_DEVELOPMENT_MODE:
+                setDevelopmentMode((Boolean) value);
+                break;
+            case KEY_BROWSE_REFRESH_MINUTES:
+                setBrowseRefreshMinutes((Integer) value);
+                break;
             default:
                 break;
+        }
+    }
+
+    /** The schema's name of a cut jump binding */
+    public static String cutJumpName(int binding) {
+        switch (binding) {
+            case CUT_JUMP_UP_DOWN:
+                return "up_down";
+            case CUT_JUMP_OFF:
+                return "off";
+            default:
+                return "left_right";
+        }
+    }
+
+    /** The binding of a schema name; -1 for a name this app does not know (the setter then ignores it) */
+    public static int cutJumpBinding(String name) {
+        switch (name) {
+            case "left_right":
+                return CUT_JUMP_LEFT_RIGHT;
+            case "up_down":
+                return CUT_JUMP_UP_DOWN;
+            case "off":
+                return CUT_JUMP_OFF;
+            default:
+                return -1;
         }
     }
 
@@ -628,6 +686,7 @@ public class UtubotSettings {
         for (int choice : UPDATE_INTERVAL_CHOICES_MINUTES) {
             if (choice == minutes) {
                 mPrefs.edit().putInt(KEY_UPDATE_INTERVAL_MINUTES, minutes).apply();
+                changed(KEY_UPDATE_INTERVAL_MINUTES);
                 return;
             }
         }
@@ -642,6 +701,20 @@ public class UtubotSettings {
 
     public void setDevelopmentMode(boolean enabled) {
         mPrefs.edit().putBoolean(KEY_DEVELOPMENT_MODE, enabled).apply();
+        changed(KEY_DEVELOPMENT_MODE);
+    }
+
+    /**
+     * Whether the app looks for updates by itself (the web setting "Check for app updates"). Off stops the automatic check; the
+     * manual check stays.
+     */
+    public boolean isUpdateChecksEnabled() {
+        return mPrefs.getBoolean(KEY_UPDATE_CHECKS, true);
+    }
+
+    public void setUpdateChecksEnabled(boolean enabled) {
+        mPrefs.edit().putBoolean(KEY_UPDATE_CHECKS, enabled).apply();
+        changed(KEY_UPDATE_CHECKS);
     }
 
     /**
@@ -697,6 +770,7 @@ public class UtubotSettings {
     public void setBrowseRefreshMinutes(int minutes) {
         if (BrowseCachePolicy.isChoice(minutes)) {
             mPrefs.edit().putInt(KEY_BROWSE_REFRESH_MINUTES, minutes).apply();
+            changed(KEY_BROWSE_REFRESH_MINUTES);
         }
     }
 
@@ -712,6 +786,7 @@ public class UtubotSettings {
     public void setAutoScrollSpeedPxPerSec(int pxPerSec) {
         if (isAutoScrollSpeedChoice(pxPerSec)) {
             mPrefs.edit().putInt(KEY_AUTO_SCROLL_SPEED, pxPerSec).apply();
+            changed(KEY_AUTO_SCROLL_SPEED);
         }
     }
 

@@ -21,6 +21,13 @@ public final class UtubotUpdateSchedule {
         long ms();
     }
 
+    public interface Gate {
+        /**
+         * @return false while automatic checks are switched off
+         */
+        boolean isOpen();
+    }
+
     public interface Check {
         /**
          * @return true when a check was made, false when it wasn't possible now
@@ -31,6 +38,7 @@ public final class UtubotUpdateSchedule {
     private final UtubotScheduler mScheduler;
     private final Check mCheck;
     private final Interval mInterval;
+    private final Gate mGate;
     private final Runnable mRun = this::run;
     private boolean mIsStarted;
     private boolean mIsDeferred;
@@ -40,9 +48,14 @@ public final class UtubotUpdateSchedule {
     }
 
     public UtubotUpdateSchedule(UtubotScheduler scheduler, Check check, Interval interval) {
+        this(scheduler, check, interval, () -> true);
+    }
+
+    public UtubotUpdateSchedule(UtubotScheduler scheduler, Check check, Interval interval, Gate gate) {
         mScheduler = scheduler;
         mCheck = check;
         mInterval = interval;
+        mGate = gate;
     }
 
     /**
@@ -93,6 +106,12 @@ public final class UtubotUpdateSchedule {
     private void run() {
         boolean isChecked;
         mIsDeferred = false;
+
+        if (!mGate.isOpen()) {
+            mScheduler.remove(mRun);
+            mScheduler.postDelayed(mRun, RETRY_MS);
+            return;
+        }
 
         try {
             isChecked = mCheck.run();

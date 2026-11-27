@@ -481,6 +481,8 @@ class SettingsSyncConfig(BaseModel):
     max_changes_per_post: int = Field(200, ge=1)
     max_body_bytes: int = Field(65536, ge=1024)
     history_max: int = Field(200, ge=1)
+    # the longest a TV's settings request may be held open waiting for a change (the long poll)
+    long_poll_max_ms: int = Field(20000, ge=0)
 
 
 class VoiceConfig(BaseModel):

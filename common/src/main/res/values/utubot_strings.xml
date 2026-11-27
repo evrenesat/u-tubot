@@ -43,6 +43,8 @@
     <string name="utubot_auto_scroll">Reading pace</string>
     <string name="utubot_auto_scroll_value">%s px/s</string>
     <string name="utubot_browse_refresh">Browse refresh</string>
+    <string name="utubot_update_checks">Check for u·tubot updates</string>
+    <string name="utubot_update_checks_desc">Also on the web Settings page. Off: the app only looks when you choose Check for updates</string>
     <string name="utubot_update_interval">Update check interval</string>
     <string name="utubot_films_developer">Films developer entry</string>
     <string name="utubot_films_developer_desc">Developer spike: play Real-Debrid film streams from a Stremio addon. Off by default</string>

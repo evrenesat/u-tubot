@@ -1,5 +1,5 @@
 {
- "schema_version": 1,
+ "schema_version": 2,
  "groups": [
   {
    "id": "ai",
@@ -558,9 +558,10 @@
    "remote": "rw",
    "confirm": false,
    "clients": [
+    "tv",
     "web"
    ],
-   "since": 1,
+   "since": 2,
    "phase": 2,
    "key": "updates.checks",
    "group": "updates",
@@ -568,7 +569,8 @@
    "description": "Let the TV look for new app versions by itself.",
    "type": "bool",
    "default": true,
-   "store": "policy:update_checks"
+   "store": "policy:update_checks",
+   "tv_pref": "update_checks"
   },
   {
    "scope": "user",
@@ -704,24 +706,30 @@
    "clients": [
     "tv"
    ],
-   "since": 1,
+   "since": 2,
    "phase": 2,
    "key": "ai.auto_scroll_speed",
    "group": "tv",
    "title": "Text scroll speed",
    "description": "How fast summary and answer text scrolls by itself.",
-   "type": "int",
+   "type": "enum",
    "default": 45,
-   "min": 30,
-   "max": 60,
-   "presets": [
-    30,
-    45,
-    60
-   ],
-   "unit": "px/s",
    "store": "values",
-   "tv_pref": "auto_scroll_speed"
+   "tv_pref": "auto_scroll_speed",
+   "choices": [
+    {
+     "value": 30,
+     "label": "30 px/s"
+    },
+    {
+     "value": 45,
+     "label": "45 px/s"
+    },
+    {
+     "value": 60,
+     "label": "60 px/s"
+    }
+   ]
   },
   {
    "scope": "device",
@@ -731,7 +739,7 @@
    "clients": [
     "tv"
    ],
-   "since": 1,
+   "since": 2,
    "phase": 2,
    "key": "ai.cut_jump",
    "group": "tv",
@@ -764,25 +772,34 @@
    "clients": [
     "tv"
    ],
-   "since": 1,
+   "since": 2,
    "phase": 2,
    "key": "updates.interval_minutes",
    "group": "tv",
    "title": "Update check interval",
    "description": "How often the TV looks for a new app version.",
-   "type": "int",
+   "type": "enum",
    "default": 5,
-   "min": 5,
-   "max": 360,
-   "presets": [
-    5,
-    15,
-    60,
-    360
-   ],
-   "unit": "min",
    "store": "values",
-   "tv_pref": "update_interval_minutes"
+   "tv_pref": "update_interval_minutes",
+   "choices": [
+    {
+     "value": 5,
+     "label": "5 minutes"
+    },
+    {
+     "value": 15,
+     "label": "15 minutes"
+    },
+    {
+     "value": 60,
+     "label": "1 hour"
+    },
+    {
+     "value": 360,
+     "label": "6 hours"
+    }
+   ]
   },
   {
    "scope": "device",
@@ -792,7 +809,7 @@
    "clients": [
     "tv"
    ],
-   "since": 1,
+   "since": 2,
    "phase": 2,
    "key": "updates.development_mode",
    "group": "tv",
@@ -812,26 +829,38 @@
    "clients": [
     "tv"
    ],
-   "since": 1,
+   "since": 2,
    "phase": 2,
    "key": "browse.refresh_minutes",
    "group": "tv",
    "title": "Browse refresh",
    "description": "How often a browse list refreshes itself.",
-   "type": "int",
+   "type": "enum",
    "default": 10,
-   "min": 5,
-   "max": 60,
-   "presets": [
-    5,
-    10,
-    20,
-    30,
-    60
-   ],
-   "unit": "min",
    "store": "values",
-   "tv_pref": "browse_refresh_minutes"
+   "tv_pref": "browse_refresh_minutes",
+   "choices": [
+    {
+     "value": 5,
+     "label": "5 minutes"
+    },
+    {
+     "value": 10,
+     "label": "10 minutes"
+    },
+    {
+     "value": 20,
+     "label": "20 minutes"
+    },
+    {
+     "value": 30,
+     "label": "30 minutes"
+    },
+    {
+     "value": 60,
+     "label": "1 hour"
+    }
+   ]
   },
   {
    "scope": "user",

@@ -23,10 +23,13 @@ import java.util.List;
  * restart; a server that does not answer leaves every value as it was.
  */
 public final class UtubotSettingsSync {
-    public static final int SCHEMA_VERSION = 1;
+    public static final int SCHEMA_VERSION = 2;
+    /** The schema the first synced keys came with: a TV that synced before the schema had a number is at this one */
+    static final int FIRST_SCHEMA = 1;
     public static final int REQUEST_TIMEOUT_MS = 5000;
     static final String OUTCOME_SUPERSEDED = "superseded";
     private static final String STATE_MIGRATED = "migrated";
+    private static final String STATE_MIGRATED_SCHEMA = "migrated_schema";
     private static final String STATE_VERSION = "version";
     private static final String STATE_REVS = "revs";
     private static final String STATE_OUTBOX = "outbox";
@@ -36,28 +39,41 @@ public final class UtubotSettingsSync {
     private static final String OUT_VALUE = "v";
     private static final String OUT_BASE = "base";
 
-    /** The synced settings: schema key, preference key and kind. In step with {@code ai/settings/schema.json} (a test compares). */
+    /** What a synced value is made of */
+    public enum Kind {
+        BOOL, INT, STRING
+    }
+
+    /** The synced settings: schema key, preference key, kind and the schema version that brought it. In step with {@code ai/settings/schema.json} (a test compares). */
     public static final class Key {
         public final String key;
         public final String pref;
-        public final boolean isBool;
+        public final Kind kind;
+        public final int since;
 
-        Key(String key, String pref, boolean isBool) {
+        Key(String key, String pref, Kind kind, int since) {
             this.key = key;
             this.pref = pref;
-            this.isBool = isBool;
+            this.kind = kind;
+            this.since = since;
         }
     }
 
     public static final Key[] KEYS = {
-            new Key("ai.assess", "assess", true),
-            new Key("ai.mark_only", "mark_only", true),
-            new Key("ai.answer_in_menu", "answer_in_menu", true),
-            new Key("ai.summary_panel", "summary_panel", true),
-            new Key("ai.panel_delay_ms", "panel_delay_ms", false),
-            new Key("ai.auto_captions", "auto_captions", true),
-            new Key("ai.auto_cuts", "auto_cuts", true),
-            new Key("ai.wait_ms", "wait_ms", false),
+            new Key("ai.assess", "assess", Kind.BOOL, 1),
+            new Key("ai.mark_only", "mark_only", Kind.BOOL, 1),
+            new Key("ai.answer_in_menu", "answer_in_menu", Kind.BOOL, 1),
+            new Key("ai.summary_panel", "summary_panel", Kind.BOOL, 1),
+            new Key("ai.panel_delay_ms", "panel_delay_ms", Kind.INT, 1),
+            new Key("ai.auto_captions", "auto_captions", Kind.BOOL, 1),
+            new Key("ai.auto_cuts", "auto_cuts", Kind.BOOL, 1),
+            new Key("ai.wait_ms", "wait_ms", Kind.INT, 1),
+            new Key("updates.checks", "update_checks", Kind.BOOL, 2),
+            new Key("ai.auto_scroll_speed", "auto_scroll_speed", Kind.INT, 2),
+            new Key("ai.cut_jump", "cut_jump", Kind.STRING, 2),
+            new Key("updates.interval_minutes", "update_interval_minutes", Kind.INT, 2),
+            new Key("updates.development_mode", "development_mode", Kind.BOOL, 2),
+            new Key("browse.refresh_minutes", "browse_refresh_minutes", Kind.INT, 2),
     };
 
     public enum Status {
@@ -72,7 +88,10 @@ public final class UtubotSettingsSync {
     }
 
     public interface Transport {
-        String get(int have, int schemaVersion) throws IOException;
+        /**
+         * @param waitMs how long the server may hold the request while nothing changed (0: answer at once)
+         */
+        String get(int have, int schemaVersion, int waitMs) throws IOException;
 
         String post(JSONObject body) throws IOException;
     }
@@ -193,7 +212,7 @@ public final class UtubotSettingsSync {
     public void onConnectionChanged() {
         synchronized (mSyncLock) {
             mIsOff = false;
-            mState.edit().remove(STATE_MIGRATED).remove(STATE_VERSION).remove(STATE_REVS).remove(STATE_OUTBOX).apply();
+            mState.edit().remove(STATE_MIGRATED).remove(STATE_MIGRATED_SCHEMA).remove(STATE_VERSION).remove(STATE_REVS).remove(STATE_OUTBOX).apply();
         }
     }
 
@@ -211,7 +230,7 @@ public final class UtubotSettingsSync {
                     String stored = mCopy.getString(COPY_PREFIX + key.pref, null);
 
                     if (stored != null) {
-                        mSettings.setSyncedValue(key.pref, key.isBool ? (Object) Boolean.valueOf(stored) : (Object) Integer.valueOf(stored));
+                        mSettings.setSyncedValue(key.pref, fromText(key, stored));
                     }
                 }
             });
@@ -220,9 +239,61 @@ public final class UtubotSettingsSync {
         }
     }
 
+    /** How a long poll ended */
+    public enum Watch {
+        /** The server has a newer version: run a round now */
+        CHANGED,
+        /** The server held the request for the whole wait and nothing changed: watch again */
+        HELD,
+        /** The server answered "unchanged" at once: it does not hold requests, so the timer polls instead */
+        ANSWERED_AT_ONCE,
+        /** Not paired, switched off, or the request failed: the timer decides when to look again */
+        FAILED
+    }
+
+    /**
+     * Holds a request at the server until its settings version differs from this TV's (the long poll), at most {@code waitMs}.
+     * It takes nothing in: {@link Watch#CHANGED} means "run a round". A server that does not know the wait answers at once;
+     * that shows in the time it took. Blocks; never call it on the main thread. It does not wait for a round in progress.
+     */
+    public Watch watch(int waitMs) {
+        if (!isMigrated() || mIsOff || !mSettings.isConfigured() || mSettings.getToken().isEmpty()) {
+            return Watch.FAILED;
+        }
+
+        long started = mClock.nowMs();
+
+        try {
+            JSONObject doc = new JSONObject(mTransport.get(mState.getInt(STATE_VERSION, 0), SCHEMA_VERSION, waitMs));
+
+            if (!doc.optBoolean("unchanged")) {
+                return Watch.CHANGED;
+            }
+
+            return mClock.nowMs() - started >= waitMs / 2 ? Watch.HELD : Watch.ANSWERED_AT_ONCE;
+        } catch (UtubotClient.HttpException e) {
+            if (e.code == 404) {
+                mIsOff = true;
+            }
+
+            return Watch.FAILED;
+        } catch (IOException | JSONException | RuntimeException e) {
+            return Watch.FAILED;
+        }
+    }
+
+    private int migratedSchema() {
+        return mState.getInt(STATE_MIGRATED_SCHEMA, FIRST_SCHEMA);
+    }
+
     private void round() throws IOException, JSONException {
         if (!isMigrated()) {
             firstSync();
+            return;
+        }
+
+        if (migratedSchema() < SCHEMA_VERSION) {
+            upgradeSync();
             return;
         }
 
@@ -234,7 +305,7 @@ public final class UtubotSettingsSync {
         }
 
         int version = mState.getInt(STATE_VERSION, 0);
-        JSONObject doc = new JSONObject(mTransport.get(version, SCHEMA_VERSION));
+        JSONObject doc = new JSONObject(mTransport.get(version, SCHEMA_VERSION, 0));
 
         if (doc.optBoolean("unchanged")) {
             return;
@@ -245,17 +316,35 @@ public final class UtubotSettingsSync {
     }
 
     private void firstSync() throws IOException, JSONException {
-        copyBeforeFirstSync();
+        copyBeforeFirstSync(0);
+        JSONObject doc = new JSONObject(mTransport.post(migrationBody(0)));
+        apply(doc, new JSONObject());
+        mState.edit().putBoolean(STATE_MIGRATED, true).putInt(STATE_MIGRATED_SCHEMA, SCHEMA_VERSION).apply();
+    }
+
+    /**
+     * The app brought new keys since this TV's first sync: send only those, with what the TV has, so the TV's own values win
+     * over the server's defaults (section 7 again, for the new keys). The keys it synced before stay base-checked.
+     */
+    private void upgradeSync() throws IOException, JSONException {
+        int from = migratedSchema();
+        copyBeforeFirstSync(from);
+        JSONObject doc = new JSONObject(mTransport.post(migrationBody(from).put("from_schema", from)));
+        apply(doc, outbox());
+        mState.edit().putInt(STATE_MIGRATED_SCHEMA, SCHEMA_VERSION).apply();
+    }
+
+    /** Every value of the keys newer than {@code fromSchema}, with the flag for "the user set it" */
+    private JSONObject migrationBody(int fromSchema) throws JSONException {
         JSONArray changes = new JSONArray();
 
         for (Key key : KEYS) {
-            changes.put(change(key, mSettings.getSyncedValue(key.pref), 0).put("user_set", mSettings.isSyncedValueSet(key.pref)));
+            if (key.since > fromSchema) {
+                changes.put(change(key, mSettings.getSyncedValue(key.pref), 0).put("user_set", mSettings.isSyncedValueSet(key.pref)));
+            }
         }
 
-        JSONObject body = base().put("initial", true).put("applied_version", mState.getInt(STATE_VERSION, 0)).put("changes", changes);
-        JSONObject doc = new JSONObject(mTransport.post(body));
-        apply(doc, new JSONObject());
-        mState.edit().putBoolean(STATE_MIGRATED, true).apply();
+        return base().put("initial", true).put("applied_version", mState.getInt(STATE_VERSION, 0)).put("changes", changes);
     }
 
     private void upload(JSONObject sent) throws IOException, JSONException {
@@ -335,7 +424,7 @@ public final class UtubotSettingsSync {
                 continue;
             }
 
-            Object stored = key.isBool ? (Object) (Boolean) value : (Object) ((Number) value).intValue();
+            Object stored = key.kind == Kind.BOOL ? (Object) (Boolean) value : key.kind == Kind.INT ? (Object) ((Number) value).intValue() : (Object) (String) value;
 
             if (!stored.equals(mSettings.getSyncedValue(key.pref))) {
                 mSettings.applyRemote(() -> mSettings.setSyncedValue(key.pref, stored));
@@ -348,18 +437,35 @@ public final class UtubotSettingsSync {
     }
 
     private static boolean hasType(Key key, Object value) {
-        return key.isBool ? value instanceof Boolean : value instanceof Number;
+        switch (key.kind) {
+            case BOOL:
+                return value instanceof Boolean;
+            case INT:
+                return value instanceof Number;
+            default:
+                return value instanceof String;
+        }
     }
 
-    private void copyBeforeFirstSync() {
-        if (mCopy.getBoolean(STATE_COPIED, false)) {
-            return;
+    private static Object fromText(Key key, String text) {
+        switch (key.kind) {
+            case BOOL:
+                return Boolean.valueOf(text);
+            case INT:
+                return Integer.valueOf(text);
+            default:
+                return text;
         }
+    }
 
+    /** Keeps the values of the keys that are about to start syncing (the ones newer than {@code fromSchema}), once each */
+    private void copyBeforeFirstSync(int fromSchema) {
         SharedPreferences.Editor edit = mCopy.edit();
 
         for (Key key : KEYS) {
-            edit.putString(COPY_PREFIX + key.pref, String.valueOf(mSettings.getSyncedValue(key.pref)));
+            if (key.since > fromSchema && !mCopy.contains(COPY_PREFIX + key.pref)) {
+                edit.putString(COPY_PREFIX + key.pref, String.valueOf(mSettings.getSyncedValue(key.pref)));
+            }
         }
 
         edit.putBoolean(STATE_COPIED, true).commit();

@@ -84,6 +84,9 @@ public class UpdatesSettingsPresenter extends BasePresenter<Void> {
                 option -> AppUpdatePresenter.instance(getContext()).start(true)));
 
         if (UtubotSettings.isBuiltIn()) {
+            settingsPresenter.appendSingleSwitch(UiOptionItem.from(getContext().getString(R.string.utubot_update_checks),
+                    getContext().getString(R.string.utubot_update_checks_desc),
+                    option -> mSettings.setUpdateChecksEnabled(option.isSelected()), mSettings.isUpdateChecksEnabled()));
             settingsPresenter.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.utubot_whats_new), option -> loadChangelogs()));
             settingsPresenter.appendSingleButton(UiOptionItem.from(getContext().getString(R.string.utubot_update_interval),
                     UtubotSettings.formatBrowseRefresh(getContext(), mSettings.getUpdateIntervalMinutes()), option -> showUpdateInterval()));

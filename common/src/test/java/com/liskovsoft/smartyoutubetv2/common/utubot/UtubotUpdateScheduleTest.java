@@ -232,4 +232,22 @@ public class UtubotUpdateScheduleTest {
         mScheduler.advance(5 * UtubotUpdateSchedule.MS_PER_MINUTE);
         assertEquals(4, mChecks);
     }
+
+    @Test
+    public void whileAutomaticChecksAreOffNothingIsCheckedAndTheyResumeOnceOn() {
+        boolean[] isOn = {false};
+        mSchedule = new UtubotUpdateSchedule(mScheduler, () -> {
+            mChecks++;
+            return true;
+        }, () -> UtubotUpdateSchedule.INTERVAL_MS, () -> isOn[0]);
+        mSchedule.start();
+
+        mScheduler.advance(UtubotUpdateSchedule.INTERVAL_MS * 3);
+        assertEquals("off: no automatic check, however long it runs", 0, mChecks);
+        assertEquals("the schedule only looks at the switch again", 1, mScheduler.pending());
+
+        isOn[0] = true;
+        mScheduler.advance(UtubotUpdateSchedule.RETRY_MS);
+        assertEquals(1, mChecks);
+    }
 }
