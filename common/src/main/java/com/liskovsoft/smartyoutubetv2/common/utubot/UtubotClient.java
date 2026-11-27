@@ -117,6 +117,20 @@ public class UtubotClient {
     }
 
     /**
+     * A one-time web sign-in link (`POST /v1/web-login`): the client opens it on the same device to
+     * sign the browser into the web admin without a password. Short lived, single use.
+     */
+    public static final class WebLogin {
+        public final String token;
+        public final int expiresInS;
+
+        public WebLogin(String token, int expiresInS) {
+            this.token = token;
+            this.expiresInS = expiresInS;
+        }
+    }
+
+    /**
      * The cut list of a video with what to cache for the next re-validation. On a 304 {@link #notModified}
      * is true and the list is null (the client keeps its copy); {@link #body} is null then too. On a fresh
      * list {@link #body} is the JSON to store on disk, {@link #etag} the one to send next time.
@@ -198,6 +212,19 @@ public class UtubotClient {
             JSONObject body = new JSONObject().put("code", code).put("device", device);
             JSONObject answer = new JSONObject(send(builder("/pair", false).post(json(body)), 0));
             return new PairResult(answer.getString("token"), answer.optString("user", ""));
+        });
+    }
+
+    /**
+     * Ask the backend for a short-lived, single-use sign-in link to open the web admin on this
+     * device (`POST /v1/web-login`). No token needed for the link itself, but the call is made with
+     * the caller's bearer token, like every other authenticated route.
+     */
+    public WebLogin webLogin() throws IOException {
+        return parse(() -> {
+            JSONObject answer = new JSONObject(
+                    send(builder("/web-login", true).post(json(new JSONObject())), 0));
+            return new WebLogin(answer.getString("token"), answer.optInt("expires_in_s", 0));
         });
     }
 

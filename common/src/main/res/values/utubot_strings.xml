@@ -46,7 +46,7 @@
     <string name="utubot_test_connection">Test connection</string>
     <string name="utubot_test_connection_desc">Check that the backend answers with the token</string>
     <string name="utubot_web_admin">u·tubot web admin</string>
-    <string name="utubot_web_admin_desc">Open the web admin of the backend</string>
+    <string name="utubot_web_admin_desc">Open the control page on this device, signed in</string>
     <string name="utubot_testing">Testing the connection…</string>
     <string name="utubot_test_ok">Connected: backend %1$s, user %2$s</string>
     <string name="utubot_test_unauthorized">The backend is up, but the token is wrong</string>
@@ -129,6 +129,10 @@
     <string name="utubot_dont_ask_desc">You can still use Settings → Backend</string>
     <string name="utubot_pair_wrong_code">the code is wrong, used or expired</string>
     <string name="utubot_pair_failed">Pairing failed: %s</string>
+    <string name="utubot_web_admin_opening">Opening the web admin…</string>
+    <string name="utubot_web_admin_failed">Could not open the web admin: %s</string>
+    <string name="utubot_web_admin_unpaired">Pair with the backend first to open the web admin</string>
+    <string name="utubot_web_admin_qr_hint">Scan with your phone to open the web admin</string>
     <string name="utubot_cut">Director\'s cut</string>
     <string name="utubot_cut_menu">Director\'s cut…</string>
     <string name="utubot_cut_ready">Director\'s cut ready: %1$s%2$s</string>

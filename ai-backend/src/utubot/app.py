@@ -97,7 +97,15 @@ from .transcripts import Fetcher, TranscriptService
 from .usage import METRIC_YOUTUBE_FORBIDDEN, Usage
 from .videoref import VIDEO_ID_RE
 from .voice import VoiceService, install_voice_routes
-from .webauth import SESSION_TOKEN_ID, VIA_TAILSCALE, WebAuth, csrf_valid, hash_session
+from .webauth import (
+    SESSION_TOKEN_ID,
+    VIA_TAILSCALE,
+    VIA_WEB_LOGIN,
+    WebAuth,
+    WebLoginError,
+    csrf_valid,
+    hash_session,
+)
 from .webroutes import Deps, install_web_routes
 from .youtube import Clock, YoutubeGate
 from .youtube_fixtures import OfflineYoutubeFetcher
@@ -684,6 +692,31 @@ def create_app(
             "voice": svc.voice.me(who.name, device_id),
         }
 
+    @app.get("/web-login/{token}")
+    async def web_login_redeem(request: Request, token: str):
+        """Open this to sign into the web UI in one step: the browser gets the session cookie and
+        is sent to the control page. A one-time link from `POST /v1/web-login`; single use, short
+        lived, so a copied link is useless after it expires or is opened once.
+        """
+        svc.limiter.check(
+            f"weblogin-open:{ip_of(request)}", cfg.security.web_login_attempts_per_ip_per_min
+        )
+        try:
+            info = await run_in_threadpool(svc.webauth.redeem_web_login, token)
+        except WebLoginError as exc:
+            log.warning("web sign-in link refused from %s", ip_of(request))
+            raise HTTPException(400, "This sign-in link is invalid or expired") from exc
+        log.info("web sign-in link used: user=%s device=%s", info.user.name, info.device)
+        session_token = await run_in_threadpool(
+            svc.webauth.create_session, info.user.name, ip_of(request), info.device, VIA_WEB_LOGIN
+        )
+        resp = RedirectResponse("/#/home", status_code=302)
+        # The link carries the secret in its path: never cached, never leaked through a Referer.
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        set_session_cookie(resp, request, session_token)
+        return resp
+
     @app.get("/v1/me")
     async def me(request: Request, user: UserConfig = Depends(current_user)):
         return {
@@ -728,6 +761,23 @@ def create_app(
         except PairError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
         return {"token": token, "user": name}
+
+    @app.post("/v1/web-login")
+    async def web_login(request: Request, user: UserConfig = Depends(current_user)):
+        """Ask the backend for a short-lived, single-use sign-in link for this client's browser.
+
+        The caller is any authenticated user (a paired TV has its device token); the link opens on
+        the same device and signs the browser in without a password. The device name is recorded on
+        the session the link makes, and the request is rate limited per address.
+        """
+        principal = getattr(request.state, "principal", None)
+        if principal is not None and principal.token_id == SESSION_TOKEN_ID:
+            raise Forbidden  # only a paired device or token mints a link, never a browser session
+        ip = ip_of(request)
+        svc.limiter.check(f"weblogin:{ip}", cfg.security.web_login_attempts_per_ip_per_min)
+        log.info("web sign-in link issued: user=%s device=%s", user.name, client_of(request))
+        token, ttl = svc.webauth.create_web_login(user.name, client_of(request))
+        return {"token": token, "expires_in_s": ttl}
 
     @app.post("/v1/admin/pair")
     async def admin_pair(body: PairCodeRequest, admin: UserConfig = Depends(admin_user)):

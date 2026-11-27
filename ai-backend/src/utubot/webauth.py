@@ -12,6 +12,7 @@ import hmac
 import secrets
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 
 from .auth import (
@@ -31,6 +32,7 @@ from .passwords import check_strength, dummy_hash, hash_password, needs_rehash, 
 
 SESSION_PREFIX = "utbs_"
 SESSION_BYTES = 32
+WEB_LOGIN_PREFIX = "wtl_"
 CSRF_SALT = "utubot-csrf:"
 AGENT_MAX_CHARS = 200
 SCOPE_NAME_MAX_CHARS = 64
@@ -38,6 +40,7 @@ SESSION_TOKEN_ID = "session"
 VIA_PASSWORD = "password"
 VIA_TOKEN = "token"
 VIA_TAILSCALE = "tailscale"
+VIA_WEB_LOGIN = "web-login"
 GENERIC_LOGIN_ERROR = "invalid username or password"
 GENERIC_TOKEN_ERROR = "invalid token"
 LOCKED_MESSAGE = "too many failed sign-ins; try again later"
@@ -48,6 +51,16 @@ class LoginError(Exception):
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after
+
+
+class WebLoginError(Exception):
+    """A web sign-in link that is missing, already used or expired."""
+
+
+@dataclass
+class WebLoginResult:
+    user: UserConfig
+    device: str
 
 
 @dataclass
@@ -273,6 +286,64 @@ class WebAuth:
             "SELECT COUNT(*) c FROM sessions WHERE user=? AND expires_at>?", [user, now]
         )
         return int(row["c"])
+
+    # ---- one-time web sign-in -------------------------------------------------------------
+
+    def create_web_login(self, user: str, device: str) -> tuple[str, int]:
+        """A short-lived, single-use link that signs the user into the web UI when a browser opens it.
+
+        The TV (or any client with a valid user token) asks for one and opens it on the same device,
+        so the browser lands signed in without typing a password. The link is single use and lives
+        only `web_login_ttl_s`; the device that asked for it is recorded on the session it makes.
+        """
+        sec = self._sec()
+        now = time.time()
+        token = WEB_LOGIN_PREFIX + secrets.token_urlsafe(SESSION_BYTES)
+        device = " ".join(device.split())[: sec.max_device_name_chars] or "device"
+        self.db.execute("DELETE FROM web_logins WHERE expires_at<? OR used=1", [now])
+        self.db.execute(
+            "INSERT INTO web_logins(id,user,token_sha256,device,created_at,expires_at,used) "
+            "VALUES(?,?,?,?,?,?,0)",
+            [
+                uuid.uuid4().hex[:12],
+                user,
+                hash_session(token),
+                device,
+                now,
+                now + sec.web_login_ttl_s,
+            ],
+        )
+        return token, sec.web_login_ttl_s
+
+    def redeem_web_login(self, token: str) -> WebLoginResult:
+        """Claim a one-time link and return the owner's user and the device that asked for it.
+
+        The claim is atomic (an `UPDATE ... WHERE used=0`), so a link is spent exactly once even
+        under a double open; a missing, expired or already-used link raises `WebLoginError`. The
+        session the browser signs in with is made by the caller, whose `agent` carries the device.
+        """
+        if not token or not token.startswith(WEB_LOGIN_PREFIX):
+            raise WebLoginError("invalid link")
+        now = time.time()
+        row = self.db.one(
+            "SELECT id,user,device,expires_at FROM web_logins WHERE token_sha256=? AND used=0"
+            " AND expires_at>?",
+            [hash_session(token), now],
+        )
+        if row is None:
+            raise WebLoginError("invalid link")
+        claimed = (
+            self.db.execute_rc(
+                "UPDATE web_logins SET used=1, used_at=? WHERE id=? AND used=0", [now, row["id"]]
+            )
+            == 1
+        )
+        if not claimed:
+            raise WebLoginError("invalid link")
+        user = self.auth.user_config(row["user"])
+        if user is None:
+            raise WebLoginError("invalid link")
+        return WebLoginResult(user, row["device"])
 
     # ---- user administration --------------------------------------------------------------
 
