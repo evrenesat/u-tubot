@@ -1,3 +1,33 @@
+## 2026-11-26 (UTB-230 multi-user, per-user key, budget and rate limit)
+
+- Per-user AI provider key: a user stores their own OpenAI-compatible upstream with `PUT /v1/me/provider`, reads it back with
+  `GET /v1/me/provider` (host + a short `key_sha256` fingerprint, never the key, or `{"configured": false}`) and clears it with
+  `DELETE /v1/me/provider` (back to the server default). The key is stored on the server, never returned, exactly like the
+  `[llm.providers]` env-var keys. A base url without a scheme or an empty key is refused with `400`.
+- Routing: the LLM router sends a bound user's calls to their upstream (the requested model, any `provider:` prefix dropped since the
+  endpoint is fixed) and falls back on the server default. This bypasses modelgate for those calls. Modelgate itself
+  cannot take a per-request upstream key (upstream keys are per-engine env vars, clients hold one modelgate key each): gap filed in
+  the modelgate repo.
+- Per-user daily budget (`[usage] user_budget_usd`, `0` = unlimited) is checked before each of a user's calls; a call past it raises
+  `UserBudgetError`, surfaced as `429` with `Retry-After` (seconds to the next UTC day). `[usage] user_requests_per_min` (`0` = follow
+  the global limit) caps their requests and also returns `429`.
+- Usage visible in the admin page: `GET /v1/users` and `GET /v1/admin/users` now include per-user `usage` (`{cost, calls, day}`) and
+  `provider` (host + key fingerprint, or `{"configured": false}`); the admin *Users* page shows both as pills.
+- Fixes: `userproviders.unbind_call` reset both contextvars with the *provider* token (a real bug that would raise on unbind); it now
+  resets each with its own token. `content.py` task-exception spots swallowed `UserBudgetError` and reported a generic failure; they
+  re-raise it so the budget surfaces as `429` instead of a silent fail.
+- Tests: `tests/test_userproviders.py` (store set/describe/remove/list, scheme validation, key never returned, context binding,
+  per-user usage accumulation and admin grouping, budget error retry-after, additive-schema open, the self-service routes, the
+  route-level `429`, per-user budget isolation via `complete`, the per-user request cap, admin usage/provider visibility). Full suite
+  green (1498 passed); `test_webui.py` updated for the new `usage`/`provider` fields.
+- Contract/docs: `ai/CONTRACT.md` (self-service routes, `429` budget behaviour, `/v1/users` fields) and `docs/server.md` (`[usage]`
+  fields, a *Per-user upstream* section) document the feature.
+- Takeover fixes (2026-11-27): the duplicated `build` field in `Services` removed; the database file is set to mode 0600 (it holds users' own keys,
+  stored plain: encryption at rest is [#247](https://github.com/evrenesat/u-tubot/issues/247)); an own upstream must be `http(s)://host`
+  (other schemes refused); each user's own upstream gets its own slot limiter, so one person never queues behind another. Tests: keys per
+  user never cross, never in a response or log, db mode, scheme refusal, per-user limiter. Modelgate cannot take a per-request upstream
+  key: [modelgate#24](https://github.com/evrenesat/modelgate/issues/24). The Real-Debrid token and addon URL stay on the device (#231; a per-user entry: [#248](https://github.com/evrenesat/u-tubot/issues/248)). Admin page: the upstream pill read `provider.configured`, which `describe` never returns, so every user showed "no upstream"; it now reads the host. Screenshots at 1440 and 390 px checked.
+
 ## 2026-11-26 (error ledger review pass, issue #206)
 
 - Rebased onto main (db schema and the `Deps` wiring kept both sides). Fixed: the admin page's counts table crashed on an undefined

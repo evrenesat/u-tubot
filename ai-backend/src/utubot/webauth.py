@@ -29,6 +29,7 @@ from .auth import (
 from .config import Config, UserConfig
 from .db import Database
 from .passwords import check_strength, dummy_hash, hash_password, needs_rehash, verify_password
+from .userproviders import PerUserUsage, UserProviders
 
 SESSION_PREFIX = "utbs_"
 SESSION_BYTES = 32
@@ -89,8 +90,17 @@ def csrf_valid(session_token: str, supplied: str | None) -> bool:
 
 
 class WebAuth:
-    def __init__(self, cfg: Config, db: Database, auth: Auth):
+    def __init__(
+        self,
+        cfg: Config,
+        db: Database,
+        auth: Auth,
+        user_providers: UserProviders | None = None,
+        user_usage: PerUserUsage | None = None,
+    ):
         self.cfg, self.db, self.auth = cfg, db, auth
+        self.user_providers = user_providers
+        self.user_usage = user_usage
         self._dummy: str | None = None
         self._hashing = threading.BoundedSemaphore(max(1, cfg.security.scrypt_max_concurrent))
 
@@ -361,6 +371,12 @@ class WebAuth:
             "devices": len(self.auth.list_devices(name)),
             "sessions": self.user_sessions(name),
             "admin_editable": self.admin_editable(name),
+            "usage": self.user_usage.for_user(name)
+            if self.user_usage
+            else {"cost": 0, "calls": 0, "day": ""},
+            "provider": (self.user_providers.describe(name) or {"configured": False})
+            if self.user_providers
+            else {"configured": False},
         }
 
     def admin_editable(self, name: str) -> bool:

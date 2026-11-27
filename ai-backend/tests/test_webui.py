@@ -10,6 +10,7 @@ import httpx
 from tests.conftest import OTHER_TOKEN, PASSWORD, TOKEN, anon_client
 from utubot import appchannel
 from utubot.auth import hash_token
+from utubot.userproviders import PerUserUsage
 
 WEB = Path(__file__).parents[1] / "src" / "utubot" / "web"
 PUBLIC = {
@@ -241,6 +242,8 @@ async def test_admin_creates_users_and_sets_passwords(env):
         "admin_editable": True,
         "prime": False,
         "class": "normal",
+        "usage": {"cost": 0, "calls": 0, "day": PerUserUsage.today()},
+        "provider": {"configured": False},
     }
     login = await anon_client(env).post(
         "/v1/auth/login", json={"username": "newbie", "password": PASSWORD}

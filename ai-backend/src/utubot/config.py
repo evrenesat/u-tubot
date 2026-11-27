@@ -995,6 +995,13 @@ class UsageConfig(BaseModel):
     window_days: int = Field(7, ge=1)
     # how long per-call rows are kept before the sweep drops them (keeps the table from growing).
     keep_days: int = Field(30, ge=1)
+    # Per-user limits for a user who runs their calls on their own upstream (issue 212). A user's
+    # own provider key overrides the owner's modelgate budget for their cuts/answers; these cap how
+    # much and how fast they may spend, shared with the owner on the admin page. 0 = no limit.
+    user_budget_usd: float = Field(0, ge=0)  # daily (UTC) cost ceiling per user; 0 = unlimited
+    user_requests_per_min: int = Field(
+        0, ge=0
+    )  # model calls per user per minute; 0 = follow the global limit
 
 
 class LedgerConfig(BaseModel):

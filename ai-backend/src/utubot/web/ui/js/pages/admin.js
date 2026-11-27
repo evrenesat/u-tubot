@@ -10,12 +10,16 @@ import { tvSettingsForm } from "./devices.js";
 
 function userRow(user, reload) {
   const panel = h("div", {});
+  const usage = user.usage || { cost: 0, calls: 0, day: "" };
+  const provider = user.provider || {};
   const flags = [
     user.admin ? pill("admin", "ok") : null,
     user.prime ? pill("prime", "ok") : pill("normal"),
     pill(user.has_password ? "password" : "no password", user.has_password ? "" : "warn"),
     pill(user.has_token ? "token" : "no token"),
     pill(user.devices + (user.devices === 1 ? " TV" : " TVs")),
+    pill("today " + fmtCost(usage.cost) + " \u00b7 " + fmtNumber(usage.calls) + (usage.calls === 1 ? " call" : " calls"), "muted"),
+    provider.host ? pill("own upstream " + provider.host.replace(/^https?:\/\//, ""), "ok") : pill("server upstream", "muted"),
   ];
 
   function passwordForm() {

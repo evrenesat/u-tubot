@@ -73,6 +73,7 @@ from .models import (
     PairCodeRequest,
     PairRequest,
     PolicyPatch,
+    ProviderBody,
     QueryMeta,
     SummaryAdhoc,
 )
@@ -95,6 +96,7 @@ from .status import StatusService, UpdatesStatus
 from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
 from .usage import METRIC_YOUTUBE_FORBIDDEN, Usage
+from .userproviders import UserBudgetError, UserProvider, UserProviders, bind_call
 from .videoref import VIDEO_ID_RE
 from .voice import VoiceService, install_voice_routes
 from .webauth import (
@@ -205,6 +207,7 @@ class Services:
     updates: UpdatesStatus
     artifacts: ArtifactCache
     ledger: LedgerService
+    user_providers: UserProviders
     build: buildinfo.Build = field(default_factory=buildinfo.detect)
 
 
@@ -243,6 +246,7 @@ def build_services(
     transcription = Transcription(cfg, transcripts, jobs)
     auth = Auth(cfg, db)
     catalog = ModelCatalog(cfg, db, llm)
+    user_providers = UserProviders(db)
     assessor = Assessor(cfg, db, llm, transcripts)
     content = ContentService(cfg, db, llm, transcripts, prompts, transcription)
     return Services(
@@ -265,13 +269,14 @@ def build_services(
         transcription=transcription,
         archive=archive,
         limiter=RateLimiter(cfg.security.rate_window_s),
-        webauth=WebAuth(cfg, db, auth),
+        webauth=WebAuth(cfg, db, auth, user_providers, llm.user_usage),
         catalog=catalog,
         settings=SettingsService(cfg, auth, prompts, catalog),
         status=StatusService(cfg, db, gate, llm.usage, transcription.engines),
         updates=UpdatesStatus(cfg, github_transport),
         artifacts=ArtifactCache(db, transcripts, content, assessor, archive),
         ledger=ledger,
+        user_providers=user_providers,
     )
 
 
@@ -336,8 +341,14 @@ def create_app(
         return error(401, "unauthorized")
 
     @app.exception_handler(Forbidden)
-    async def _forbidden(_r: Request, _e: Forbidden):
+    async def _forbidden(_r: Request, exc: Forbidden):
         return error(403, "forbidden")
+
+    @app.exception_handler(UserBudgetError)
+    async def _budget(_r: Request, exc: UserBudgetError):
+        resp = error(exc.status, str(exc))
+        resp.headers["Retry-After"] = str(exc.retry_after_s)
+        return resp
 
     @app.exception_handler(RateLimited)
     async def _limited(_r: Request, exc: RateLimited):
@@ -486,9 +497,18 @@ def create_app(
         return user
 
     async def authenticated(request: Request, token: str | None) -> UserConfig:
-        """Authenticate off the event loop, then bind the class in the context the route sees."""
+        """Authenticate off the event loop, then bind the class and the caller the route sees.
+
+        The caller (user name and, when they have one, their own upstream) is bound so the LLM router
+        and the per-user limits run the request's calls on that person, wherever they execute.
+        """
         user = await run_in_threadpool(authenticate, request, token)
         bind_class(user.klass)
+        limit = cfg.usage.user_requests_per_min
+        if limit > 0:
+            svc.limiter.check(f"usr:{user.name}", limit)
+        live = svc.user_providers.get_live(user.name)
+        bind_call(user.name, UserProvider(*live) if live else None)
         return user
 
     async def current_user(request: Request) -> UserConfig:
@@ -752,6 +772,29 @@ def create_app(
         except PairError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
 
+    @app.get("/v1/me/provider")
+    async def me_provider(user: UserConfig = Depends(current_user)):
+        """The caller's own upstream, shown without the key: a host and a short key fingerprint, or
+        `{"configured": false}` when they have none."""
+        return svc.user_providers.describe(user.name) or {"configured": False}
+
+    @app.put("/v1/me/provider")
+    async def me_provider_set(body: ProviderBody, user: UserConfig = Depends(current_user)):
+        """Store the caller's own upstream. Their next model calls run on it instead of the owner's
+        modelgate budget, still under their per-user daily budget and request cap; clearing it returns
+        them to the server default."""
+        try:
+            doc = svc.user_providers.set(user.name, body.base_url, body.api_key)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {**doc, "configured": True}
+
+    @app.delete("/v1/me/provider")
+    async def me_provider_clear(user: UserConfig = Depends(current_user)):
+        if svc.user_providers.remove(user.name):
+            return {"ok": True}
+        raise HTTPException(404, "no own upstream stored")
+
     @app.post("/v1/pair")
     async def pair(body: PairRequest, request: Request):
         ip = ip_of(request)
@@ -800,6 +843,8 @@ def create_app(
                     "class": u.klass,
                     "policy": u.policy.model_dump(),
                     "devices": svc.auth.list_devices(name),
+                    "usage": svc.llm.user_usage.for_user(name),
+                    "provider": svc.user_providers.describe(name) or {"configured": False},
                 }
             )
         return {"users": out}

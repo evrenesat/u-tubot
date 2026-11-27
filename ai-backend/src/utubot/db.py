@@ -188,6 +188,12 @@ CREATE TABLE IF NOT EXISTS failures(
    detail TEXT, flagged INTEGER NOT NULL DEFAULT 0, client TEXT);
 CREATE INDEX IF NOT EXISTS failures_ts ON failures(ts DESC);
 CREATE INDEX IF NOT EXISTS failures_category ON failures(category, ts DESC);
+CREATE TABLE IF NOT EXISTS user_providers(
+   user TEXT PRIMARY KEY, base_url TEXT NOT NULL, api_key_hash TEXT NOT NULL, api_key TEXT NOT NULL,
+   updated_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS user_usage(
+   user TEXT NOT NULL, day TEXT NOT NULL, cost REAL NOT NULL DEFAULT 0, calls INTEGER NOT NULL DEFAULT 0,
+   PRIMARY KEY(user, day));
 """
 
 JOB_COLUMNS = {
@@ -243,12 +249,18 @@ MAX_CHANNEL_NAME_CHARS = 120
 METADATA_ONLY = "metadata_only"
 
 
+DB_FILE_MODE = 0o600
+
+
 class Database:
     def __init__(self, path: Path | str):
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        if str(path) != ":memory:":
+            # the file holds users' own provider keys: owner-only, like users.toml
+            Path(path).chmod(DB_FILE_MODE)
         self._lock = threading.Lock()
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")

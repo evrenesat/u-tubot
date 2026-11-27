@@ -490,7 +490,10 @@ The extension sends the bearer token from its background context only, to the ba
 - Public endpoints (no token): `GET /setup.json`, `GET /v1/health`, `POST /v1/pair`,
   `GET /app/update.json`, `GET /app/info.json`, `GET /app/<file>.apk`, `GET /app/latest/<abi>.apk`, and for the web UI `GET /`, `GET /ui/*`
    (static files, no data), `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /web-login/<token>`. Everything else needs a bearer token or a session cookie. Rate limits return `429
-  {"error":"rate limited"}` with `Retry-After`. Bodies over 256 KiB return 413.
+   {"error":"rate limited"}` with `Retry-After`. Bodies over 256 KiB return 413.
+- A user's own daily cost budget (`[usage] user_budget_usd`, `0` = unlimited) is checked before each of their calls; a call past it is refused with
+  `429 {"error": ...}` and a `Retry-After` (seconds to the next UTC day). `[usage] user_requests_per_min` (`0` = follow the global limit) caps their
+  requests the same way. A user's own upstream (see `/v1/me/provider`) is where their calls run; without one they use the server default.
 - Video ids must match `^[A-Za-z0-9_-]{11}$`, else `400`.
 - `POST /v1/pair` `{"code":"123456","device":"Living room TV"}` -> `{"token":"utb_...","user":"owner"}`.
   Codes are single use, valid 15 minutes, created by `utubot user pair NAME` or the admin UI.
@@ -1042,17 +1045,23 @@ when a non-admin sends the flag). `PUT /v1/me/policy` answers `403` to a non-adm
 - Voice control additions to the web UI: see [Voice control](#voice-control-addendum-2026-11-26).
 - `GET /v1/me/devices` -> `{"devices":[{"id","user","device","created_at","last_used"}]}`, `DELETE /v1/me/devices/{id}` (own devices
   only), `POST /v1/me/pair` -> `{"user","code","expires_in_s"}` (a one-time pairing code for the caller).
+- `GET /v1/me/provider` -> the caller's own upstream as `{"host","key_sha256"}` (a short key fingerprint, never the key) or
+  `{"configured": false}`; `PUT /v1/me/provider` `{"base_url","api_key"}` stores it and returns that plus `"configured": true`
+  (`400` for a base url without a scheme or an empty key); `DELETE /v1/me/provider` clears it (`404` when none) and returns the
+  server default for the caller's next calls. The key is stored on the server, never returned.
 - `POST /v1/prompts/validate` with a prompt set -> `{"ok":true,"id","name","prompts":2}` or `400` with the validator's messages.
 - `POST /v1/videos/resolve` `{"text":"https://youtu.be/..."}` -> `{"video_id":"..."}` (an id, or a watch, shorts, live, embed or
   youtu.be link; `400` otherwise; nothing is fetched).
 
 ### User administration (admin only)
 
-`GET /v1/users` -> `{"users":[{"name","admin","prime","class","has_password","has_token","devices","sessions","admin_editable"}]}`;
+`GET /v1/users` -> `{"users":[{"name","admin","prime","class","has_password","has_token","devices","sessions","admin_editable","usage","provider"}]}`;
 `POST /v1/users` `{"name","admin":false,"prime":false,"password":null}` (a user without a token; `409` if it exists, `400` for a bad name or a short
 password); `PUT /v1/users/{name}` `{"admin":true,"prime":true}` (either field optional; `409` for a user declared in `config.toml` or for your own `admin` flag);
 `PUT /v1/users/{name}/password` `{"password"}`; `GET/PUT /v1/users/{name}/settings` as above. The older `GET /v1/admin/users`,
-`POST /v1/admin/pair`, `DELETE /v1/admin/devices/{id}` and `PUT /v1/admin/users/{name}/policy` stay.
+`POST /v1/admin/pair`, `DELETE /v1/admin/devices/{id}` and `PUT /v1/admin/users/{name}/policy` stay. Each user also carries `usage`
+(`{"cost","calls","day"}`, the caller's own cost and calls for the UTC day) and `provider` (`{"host","key_sha256"}` or `{"configured": false}`);
+neither carries a key.
 
 ### Media archive (admin only)
 

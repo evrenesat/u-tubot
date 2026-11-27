@@ -22,6 +22,7 @@ from .prompts import (
 )
 from .transcribe import OK, Transcription
 from .transcripts import Transcript, TranscriptService, fmt_ts
+from .userproviders import UserBudgetError
 
 MAP_SYSTEM = (
     "You condense one part of a long video transcript into terse factual notes. Keep concrete "
@@ -337,6 +338,8 @@ class ContentService:
         if not await wait_task(task, self.wait_cap(wait_ms)):
             return {**base, "status": "pending"}
         exc = task.exception()
+        if isinstance(exc, UserBudgetError):
+            raise exc
         if exc is not None:
             problem = self.transcription.problem(video_id, exc, qmeta)
             if problem:
@@ -492,6 +495,8 @@ class ContentService:
         if not await wait_task(task, self.wait_cap(wait_ms)):
             return {**base, "status": "pending"}
         exc = task.exception()
+        if isinstance(exc, UserBudgetError):
+            raise exc
         if exc is not None:
             problem = self.transcription.problem(video_id, exc, qmeta)
             if problem:
@@ -560,6 +565,8 @@ class ContentService:
         if not await wait_task(task, self.wait_cap(wait_ms)):
             return {**base, "status": "pending"}
         exc = task.exception()
+        if isinstance(exc, UserBudgetError):
+            raise exc
         if exc is not None:
             problem = self.transcription.problem(video_id, exc, qmeta)
             if problem:
