@@ -1188,6 +1188,9 @@ are additive and need a signed-in caller.
   `provider.api_key`, never delivered to a TV); at the first start with a master key every clear-text key moves in, the old column is
   blanked after the new row decrypts back to the same value, and the database file is rewritten (`VACUUM`) so no clear copy stays;
   `key_sha256` is unchanged. Without a master key the provider key stays in its column as before.
+- The owner's Stremio auth key (`films_stremio_auth`, set by `POST /v1/films/stremio/login` from the Stremio login) uses the same store but
+  is server-side only: it is not in the schema, is never delivered to a TV and never returned by the secret routes. The import runs on the
+  server, so the key never leaves it; see [Stremio library import](#stremio-library-import-addendum-2026-11-28-issue-308).
 - `GET /v1/me/settings/status` -> `{"version","now","devices":[{"id","device","last_used","syncs","applied_version","applied_at",
   "last_sync_at","schema_version","app_version","migrated","report","overrides":[key],"pending":[key]}]}`; `pending` is every key whose `rev`
   is above the TV's `applied_version` among the keys that TV's schema may see.
@@ -1263,6 +1266,24 @@ are additive and need a signed-in caller.
   as the film cuts. The add-on's lists and files are cached in memory for an hour (64 entries), shared with the cut builder.
 - The TV (`UtubotFilmSubtitlesController`) side-loads the file as a text track merged with the stream, applies the viewer's delay by shifting
   the cues of its copy, and keeps the choice and the delay per title on the TV. Clients: TV only (no film player in the browser extension).
+
+### Stremio library import (addendum, 2026-11-28, issue 308)
+
+The owner's Stremio watch state is copied into the per-user films store (the **My list** and **Continue watching** rows the TV reads). Import
+only; a two-way sync is a later investigation. The owner signs in once on the web; the server keeps only the Stremio auth key (encrypted in the
+secret store as `films_stremio_auth`, server-side only, never delivered to a TV and never the password).
+
+- `POST /v1/films/stremio/login` `{"email","password"}` (signed-in users only) -> `{"ok":true}`. Logs in to Stremio (`POST https://stremio.com/api/auth`,
+  `{"event":"login","payload":{"email","password"}}`), keeps the returned `auth` key, forgets the password. `400` for a bad email/password or a Stremio
+  auth failure (`{"error": message}`), `502` when Stremio answers in an unreadable shape.
+- `POST /v1/films/stremio/import` (signed-in users only) -> `{"watchlist","resume","watched","unmapped","items":[{id,type,title_id,name,poster,season,episode,position_ms,watched,last_watched}]}`. Reads the library with the stored key (`GET https://lib.stremio.com/api/datastoreGet`, `payload` = base64 of
+  `{"op":"read","key":"libraryItem"}`), maps it, and writes the films store. `400 {"error":"connect your Stremio account first"}` when no key is stored,
+  `502` on a Stremio error. A movie maps to one film entry (id = IMDb id, `timeOffset` seconds as `position_ms`, not watched); a series episode maps to an
+  entry (id = `imdb:season:episode`, watched when the fraction is ≥ `WATCHED_SHARE` (0.9) or in `watchedAnyway`), and the series also gets a resume entry
+  (id = the IMDb id, `position_ms` from its `timeOffset`). A key that is not an IMDb movie or episode is counted in `unmapped`.
+- `GET /v1/films/stremio/status` (signed-in users only) -> `{"set":true|false}`: whether the account is connected.
+- Clients: TV + web UI + backend. The browser extension shows no films section (a watchlist is IMDb titles, not a YouTube video), so it has no row; see
+  the parity matrix in `ai/STREMIO_PLAN.md` and the contract's "Clients" section.
 
 ### Devices, prompts, videos
 

@@ -1,3 +1,11 @@
+## 2026-11-28 (Stremio library import, #308, r0)
+
+- `stremio.py`: `login(email, password)` (`POST https://stremio.com/api/auth`, `{"event":"login","payload":{"email","password"}}`, returns the `auth` key or raises on a non-OK status / bad shape), `library(auth)` (`GET https://lib.stremio.com/api/datastoreGet` with `payload` = base64 of `{"op":"read","key":"libraryItem"}` through `guarded_request`; the double-base64 `{"payload","signature"}` answer is decoded), and the mapping to the films store. A movie maps to one film entry (id = IMDb id, `timeOffset` as the position, not watched); a series episode maps to an entry (id = `imdb:season:episode`, watched when fraction ≥ `WATCHED_SHARE` or in `watchedAnyway`), and the series also gets a resume entry from its `timeOffset`. A key that is not an IMDb movie or episode is counted as unmapped.
+- `stremio_routes.py`: `POST /v1/films/stremio/login` (signs in, stores the key via `secrets.set(user, "films_stremio_auth", auth_key)` — server-side only, never the password), `POST /v1/films/stremio/import` (reads the library, maps it, returns the items and the counts: watchlist, resume, watched, unmapped), `GET /v1/films/stremio/status` (`{"set": true|false}`). Auth and format failures map to 400/502.
+- `urlguard.py`: `guarded_request` (validated request with a size cap and a query merge) for the two Stremio hosts.
+- `config.py` / `config.example.toml`: `[films.stremio]` (endpoints, timeouts).
+- Tests: `tests/test_stremio.py` (login success/failure, the library read, the mapping of a movie, a series with watched episodes and a resume offset, unmapped keys). `ruff check` / `ruff format --check` clean. The auth key is never delivered to the TV or added to the settings schema.
+
 ## 2026-11-28 (crash reports and player logs, #301)
 
 - `devicereports.py`: `POST /v1/device/reports` (paired TV only, gzip or plain JSON, size limit before and after unpacking so a zip bomb is refused with 413, must be a JSON object), `DeviceReports` over the new table `device_reports` (additive; report stored gzipped, counts of crashes, ANRs and errors read from the failure kinds). Retention on every upload: `[reports] keep_days` (30) and `max_bytes_per_user` (50 MiB, oldest first). `counts()` feeds `reports` in `GET /v1/status` (admin: whole server) and a card on the web home.
