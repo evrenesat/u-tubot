@@ -4,6 +4,8 @@ import asyncio
 import ipaddress
 import socket
 from collections.abc import Awaitable, Callable, Iterable
+from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -144,3 +146,56 @@ class _GuardedGet:
         if self.resp is not None:
             await self.resp.aclose()
         await self.client.aclose()
+
+
+class RequestTooLarge(ValueError):
+    """The response body exceeded the allowed size."""
+
+
+async def guarded_request(
+    method: str,
+    url: str,
+    *,
+    allow_hosts: Iterable[str],
+    max_redirects: int,
+    timeout_s: float,
+    limit: int,
+    transport: httpx.AsyncBaseTransport | None = None,
+    resolver: Resolver = system_resolver,
+    json_body: Any = None,
+    query: dict[str, str] | None = None,
+) -> tuple[int, bytes]:
+    """One validated request (GET or POST) and its body, capped at `limit` bytes.
+
+    Every hop is validated and pinned like `guarded_get`; the body is read under `limit` so a large
+    answer cannot exhaust memory. Returns `(status_code, body)`; a refused hop raises `UrlRejected`.
+    """
+    client = httpx.AsyncClient(follow_redirects=False, timeout=timeout_s, transport=transport)
+    try:
+        target = httpx.URL(url)
+        if query:
+            base = {key: value for key, value in httpx.QueryParams(target.query).multi_items()}
+            target = target.copy_with(query=urlencode({**base, **query}).encode())
+        for _ in range(max_redirects + 1):
+            ip = await validate_url(target, allow_hosts, resolver)
+            pinned = target.copy_with(host=ip)
+            request = client.build_request(
+                method,
+                pinned,
+                json=json_body,
+                headers={"Host": target.netloc.decode()},
+                extensions={"sni_hostname": target.host},
+            )
+            resp = await client.send(request)
+            if resp.is_redirect and resp.headers.get("location"):
+                target = target.join(resp.headers["location"])
+                continue
+            body = bytearray()
+            async for chunk in resp.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > limit:
+                    raise RequestTooLarge("response was too large")
+            return resp.status_code, bytes(body)
+        raise UrlRejected("too many redirects")
+    finally:
+        await client.aclose()

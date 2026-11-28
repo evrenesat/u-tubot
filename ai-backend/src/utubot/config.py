@@ -421,6 +421,20 @@ class ReportsConfig(BaseModel):
     max_report_bytes: int = Field(2 * 1024 * 1024, ge=1024)
 
 
+class StremioConfig(BaseModel):
+    """The two Stremio hosts the server reaches for a films library import.
+
+    `auth` logs in (email + password -> auth key); `datastore` reads the library with that key.
+    Both are the public Stremio service; the library read is pinned to the datastore host so the
+    auth key cannot be sent elsewhere.
+    """
+
+    auth_url: str = Field(default="https://stremio.com/api/auth")
+    datastore_url: str = Field(default="https://lib.stremio.com/api/datastoreGet")
+    timeout_s: float = Field(default=20.0, gt=0.0)
+    max_library_bytes: int = Field(default=8 * 1024 * 1024, ge=1024 * 1024)
+
+
 class FilmsConfig(BaseModel):
     """Film cuts: the transcript of a film comes from its subtitles, found by IMDb id.
 
@@ -455,6 +469,9 @@ class FilmsConfig(BaseModel):
     # A cut applies to a stream whose length differs from the one it was built for by up to this
     # (subtitle sync is not frame exact, and the details screen only knows the length it saw).
     apply_tolerance_ms: int = Field(default=30_000, ge=0)
+    # Stremio account: log in (api/auth) and read the library (datastoreGet on libraryItem). The
+    # server keeps only the returned auth key; the password never leaves this call.
+    stremio: StremioConfig = Field(default_factory=StremioConfig)
 
 
 class ClassConfig(BaseModel):
