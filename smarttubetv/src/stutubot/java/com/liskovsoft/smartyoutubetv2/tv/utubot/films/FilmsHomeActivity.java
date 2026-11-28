@@ -21,8 +21,11 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsCatalog;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsCatalog.Item;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsProgress;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsProgress.Entry;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsWatchlist;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotStremioClient;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotStremioClient.ImportResult;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,8 +33,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The films home on the TV: a search field and rows of posters (Continue watching, Popular, Trending, Series). A poster opens the details
- * screen. Back leaves to where the films were opened from; it never quits the app.
+ * The films home on the TV: a search field and rows of posters (Continue watching, My list, Popular, Trending, Series). The owner's Stremio
+ * library is imported on demand (the Import button), filling the My list and the resume positions of the Continue watching row from it. A
+ * poster opens the details screen. Back leaves to where the films were opened from; it never quits the app.
  */
 public class FilmsHomeActivity extends Activity {
     private static final String TAG = "UtubotFilmsHome";
@@ -41,13 +45,18 @@ public class FilmsHomeActivity extends Activity {
     private final ExecutorService mIo = Executors.newFixedThreadPool(3);
     private UtubotFilmsCatalog mCatalog;
     private UtubotFilmsProgress mProgress;
+    private UtubotFilmsWatchlist mWatchlist;
+    private UtubotStremioClient mStremioClient;
     private LinearLayout mRows;
     private LinearLayout mContinueSlot;
+    private LinearLayout mMyListSlot;
     private LinearLayout mResultsSlot;
     private TextView mStatus;
+    private TextView mImportButton;
     private EditText mSearch;
     private boolean mInitialFocusDone;
     private boolean mFocusOnRetry;
+    private boolean mImporting;
     private boolean mDestroyed;
 
     @Override
@@ -64,6 +73,8 @@ public class FilmsHomeActivity extends Activity {
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN);
         mCatalog = new UtubotFilmsCatalog(settings.getFilmsCatalogUrl());
         mProgress = new UtubotFilmsProgress(this);
+        mWatchlist = new UtubotFilmsWatchlist(this);
+        mStremioClient = new UtubotStremioClient(settings.getUrl(), settings.getToken());
 
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(FilmsUi.BACKGROUND);
@@ -77,6 +88,7 @@ public class FilmsHomeActivity extends Activity {
 
         buildHeader();
         mContinueSlot = slot();
+        mMyListSlot = slot();
         mResultsSlot = slot();
 
         if (settings.getFilmsAddonUrl().isEmpty()) {
@@ -118,6 +130,8 @@ public class FilmsHomeActivity extends Activity {
             return false;
         });
         bar.addView(search, new LinearLayout.LayoutParams(FilmsUi.dp(this, 420), ViewGroup.LayoutParams.WRAP_CONTENT));
+        mImportButton = FilmsUi.button(this, "Import Stremio", FilmsUi.BODY_SP, v -> startImport());
+        bar.addView(mImportButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         mRows.addView(bar);
 
         mStatus = FilmsUi.text(this, "", FilmsUi.BODY_SP, FilmsUi.WARN, false);
@@ -145,10 +159,115 @@ public class FilmsHomeActivity extends Activity {
 
         if (mProgress != null) {
             showContinueWatching();
+            showMyList();
+            refreshConnection();
 
-            if (!mInitialFocusDone && mContinueSlot.getChildCount() > 0) {
-                mInitialFocusDone = true;
-                focusFirstCard(mContinueSlot.getChildAt(1));
+            if (!mInitialFocusDone) {
+                if (mContinueSlot.getChildCount() > 0) {
+                    mInitialFocusDone = true;
+                    focusFirstCard(mContinueSlot.getChildAt(1));
+                } else if (mMyListSlot.getChildCount() > 0) {
+                    mInitialFocusDone = true;
+                    focusFirstCard(mMyListSlot.getChildAt(1));
+                }
+            }
+        }
+    }
+
+    private void showMyList() {
+        mMyListSlot.removeAllViews();
+        List<UtubotStremioClient.ImportedItem> titles = mWatchlist.titles();
+
+        if (titles.isEmpty()) {
+            return;
+        }
+
+        List<View> cards = new ArrayList<>();
+
+        for (UtubotStremioClient.ImportedItem item : titles) {
+            String subtitle = UtubotStremioClient.TYPE_SERIES.equals(item.type) ? "Series" : "Film";
+            cards.add(FilmsUi.posterCard(this, item.name, subtitle, item.poster, 0f, false,
+                    v -> openDetails(item.type, item.titleId, item.name, item.poster)));
+        }
+
+        mMyListSlot.addView(FilmsUi.rowHeader(this, "My list"));
+        mMyListSlot.addView(row(cards));
+    }
+
+    /** Whether the owner's Stremio account is connected on the backend; the Import button runs only then */
+    private boolean isConnected() {
+        try {
+            return mStremioClient.status();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void refreshConnection() {
+        mIo.execute(() -> {
+            final boolean connected = isConnected();
+
+            mHandler.post(() -> {
+                if (mDestroyed || mImporting) {
+                    return;
+                }
+
+                if (connected) {
+                    setStatus("");
+                } else {
+                    setStatus("Connect your Stremio account in the web settings, then import.");
+                }
+            });
+        });
+    }
+
+    /** Import the owner's Stremio library on demand, filling the My list and the resume positions */
+    private void startImport() {
+        if (mImporting) {
+            return;
+        }
+
+        mImporting = true;
+        setStatus("Importing your Stremio library...");
+
+        mIo.execute(() -> {
+            ImportResult result;
+
+            try {
+                result = mStremioClient.importLibrary();
+            } catch (Exception e) {
+                mHandler.post(() -> {
+                    mImporting = false;
+                    setStatus("Import failed: " + e.getMessage());
+                });
+                return;
+            }
+
+            mWatchlist.apply(result.items);
+            mHandler.post(() -> {
+                mImporting = false;
+                showMyList();
+                showContinueWatching();
+                focusFirstCardOf(mMyListSlot);
+                setStatus("Imported " + result.watchlistCount + " titles from Stremio"
+                        + (result.resumeCount > 0 ? ", " + result.resumeCount + " to resume" : "")
+                        + (result.watchedCount > 0 ? ", " + result.watchedCount + " watched" : "")
+                        + (result.unmappedCount > 0 ? ", " + result.unmappedCount + " not shown" : ""));
+            });
+        });
+    }
+
+    private void focusFirstCardOf(LinearLayout slot) {
+        for (int i = 0; i < slot.getChildCount(); i++) {
+            View child = slot.getChildAt(i);
+
+            if (child instanceof ViewGroup && ((ViewGroup) child).getChildCount() > 0) {
+                View first = ((ViewGroup) child).getChildAt(0);
+
+                if (first != null) {
+                    first.post(first::requestFocus);
+                    return;
+                }
             }
         }
     }
@@ -156,11 +275,25 @@ public class FilmsHomeActivity extends Activity {
     private void showContinueWatching() {
         mContinueSlot.removeAllViews();
         List<View> cards = new ArrayList<>();
+        List<String> seen = new ArrayList<>();
 
         for (Entry entry : mProgress.continueWatching()) {
             String subtitle = entry.season > 0 ? "S" + entry.season + " E" + entry.episode : entry.timeLeft();
             cards.add(FilmsUi.posterCard(this, entry.name, subtitle, entry.poster, entry.share(), false,
                     v -> openDetails(entry.type, entry.titleId, entry.name, entry.poster)));
+            seen.add(entry.titleId);
+        }
+
+        // The resume positions the owner left in their Stremio library: no duration on this TV, so
+        // the card shows the title to resume from rather than a progress bar.
+        for (UtubotStremioClient.ImportedItem item : mWatchlist.resume()) {
+            if (seen.contains(item.titleId)) {
+                continue;
+            }
+
+            cards.add(FilmsUi.posterCard(this, item.name, "", item.poster, 0f, false,
+                    v -> openDetails(item.type, item.titleId, item.name, item.poster)));
+            seen.add(item.titleId);
         }
 
         if (!cards.isEmpty()) {
