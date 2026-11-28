@@ -7,6 +7,12 @@ from pydantic import BaseModel, Field, RootModel, field_validator
 from .db import MAX_CHANNEL_ID_CHARS, MAX_CHANNEL_NAME_CHARS
 from .ledger import KNOWN_CATEGORIES
 
+MAX_SOURCE_KEY_CHARS = 64
+MAX_RELEASE_KEY_CHARS = 400
+MAX_FPS = 240
+MAX_LANG_CHARS = 12
+MAX_POSTER_CHARS = 500
+
 
 class VideoMeta(BaseModel):
     """What the app knows from a card for triage. Every field but `video_id` is optional; the assess
@@ -177,9 +183,23 @@ class QueryMeta(BaseModel):
     channel_id: str | None = Field(None, max_length=MAX_CHANNEL_ID_CHARS)
     duration_s: int | None = None
     is_live: bool | None = None
+    # A film or an episode (source_kind "film"): the TV states which release it plays. Only these
+    # facts about the stream and the TV's subtitle language are stored; the poster is a public URL.
+    source_kind: Literal["youtube", "film"] | None = None
+    source_key: str | None = Field(None, max_length=MAX_SOURCE_KEY_CHARS)
+    release_key: str | None = Field(None, max_length=MAX_RELEASE_KEY_CHARS)
+    release_duration_ms: int | None = Field(None, ge=0)
+    file_name: str | None = Field(None, max_length=MAX_RELEASE_KEY_CHARS)
+    stream_size: int | None = Field(None, ge=0)
+    stream_fps: float | None = Field(None, ge=0, le=MAX_FPS)
+    sub_lang: str | None = Field(None, max_length=MAX_LANG_CHARS)
+    poster: str | None = Field(None, max_length=MAX_POSTER_CHARS)
 
     def as_dict(self) -> dict[str, Any]:
-        return {k: v for k, v in self.model_dump().items() if v is not None}
+        out = {k: v for k, v in self.model_dump().items() if v is not None and k != "poster"}
+        if self.poster and self.poster.startswith(("https://", "http://")):
+            out["thumbnail"] = self.poster
+        return out
 
 
 class LoginRequest(BaseModel):

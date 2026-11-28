@@ -412,6 +412,42 @@ class CutsConfig(BaseModel):
         return self
 
 
+class FilmsConfig(BaseModel):
+    """Film cuts: the transcript of a film comes from its subtitles, found by IMDb id.
+
+    The server asks a Stremio subtitles add-on (OpenSubtitles v3 by default) for the title's
+    subtitles. Only the IMDb id, season and episode and the stream's file name and size are sent,
+    never anything about the user. A subtitle is used only when its timing fits the release.
+    """
+
+    subtitles_url: str = "https://opensubtitles-v3.strem.io"
+    # Hosts besides the add-on's own that subtitle files may be downloaded from even when they
+    # resolve to a private address (an add-on on the LAN serving its own files). Empty by default:
+    # a subtitle address in an add-on's answer is otherwise held to the public-address rules.
+    download_hosts: list[str] = Field(default_factory=list)
+    # Origins a film's poster may be shown from on the phone (the page's image policy allows
+    # exactly these): the poster a TV sends from any other origin is not stored.
+    poster_origins: list[str] = Field(default_factory=lambda: ["https://images.metahub.space"])
+    timeout_s: float = Field(default=20.0, gt=0.0)
+    max_subtitle_bytes: int = Field(default=2 * 1024 * 1024, ge=1024)
+    max_candidates_tried: int = Field(default=3, ge=1)
+    # The last cue may end this much after the stream (credits, a trailing cue) before the
+    # subtitle is refused: the larger of the two.
+    end_margin_s: float = Field(default=60.0, ge=0.0)
+    end_margin_frac: float = Field(default=0.02, ge=0.0)
+    # The last cue must reach this share of the stream, and the cues together must cover this
+    # share of it (a partial file or a different cut of the film would not).
+    min_last_cue_frac: float = Field(default=0.75, gt=0.0, le=1.0)
+    min_cover_frac: float = Field(default=0.08, gt=0.0, le=1.0)
+    min_cues: int = Field(default=30, ge=1)
+    # A subtitle synced to another frame rate drifts: refused when its frame rate and the
+    # stream's (when the TV knows it) differ by more than this fraction.
+    fps_tolerance: float = Field(default=0.01, ge=0.0)
+    # A cut applies to a stream whose length differs from the one it was built for by up to this
+    # (subtitle sync is not frame exact, and the details screen only knows the length it saw).
+    apply_tolerance_ms: int = Field(default=30_000, ge=0)
+
+
 class ClassConfig(BaseModel):
     """What one user class may start; `UserPolicy` and the cut/watched limits still apply."""
 
@@ -1056,6 +1092,7 @@ class Config(BaseModel):
     transcripts: TranscriptConfig = Field(default_factory=TranscriptConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     cuts: CutsConfig = Field(default_factory=CutsConfig)
+    films: FilmsConfig = Field(default_factory=FilmsConfig)
     classes: ClassesConfig = Field(default_factory=ClassesConfig)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)

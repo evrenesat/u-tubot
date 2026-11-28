@@ -37,6 +37,14 @@ from .db import (
     Database,
 )
 from .feature import feature_run
+from .films import (
+    SOURCE_KIND_FILM,
+    FilmRefused,
+    FilmSource,
+    FilmSubtitles,
+    film_source,
+    release_fits,
+)
 from .inbox import KIND_CUT, InboxService, thumbnail_for
 from .llm import INTERACTIVE, LLMClient, LLMError
 from .media_archive import MediaArchive
@@ -48,6 +56,7 @@ from .transcripts import (
     Transcript,
     TranscriptService,
     fmt_ts,
+    segments_to_text,
 )
 from .usage import METRIC_YOUTUBE_FORBIDDEN
 from .youtube import YoutubeGate
@@ -63,6 +72,8 @@ STAGE_REDUCE = "reduce"  # long videos: the final choice over the candidates (de
 
 # Shown on the TV when a cut cannot fetch the transcript because YouTube refused the download: the
 # server waits for the TV's own captions (the client proxy path) instead of failing the cut.
+FILM_WATCHED_MESSAGE = "Films are cut from their subtitles; the Watched mode is for YouTube videos."
+
 FORBIDDEN_CAPTIONS_MESSAGE = (
     "YouTube refused the server and no captions are stored for this video. "
     "Play the video on the TV for a few seconds so it can send its captions; this cut then builds."
@@ -1238,8 +1249,10 @@ class CutService:
         archive: MediaArchive | None = None,
         gate: YoutubeGate | None = None,
         inbox: InboxService | None = None,
+        films: FilmSubtitles | None = None,
     ):
         self.cfg, self.db, self.llm = cfg, db, llm
+        self.films = films or FilmSubtitles(cfg.films)
         self.transcripts, self.prompts, self.jobs = transcripts, prompts, jobs
         self.auth, self.archive, self.gate = auth, archive, gate
         self.inbox = inbox
@@ -1410,6 +1423,38 @@ class CutService:
 
     def _meta(self, video_id: str) -> dict[str, Any]:
         return self.transcripts.cached_meta(video_id) or {}
+
+    def film(self, video_id: str) -> FilmSource | None:
+        """The film release behind a backend id, from the facts the TV stated; None for a YouTube video."""
+        meta = self._meta(video_id)
+        if meta.get("source_kind") != SOURCE_KIND_FILM:
+            return None
+        try:
+            return film_source(
+                str(meta.get("source_key") or ""),
+                str(meta.get("release_key") or ""),
+                meta.get("release_duration_ms"),
+            )
+        except ValueError:
+            return None
+
+    def duration_s(self, video_id: str) -> float | None:
+        """The length a cut of this video is built for: a film's release length, else the video's."""
+        film = self.film(video_id)
+        if film is not None and film.release_duration_ms:
+            return film.release_duration_ms / 1000.0
+        value = self._meta(video_id).get("duration_s")
+        return float(value) if value else None
+
+    def _resolve_mode(
+        self, video_id: str, user: str, mode: str | None, channel_id: str | None
+    ) -> tuple[str, str]:
+        """A film is cut from its subtitles only: Quick. Watched needs frames the server does not have."""
+        if self.film(video_id) is None:
+            return self.resolve_mode_rule(user, mode, channel_id)
+        if mode == "watched":
+            raise CutRefused(FILM_WATCHED_MESSAGE, status=409)
+        return "quick", MODE_RULE_REQUEST
 
     def building_count(self, user: str) -> int:
         marks = ",".join("?" * len(BUILDING_STATES))
@@ -1661,7 +1706,7 @@ class CutService:
         if not self.configured:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
         channel_id, _ = self._video_channel(video_id, channel_id)
-        chosen_mode, mode_rule = self.resolve_mode_rule(user, mode, channel_id)
+        chosen_mode, mode_rule = self._resolve_mode(video_id, user, mode, channel_id)
         prompt = self._validate_prompt(prompt)
         if prompt is not None and preset is not None:
             raise CutRefused("A cut takes a preset or a description, not both.", status=400)
@@ -1725,7 +1770,8 @@ class CutService:
         now = time.time()
         title = self._meta(video_id).get("title")
         channel_id, _ = self._video_channel(video_id, channel_id)
-        chosen_mode, mode_rule = self.resolve_mode_rule(user, mode, channel_id)
+        chosen_mode, mode_rule = self._resolve_mode(video_id, user, mode, channel_id)
+        film = self.film(video_id)
         self.db.execute(
             "INSERT INTO jobs(id,user,video_id,lang,translate_to,status,progress,created_at,"
             "updated_at,kind,title,priority,klass)"
@@ -1734,8 +1780,9 @@ class CutService:
         )
         self.db.execute(
             "INSERT INTO cut_requests(id,user,video_id,source,preset_id,prompt,state,job_id,"
-            "created_at,updated_at,mode,source_kind,source_key,force,klass,mode_rule,channel_id,refetch)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "created_at,updated_at,mode,source_kind,source_key,release_key,release_duration_ms,"
+            "force,klass,mode_rule,channel_id,refetch)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 request_id,
                 user,
@@ -1748,8 +1795,10 @@ class CutService:
                 now,
                 now,
                 chosen_mode,
-                "youtube",
-                f"youtube:{video_id}",
+                SOURCE_KIND_FILM if film else "youtube",
+                film.key if film else f"youtube:{video_id}",
+                film.release_key if film else None,
+                film.release_duration_ms if film else None,
                 1 if force else 0,
                 klass,
                 mode_rule,
@@ -1841,7 +1890,7 @@ class CutService:
         stored_channel = row["channel_id"]
         if mode is not None:
             stored_channel, _ = self._video_channel(row["video_id"], channel_id or stored_channel)
-            chosen_mode, mode_rule = self.resolve_mode_rule(user, mode, stored_channel)
+            chosen_mode, mode_rule = self._resolve_mode(row["video_id"], user, mode, stored_channel)
         prompt = self._validate_prompt(prompt)
         if prompt is None:
             raise CutRefused("The description of the cut is empty.")
@@ -1918,7 +1967,7 @@ class CutService:
             **{
                 k: v
                 for k, v in self._meta(row["video_id"]).items()
-                if k in ("title", "channel", "duration_s")
+                if k in ("title", "channel", "duration_s", "thumbnail", "source_kind")
             },
         }
         if row["channel_id"]:
@@ -2083,11 +2132,13 @@ class CutService:
         chose. `channel_mode` is the owner's stored default for the video's channel, or null.
         """
         channel_id, channel_name = self._video_channel(video_id, channel_id)
-        default, mode_rule = self.resolve_mode_rule(user, None, channel_id)
+        default, mode_rule = self._resolve_mode(video_id, user, None, channel_id)
         from .watch import watched_available
 
         ok, reason = watched_available(self.cfg)
-        minutes = self._meta(video_id).get("duration_s")
+        if self.film(video_id) is not None:
+            ok, reason = False, FILM_WATCHED_MESSAGE
+        minutes = self.duration_s(video_id)
         eta = None
         if ok and minutes:
             watched = self.cfg.cuts.watched
@@ -2198,6 +2249,8 @@ class CutService:
             from .watch import watched_available
 
             ok, reason = watched_available(self.cfg)
+            if self.film(video_id) is not None:
+                ok, reason = False, FILM_WATCHED_MESSAGE
             if not ok:
                 return {"state": "unavailable", "reason": reason}
         row = self.db.one(
@@ -2235,22 +2288,60 @@ class CutService:
             preset_id, instruction = None, prompt
         else:
             return None
-        duration = self._meta(video_id).get("duration_s")
-        target_s = self.target_for(
-            preset_id, float(duration) if duration else None, instruction, saved
-        )
+        duration = self.duration_s(video_id)
+        target_s = self.target_for(preset_id, duration, instruction, saved)
         row = self.db.one(
             "SELECT json, transcript_hash FROM cuts WHERE video_id=? AND version=? AND model=?"
             " AND mode=? ORDER BY created_at DESC LIMIT 1",
             [video_id, self._version(preset_id, instruction, target_s), model, mode],
         )
         if row is None:
-            return None
+            return self._release_sibling_cut(video_id, preset_id, saved, instruction, model, mode)
         transcript = self.transcripts.cached(video_id)
         if transcript is not None and transcript.segments:
             if transcript_hash(transcript.segments) != row["transcript_hash"]:
                 return None
         return json.loads(row["json"])
+
+    def _release_sibling_cut(
+        self,
+        video_id: str,
+        preset_id: str | None,
+        saved: Prompt | None,
+        instruction: str,
+        model: str,
+        mode: str,
+    ) -> dict[str, Any] | None:
+        """A film's cut built for another release of the same title, when the two lengths agree.
+
+        The cut document is handed out under this release's id, so the TV applies it as its own.
+        """
+        film = self.film(video_id)
+        if film is None or not film.release_duration_ms:
+            return None
+        here = {"key": film.key, "release_duration_ms": film.release_duration_ms}
+        match = "preset_id=?" if preset_id else "prompt=? AND preset_id IS NULL"
+        rows = self.db.all(
+            "SELECT video_id, version, json, release_duration_ms FROM cuts WHERE source_kind=?"
+            f" AND source_key=? AND video_id!=? AND model=? AND mode=? AND {match}"
+            " ORDER BY created_at DESC LIMIT 20",
+            [SOURCE_KIND_FILM, film.key, video_id, model, mode, preset_id or instruction],
+        )
+        tolerance = self.cfg.cuts.release_duration_tolerance_ms
+        for row in rows:
+            there = {"key": film.key, "release_duration_ms": row["release_duration_ms"]}
+            if not release_fits(here, there, tolerance):
+                continue
+            target_s = self.target_for(
+                preset_id, row["release_duration_ms"] / 1000.0, instruction, saved
+            )
+            if row["version"] != self._version(preset_id, instruction, target_s):
+                continue
+            doc = json.loads(row["json"])
+            doc["video_id"] = video_id
+            doc["shared_from_video_id"] = row["video_id"]
+            return doc
+        return None
 
     # ---- repair of old near-full long cuts ------------------------------------------------------
 
@@ -2610,7 +2701,10 @@ class CutService:
                 raise CutRefused("This transcript has no timed speech to cut.")
             thash = transcript_hash(transcript.segments)
             meta = {**transcript.meta, **self._meta(video_id)}
-            if not meta.get("duration_s"):
+            film = self.film(video_id)
+            if film is not None and film.release_duration_ms:
+                meta = {**meta, "duration_s": film.release_duration_ms / 1000.0}
+            if film is None and not meta.get("duration_s"):
                 await self.transcripts.ensure_length(video_id, wait_s=15.0)
                 meta = {**meta, **self._meta(video_id)}
             chapters = parse_chapters(meta.get("description"))
@@ -2624,8 +2718,7 @@ class CutService:
             )
         if self._dismissed(request_id):
             return
-        duration_s = meta.get("duration_s")
-        duration_s = float(duration_s) if duration_s else None
+        duration_s = self.duration_s(video_id)
         saved = next((p for p in self.presets(row["user"]) if p.id == preset_id), None)
         target_s = self.target_for(preset_id, duration_s, instruction, saved)
         version = self._version(preset_id, instruction, target_s)
@@ -2867,6 +2960,9 @@ class CutService:
         cached = self.transcripts.cached(video_id)
         if cached is not None and cached.segments and not forced:
             return cached
+        film = self.film(video_id)
+        if film is not None:
+            return await self._film_transcript(row, film)
         if self._meta(video_id).get("is_live"):
             raise CutRefused("This is a live stream; live videos cannot be cut.")
         if cached is not None:
@@ -2924,6 +3020,47 @@ class CutService:
         raise CutRefused(
             f"No transcript after {int(self.cfg.cuts.transcript_wait_s / 60)} min; try again later."
         )
+
+    async def _film_transcript(self, row: dict[str, Any], film: FilmSource) -> Transcript:
+        """A film's transcript: the subtitles of its release, stored once and shared by every cut of it.
+
+        The subtitle comes from the subtitles add-on by IMDb id and must fit the release's timing; a
+        refusal says why in plain words and the request fails with it. Captions the TV sent from the
+        file's own tracks (the client captions route) are used instead when they are already stored.
+        """
+        video_id = row["video_id"]
+        meta = self._meta(video_id)
+        duration_ms = film.release_duration_ms
+        if not duration_ms and meta.get("duration_s"):
+            duration_ms = int(float(meta["duration_s"]) * 1000)
+        if not duration_ms:
+            raise CutRefused(
+                "The length of this stream is not known yet. Play the film for a moment, then ask again."
+            )
+        fps = meta.get("stream_fps")
+        try:
+            subtitle = await self.films.fetch(
+                film,
+                file_name=str(meta.get("file_name") or film.release_key.split("|")[0]),
+                size_bytes=meta.get("stream_size"),
+                preferred_language=meta.get("sub_lang"),
+                duration_ms=duration_ms,
+                stream_fps=float(fps) if fps else None,
+            )
+        except FilmRefused as exc:
+            raise CutRefused(exc.message) from exc
+        text = segments_to_text([(start, text) for start, _end, text in subtitle.segments])
+        self.transcripts.store_client_captions(
+            video_id,
+            text,
+            subtitle.lang,
+            CAPTION_MANUAL,
+            segments=subtitle.segments,
+        )
+        stored = self.transcripts.cached(video_id)
+        if stored is None or not stored.segments:
+            raise CutRefused("The subtitles could not be stored.")
+        return stored
 
     async def _wait_for_client_captions(
         self, request_id: str, row: dict[str, Any], job: dict[str, Any]
