@@ -366,9 +366,10 @@ const STREMIO_SCHEMA = {
   settings: [S("ai.summary_panel", "Summary panel", "Show the side panel with a summary while you browse.")],
 };
 
-// The Stremio routes: status, then login and import on demand.
+// The Stremio routes: status, then login and import on demand. Status reflects whether a login has happened.
 function installStremio({ connected = false, importResult = null } = {}) {
   const calls = [];
+  let loggedIn = connected;
   globalThis.fetch = async (url, init = {}) => {
     const method = init.method || "GET";
     calls.push({ url, method, body: init.body ? JSON.parse(init.body) : null });
@@ -376,8 +377,8 @@ function installStremio({ connected = false, importResult = null } = {}) {
     if (url === "/v1/settings/schema") return reply(200, STREMIO_SCHEMA);
     if (url.startsWith("/v1/me/settings/status")) return reply(200, { version: 1, devices: [] });
     if (url === "/v1/me/settings") return reply(200, { version: 1, values: { "ai.summary_panel": { v: false, rev: 0, from: "default" } } });
-    if (url === "/v1/films/stremio/status") return reply(200, { set: connected });
-    if (url === "/v1/films/stremio/login" && method === "POST") return reply(200, { ok: true });
+    if (url === "/v1/films/stremio/status") return reply(200, { set: loggedIn });
+    if (url === "/v1/films/stremio/login" && method === "POST") { loggedIn = true; return reply(200, { ok: true }); }
     if (url === "/v1/films/stremio/import" && method === "POST") return reply(200, importResult);
     return reply(404, { error: "unexpected " + url });
   };
@@ -401,11 +402,10 @@ test("the Stremio card signs in, then imports the watch state and shows the coun
   const login = calls.find((c) => c.url === "/v1/films/stremio/login");
   assert.equal(login.method, "POST");
   assert.deepEqual(login.body, { email: "owner@example.com", password: "correct horse battery" });
-  // The password is cleared after a successful sign-in.
-  assert.equal(find(view, (n) => n.tagName === "INPUT" && n.type === "password")[0].value, "");
   await settle();
-  // Connected: the sign-in is gone, an Import button shows.
+  // Connected: the sign-in form (and its password field) is gone, an Import button shows.
   assert.equal(buttons(view, "Sign in").length, 0);
+  assert.equal(find(view, (n) => n.tagName === "INPUT" && n.type === "password").length, 0);
   assert.equal(buttons(view, "Import now").length, 1);
   buttons(view, "Import now")[0].dispatch("click");
   await settle();
