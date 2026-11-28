@@ -49,6 +49,7 @@ import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.PlaylistAddAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.PlaybackModeAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.SearchAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.SubscribeAction;
+import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotFilmStreamsAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.TwoStateAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.ThumbsDownAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.ThumbsUpAction;
@@ -88,6 +89,7 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
     private final PlaybackControlsRow.FastForwardAction mFastForwardAction;
     private final PlaybackControlsRow.RewindAction mRewindAction;
     private final Map<Integer, Action> mActions = new HashMap<>();
+    private boolean mFilmMode;
     private final OnActionClickedListener mActionListener;
     private final PlayerTweaksData mPlayerTweaksData;
     private final GeneralData mGeneralData;
@@ -123,6 +125,7 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
         putAction(new PlaylistAddAction(context));
         putAction(new SubscribeAction(context));
         putAction(new VideoInfoAction(context));
+        putAction(new UtubotFilmStreamsAction(context));
         putAction(new VideoSpeedAction(context));
         putAction(new VideoStatsAction(context));
         putAction(new SearchAction(context));
@@ -181,13 +184,13 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
             adapter.add(mActions.get(R.id.action_screen_dimming));
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_CHAT)) {
-            adapter.add(mActions.get(R.id.action_chat));
+            addShown(adapter, R.id.action_chat);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_SEARCH)) {
-            adapter.add(mActions.get(R.id.action_search));
+            addShown(adapter, R.id.action_search);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_SHARE)) {
-            adapter.add(mActions.get(R.id.action_share));
+            addShown(adapter, R.id.action_share);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_SEEK_INTERVAL)) {
             adapter.add(mActions.get(R.id.action_seek_interval));
@@ -222,37 +225,76 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
             adapter.add(mActions.get(R.id.lb_control_high_quality));
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_OPEN_CHANNEL)) {
-            adapter.add(mActions.get(R.id.action_channel));
+            addShown(adapter, R.id.action_channel);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_LIKE)) {
-            adapter.add(mActions.get(R.id.action_thumbs_up));
+            addShown(adapter, R.id.action_thumbs_up);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_DISLIKE)) {
-            adapter.add(mActions.get(R.id.action_thumbs_down));
+            addShown(adapter, R.id.action_thumbs_down);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_SUBTITLES)) {
             adapter.add(mActions.get(R.id.lb_control_closed_captioning));
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_ADD_TO_PLAYLIST)) {
-            adapter.add(mActions.get(R.id.action_playlist_add));
+            addShown(adapter, R.id.action_playlist_add);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_SUBSCRIBE)) {
-            adapter.add(mActions.get(R.id.action_subscribe));
+            addShown(adapter, R.id.action_subscribe);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_VIDEO_INFO)) {
-            adapter.add(mActions.get(R.id.action_info));
+            addShown(adapter, R.id.action_info);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_PLAYBACK_QUEUE)) {
-            adapter.add(mActions.get(R.id.action_playback_queue));
+            addShown(adapter, R.id.action_playback_queue);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_CONTENT_BLOCK)) {
-            adapter.add(mActions.get(R.id.action_content_block));
+            addShown(adapter, R.id.action_content_block);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_VIDEO_STATS)) {
             adapter.add(mActions.get(R.id.action_video_stats));
         }
         if (UtubotCutAction.isAvailable(getContext())) {
-            adapter.add(mActions.get(R.id.action_utubot_cut));
+            adapter.add(mActions.get(R.id.action_utubot_cut)); // stays for a film too: its cuts are a follow-up
+        }
+        if (mFilmMode) {
+            adapter.add(0, mActions.get(R.id.action_utubot_films_streams));
+        }
+    }
+
+    /**
+     * The YouTube-only buttons (like, subscribe, channel, comments and chat, the queue, the segment blocker, search, share, "add to
+     * playlist", the video info) make no sense for a film from a direct stream: a film hides them and shows "Streams" instead. The
+     * quality button stays, as the picker of the file's audio tracks.
+     */
+    public void setFilmMode(boolean film) {
+        if (film == mFilmMode) {
+            return;
+        }
+
+        mFilmMode = film;
+
+        if (getControlsRow() == null) {
+            return;
+        }
+
+        ArrayObjectAdapter primary = (ArrayObjectAdapter) getControlsRow().getPrimaryActionsAdapter();
+        ArrayObjectAdapter secondary = (ArrayObjectAdapter) getControlsRow().getSecondaryActionsAdapter();
+
+        if (primary != null) {
+            primary.clear();
+            onCreatePrimaryActions(primary);
+        }
+
+        if (secondary != null) {
+            secondary.clear();
+            onCreateSecondaryActions(secondary);
+        }
+    }
+
+    private void addShown(ArrayObjectAdapter adapter, int actionId) {
+        if (!mFilmMode) {
+            adapter.add(mActions.get(actionId));
         }
     }
 

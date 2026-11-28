@@ -114,6 +114,13 @@ public class ErrorFixerController extends BasePlayerController implements OnLong
 
     @Override
     public void onEngineError(int type, int rendererIndex, Throwable error) {
+        if (getVideo() != null && getVideo().isFilm()) {
+            // The YouTube fixes (other client, other format) do not apply to a direct stream
+            Log.e(TAG, "Film stream error: %s", type);
+            MessageHelpers.showLongMessage(getContext(), R.string.utubot_films_stream_error);
+            return;
+        }
+
         Log.e(TAG, "Player error occurred: %s. Trying to fix…", type);
 
         PlayerFailure failure = newFailure(PlayerFailure.KIND_ENGINE_ERROR).engineError(type, rendererIndex, error);

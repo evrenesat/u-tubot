@@ -113,6 +113,8 @@ public final class Video {
     public boolean isPending;
     public boolean finishOnEnded;
     public boolean incognito;
+    /** A film or an episode played from a direct stream, not from YouTube (see UtubotFilmPlay), or null */
+    public com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmPlay film;
     public String likeCount;
     public String dislikeCount;
     public String subscriberCount;
@@ -229,7 +231,22 @@ public final class Video {
         video.clickTrackingParams = item.clickTrackingParams;
         video.mediaItem = item.mediaItem;
         video.group = item.group;
+        video.film = item.film;
 
+        return video;
+    }
+
+    /**
+     * A film or an episode that plays from a direct stream (see UtubotFilmPlay)
+     */
+    public static Video fromFilm(com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmPlay film) {
+        Video video = new Video();
+        video.film = film;
+        video.videoId = film.videoId();
+        video.title = film.title();
+        video.secondTitle = film.streamName;
+        video.cardImageUrl = film.poster;
+        video.bgImageUrl = film.poster;
         return video;
     }
 
@@ -564,6 +581,10 @@ public final class Video {
         return Helpers.mergeObj(id, category, title, videoId, null, playlistId, channelId, bgImageUrl, cardImageUrl,
                 null, playlistParams, sectionId, getReloadPageKey(), itemType, secondTitle, previewUrl, percentWatched,
                 metadataTitle, metadataSecondTitle, badge, isLive, channelGroupId, searchQuery);
+    }
+
+    public boolean isFilm() {
+        return film != null;
     }
 
     public boolean hasVideo() {

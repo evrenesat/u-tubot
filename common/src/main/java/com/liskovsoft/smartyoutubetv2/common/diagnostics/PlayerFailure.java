@@ -41,6 +41,7 @@ public final class PlayerFailure {
     public static final String PROTOCOL_DASH_LIVE = "dash_live";
     public static final String PROTOCOL_HLS = "hls";
     public static final String PROTOCOL_URL_LIST = "url_list";
+    public static final String PROTOCOL_PROGRESSIVE = "progressive";
     private static final int MAX_STACK_FRAMES = 20;
     private static final int MAX_CAUSES = 8;
     private final Context mContext;

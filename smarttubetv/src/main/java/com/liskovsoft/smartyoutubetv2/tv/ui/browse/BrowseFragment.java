@@ -134,6 +134,11 @@ public class BrowseFragment extends BrowseSupportFragment implements BrowseView 
         getHeadersSupportFragment().setOnHeaderClickedListener(
                 (viewHolder, row) -> {
                     long headerId = row.getHeaderItem().getId();
+
+                    if (mBrowsePresenter.openSectionApp((int) headerId)) { // Films: an app of its own, one click opens it
+                        return;
+                    }
+
                     int newPosition = indexOf(headerId);
 
                     if (getHeadersSupportFragment().getSelectedPosition() != newPosition) {

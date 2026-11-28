@@ -108,6 +108,11 @@ public class SponsorBlockController extends BasePlayerController {
             return;
         }
 
+        if (item != null && item.isFilm()) { // YouTube's segment database has nothing for a film
+            getPlayer().setButtonState(R.id.action_content_block, PlayerUI.BUTTON_OFF);
+            return;
+        }
+
         boolean enabled = isSponsorBlockEnabled(item, item != null ? item.channelId : null);
         getPlayer().setButtonState(R.id.action_content_block, enabled ? PlayerUI.BUTTON_ON : PlayerUI.BUTTON_OFF);
 

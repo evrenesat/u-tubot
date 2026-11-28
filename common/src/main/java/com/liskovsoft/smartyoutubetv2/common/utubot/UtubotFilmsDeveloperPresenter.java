@@ -16,10 +16,10 @@ import com.liskovsoft.smartyoutubetv2.common.utils.SimpleEditDialog;
  * can be keys, so they are entered here on the TV, kept in the app's private preferences and never logged.
  */
 public class UtubotFilmsDeveloperPresenter extends BasePresenter<Void> {
-    public static final String FILMS_ACTIVITY = "com.liskovsoft.smartyoutubetv2.tv.utubot.films.RealDebridFilmsActivity";
+    public static final String FILMS_ACTIVITY = "com.liskovsoft.smartyoutubetv2.tv.utubot.films.FilmDetailsActivity";
     public static final String HOME_ACTIVITY = "com.liskovsoft.smartyoutubetv2.tv.utubot.films.FilmsHomeActivity";
-    public static final String EXTRA_IMDB_ID = "imdb_id";
-    public static final String EXTRA_SKIPS = "skips";
+    public static final String EXTRA_TYPE = "type";
+    public static final String EXTRA_ID = "id";
 
     private final UtubotSettings mSettings;
 
@@ -59,8 +59,8 @@ public class UtubotFilmsDeveloperPresenter extends BasePresenter<Void> {
         }
 
         return new Intent().setClassName(getContext(), FILMS_ACTIVITY)
-                .putExtra(EXTRA_IMDB_ID, mSettings.getFilmsImdbId())
-                .putExtra(EXTRA_SKIPS, mSettings.getFilmsSkips());
+                .putExtra(EXTRA_TYPE, UtubotRealDebridClient.TYPE_MOVIE)
+                .putExtra(EXTRA_ID, mSettings.getFilmsImdbId());
     }
 
     private void openHome() {

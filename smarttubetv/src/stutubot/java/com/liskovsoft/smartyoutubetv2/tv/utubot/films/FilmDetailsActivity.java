@@ -26,6 +26,9 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsCatalog.Item;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsDeveloperPresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsProgress;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsProgress.Entry;
+import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+import com.liskovsoft.smartyoutubetv2.common.app.presenters.PlaybackPresenter;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmPlay;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient.Stream;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
@@ -469,18 +472,12 @@ public class FilmDetailsActivity extends Activity {
     private void play(Stream stream) {
         String videoId = videoId();
         Entry entry = mProgress.get(videoId);
-        Intent intent = new Intent().setClassName(this, UtubotFilmsDeveloperPresenter.FILMS_ACTIVITY)
-                .putExtra(UtubotFilmsDeveloperPresenter.EXTRA_IMDB_ID, videoId)
-                .putExtra(RealDebridFilmsActivity.EXTRA_TYPE, mItem.isSeries() ? UtubotRealDebridClient.TYPE_SERIES : UtubotRealDebridClient.TYPE_MOVIE)
-                .putExtra(RealDebridFilmsActivity.EXTRA_TITLE_ID, mItem.id)
-                .putExtra(RealDebridFilmsActivity.EXTRA_NAME, mItem.name)
-                .putExtra(RealDebridFilmsActivity.EXTRA_POSTER, mItem.poster)
-                .putExtra(RealDebridFilmsActivity.EXTRA_SEASON, mItem.isSeries() && mEpisode != null ? mEpisode.season : 0)
-                .putExtra(RealDebridFilmsActivity.EXTRA_EPISODE, mItem.isSeries() && mEpisode != null ? mEpisode.number : 0)
-                .putExtra(RealDebridFilmsActivity.EXTRA_STREAM_URL, stream.url)
-                .putExtra(RealDebridFilmsActivity.EXTRA_STREAM_NAME, stream.name)
-                .putExtra(RealDebridFilmsActivity.EXTRA_START_MS, entry == null ? 0L : entry.resumeMs());
-        startActivity(intent);
+        UtubotFilmPlay film = new UtubotFilmPlay(videoId, mItem.isSeries() ? UtubotRealDebridClient.TYPE_SERIES : UtubotRealDebridClient.TYPE_MOVIE,
+                mItem.id, mItem.name, mItem.poster, mItem.isSeries() && mEpisode != null ? mEpisode.season : 0,
+                mItem.isSeries() && mEpisode != null ? mEpisode.number : 0, stream.url, stream.name, entry == null ? 0L : entry.resumeMs(),
+                stream.sizeBytes);
+        Log.i(TAG, "Chosen stream: " + stream.format.describe() + " verdict=" + stream.format.verdict(mDevice) + " resolution=" + stream.resolution);
+        PlaybackPresenter.instance(this).openVideo(Video.fromFilm(film));
     }
 
     @Override
