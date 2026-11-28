@@ -1,3 +1,12 @@
+## 2026-11-28 (Stremio import on the TV, #308, checkpoint 1)
+
+- The TV now triggers the import: an **Import Stremio** button on the films home calls the backend's `POST /v1/films/stremio/import`, applies the mapped items to this TV, and shows the counts (watchlist, continue watching, watched, unmapped) in the status line.
+- `UtubotStremioClient` (common): the backend's `status` and `import` endpoints, its own OkHttp client with the bearer token and a clean "could not be reached" error that never quotes the backend address.
+- `UtubotFilmsWatchlist` (common): the imported titles, resume positions and watched marks on this TV, replacing the whole store on each import. `titles()` gives the distinct IMDb titles for the **My list** row; `resume()` gives the unfinished ones for the **Continue watching** row.
+- Films home: a **My list** row (distinct titles, movie or series), the imported resume positions merged into the **Continue watching** row (deduplicated by title), and, when the account is not yet connected, a hint to connect it in the web settings.
+- Tests: `UtubotStremioClientTest` against a local fake backend (status flag, the POST import, counts, clean errors); `UtubotFilmsWatchlistTest` with Robolectric (round-trip, distinct titles, resume order, watched marks). `:common:testStutubotDebugUnitTest` green; the `stutubot` debug APK builds.
+- Not done: a two-way sync (checkpoint 2).
+
 ## 2026-11-28 (Stremio library import, #308, r0)
 
 - The owner's Stremio watch state goes into the u·tubot films store: the watchlist becomes **My list**, where you stopped becomes **Continue watching**, plus watched marks. Import only for now; a two-way sync is a later investigation (`ai/STREMIO_PLAN.md`).
@@ -7,7 +16,7 @@
 - Web UI: a **Stremio** card on the Settings "Accounts and services" page (its own form, not the generic secret row): sign in with email + password, then an Import button and the counts (watchlist, continue watching, watched, unmapped). The password field is cleared after a successful sign in.
 - Tests: `ai-backend/tests/test_stremio.py` (login success/failure, the library read, the mapping of a movie, a series with watched episodes and a resume offset, unmapped keys); `ai-backend/tests/js/settings.test.mjs` (the card signs in, imports and shows the counts; a connected account shows the Import button; a login failure keeps the form and shows the server message). JS suite 27 pass; backend `ruff check`/`ruff format --check` clean.
 - Parity: TV + web UI + backend. The browser extension shows no films section (IMDb films, not a YouTube video), so its row is "Not applicable" in the parity matrix, per the contract's "Clients" section.
-- Not done: the TV Import button and counts (checkpoint 1); a two-way sync (checkpoint 2).
+- Not done: a two-way sync (checkpoint 2).
 
 ## 2026-11-28 (working badge over films, #306)
 
