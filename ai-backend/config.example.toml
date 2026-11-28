@@ -250,6 +250,15 @@ max_tokens = 2000
 # fps_tolerance = 0.01             # subtitle and stream frame rates may differ by this fraction
 # apply_tolerance_ms = 30000       # a film cut applies to a stream this close in length
 
+# The owner's Stremio account: log in (api/auth) and read the library (datastoreGet on libraryItem)
+# to import the watchlist and the resume/watched state into the films screens. The server keeps only
+# the returned auth key (encrypted, secretstore); the password never leaves the login call.
+# [films.stremio]
+# auth_url = "https://stremio.com/api/auth"
+# datastore_url = "https://lib.stremio.com/api/datastoreGet"
+# timeout_s = 20.0
+# max_library_bytes = 8388608      # the library answer is held to this size
+
 # The cuts list is immutable once built, so a GET carries a strong ETag and `Cache-Control: max-age`;
 # the client re-validates with If-None-Match and gets 304 while nothing changed (offline-first, issue 146).
 # cache_max_age_s = 900          # how long the client may use the cached list before re-validating (15 min)

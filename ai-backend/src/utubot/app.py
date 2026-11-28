@@ -108,6 +108,7 @@ from .settings import SettingsError, SettingsService
 from .settingsschema import default_schema
 from .speech import SpeechError, SpeechService
 from .status import StatusService, UpdatesStatus
+from .stremio_routes import install_stremio_routes
 from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
 from .urlguard import Resolver, system_resolver
@@ -242,6 +243,7 @@ class Services:
     device_reports: Any = None
     device_settings: Any = None
     secrets: Any = None
+    stremio_transport: Any = None
     build: buildinfo.Build = field(default_factory=buildinfo.detect)
 
 
@@ -257,6 +259,7 @@ def build_services(
     github_transport: httpx.AsyncBaseTransport | None = None,
     films_transport: httpx.AsyncBaseTransport | None = None,
     films_resolver: Resolver = system_resolver,
+    stremio_transport: httpx.AsyncBaseTransport | None = None,
 ) -> Services:
     db = Database(cfg.db_path)
     ledger = LedgerService(db, cfg.ledger.keep_days)
@@ -339,6 +342,7 @@ def build_services(
         user_providers=user_providers,
         secrets=secret_store,
         device_reports=DeviceReports(cfg.reports, db),
+        stremio_transport=stremio_transport,
     )
 
 
@@ -1774,6 +1778,7 @@ def create_app(
     install_settings_routes(app, deps)
     install_report_routes(app, deps)
     install_film_routes(app, deps)
+    install_stremio_routes(app, deps)
     return app
 
 
