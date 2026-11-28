@@ -55,6 +55,13 @@ public final class UtubotUiHost {
     }
 
     /**
+     * The player, or a dialog over it, is the screen in front
+     */
+    public static boolean isPlayerScreen() {
+        return sIsPlayerScreen;
+    }
+
+    /**
      * A screen can show the Summary view or the answer: the menu offers them and posts requests. Not over the player.
      */
     public static boolean canOpen() {

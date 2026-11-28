@@ -160,6 +160,7 @@ public class UtubotClient {
     private final Set<Call> mCalls = ConcurrentHashMap.newKeySet();
     private volatile boolean mIsCancelled;
     private volatile boolean mIsQuiet;
+    private volatile boolean mIsBackground;
 
     /**
      * @param baseUrl the backend address, with or without a trailing slash
@@ -203,6 +204,31 @@ public class UtubotClient {
     public UtubotClient quiet() {
         mIsQuiet = true;
         return this;
+    }
+
+    /**
+     * A request the viewer is not waiting for (a poll for a cut, a prefetch, an upload, a read mark): it is not counted by the
+     * working indicator, but its failures are reported like any other's
+     */
+    public UtubotClient background() {
+        mIsBackground = true;
+        return this;
+    }
+
+    private boolean isCounted() {
+        return !mIsQuiet && !mIsBackground;
+    }
+
+    private void busyBegin() {
+        if (isCounted()) {
+            UtubotBusyTracker.instance().begin();
+        }
+    }
+
+    private void busyEnd() {
+        if (isCounted()) {
+            UtubotBusyTracker.instance().end();
+        }
     }
 
     /**
@@ -931,9 +957,7 @@ public class UtubotClient {
         Call call = sBase.newCall(builder.build());
         mCalls.add(call);
 
-        if (!mIsQuiet) {
-            UtubotBusyTracker.instance().begin();
-        }
+        busyBegin();
 
         try (Response response = call.execute()) {
             if (!response.isSuccessful()) {
@@ -943,7 +967,7 @@ public class UtubotClient {
             return response.body() != null ? readBoundedBytes(response.body().byteStream(), UtubotCaptionStore.MAX_FILE_BYTES) : new byte[0];
         } finally {
             mCalls.remove(call);
-            UtubotBusyTracker.instance().end();
+            busyEnd();
         }
     }
 
@@ -1167,7 +1191,7 @@ public class UtubotClient {
     private String execute(OkHttpClient client, Request request) throws IOException {
         Call call = client.newCall(request);
         mCalls.add(call);
-        UtubotBusyTracker.instance().begin();
+        busyBegin();
 
         try {
             if (mIsCancelled) {
@@ -1185,10 +1209,7 @@ public class UtubotClient {
             }
         } finally {
             mCalls.remove(call);
-
-            if (!mIsQuiet) {
-                UtubotBusyTracker.instance().end();
-            }
+            busyEnd();
         }
     }
 
@@ -1199,7 +1220,7 @@ public class UtubotClient {
     private Response executeResponse(OkHttpClient client, Request request) throws IOException {
         Call call = client.newCall(request);
         mCalls.add(call);
-        UtubotBusyTracker.instance().begin();
+        busyBegin();
 
         try {
             if (mIsCancelled) {
@@ -1209,7 +1230,7 @@ public class UtubotClient {
             return call.execute();
         } finally {
             mCalls.remove(call);
-            UtubotBusyTracker.instance().end();
+            busyEnd();
         }
     }
 

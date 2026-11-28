@@ -74,6 +74,26 @@ public class UtubotClientTest {
     }
 
     @Test
+    public void onlyAForegroundRequestIsCountedAsBusy() throws Exception {
+        AtomicReference<Integer> seen = new AtomicReference<>();
+        mServer.on("/v1/health", request -> {
+            seen.set(UtubotBusyTracker.instance().getCount());
+            return new TinyHttpServer.Response(200, "{\"ok\":true,\"version\":\"0.1.0\"}");
+        });
+        int before = UtubotBusyTracker.instance().getCount();
+
+        new UtubotClient(base(), TOKEN).health();
+        assertEquals(Integer.valueOf(before + 1), seen.get());
+
+        new UtubotClient(base(), TOKEN).background().health();
+        assertEquals(Integer.valueOf(before), seen.get());
+
+        new UtubotClient(base(), TOKEN).quiet().health();
+        assertEquals(Integer.valueOf(before), seen.get());
+        assertEquals(before, UtubotBusyTracker.instance().getCount());
+    }
+
+    @Test
     public void healthNeedsNoToken() throws Exception {
         assertTrue(new UtubotClient(base(), "").health());
     }

@@ -749,7 +749,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      * hears of them on the main thread
      */
     private void fetchCaptions(String videoId, UtubotCaptionsFollower.Callback callback) {
-        UtubotClient client = newClient();
+        UtubotClient client = newClient().background();
 
         Observable.fromCallable(() -> {
             Captions captions = client.captions(videoId);
@@ -872,7 +872,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
             mCutsFollower = new UtubotCutFollower(UtubotScheduler.mainThread(), new UtubotCutFollower.Fetcher() {
                 @Override
                 public void fetchCuts(String videoId, UtubotCutFollower.CutsCallback callback) {
-                    UtubotClient client = newClient();
+                    UtubotClient client = newClient().background();
 
                     VideoMeta filmMeta = mFilmMetas.get(videoId);
 
@@ -890,7 +890,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
 
                 @Override
                 public void fetchRequest(String requestId, int waitMs, UtubotCutFollower.RequestCallback callback) {
-                    UtubotClient client = newClient();
+                    UtubotClient client = newClient().background();
 
                     Observable.<CutRequest>fromCallable(() -> client.cut(requestId, waitMs))
                             .subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
@@ -998,7 +998,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
     }
 
     private void refreshCuts(String videoId, @Nullable VideoMeta meta, ObservableEmitter<CutUpdate> emitter) {
-        UtubotClient client = newClient();
+        UtubotClient client = newClient().background();
         emitter.setCancellable(client::cancel);
         String ifNoneMatch;
         boolean hadCache;
@@ -1180,7 +1180,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     public Observable<Boolean> readInbox(List<Long> ids) {
         return Observable.fromCallable(() -> {
-            newClient().readInbox(ids);
+            newClient().background().readInbox(ids);
             return true;
         }).subscribeOn(Schedulers.io());
     }
@@ -1190,7 +1190,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     public Observable<Boolean> readAllInbox() {
         return Observable.fromCallable(() -> {
-            newClient().readAllInbox();
+            newClient().background().readAllInbox();
             return true;
         }).subscribeOn(Schedulers.io());
     }
@@ -1200,7 +1200,7 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      */
     public Observable<Boolean> dismissInbox(List<Long> ids) {
         return Observable.fromCallable(() -> {
-            newClient().dismissInbox(ids);
+            newClient().background().dismissInbox(ids);
             return true;
         }).subscribeOn(Schedulers.io());
     }
