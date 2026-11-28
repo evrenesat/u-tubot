@@ -72,6 +72,8 @@ STAGE_REDUCE = "reduce"  # long videos: the final choice over the candidates (de
 
 # Shown on the TV when a cut cannot fetch the transcript because YouTube refused the download: the
 # server waits for the TV's own captions (the client proxy path) instead of failing the cut.
+# Built-in presets about a talking video: they mean nothing for a film.
+YOUTUBE_ONLY_PRESET_IDS = frozenset({"cut-no-filler", "cut-answer", "cut-demo"})
 FILM_WATCHED_MESSAGE = "Films are cut from their subtitles; the Watched mode is for YouTube videos."
 
 FORBIDDEN_CAPTIONS_MESSAGE = (
@@ -1319,6 +1321,14 @@ class CutService:
     def presets(self, user: str) -> list[Prompt]:
         return self.prompts.cut_prompts(user)
 
+    def presets_for(self, user: str, video_id: str) -> list[Prompt]:
+        """The presets that fit this source: a film keeps the length presets and the viewer's own,
+        not the ones made for YouTube talk (answer, demo, filler), so every client lists the same."""
+        presets = self.presets(user)
+        if self.film(video_id) is None:
+            return presets
+        return [p for p in presets if p.id not in YOUTUBE_ONLY_PRESET_IDS]
+
     # ---- the viewer's choice --------------------------------------------------------------------
 
     def choose(
@@ -1352,7 +1362,7 @@ class CutService:
             return
 
         if preset is not None:
-            if not any(p.id == preset for p in self.presets(user)):
+            if not any(p.id == preset for p in self.presets_for(user, video_id)):
                 raise CutRefused(f"Unknown cut preset {preset}.")
             self.db.execute(
                 "INSERT INTO cut_choices(user,video_id,preset_id,request_id,off,updated_at)"
@@ -1707,13 +1717,15 @@ class CutService:
             raise CutRefused("Cuts are not configured on this server (no [llm.cuts] model).")
         channel_id, _ = self._video_channel(video_id, channel_id)
         chosen_mode, mode_rule = self._resolve_mode(video_id, user, mode, channel_id)
+        if self.film(video_id) is not None:
+            force = refetch = False  # nothing to transcribe again: the subtitles are the transcript
         prompt = self._validate_prompt(prompt)
         if prompt is not None and preset is not None:
             raise CutRefused("A cut takes a preset or a description, not both.", status=400)
         if prompt is None and not await_prompt:
             if preset is None:
                 raise CutRefused("A cut needs a preset or a description.")
-            if not any(p.id == preset for p in self.presets(user)):
+            if not any(p.id == preset for p in self.presets_for(user, video_id)):
                 raise CutRefused(f"Unknown cut preset {preset}.")
         if await_prompt and preset is not None:
             raise CutRefused("A request that waits for a description cannot name a preset.")
@@ -2162,7 +2174,7 @@ class CutService:
             },
         ]
         out = []
-        for prompt in self.presets(user):
+        for prompt in self.presets_for(user, video_id):
             quick = self._preset_state(user, video_id, prompt, "quick")
             watched = self._preset_state(user, video_id, prompt, "watched")
             top = quick if default == "quick" else watched

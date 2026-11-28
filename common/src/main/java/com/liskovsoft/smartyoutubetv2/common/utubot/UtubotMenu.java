@@ -248,7 +248,7 @@ public final class UtubotMenu {
         for (CutPreset preset : cuts.presets) {
             CutPreset shown = preset.forMode(mode);
 
-            dialog.appendSingleButton(UiOptionItem.from(presetTitle(context, shown), stateText(context, shown, controller),
+            dialog.appendSingleButton(UiOptionItem.from(presetTitle(context, shown), stateText(context, shown, controller, video.isFilm()),
                     option -> onPresetPicked(context, video, shown, controller, mode, cuts, force)));
 
             // A ready cut shows its kept parts under the preset, so the owner can judge it on the
@@ -266,9 +266,11 @@ public final class UtubotMenu {
         }
 
         appendChannelDefault(context, dialog, video, cuts);
-        dialog.appendSingleButton(UiOptionItem.from(context.getString(
-                force ? R.string.utubot_cut_force_on : R.string.utubot_cut_force_off),
-                option -> showCutsDialog(context, video, cuts, !force)));
+        if (!video.isFilm()) { // transcribing needs the audio of a YouTube video; a film's transcript is its subtitles
+            dialog.appendSingleButton(UiOptionItem.from(context.getString(
+                    force ? R.string.utubot_cut_force_on : R.string.utubot_cut_force_off),
+                    option -> showCutsDialog(context, video, cuts, !force)));
+        }
         dialog.appendSingleButton(UiOptionItem.from(context.getString(Helpers.isTouchSupported(context)
                 ? R.string.utubot_cut_describe_on_device : R.string.utubot_cut_describe_on_phone),
                 option -> describeOnPhone(context, video, mode)));
@@ -371,7 +373,7 @@ public final class UtubotMenu {
     /**
      * The state of the preset's cut for this video, under its label
      */
-    private static String stateText(Context context, CutPreset preset, @Nullable UtubotCutController controller) {
+    private static String stateText(Context context, CutPreset preset, @Nullable UtubotCutController controller, boolean film) {
         if (preset.isReady()) {
             String length = context.getString(R.string.utubot_cut_state_ready_length,
                     UtubotCutController.formatLength(preset.cut.keptMs),
@@ -393,6 +395,13 @@ public final class UtubotMenu {
                         ? preset.error
                         : context.getString(R.string.utubot_cut_state_needs_transcript);
             case UtubotModels.CutState.FAILED:
+                // A film's cut fails on its subtitles and the stream's timing: asking again changes nothing, another stream may
+                if (film) {
+                    return preset.error != null
+                            ? context.getString(R.string.utubot_cut_state_failed_film, preset.error)
+                            : context.getString(R.string.utubot_cut_state_failed_film_plain);
+                }
+
                 return preset.error != null
                         ? context.getString(R.string.utubot_cut_state_failed, preset.error)
                         : context.getString(R.string.utubot_cut_state_failed_plain);
