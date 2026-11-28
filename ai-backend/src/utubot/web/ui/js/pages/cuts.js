@@ -72,11 +72,14 @@ export function videoIdFrom(text) {
   return /^[A-Za-z0-9_-]{11}$/.test(t) ? t : null;
 }
 
-function thumb(videoId) {
-  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId || "")) return null;
+// A film or an episode has no YouTube image: its card shows the poster the TV sent.
+function thumb(req) {
+  const poster = req.thumbnail && /^https?:\/\//.test(req.thumbnail) ? req.thumbnail : null;
+  const film = req.source_kind === "film";
+  if (!poster && (film || !/^[A-Za-z0-9_-]{11}$/.test(req.video_id || ""))) return null;
   const img = h("img", {
-    class: "thumb",
-    src: "https://i.ytimg.com/vi/" + videoId + "/mqdefault.jpg",
+    class: film ? "thumb poster" : "thumb",
+    src: poster || "https://i.ytimg.com/vi/" + req.video_id + "/mqdefault.jpg",
     alt: "",
     loading: "lazy",
   });
@@ -189,7 +192,7 @@ function cutCard(req, reload) {
   return h(
     "div",
     { class: "cut" },
-    h("div", { class: "row nowrap" }, thumb(req.video_id), h("div", { class: "cut-text" }, cutHeadline(req), h("small", { class: "muted", text: sourceLine(req) }))),
+    h("div", { class: "row nowrap" }, thumb(req), h("div", { class: "cut-text" }, cutHeadline(req), h("small", { class: "muted", text: sourceLine(req) }))),
     h(
       "div",
       { class: "row between nowrap" },
@@ -753,7 +756,7 @@ async function sheet(view, requestId) {
     const head = h(
       "div",
       { class: "row nowrap" },
-      thumb(req.video_id),
+      thumb(req),
       h(
         "div",
         { class: "cut-text" },
@@ -762,7 +765,7 @@ async function sheet(view, requestId) {
         h("small", { class: "muted", text: sourceLine(req) }),
       ),
     );
-    const yt = youtubeHref(req.video_id);
+    const yt = req.source_kind === "film" ? null : youtubeHref(req.video_id);
 
     if (req.state === "waiting") {
       // Redraw only when something visible changed (metadata arriving); while it has not, keep

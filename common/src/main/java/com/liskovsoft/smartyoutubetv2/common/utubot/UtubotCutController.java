@@ -135,8 +135,9 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         updateCutSkipButton();
         updateEndingTime();
 
-        if (item != null && item.videoId != null && !item.isFilm() && UtubotSettings.instance(getContext()).isConfigured()) {
-            UtubotManager.instance(getContext()).followCuts(item.videoId, this);
+        if (item != null && item.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
+            // A film names its release in the meta (the backend knows its id only from it); a YouTube video needs none
+            UtubotManager.instance(getContext()).followCuts(item.videoId, item.isFilm() ? UtubotMeta.from(item) : null, this);
         }
     }
 
@@ -449,7 +450,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
             return true;
         }
 
-        if (!UtubotCutSkipper.matchesDuration(cut, durationMs)) {
+        if (!UtubotCutSkipper.matchesDuration(cut, durationMs, UtubotCutSkipper.toleranceFor(getVideo()))) {
             MessageHelpers.showLongMessage(getContext(), getContext().getString(R.string.utubot_cut_other_length));
             return true;
         }
@@ -742,7 +743,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
 
         mPendingCut = null;
 
-        if (!UtubotCutSkipper.matchesDuration(cut, durationMs)) {
+        if (!UtubotCutSkipper.matchesDuration(cut, durationMs, UtubotCutSkipper.toleranceFor(video))) {
             Log.d(TAG, "Not applying the cut of %s: built for %s ms, the video is %s ms", cut.videoId, cut.durationMs, durationMs);
             MessageHelpers.showLongMessage(getContext(), getContext().getString(R.string.utubot_cut_other_length));
             UtubotCutSeekBar.setCut(cut.videoId, null); // a re-armed cut may have left its dims on the bar

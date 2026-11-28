@@ -647,6 +647,40 @@ public class UtubotClient {
         });
     }
 
+    /**
+     * The release of a film: its IMDb source key, the stream's file name, size and length, and the subtitle language. Nothing about the
+     * viewer; the stream address (it can carry a key) is never sent.
+     */
+    private static void addFilmFacts(HttpUrl.Builder url, UtubotModels.FilmMeta film) {
+        url.addQueryParameter("source_kind", "film");
+        url.addQueryParameter("source_key", film.sourceKey);
+        url.addQueryParameter("release_key", film.releaseKey);
+
+        if (film.releaseDurationMs > 0) {
+            url.addQueryParameter("release_duration_ms", String.valueOf(film.releaseDurationMs));
+        }
+
+        if (film.fileName != null && !film.fileName.isEmpty()) {
+            url.addQueryParameter("file_name", film.fileName);
+        }
+
+        if (film.streamSize > 0) {
+            url.addQueryParameter("stream_size", String.valueOf(film.streamSize));
+        }
+
+        if (film.streamFps > 0) {
+            url.addQueryParameter("stream_fps", String.valueOf(film.streamFps));
+        }
+
+        if (film.subtitleLanguage != null && !film.subtitleLanguage.isEmpty()) {
+            url.addQueryParameter("sub_lang", film.subtitleLanguage);
+        }
+
+        if (film.poster != null && !film.poster.isEmpty()) {
+            url.addQueryParameter("poster", film.poster);
+        }
+    }
+
     private HttpUrl.Builder cutUrl(String videoId, @Nullable VideoMeta meta) throws IOException {
         HttpUrl.Builder url = urlBuilder("/videos/" + videoId + "/cuts");
 
@@ -669,6 +703,10 @@ public class UtubotClient {
 
             if (meta.isLive) {
                 url.addQueryParameter("is_live", "true");
+            }
+
+            if (meta.film != null) {
+                addFilmFacts(url, meta.film);
             }
         }
 

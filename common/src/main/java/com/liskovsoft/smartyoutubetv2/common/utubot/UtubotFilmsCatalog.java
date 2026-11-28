@@ -202,6 +202,28 @@ public class UtubotFilmsCatalog {
         return text == null ? "" : text.trim();
     }
 
+    /** The runtime of {@link #runtime} in milliseconds: "148 min", "2h 28min" and a bare "148" work, 0 when it says nothing readable */
+    public static long runtimeMs(@Nullable String text) {
+        if (text == null) {
+            return 0;
+        }
+
+        long hours = firstNumber(text, "(\\d+)\\s*h");
+        long minutes = firstNumber(text, "(\\d+)\\s*m");
+
+        if (hours == 0 && minutes == 0) {
+            minutes = firstNumber(text, "^\\s*(\\d+)\\s*$");
+        }
+
+        return TimeUnit.HOURS.toMillis(hours) + TimeUnit.MINUTES.toMillis(minutes);
+    }
+
+    private static long firstNumber(String text, String pattern) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(pattern).matcher(text);
+
+        return matcher.find() ? Long.parseLong(matcher.group(1)) : 0;
+    }
+
     /** The seasons of an episode list, in order and without repeats */
     public static List<Integer> seasons(List<Episode> episodes) {
         List<Integer> seasons = new ArrayList<>();

@@ -6,7 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -46,6 +46,7 @@ from .cuts import CutRefused, CutService
 from .db import MAX_CHANNEL_ID_CHARS, Database
 from .devicesettings import DeviceSettings, install_settings_routes
 from .feature import feature_run
+from .films import SOURCE_KIND_FILM, FilmSubtitles, film_source
 from .inbox import (
     KIND_CAPTIONS,
     KIND_RESEARCH,
@@ -58,6 +59,11 @@ from .llm import LLMClient
 from .media_archive import ENTRY_LIMIT, MediaArchive
 from .modelcatalog import ModelCatalog
 from .models import (
+    MAX_FPS,
+    MAX_LANG_CHARS,
+    MAX_POSTER_CHARS,
+    MAX_RELEASE_KEY_CHARS,
+    MAX_SOURCE_KEY_CHARS,
     AskRequest,
     AssessRequest,
     CaptionsRequest,
@@ -102,6 +108,7 @@ from .speech import SpeechError, SpeechService
 from .status import StatusService, UpdatesStatus
 from .transcribe import TranscribeRefused, Transcription
 from .transcripts import Fetcher, TranscriptService
+from .urlguard import Resolver, system_resolver
 from .usage import METRIC_YOUTUBE_FORBIDDEN, Usage
 from .userproviders import UserBudgetError, UserProvider, UserProviders, bind_call
 from .videoref import VIDEO_ID_RE
@@ -164,6 +171,21 @@ CSP = (
     "connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; "
     "frame-ancestors 'none'"
 )
+
+
+def poster_allowed(url: str, origins: list[str]) -> bool:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}" in origins
+
+
+def security_headers(cfg: Config) -> dict[str, str]:
+    """The response headers; the page's image policy also allows the configured film poster origins."""
+    csp = CSP.replace(
+        "https://i.ytimg.com;", " ".join(["https://i.ytimg.com", *cfg.films.poster_origins]) + ";"
+    )
+    return {**SECURITY_HEADERS, "Content-Security-Policy": csp}
+
+
 SECURITY_HEADERS = {
     "Content-Security-Policy": CSP,
     "X-Content-Type-Options": "nosniff",
@@ -230,6 +252,8 @@ def build_services(
     prompt_transport: httpx.AsyncBaseTransport | None = None,
     clock: Clock | None = None,
     github_transport: httpx.AsyncBaseTransport | None = None,
+    films_transport: httpx.AsyncBaseTransport | None = None,
+    films_resolver: Resolver = system_resolver,
 ) -> Services:
     db = Database(cfg.db_path)
     ledger = LedgerService(db, cfg.ledger.keep_days)
@@ -281,7 +305,19 @@ def build_services(
         content=content,
         jobs=jobs,
         reports=reports,
-        cuts=CutService(cfg, db, llm, transcripts, prompts, jobs, auth, archive, gate, inbox),
+        cuts=CutService(
+            cfg,
+            db,
+            llm,
+            transcripts,
+            prompts,
+            jobs,
+            auth,
+            archive,
+            gate,
+            inbox,
+            FilmSubtitles(cfg.films, films_transport, films_resolver),
+        ),
         processed=ProcessedService(db, transcripts, prompts),
         inbox=inbox,
         voice=VoiceService(cfg.voice, db, auth),
@@ -324,11 +360,30 @@ def check_video_id(video_id: str) -> str:
     return video_id
 
 
+def check_film_meta(video_id: str, meta: QueryMeta, cfg: Config | None = None) -> None:
+    """A film's backend id is derived from its source and release; one that is not is refused."""
+    if meta.source_kind != SOURCE_KIND_FILM:
+        return
+    try:
+        source = film_source(meta.source_key or "", meta.release_key or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if source.video_id != video_id:
+        raise HTTPException(400, "the id does not belong to this film release")
+    if (
+        meta.poster
+        and cfg is not None
+        and not poster_allowed(meta.poster, cfg.films.poster_origins)
+    ):
+        meta.poster = None
+
+
 def create_app(
     cfg: Config | None = None, services: Services | None = None, **kwargs: Any
 ) -> FastAPI:
     cfg = cfg or load_config()
     svc = services or build_services(cfg, **kwargs)
+    page_headers = security_headers(cfg)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -636,7 +691,7 @@ def create_app(
         except RateLimited as exc:
             response = error(429, "rate limited")
             response.headers["Retry-After"] = str(exc.retry_after)
-        response.headers.update(SECURITY_HEADERS)
+        response.headers.update(page_headers)
         if request.url.path.startswith("/v1/"):
             response.headers.setdefault("Cache-Control", "no-store")
         refresh = getattr(request.state, "session_refresh", None)
@@ -663,6 +718,15 @@ def create_app(
         channel_id: str | None = Query(None, max_length=MAX_CHANNEL_ID_CHARS),
         duration_s: int | None = None,
         is_live: bool | None = Query(None),
+        source_kind: Literal["youtube", "film"] | None = None,
+        source_key: str | None = Query(None, max_length=MAX_SOURCE_KEY_CHARS),
+        release_key: str | None = Query(None, max_length=MAX_RELEASE_KEY_CHARS),
+        release_duration_ms: int | None = Query(None, ge=0),
+        file_name: str | None = Query(None, max_length=MAX_RELEASE_KEY_CHARS),
+        stream_size: int | None = Query(None, ge=0),
+        stream_fps: float | None = Query(None, ge=0, le=MAX_FPS),
+        sub_lang: str | None = Query(None, max_length=MAX_LANG_CHARS),
+        poster: str | None = Query(None, max_length=MAX_POSTER_CHARS),
     ) -> QueryMeta:
         return QueryMeta(
             title=title,
@@ -670,6 +734,15 @@ def create_app(
             channel_id=channel_id,
             duration_s=duration_s,
             is_live=is_live,
+            source_kind=source_kind,
+            source_key=source_key,
+            release_key=release_key,
+            release_duration_ms=release_duration_ms,
+            file_name=file_name,
+            stream_size=stream_size,
+            stream_fps=stream_fps,
+            sub_lang=sub_lang,
+            poster=poster,
         )
 
     @app.get("/", response_class=HTMLResponse)
@@ -1471,6 +1544,7 @@ def create_app(
         and re-validates with If-None-Match gets 304 when nothing changed (offline-first, issue 146).
         """
         check_video_id(video_id)
+        check_film_meta(video_id, meta, cfg)
         if meta.as_dict():
             svc.transcripts.store_meta(video_id, meta.as_dict())
         state = svc.cuts.presets_state(user.name, video_id, meta.channel_id)
@@ -1517,6 +1591,7 @@ def create_app(
         """Queue a cut: `{preset}`, `{prompt}` or `{await_prompt: true}` (the TV's "Describe on
         phone…"). The video facts the caller knows are stored so the phone queue shows them."""
         check_video_id(video_id)
+        check_film_meta(video_id, meta, cfg)
         mark_origin(request, user)
         if meta.as_dict():
             svc.transcripts.store_meta(video_id, meta.as_dict())
@@ -1576,6 +1651,7 @@ def create_app(
         if meta.as_dict():
             row = svc.cuts.get(request_id, user.name)
             if row is not None:
+                check_film_meta(row["video_id"], meta, cfg)
                 svc.transcripts.store_meta(row["video_id"], meta.as_dict())
         return svc.cuts.fill(request_id, user.name, body.prompt, body.mode, meta.channel_id)
 

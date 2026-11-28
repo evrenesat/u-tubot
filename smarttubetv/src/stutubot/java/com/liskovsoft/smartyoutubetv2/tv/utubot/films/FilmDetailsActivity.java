@@ -29,6 +29,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsProgress.Entry;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.PlaybackPresenter;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmPlay;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotMenu;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotRealDebridClient.Stream;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
@@ -71,6 +72,7 @@ public class FilmDetailsActivity extends Activity {
     private LinearLayout mStreamList;
     private TextView mStreamStatus;
     private TextView mPlay;
+    private TextView mCuts;
     private ImageView mBackdrop;
     private boolean mDestroyed;
 
@@ -217,7 +219,16 @@ public class FilmDetailsActivity extends Activity {
         mPlay.setEnabled(false);
         LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         playParams.topMargin = FilmsUi.dp(this, 16);
-        info.addView(mPlay, playParams);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.addView(mPlay);
+        mCuts = FilmsUi.button(this, "✂  Cuts", 22, v -> openCuts());
+        mCuts.setPadding(FilmsUi.dp(this, 28), FilmsUi.dp(this, 10), FilmsUi.dp(this, 28), FilmsUi.dp(this, 10));
+        mCuts.setEnabled(false);
+        LinearLayout.LayoutParams cutsParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cutsParams.leftMargin = FilmsUi.dp(this, 16);
+        actions.addView(mCuts, cutsParams);
+        info.addView(actions, playParams);
         top.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         mContent.addView(top);
 
@@ -440,6 +451,7 @@ public class FilmDetailsActivity extends Activity {
         mStreamList.removeAllViews();
         setStreamStatus(streams.isEmpty() ? "The addon returned no playable streams." : "");
         mPlay.setEnabled(!streams.isEmpty());
+        mCuts.setEnabled(!streams.isEmpty());
         updatePlayLabel();
 
         for (int i = 0; i < streams.size(); i++) {
@@ -470,14 +482,34 @@ public class FilmDetailsActivity extends Activity {
     }
 
     private void play(Stream stream) {
+        UtubotFilmPlay film = newFilm(stream);
+        Log.i(TAG, "Chosen stream: " + stream.format.describe() + " verdict=" + stream.format.verdict(mDevice) + " resolution=" + stream.resolution);
+        PlaybackPresenter.instance(this).openVideo(Video.fromFilm(film));
+    }
+
+    private UtubotFilmPlay newFilm(Stream stream) {
         String videoId = videoId();
         Entry entry = mProgress.get(videoId);
-        UtubotFilmPlay film = new UtubotFilmPlay(videoId, mItem.isSeries() ? UtubotRealDebridClient.TYPE_SERIES : UtubotRealDebridClient.TYPE_MOVIE,
+        return new UtubotFilmPlay(videoId, mItem.isSeries() ? UtubotRealDebridClient.TYPE_SERIES : UtubotRealDebridClient.TYPE_MOVIE,
                 mItem.id, mItem.name, mItem.poster, mItem.isSeries() && mEpisode != null ? mEpisode.season : 0,
                 mItem.isSeries() && mEpisode != null ? mEpisode.number : 0, stream.url, stream.name, entry == null ? 0L : entry.resumeMs(),
                 stream.sizeBytes);
-        Log.i(TAG, "Chosen stream: " + stream.format.describe() + " verdict=" + stream.format.verdict(mDevice) + " resolution=" + stream.resolution);
-        PlaybackPresenter.instance(this).openVideo(Video.fromFilm(film));
+    }
+
+    /**
+     * The cut picker of the best stream, before anything plays: a ready cut starts the film with it. The length the backend builds a cut
+     * for is the one the player saw last for this title, else the runtime the catalogue lists (the cut then applies within the film
+     * tolerance).
+     */
+    private void openCuts() {
+        if (mStreams.isEmpty() || mItem == null) {
+            return;
+        }
+
+        UtubotFilmPlay film = newFilm(mStreams.get(0));
+        Entry entry = mProgress.get(videoId());
+        film.setReleaseDurationMs(entry != null && entry.durationMs > 0 ? entry.durationMs : UtubotFilmsCatalog.runtimeMs(mItem.runtime));
+        UtubotMenu.showCuts(this, Video.fromFilm(film));
     }
 
     @Override

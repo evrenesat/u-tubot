@@ -36,7 +36,35 @@ public final class UtubotMeta {
         meta.description = video.description;
         meta.isSubscribed = video.isSubscribed || video.belongsToSubscriptions();
         fillStats(meta, video.getSecondTitle());
+        fillFilm(meta, video);
         return meta;
+    }
+
+    /**
+     * A film names its release: the backend builds the cut from the subtitles of this stream and shows the title and poster on the
+     * phone. Its channel is not a YouTube channel, so none is sent.
+     */
+    static void fillFilm(VideoMeta meta, Video video) {
+        UtubotFilmPlay film = video.film;
+
+        if (film == null) {
+            return;
+        }
+
+        UtubotModels.FilmMeta facts = new UtubotModels.FilmMeta();
+        facts.sourceKey = film.sourceKey();
+        facts.releaseKey = film.releaseKey();
+        facts.releaseDurationMs = film.releaseDurationMs();
+        facts.fileName = film.streamName;
+        facts.streamSize = film.sizeBytes;
+        facts.streamFps = film.streamFps();
+        facts.subtitleLanguage = film.subtitleLanguage();
+        facts.poster = film.poster;
+        meta.film = facts;
+        meta.channel = null;
+        meta.channelId = null;
+        meta.title = film.title();
+        meta.durationSec = film.releaseDurationMs() / 1000;
     }
 
     /**

@@ -255,6 +255,26 @@ public class UtubotCutSkipperTest {
     }
 
     @Test
+    public void aFilmCutAppliesWithinTheFilmToleranceOnly() {
+        Cut cut = cut();
+        cut.durationMs = 7_200_000;
+
+        assertFalse(UtubotCutSkipper.matchesDuration(cut, 7_215_000));
+        assertTrue(UtubotCutSkipper.matchesDuration(cut, 7_215_000, UtubotCutSkipper.FILM_TOLERANCE_MS));
+        assertFalse(UtubotCutSkipper.matchesDuration(cut, 7_240_000, UtubotCutSkipper.FILM_TOLERANCE_MS));
+    }
+
+    @Test
+    public void theToleranceFollowsTheKindOfVideo() {
+        com.liskovsoft.smartyoutubetv2.common.app.models.data.Video film = com.liskovsoft.smartyoutubetv2.common.app.models.data.Video.fromFilm(
+                new UtubotFilmPlay("tt1", "movie", "tt1", "F", null, 0, 0, "https://h/f.mkv", "F", 0, 0));
+
+        assertEquals(UtubotCutSkipper.FILM_TOLERANCE_MS, UtubotCutSkipper.toleranceFor(film));
+        assertEquals(UtubotCutSkipper.VIDEO_TOLERANCE_MS, UtubotCutSkipper.toleranceFor(
+                com.liskovsoft.smartyoutubetv2.common.app.models.data.Video.from("dQw4w9WgXcQ")));
+    }
+
+    @Test
     public void aCutWithoutAKnownLength_isNotApplied() {
         Cut cut = cut();
         cut.durationMs = 0;

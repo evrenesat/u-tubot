@@ -2,6 +2,10 @@ package com.liskovsoft.smartyoutubetv2.common.utubot;
 
 import androidx.annotation.Nullable;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+
 /**
  * What the main player needs to play a film or an episode from a direct stream (a Real-Debrid link): the stream, the title it belongs to and
  * where to start. A {@code Video} that carries one skips the YouTube format load (see {@code VideoLoaderController}) and keeps its position in
@@ -10,9 +14,10 @@ import androidx.annotation.Nullable;
  * <p>The stream address can carry a key: it is never logged or shown.
  */
 public final class UtubotFilmPlay {
-    /** The prefix of a film's video id, so it is never mistaken for a YouTube id */
     public static final String SOURCE_KIND = "film";
-    public static final String VIDEO_ID_PREFIX = "utubot-film:";
+    /** The backend's id of a release starts with this, then the first hex digits of the SHA-256 of {@code sourceKey|releaseKey} */
+    public static final String VIDEO_ID_PREFIX = "f";
+    public static final int VIDEO_ID_HEX_CHARS = 10;
 
     /** The key in {@link UtubotFilmsProgress}: a film's IMDb id, an episode's {@code tt0000000:season:episode} */
     public final String progressId;
@@ -30,6 +35,8 @@ public final class UtubotFilmPlay {
     /** The size of the stream file, 0 when the addon did not say */
     public final long sizeBytes;
     private volatile long mReleaseDurationMs;
+    private volatile float mStreamFps;
+    private volatile String mSubtitleLanguage = "";
 
     public UtubotFilmPlay(String progressId, String type, String titleId, String name, @Nullable String poster, int season, int episode,
                           String streamUrl, String streamName, long startMs, long sizeBytes) {
@@ -77,8 +84,48 @@ public final class UtubotFilmPlay {
         }
     }
 
+    /**
+     * The backend's id of this release (as {@code film_video_id} in the backend): eleven characters, derived from the source and the
+     * release, so cuts, their choice and the transcript are per release and never mistaken for a YouTube video. Not the progress id:
+     * the position of a title is kept per title, the cut per stream file.
+     */
     public String videoId() {
-        return VIDEO_ID_PREFIX + progressId;
+        return filmVideoId(sourceKey(), releaseKey());
+    }
+
+    public static String filmVideoId(String sourceKey, String releaseKey) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest((sourceKey + "|" + releaseKey).getBytes(StandardCharsets.UTF_8));
+            StringBuilder id = new StringBuilder(VIDEO_ID_PREFIX);
+
+            for (int i = 0; i < VIDEO_ID_HEX_CHARS / 2; i++) {
+                id.append(String.format("%02x", digest[i]));
+            }
+
+            return id.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** The frame rate of the stream's video once the player has opened it, 0 when unknown */
+    public float streamFps() {
+        return mStreamFps;
+    }
+
+    public void setStreamFps(float fps) {
+        if (fps > 0) {
+            mStreamFps = fps;
+        }
+    }
+
+    /** The viewer's subtitle language (two letters) for the subtitles the backend looks up, empty for the backend's English */
+    public String subtitleLanguage() {
+        return mSubtitleLanguage;
+    }
+
+    public void setSubtitleLanguage(@Nullable String language) {
+        mSubtitleLanguage = language == null ? "" : language;
     }
 
     public boolean isSeries() {

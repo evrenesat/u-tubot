@@ -487,7 +487,7 @@ public class VideoLoaderControllerTest {
 
         assertTrue(calls.contains("openProgressiveUrl:https://host/key/file.mkv"));
         assertFalse(calls.contains("openDash"));
-        assertEquals("utubot-film:tt1", getField(controller, "mFormatVideoId"));
+        assertEquals(film.videoId, getField(controller, "mFormatVideoId"));
         assertEquals("progressive", getField(controller, "mFormatProtocol"));
         assertTrue(controller.onNextClicked());
         assertTrue(controller.onPreviousClicked());

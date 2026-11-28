@@ -1,3 +1,14 @@
+## 2026-11-28 (film cuts, #295)
+
+- `films.py`: source keys (`imdb:tt..[:S1E2]`), the derived release id (`film_video_id`: `f` + 10 hex of SHA-256 of `source_key|release_key`, eleven characters so every video-id route works), SRT/WebVTT parsing into the transcript shape, subtitle choice (viewer's language else English, then release-name token overlap plus group and hash-match bonuses; an episode search drops another episode) and the timing check (cue count, last cue against the stream plus margin, reach, coverage, frame rate, with the 23.976/24/25 mix-up named). `FilmSubtitles` asks the Stremio add-on by IMDb id and file name and size only; downloads go through `guarded_get` (public addresses only, `[films] download_hosts` for a LAN add-on).
+- `cuts.py`: `CutService.film()` reads the release from the stored video facts; `_enqueue` writes the source columns; films are Quick only; `duration_s()` is the release length; `_film_transcript` stores the chosen subtitle like client captions (never refetched, shared by every cut of the release) and fails the request with the plain reason when the timing does not fit; `_release_sibling_cut` offers a cut of another release of the same title when the lengths agree within `release_duration_tolerance_ms`; queue cards carry `thumbnail` and `source_kind`.
+- `app.py`/`models.py`: `QueryMeta` has the film facts, `check_film_meta` refuses an id that is not the release's (`400`) and drops a poster whose origin is not in `[films] poster_origins`; the page's image policy allows exactly those origins.
+- Phone page: the cut card and sheet show the poster, no YouTube link for a film.
+- Config: new `[films]` table (`config.example.toml`).
+- Tests: `tests/test_films.py` (keys, id vector shared with the TV test, parsing, choice, timing, fetch, private download host), `tests/test_cuts_film.py` (the cut API with a film source: build from the subtitles, only id and file name sent, fetched once per release, card title and poster, skim target from the release length, refusals, Quick only, embedded captions used first, sibling release, episode request).
+- Real add-on check: one request to `https://opensubtitles-v3.strem.io/subtitles/movie/tt0111161.json` showed the answer shape (`id`, `url`, `lang` three letters, `subtitleFileName`, `releaseGroup`, `fpsMilli`, `m`, `season`, `episode`); the code and tests use that shape. No other real request.
+- Live database: no schema change (the source columns exist). New rows only for film ids.
+
 ## 2026-11-27 (secrets store, plan checkpoint 6, #276)
 
 - `secretstore.py`: `user_secrets` (AES-256-GCM, nonce per write, user and name as associated data, `key_id`), `user_secret_rev`, `user_secret_deliveries`. Master key from `[security] secrets_key_env` (`UTUBOT_SECRETS_KEY`); without it the routes answer 503 and nothing is stored. `cryptography` is a new dependency.

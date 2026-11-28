@@ -54,6 +54,48 @@ public class UtubotFilmPlayTest {
     }
 
     @Test
+    public void theBackendIdIsDerivedFromTheSourceAndTheRelease() {
+        UtubotFilmPlay film = new UtubotFilmPlay("tt0111161", "movie", "tt0111161", "The Movie", null, 0, 0, "https://h/f.mkv", "Movie.mkv", 0, 1234);
+
+        assertEquals("f7bb94acc21", film.videoId()); // the same vector as test_films.py in the backend
+        assertEquals(11, film.videoId().length());
+        assertEquals("f6dd47663e4", episode().videoId());
+        assertFalse(film.videoId().equals(film.withStream("https://h/g.mkv", "Other.mkv", 1, 0).videoId())); // another release, another cut
+        assertEquals(film.videoId(), film.withStream("https://h/other-address.mkv", "Movie.mkv", 1234, 5).videoId()); // the same release
+    }
+
+    @Test
+    public void theMetaOfAFilmNamesItsReleaseAndHasNoChannel() {
+        UtubotFilmPlay film = film(0);
+        film.setReleaseDurationMs(5_400_000);
+        film.setStreamFps(25f);
+        film.setSubtitleLanguage("de");
+
+        UtubotModels.VideoMeta meta = UtubotMeta.from(Video.fromFilm(film));
+
+        assertEquals(film.videoId(), meta.videoId);
+        assertEquals("Heat", meta.title);
+        assertEquals(5400, meta.durationSec);
+        assertEquals("imdb:tt1234567", meta.film.sourceKey);
+        assertEquals("Heat 2160p DV|5000", meta.film.releaseKey);
+        assertEquals(5_400_000, meta.film.releaseDurationMs);
+        assertEquals(25f, meta.film.streamFps, 0f);
+        assertEquals("de", meta.film.subtitleLanguage);
+        assertEquals("poster", meta.film.poster);
+        assertTrue(meta.channel == null && meta.channelId == null);
+        assertTrue(UtubotMeta.from(Video.from("dQw4w9WgXcQ")).film == null);
+    }
+
+    @Test
+    public void aZeroFrameRateOrLengthKeepsTheKnownOne() {
+        UtubotFilmPlay film = film(0);
+        film.setStreamFps(23.976f);
+        film.setStreamFps(0f);
+
+        assertEquals(23.976f, film.streamFps(), 0f);
+    }
+
+    @Test
     public void anEpisodeKeyHasSeasonAndEpisode() {
         UtubotFilmPlay episode = episode();
 
@@ -67,7 +109,7 @@ public class UtubotFilmPlayTest {
         Video video = Video.fromFilm(film(0));
 
         assertTrue(video.isFilm());
-        assertEquals("utubot-film:tt1234567", video.videoId);
+        assertEquals("fa8e9102fa1", video.videoId); // f + SHA-256 of "imdb:tt1234567|Heat 2160p DV|5000", as film_video_id in the backend
         assertEquals("Heat", video.getTitle());
         assertEquals("Heat 2160p DV", video.secondTitle);
         assertTrue(Video.from(video).isFilm());

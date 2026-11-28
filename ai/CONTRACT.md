@@ -622,7 +622,7 @@ built for (`duration_ms`); a client does not apply a cut whose video length diff
 compare it (they hold no transcript). `skip_ranges_ms` is the sorted,
 non-overlapping complement of `parts`.
 `source` is the transcript's origin (`youtube_captions` or `asr`) on YouTube cuts. A cut of another
-source (a film or episode, not built yet) may carry it as `{"kind","key","release_key"?,
+source (a film or episode, see "Cuts of films and episodes") may carry it as `{"kind","key","release_key"?,
 "release_duration_ms"?}` instead; a client that ignores it reads the YouTube `video_id` as today.
 A cut may also carry optional `transitions` (`[{"after_part","type","duration_ms","asset":{"ref",
 "sha256"?},"engine","engine_version","status"}]`, status `none|pending|ready|failed`) from the later
@@ -744,6 +744,40 @@ unchanged and a named preset may still keep nearly all of a short video. Cuts bu
 algorithm (`cuts.algo_version` older than the current build) that kept over `repair_near_full_frac`
 on the map/reduce path are superseded once, on server start or by `utubot cuts repair`, and the same
 user, video and preset or prompt is queued again; the wire documents do not change.
+
+## Cuts of films and episodes (addendum, 2026-11-28, issue 295)
+
+A film or an episode playing in the TV's main player is cut like a YouTube video, from its subtitles. The cut routes are the same
+(`GET/POST /v1/videos/{id}/cuts`, `PUT .../cut-choice`, `GET /v1/cuts/{id}`, the queue); what differs is the id and the facts the TV states.
+
+- **The id** is derived, never guessed: `f` plus the first ten hex digits of the SHA-256 of `{source_key}|{release_key}` (eleven characters,
+  so every route keyed by a video id works). The release is the stream file, so cuts, the cut choice and the stored subtitles are per
+  release. A request whose id does not match its source and release is `400`.
+- **The facts**, as query parameters on the cut list and the cut request: `source_kind=film`, `source_key` (`imdb:tt0111161`, or
+  `imdb:tt0944947:S1E2` for an episode), `release_key` (the stream's name and size), `release_duration_ms` (the player's length; the details
+  screen sends the length it last saw or the catalogue runtime), `file_name`, `stream_size`, `stream_fps` (when the player opened the file),
+  `sub_lang` (the viewer's subtitle language, two letters), `title` and `poster` (a public image address; stored only when its origin is in
+  `[films] poster_origins`). The server keeps them with the video facts, so a phone request for the same id needs none. The stream address
+  is never sent.
+- **The transcript** is a subtitle file from a Stremio subtitles add-on (`[films] subtitles_url`, OpenSubtitles v3 by default), asked by IMDb
+  id (`/subtitles/{movie|series}/{tt..[:season:episode]}/filename=..&videoSize=..`). Only the IMDb id, season, episode, file name and size
+  leave the server. The candidate in the viewer's language (else English) whose release name best matches the file name is tried first (token
+  overlap, release group, hash match). It is used only when its timing fits the release: enough cues, the last cue before the stream's end plus
+  a margin, reaching at least `min_last_cue_frac` of it, covering `min_cover_frac` of it, and the subtitle's and the stream's frame rates
+  agreeing (`fps_tolerance`) when both are known. The first failure is the reason told: the request fails with plain words
+  ("The subtitles end at 4 min but this stream is 126 min, so they belong to a different cut of the film."), shown as the preset's error.
+  A stored transcript (an earlier fetch, or captions the TV sent through `POST /v1/videos/{id}/captions/client` from the file's own tracks)
+  is used first and never refetched.
+- **Modes**: films are Quick only. `modes[watched]` is `available: false` with a reason, a request for `watched` is `409`, the default is
+  `quick`.
+- **Columns**: `cut_requests` and `cuts` keep `source_kind` `film`, `source_key`, `release_key`, `release_duration_ms`; the cut document's
+  `source` is `{"kind":"film","key","release_key","release_duration_ms"}`.
+- **Other releases**: a cut built for another release of the same title is offered for this one (its `video_id` rewritten to this release's,
+  plus `shared_from_video_id`) only when both lengths are known and agree within `[cuts] release_duration_tolerance_ms`.
+- **Applying**: a TV applies a film cut whose length is within `[films] apply_tolerance_ms` (30 s; subtitle sync is not frame exact), not the
+  2 s of a YouTube video.
+- The queue card and the inbox carry `title`, `thumbnail` (the poster) and `source_kind`; the phone page shows the poster and no YouTube link.
+- Clients: TV only. Films play in the TV app; the extension has no film player. Its row is in the plan's parity matrix.
 
 ## Voice prompts (addendum, 2026-11-21)
 

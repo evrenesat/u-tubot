@@ -4,6 +4,10 @@
 Serves, on one port: /catalog/{type}/{id}.json, /catalog/{type}/top/search={text}.json, /meta/{type}/{id}.json,
 /stream/{type}/{id}.json (a mix of formats, including Dolby Vision profile 5), /img/{name}.png (generated posters and backdrops with PIL)
 and /media/film.mp4 (the file given with --media, the address every stream points to).
+It also stands in for the Stremio OpenSubtitles add-on: /subtitles/{type}/{id}[/extra].json lists three English subtitle files and
+/subs/{name}.srt serves them, generated for a film of --duration-s seconds: one timed for 25 frames per second (it runs past the stream,
+so the backend must refuse it), one for the whole film, one that stops halfway. Run the backend with
+`[films] subtitles_url = "http://127.0.0.1:18791"` and `download_hosts = ["127.0.0.1"]`.
 
     python3 scripts/emulator_mock_films.py --port 18791 --media temp/film.mp4 &
     # prefs of the app: films_developer=true, films_catalog_url=http://10.0.2.2:18791, films_addon_url=http://10.0.2.2:18791
@@ -44,6 +48,36 @@ STREAMS = [
 COLOURS = [(47, 111, 176), (176, 80, 47), (60, 140, 90), (140, 60, 150), (180, 150, 40), (40, 130, 150), (150, 50, 70), (90, 90, 160)]
 
 
+STORY_LINES = [
+    "The harbour wakes before the ships do.", "She checks the charts one last time.", "Nobody leaves without the captain's word.",
+    "The storm is three days out.", "There is a door in the hull that should not be there.", "Open it, then, if you are so sure.",
+    "The sea keeps what it is given.", "Count the lanterns twice.", "We sail at dawn, with or without them.",
+    "The map ends here, and the water does not.",
+]
+SUB_CUE_S = 7.0
+SUB_CUE_LENGTH_S = 3.5
+FRAME_DRIFT = 25.0 / 23.976
+
+
+def clock(seconds):
+    total = int(seconds)
+    return f"{total // 3600:02d}:{total % 3600 // 60:02d}:{total % 60:02d},{int((seconds - total) * 1000):03d}"
+
+
+def subtitle_file(kind, duration_s):
+    """SRT cues over a film of duration_s seconds: 'fit' reaches the end, 'drift' is timed for another frame rate, 'half' stops early."""
+    last = {"fit": duration_s - 8, "drift": duration_s - 8, "half": duration_s * 0.45}[kind]
+    scale = FRAME_DRIFT if kind == "drift" else 1.0
+    out = []
+    at, i = 4.0, 0
+    while at + SUB_CUE_LENGTH_S <= last:
+        text = STORY_LINES[i % len(STORY_LINES)]
+        out.append(f"{i + 1}\n{clock(at * scale)} --> {clock((at + SUB_CUE_LENGTH_S) * scale)}\n{text}\n")
+        at += SUB_CUE_S
+        i += 1
+    return "\n".join(out).encode()
+
+
 def entries(kind):
     return MOVIES if kind == "movie" else SERIES
 
@@ -80,6 +114,7 @@ def image(name):
 
 class Handler(BaseHTTPRequestHandler):
     media = None
+    duration_s = 300.0
 
     def log_message(self, *args):
         pass
@@ -114,6 +149,16 @@ class Handler(BaseHTTPRequestHandler):
             kind, id_ = parts[1], parts[2].removesuffix(".json")
             row = next((r for r in entries(kind) if r[0] == id_), None)
             return self.send(json.dumps({"meta": meta_of(kind, row, port, True)}).encode()) if row else self.send(b"{}", code=404)
+        if parts[0] == "subtitles" and len(parts) >= 3:
+            names = [("drift", "Movie.2160p.UHD.BluRay.REMUX.HEVC.DV.P5.TrueHD.Atmos-GRP.srt"),
+                     ("half", "Movie.720p.HDTV.x264.AC3-OTHER.srt"),
+                     ("fit", "Movie.1080p.BluRay.x264.DTS-HD.5.1-GRP.srt")]
+            items = [{"id": str(i + 1), "url": f"http://127.0.0.1:{port}/subs/{kind}.srt", "SubEncoding": "UTF-8", "lang": "eng",
+                      "m": "i", "g": "11", "subtitleFileName": name, "movieReleaseName": "Mock film", "fpsMilli": 23976,
+                      "season": 0, "episode": 0} for i, (kind, name) in enumerate(names)]
+            return self.send(json.dumps({"subtitles": items}).encode())
+        if parts[0] == "subs" and len(parts) == 2:
+            return self.send(subtitle_file(parts[1].removesuffix(".srt"), self.duration_s), "application/x-subrip")
         if parts[0] == "stream":
             streams = [{"name": name, "title": title + "\n\U0001F464 12 \U0001F4BE " + str(size >> 30) + " GB",
                         "url": f"http://10.0.2.2:{port}/media/film.mp4?s={i}", "behaviorHints": {"videoSize": size}}
@@ -126,8 +171,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=18791)
     parser.add_argument("--media")
+    parser.add_argument("--duration-s", type=float, default=300.0, help="the length of the media file, for the generated subtitles")
     args = parser.parse_args()
     Handler.media = args.media
+    Handler.duration_s = args.duration_s
     ThreadingHTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
 
 

@@ -229,6 +229,22 @@ max_tokens = 2000
 # max_report_chars = 4000          # cut report text shown in the app
 # release_duration_tolerance_ms = 2000  # cached cut's duration may differ from the video by this
 
+# Films: the transcript of a film cut is its subtitles, found by IMDb id on a Stremio subtitles
+# add-on. Only the IMDb id, season/episode and the stream's file name and size are sent.
+# [films]
+# subtitles_url = "https://opensubtitles-v3.strem.io"
+# download_hosts = []             # hosts subtitle files may come from even at a private address (an add-on on the LAN)
+# poster_origins = ["https://images.metahub.space"]   # where a film poster may be shown from on the phone page
+# timeout_s = 20.0
+# max_candidates_tried = 3         # subtitle files tried, best release match first
+# end_margin_s = 60.0              # the last cue may end this much (or end_margin_frac) after the stream
+# end_margin_frac = 0.02
+# min_last_cue_frac = 0.75         # the last cue must reach this share of the stream
+# min_cover_frac = 0.08            # the cues together must cover this share of it
+# min_cues = 30
+# fps_tolerance = 0.01             # subtitle and stream frame rates may differ by this fraction
+# apply_tolerance_ms = 30000       # a film cut applies to a stream this close in length
+
 # The cuts list is immutable once built, so a GET carries a strong ETag and `Cache-Control: max-age`;
 # the client re-validates with If-None-Match and gets 304 while nothing changed (offline-first, issue 146).
 # cache_max_age_s = 900          # how long the client may use the cached list before re-validating (15 min)

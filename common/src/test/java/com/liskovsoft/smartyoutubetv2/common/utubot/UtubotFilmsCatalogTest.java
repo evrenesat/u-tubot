@@ -54,4 +54,13 @@ public class UtubotFilmsCatalogTest {
         assertEquals("", new Episode(1, 3, "Episode 3").shortTitle());
         assertEquals("Episodes of Doom", new Episode(1, 4, "Episodes of Doom").shortTitle());
     }
+
+    @Test
+    public void theRuntimeInMilliseconds() {
+        assertEquals(148 * 60_000L, UtubotFilmsCatalog.runtimeMs("148 min"));
+        assertEquals((2 * 60 + 28) * 60_000L, UtubotFilmsCatalog.runtimeMs("2h 28min"));
+        assertEquals(148 * 60_000L, UtubotFilmsCatalog.runtimeMs("148"));
+        assertEquals(0, UtubotFilmsCatalog.runtimeMs(""));
+        assertEquals(0, UtubotFilmsCatalog.runtimeMs(null));
+    }
 }

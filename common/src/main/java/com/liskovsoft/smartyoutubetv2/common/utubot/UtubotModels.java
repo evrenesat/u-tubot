@@ -37,6 +37,21 @@ public final class UtubotModels {
     /**
      * What the app knows about a video from its card
      */
+    /**
+     * The stream a film cut is built for. The backend derives the id from {@code sourceKey} and {@code releaseKey}; the poster is the
+     * public image address of the title, the language the viewer's subtitle language.
+     */
+    public static final class FilmMeta {
+        public String sourceKey;
+        public String releaseKey;
+        public long releaseDurationMs;
+        public String fileName;
+        public long streamSize;
+        public float streamFps;
+        public String subtitleLanguage;
+        public String poster;
+    }
+
     public static final class VideoMeta {
         public String videoId;
         public String title;
@@ -50,6 +65,8 @@ public final class UtubotModels {
         public String description;
         /** Only sent when true: an unknown subscription must not read as "not subscribed". */
         public boolean isSubscribed;
+        /** A film or an episode: the facts of its release, which the backend needs to cut it from its subtitles. Null for a YouTube video. */
+        public FilmMeta film;
 
         public JSONObject toJson() throws JSONException {
             JSONObject json = new JSONObject();

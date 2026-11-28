@@ -66,7 +66,6 @@
     <string name="utubot_films_missing">Set the stream addon address and the IMDb id first</string>
     <string name="utubot_films_no_streams">The addon returned no playable streams</string>
     <string name="utubot_films_failed">Cannot load streams</string>
-    <string name="utubot_cut_film_none">No cut for this film yet</string>
     <string name="utubot_films_stream_error">Cannot play this stream. Pick another one under Streams.</string>
     <string name="utubot_films_streams">Streams</string>
     <string name="utubot_films_streams_loading">Loading streams</string>
@@ -253,6 +252,8 @@
     <string name="utubot_cut_jump_value_off">Off</string>
     <string name="utubot_cut_state_failed">Failed: %s · Retry</string>
     <string name="utubot_cut_state_failed_plain">Failed · Retry</string>
+    <string name="utubot_cut_state_failed_film">Failed: %s · Pick another stream</string>
+    <string name="utubot_cut_state_failed_film_plain">Failed · Pick another stream</string>
     <string name="utubot_cut_mode">Mode: %1$s</string>
     <string name="utubot_cut_mode_default">(default)</string>
     <string name="utubot_cut_watched_suffix"> · Watched</string>
