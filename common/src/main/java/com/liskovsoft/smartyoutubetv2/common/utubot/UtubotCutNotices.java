@@ -357,7 +357,7 @@ public final class UtubotCutNotices {
     }
 
     private void fetchRequest(String requestId, int waitMs, UtubotCutWatcher.Callback callback) {
-        UtubotClient client = UtubotManager.instance(mContext).newClient();
+        UtubotClient client = UtubotManager.instance(mContext).newClient().background();
 
         Observable.<CutRequest>fromCallable(() -> client.cut(requestId, waitMs))
                 .subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())

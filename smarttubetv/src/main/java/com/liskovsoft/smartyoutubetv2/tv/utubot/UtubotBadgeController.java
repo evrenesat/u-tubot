@@ -11,7 +11,9 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBadgePolicy;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotBusyTracker;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotUiHost;
 import com.liskovsoft.smartyoutubetv2.tv.R;
 
 import java.lang.ref.WeakReference;
@@ -103,7 +105,7 @@ class UtubotBadgeController {
 
         int count = mTracker.getCount();
 
-        if (count > 0) {
+        if (UtubotBadgePolicy.isAllowed(UtubotUiHost.isPlayerScreen(), count)) {
             mHandler.removeCallbacks(mHide);
             badge.setCountText(count);
 
@@ -111,6 +113,11 @@ class UtubotBadgeController {
                 mHandler.removeCallbacks(mShow);
                 mHandler.postDelayed(mShow, mShowDelayMs);
             }
+        } else if (count > 0) {
+            // Over the player: never shown, and gone when a dialog came up over it while the badge was on
+            mHandler.removeCallbacks(mShow);
+            mHandler.removeCallbacks(mHide);
+            hide();
         } else {
             mHandler.removeCallbacks(mShow);
 
@@ -125,7 +132,7 @@ class UtubotBadgeController {
     private void show() {
         UtubotBadgeView badge = mBadge.get();
 
-        if (badge != null && mIsAttached && mTracker.isBusy()) {
+        if (badge != null && mIsAttached && UtubotBadgePolicy.isAllowed(UtubotUiHost.isPlayerScreen(), mTracker.getCount())) {
             mShownAtMs = SystemClock.uptimeMillis();
             badge.setCount(mTracker.getCount());
         }

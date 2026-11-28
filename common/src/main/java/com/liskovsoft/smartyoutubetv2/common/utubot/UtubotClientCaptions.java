@@ -101,7 +101,7 @@ public final class UtubotClientCaptions {
         UtubotManager manager = UtubotManager.instance(context);
         Observable.fromCallable(() -> {
                     handOver(videoId, picks, UtubotClientCaptions::download, (id, tracks) -> {
-                        if (!manager.newClient().uploadCaptions(id, tracks)) {
+                        if (!manager.newClient().background().uploadCaptions(id, tracks)) {
                             Log.d(TAG, "%s: the backend kept its own captions", id);
                         }
                     });

@@ -109,7 +109,7 @@ public final class UtubotCaptions {
             Captions captions = UtubotManager.instance(context).getCachedCaptions(videoId);
 
             if (captions != null && captions.isReady()) {
-                UtubotClient client = UtubotManager.instance(context).newClient();
+                UtubotClient client = UtubotManager.instance(context).newClient().background();
 
                 for (CaptionTrack track : captions.tracks) {
                     if (!stored.contains(track.lang)) {
