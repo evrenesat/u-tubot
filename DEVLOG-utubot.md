@@ -12,6 +12,12 @@
 - Crash risks fixed in the direct-stream path: `openMediaSource` on a released player (NPE), `openProgressiveUrl` and `loadFilm` with no address (`Uri.parse(null)`), `releasePlayer` only caught one exception type, `onTracksChanged` read the format of an empty selection, `PlaybackActivity.onKeyDown` used the fragment before it existed; swallowed exceptions in `MainApplication` are logged.
 - Tests: `ReportRedactionTest`, `UtubotPlayerLogTest` (ring bounds, rotation caps, redaction, delete after upload), `ReportUploaderTest`, `AppExitsTest` (crash carries events and flushes), `ai-backend/tests/test_device_reports.py` (upload, limits, retention by age and size, counts, status, CLI).
 - Not done: the stream-address redaction is by pattern, so a secret in an unusual shape (a short opaque path segment) is not caught unless it is the TV's own token or add-on address; the log level is on or off in code (no setting yet, so no new settings key); the browser extension has no player log.
+## 2026-11-28 (clock and remaining time toggle for films, #300)
+
+- The corner clock with the hourglass end time and the "Remaining" line under the seek bar are off by default over a film. A new Clock button in the player's second row (built-in flavor, film and YouTube) turns them on and off and says so in a toast. `UtubotClockPolicy` holds the rule: over a film the choice is `UtubotSettings.isFilmClockEnabled` (`films_clock`, default off, per TV, in `DEVICE_ONLY` of `test_settings_schema.py`); over a YouTube video the button flips the player's own global clock and end-time settings, so the two choices never touch each other. The line under the seek bar of a film shows only with the film's clock on, then as the player's Remaining / End time setting says.
+- Hooks: `PlaybackFragment` (corner visibility follows the policy, re-applied on a new video and from `updateEndingTime`), `PlaybackTransportRowPresenter` (`refreshEndingTime`, the label check), `VideoPlayerGlue` (the action, `refreshTimeLine`), `UtubotClockController` registered after the streams controller.
+- Tests: `UtubotClockPolicyTest` (a film starts off whatever YouTube is set to; one choice per kind; a video follows the player). Emulator (1920x1080): `shots5/clock-menu-off.png` (film, default), `shots5/clock-menu-on.png` (after the button).
+- Not done: a distinct icon per state (the clock icon is the same on and off; the toast says which).
 
 ## 2026-11-28 (director's cuts for films and episodes, #295)
 

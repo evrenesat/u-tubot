@@ -26,6 +26,7 @@ import com.liskovsoft.smartyoutubetv2.common.prefs.GeneralData;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerTweaksData;
 import com.liskovsoft.smartyoutubetv2.tv.R;
 import com.liskovsoft.smartyoutubetv2.tv.ui.mod.leanback.playerglue.tweaks.MaxControlsVideoPlayerGlue;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.tv.ui.mod.leanback.playerglue.tweaks.PlaybackTransportRowPresenter;
 import com.liskovsoft.smartyoutubetv2.tv.ui.mod.leanback.widget.OnActionLongClickedListener;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.AFRAction;
@@ -49,6 +50,7 @@ import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.PlaylistAddAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.PlaybackModeAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.SearchAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.SubscribeAction;
+import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotClockAction;
 import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotFilmStreamsAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.TwoStateAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.ThumbsDownAction;
@@ -126,6 +128,7 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
         putAction(new SubscribeAction(context));
         putAction(new VideoInfoAction(context));
         putAction(new UtubotFilmStreamsAction(context));
+        putAction(new UtubotClockAction(context));
         putAction(new VideoSpeedAction(context));
         putAction(new VideoStatsAction(context));
         putAction(new SearchAction(context));
@@ -257,6 +260,9 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
         if (UtubotCutAction.isAvailable(getContext())) {
             adapter.add(mActions.get(R.id.action_utubot_cut)); // stays for a film too: its cuts are a follow-up
         }
+        if (UtubotSettings.isBuiltIn()) {
+            adapter.add(mActions.get(R.id.action_utubot_clock)); // a film and a video each keep their own choice
+        }
         if (mFilmMode) {
             adapter.add(0, mActions.get(R.id.action_utubot_films_streams));
         }
@@ -289,6 +295,15 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
         if (secondary != null) {
             secondary.clear();
             onCreateSecondaryActions(secondary);
+        }
+    }
+
+    /**
+     * The Clock button or another kind of video changed whether the time line under the seek bar shows
+     */
+    public void refreshTimeLine() {
+        if (getPlaybackRowPresenter() instanceof PlaybackTransportRowPresenter) {
+            ((PlaybackTransportRowPresenter) getPlaybackRowPresenter()).refreshEndingTime();
         }
     }
 

@@ -58,6 +58,7 @@ public class UtubotSettings {
     private static final String KEY_DEVELOPMENT_MODE = "development_mode";
     private static final String KEY_UPDATE_CHECKS = "update_checks";
     private static final String KEY_FILMS_DEV = "films_developer";
+    private static final String KEY_FILMS_CLOCK = "films_clock";
     private static final String KEY_FILMS_ADDON = "films_addon_url";
     private static final String KEY_FILMS_RD_TOKEN = "films_rd_token";
     private static final String KEY_FILMS_IMDB = "films_imdb_id";
@@ -723,6 +724,18 @@ public class UtubotSettings {
      */
     public boolean isFilmsDeveloperEnabled() {
         return isBuiltIn() && mPrefs.getBoolean(KEY_FILMS_DEV, false);
+    }
+
+    /**
+     * The corner clock with the end time and the remaining-time line over a film, off until the viewer turns it on (the player's
+     * Clock button). A YouTube video keeps the player's own settings.
+     */
+    public boolean isFilmClockEnabled() {
+        return mPrefs.getBoolean(KEY_FILMS_CLOCK, false);
+    }
+
+    public void setFilmClockEnabled(boolean enabled) {
+        mPrefs.edit().putBoolean(KEY_FILMS_CLOCK, enabled).apply();
     }
 
     public void setFilmsDeveloperEnabled(boolean enabled) {

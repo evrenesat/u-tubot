@@ -15,6 +15,7 @@
  */
 package com.liskovsoft.smartyoutubetv2.tv.ui.mod.leanback.playerglue.tweaks;
 
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotClockPolicy;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Color;
@@ -67,6 +68,8 @@ import java.util.List;
  * </p>
  */
 public class PlaybackTransportRowPresenter extends PlaybackRowPresenter {
+    private ViewHolder mLastViewHolder;
+
     static class BoundData extends PlaybackControlsPresenter.BoundData {
         ViewHolder mRowViewHolder;
     }
@@ -774,7 +777,9 @@ public class PlaybackTransportRowPresenter extends PlaybackRowPresenter {
             if (mEndingTime != null) {
                 mEndingTime.removeCallbacks(mEndingTimeUpdater);
 
-                if (mPlayerData.isRemainingTimeEnabled()) {
+                if (!UtubotClockPolicy.timeLine(mEndingTime.getContext())) { // a film shows it only with the clock on
+                    mEndingTime.setVisibility(View.GONE);
+                } else if (mPlayerData.isRemainingTimeEnabled()) {
                     formatTime(remainingTimeMs, mTempBuilder);
                     mEndingTime.setText(String.format(mRemainingTimeFormat, mTempBuilder.toString()));
                     mEndingTime.setVisibility(View.VISIBLE);
@@ -1076,7 +1081,17 @@ public class PlaybackTransportRowPresenter extends PlaybackRowPresenter {
         View v = LayoutInflater.from(parent.getContext()).inflate(mRowLayoutId, parent, false);
         ViewHolder vh = new ViewHolder(v, mDescriptionPresenter);
         initRow(vh);
+        mLastViewHolder = vh;
         return vh;
+    }
+
+    /**
+     * The remaining or ending time line is drawn again (the Clock button changed what it shows), even when the time did not move
+     */
+    public void refreshEndingTime() {
+        if (mLastViewHolder != null && mLastViewHolder.mRemainingTimeInMs != Long.MIN_VALUE) {
+            mLastViewHolder.onSetEndingTimeLabel(mLastViewHolder.mRemainingTimeInMs);
+        }
     }
 
     private void initRow(final ViewHolder vh) {

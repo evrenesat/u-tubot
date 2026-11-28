@@ -27,6 +27,9 @@ so the other flavors behave as before.
 | `app/models/playback/controllers/VideoLoaderController.java` (player log) | `loadFilm` refuses a film without a stream address and logs `film.load` | same |
 | `tv/ui/playback/PlaybackActivity.java` (player log) | `key.back` event; `onKeyDown` skips the game pad keys while the fragment is missing | same |
 | `diagnostics/AppExits.java` | `recordCrash` adds the screen and the last events, flushes the player log; `KIND_ANR` | same |
+| `tv/ui/playback/PlaybackFragment.java` (clock) | corner clock and end-time visibility from `UtubotClockPolicy`, re-applied in `setVideo` and `updateEndingTime` | the film's own clock choice (issue 300) |
+| `tv/ui/mod/leanback/playerglue/tweaks/PlaybackTransportRowPresenter.java` (clock) | `refreshEndingTime`, `onSetEndingTimeLabel` asks `UtubotClockPolicy.timeLine` | the Remaining line is off over a film until the clock is on |
+| `tv/ui/playback/other/VideoPlayerGlue.java` (clock) | the `UtubotClockAction` in the second row, `refreshTimeLine` | the Clock button |
 | `smarttubetv/src/stutubot/res/` | app label; icon, alternative icon, banner and the three header logos, rendered from `assets/brand/*.svg` by `assets/brand/render.py` | own identity, not Electric Eel's |
 | `smarttubetv/src/stutubot/AndroidManifest.xml` | literal `android:label="u·tubot"` on `<application>` (merged over main's `@string/app_name`; keep both the same) | the system installer's "App installed" screen read the label without resources and showed the class name |
 | `smarttubetv/src/main/AndroidManifest.xml` | `uses-feature` `leanback`, `usb.host` and `bluetooth` with `required="false"` and `tools:node="replace"` (a library's required feature wins the merge otherwise) | the package installs on a tablet; `UtubotTabletManifestTest` |
