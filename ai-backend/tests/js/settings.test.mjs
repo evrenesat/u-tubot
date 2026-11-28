@@ -26,6 +26,12 @@ function* walk(n) {
 const find = (root, pred) => [...walk(root)].filter(pred);
 const buttons = (root, text) => find(root, (n) => n.tagName === "BUTTON" && n.textContent === text);
 const rows = (root) => find(root, (n) => n.className.split(/\s+/).includes("set-row"));
+// The password fields of the generic "Accounts and services" card only, not the Stremio card's sign-in.
+const accountsFields = (root) => {
+  const h2 = find(root, (n) => n.tagName === "H2" && n.textContent === "Accounts and services")[0];
+  const card = h2 && h2._parent;
+  return card ? find(card, (n) => n.tagName === "INPUT" && n.type === "password") : [];
+};
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); };
 
 function install({ conflict = false } = {}) {
@@ -320,7 +326,7 @@ test("Accounts and services is write-only: it shows set, the hint and where it w
   const text = view.textContent;
   assert.ok(text.includes("Accounts and services") && text.includes("Set, ends in 4f2a") && text.includes("Given to Den TV"));
   assert.ok(text.includes("Not set"));
-  const fields = find(view, (n) => n.tagName === "INPUT" && n.type === "password");
+  const fields = accountsFields(view);
   assert.equal(fields.length, 2);
   fields[1].value = "https://addon.example.org/CANARYKEY/manifest.json";
   buttons(view, "Save")[1].dispatch("click");
@@ -340,7 +346,7 @@ test("without a master key the section says so and offers no field", async () =>
   const stop = await render(view, { rest: [] });
   await settle();
   assert.ok(view.textContent.includes("Secret storage is not set up on this server"));
-  assert.equal(find(view, (n) => n.tagName === "INPUT" && n.type === "password").length, 0);
+  assert.equal(accountsFields(view).length, 0);
   stop();
 });
 
@@ -351,5 +357,104 @@ test("a server without secret routes draws no section", async () => {
   const stop = await render(view, { rest: [] });
   await settle();
   assert.ok(!view.textContent.includes("Accounts and services"));
+  stop();
+});
+
+const STREMIO_SCHEMA = {
+  schema_version: 1,
+  groups: [{ id: "ai", title: "AI features", order: 10 }],
+  settings: [S("ai.summary_panel", "Summary panel", "Show the side panel with a summary while you browse.")],
+};
+
+// The Stremio routes: status, then login and import on demand.
+function installStremio({ connected = false, importResult = null } = {}) {
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const method = init.method || "GET";
+    calls.push({ url, method, body: init.body ? JSON.parse(init.body) : null });
+    const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
+    if (url === "/v1/settings/schema") return reply(200, STREMIO_SCHEMA);
+    if (url.startsWith("/v1/me/settings/status")) return reply(200, { version: 1, devices: [] });
+    if (url === "/v1/me/settings") return reply(200, { version: 1, values: { "ai.summary_panel": { v: false, rev: 0, from: "default" } } });
+    if (url === "/v1/films/stremio/status") return reply(200, { set: connected });
+    if (url === "/v1/films/stremio/login" && method === "POST") return reply(200, { ok: true });
+    if (url === "/v1/films/stremio/import" && method === "POST") return reply(200, importResult);
+    return reply(404, { error: "unexpected " + url });
+  };
+  return calls;
+}
+
+test("the Stremio card signs in, then imports the watch state and shows the counts", async () => {
+  const calls = installStremio({ connected: false, importResult: { watchlist: 12, resume: 3, watched: 4, unmapped: 1, items: [] } });
+  const view = document.createElement("div");
+  const stop = await render(view, { rest: [] });
+  await settle();
+  assert.ok(view.textContent.includes("Stremio"));
+  assert.equal(buttons(view, "Sign in").length, 1);
+  assert.equal(buttons(view, "Import now").length, 0);
+  const email = find(view, (n) => n.tagName === "INPUT" && n.type === "email")[0];
+  const password = find(view, (n) => n.tagName === "INPUT" && n.type === "password")[0];
+  email.value = "owner@example.com";
+  password.value = "correct horse battery";
+  buttons(view, "Sign in")[0].dispatch("click");
+  await settle();
+  const login = calls.find((c) => c.url === "/v1/films/stremio/login");
+  assert.equal(login.method, "POST");
+  assert.deepEqual(login.body, { email: "owner@example.com", password: "correct horse battery" });
+  // The password is cleared after a successful sign-in.
+  assert.equal(find(view, (n) => n.tagName === "INPUT" && n.type === "password")[0].value, "");
+  await settle();
+  // Connected: the sign-in is gone, an Import button shows.
+  assert.equal(buttons(view, "Sign in").length, 0);
+  assert.equal(buttons(view, "Import now").length, 1);
+  buttons(view, "Import now")[0].dispatch("click");
+  await settle();
+  const imp = calls.find((c) => c.url === "/v1/films/stremio/import");
+  assert.equal(imp.method, "POST");
+  assert.ok(view.textContent.includes("12 in My list") && view.textContent.includes("3 continue watching") && view.textContent.includes("4 watched") && view.textContent.includes("1 not matched"));
+  stop();
+});
+
+test("a connected Stremio account shows the Import button without a sign-in form", async () => {
+  installStremio({ connected: true, importResult: { watchlist: 5, resume: 0, watched: 0, unmapped: 0, items: [] } });
+  const view = document.createElement("div");
+  const stop = await render(view, { rest: [] });
+  await settle();
+  assert.ok(view.textContent.includes("Stremio"));
+  assert.equal(buttons(view, "Sign in").length, 0);
+  assert.equal(buttons(view, "Import now").length, 1);
+  assert.equal(find(view, (n) => n.tagName === "INPUT" && n.type === "password").length, 0);
+  stop();
+});
+
+test("a login failure shows the server message and keeps the sign-in form", async () => {
+  const calls = installStremio({ connected: false });
+  globalThis.fetch = async (url, init = {}) => {
+    const method = init.method || "GET";
+    calls.push({ url, method, body: init.body ? JSON.parse(init.body) : null });
+    const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
+    if (url === "/v1/settings/schema") return reply(200, STREMIO_SCHEMA);
+    if (url.startsWith("/v1/me/settings/status")) return reply(200, { version: 1, devices: [] });
+    if (url === "/v1/me/settings") return reply(200, { version: 1, values: { "ai.summary_panel": { v: false, rev: 0, from: "default" } } });
+    if (url === "/v1/films/stremio/status") return reply(200, { set: false });
+    if (url === "/v1/films/stremio/login" && method === "POST") return reply(400, { error: "Wrong email or password." });
+    return reply(404, { error: "unexpected " + url });
+  };
+  const view = document.createElement("div");
+  const host = document.createElement("div");
+  host.id = "toasts";
+  const getElementById = globalThis.document.getElementById;
+  globalThis.document.getElementById = () => host;
+  const stop = await render(view, { rest: [] });
+  await settle();
+  const email = find(view, (n) => n.tagName === "INPUT" && n.type === "email")[0];
+  const password = find(view, (n) => n.tagName === "INPUT" && n.type === "password")[0];
+  email.value = "owner@example.com";
+  password.value = "wrong";
+  buttons(view, "Sign in")[0].dispatch("click");
+  await settle();
+  assert.ok(host.textContent.includes("Wrong email or password."));
+  assert.equal(buttons(view, "Sign in").length, 1);
+  globalThis.document.getElementById = getElementById;
   stop();
 });

@@ -187,7 +187,7 @@ function control(setting, value, onChange, disabled) {
 
 export async function render(view, { rest = [] } = {}) {
   const where = parseRest(rest);
-  const S = { schema: null, doc: null, status: null, devDocs: {}, history: null, query: "", signature: "", secrets: null };
+  const S = { schema: null, doc: null, status: null, devDocs: {}, history: null, query: "", signature: "", secrets: null, stremio: null, stremio_result: null };
   const host = h("div", { class: "stack" });
   const bar = h("div", { class: "stage-host" });
   let stopPoll = null;
@@ -206,6 +206,11 @@ export async function render(view, { rest = [] } = {}) {
       S.secrets = await api("/v1/me/secrets");
     } catch {
       S.secrets = null; // a server without secrets: the section is not drawn
+    }
+    try {
+      S.stremio = await api("/v1/films/stremio/status");
+    } catch {
+      S.stremio = { set: false }; // a backend without the Stremio routes: the card is not drawn
     }
     await Promise.all(
       status.devices.map(async (d) => {
@@ -409,7 +414,8 @@ export async function render(view, { rest = [] } = {}) {
     const settings = pageSettings(S.schema, S.doc.values);
     const groups = groupSettings(S.schema, settings, S.query);
     const accounts = secretsCard();
-    if (!groups.length && !accounts) return [empty("No setting matches \"" + S.query + "\".")];
+    const stremio = stremioCard();
+    if (!groups.length && !accounts && !stremio) return [empty("No setting matches \"" + S.query + "\".")];
     return [
       ...groups.map(({ group, rows }) =>
         card(
@@ -418,6 +424,7 @@ export async function render(view, { rest = [] } = {}) {
         ),
       ),
       accounts,
+      stremio,
     ];
   }
 
@@ -460,6 +467,55 @@ export async function render(view, { rest = [] } = {}) {
       state.set && state.delivered_to && state.delivered_to.length ? h("small", { class: "muted", text: "Given to " + state.delivered_to.map((d) => d.device + " (" + fmtAgo(d.at) + ")").join(", ") }) : null,
       h("div", { class: "row nowrap" }, input, button("Save", save, { kind: "primary" })),
       h("small", { class: "muted", text: "Write-only: the value is never shown here again." }),
+    );
+  }
+
+  // Stremio (r0): the owner signs in on the server, which keeps only the auth key; the web then
+  // imports the watch state. The email is kept between draws for convenience, the password is not.
+  let stremioEmail = "";
+
+  function result_summary(r) {
+    const parts = [r.watchlist + " in My list"];
+    if (r.resume) parts.push(r.resume + " continue watching");
+    if (r.watched) parts.push(r.watched + " watched");
+    if (r.unmapped) parts.push(r.unmapped + " not matched");
+    return "Last import: " + parts.join(", ") + ".";
+  }
+
+  function stremioCard() {
+    if (!S.stremio) return null;
+    const connected = S.stremio.set;
+    const last = S.stremio_result;
+    const email = textInput(stremioEmail, { placeholder: "you@example.com", type: "email", autocomplete: "email" });
+    const password = h("input", { type: "password", placeholder: "Your Stremio password", autocomplete: "new-password", spellcheck: "false", autocapitalize: "none", autocorrect: "off" });
+    const signin = async () => {
+      const value = email.value.trim();
+      const secret = password.value;
+
+      if (!value || !secret) {
+        throw new ApiError("Enter your Stremio email and password.");
+      }
+
+      await api("/v1/films/stremio/login", { method: "POST", body: { email: value, password: secret } });
+      stremioEmail = value;
+      password.value = "";
+      S.stremio = { set: true };
+      toast("Connected to Stremio. Import it into films when you are ready.");
+      await refresh();
+    };
+    const imp = async () => {
+      const result = await api("/v1/films/stremio/import", { method: "POST", body: {} });
+      S.stremio_result = result;
+      toast("Imported " + result.watchlist + " titles from Stremio.");
+      await refresh();
+    };
+    return card(
+      "Stremio",
+      h("div", { class: "stremio-account" },
+        h("div", { class: "set-head" }, h("strong", { text: "Stremio" }), h("small", { class: "muted", text: "Copy your Stremio watchlist and continue watching into u·tubot films. The server keeps only the auth key, never your password." })),
+        connected ? h("div", { class: "row nowrap" }, pill("Set", "ok"), button("Import now", imp, { kind: "primary" })) : h("div", { class: "row nowrap" }, email, password, button("Sign in", signin, { kind: "primary" })),
+        last ? h("small", { class: "muted", text: result_summary(last) }) : null,
+      ),
     );
   }
 
