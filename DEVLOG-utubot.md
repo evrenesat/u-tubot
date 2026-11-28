@@ -18,6 +18,14 @@
 - Hooks: `PlaybackFragment` (corner visibility follows the policy, re-applied on a new video and from `updateEndingTime`), `PlaybackTransportRowPresenter` (`refreshEndingTime`, the label check), `VideoPlayerGlue` (the action, `refreshTimeLine`), `UtubotClockController` registered after the streams controller.
 - Tests: `UtubotClockPolicyTest` (a film starts off whatever YouTube is set to; one choice per kind; a video follows the player). Emulator (1920x1080): `shots5/clock-menu-off.png` (film, default), `shots5/clock-menu-on.png` (after the button).
 - Not done: a distinct icon per state (the clock icon is the same on and off; the toast says which).
+## 2026-11-28 (film subtitles: one picker, subtitles from the internet, delay, #300)
+
+- Over a film the CC button is replaced by a "Subtitles" button (`UtubotFilmSubtitlesController`). Its picker lists Off, the file's own tracks (the viewer's language first, then English) and the subtitles from the internet (the viewer's language, then English; best release match first, marked "best match"). The TV asks the backend (`GET /v1/films/subtitles`), which holds the one add-on client and cache (see `ai-backend/DEVLOG.md`); the TV never talks to OpenSubtitles.
+- A subtitle from the internet is downloaded (WebVTT, `cache/utubot_film_subtitles/<release id>/`) and side-loaded: `ExoPlayerController.setFilmSubtitle` merges a `SingleSampleMediaSource` with the film's source and opens it again at the same position (`prepare(source, false, false)`, the way the HQ captions of a video are added), then selects the track. Its track id starts with `utubot:film:` so `TrackSelectorManager` picks it by id: by language it matched the file's English track.
+- Delay: the picker's second list (-5 s to +5 s). It shifts the cues of the TV's copy (`UtubotFilmSubtitles.shiftVtt`, a file per delay) and reopens the source at the same position.
+- The choice (off, a file track, or an internet subtitle with its delay) is kept per title (`UtubotFilmSubtitles.Store`, prefs `utubot_film_subtitles`) and applied when the tracks are there (`onVideoLoaded`). Checked on the emulator: leaving and playing again put the same subtitle back.
+- Tests: `UtubotSubtitlePickerTest` (order, best match, language codes, the entry in use), `UtubotFilmSubtitlesTest` (list parsing, shift, choice storage), backend tests (see `ai-backend/DEVLOG.md`). Screenshots at 1920x1080 in `/tmp/utubot-films/shots5/` (`picker-list2.png`, `picker-after-select.png`, `picker-delay-applied.png`).
+- Not done: the delay applies to subtitles from the internet only (ExoPlayer 2.10 has no offset for the file's own text tracks); no automatic pick of an internet subtitle when the file has none in the viewer's language; PGS and other picture subtitles of the file show as the player renders them (not checked); the cut's use of the file's embedded text (#298) is unchanged.
 
 ## 2026-11-28 (director's cuts for films and episodes, #295)
 

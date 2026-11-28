@@ -71,6 +71,16 @@
     <string name="utubot_clock">Clock</string>
     <string name="utubot_clock_on">Clock and end time on</string>
     <string name="utubot_clock_off">Clock and end time off</string>
+    <string name="utubot_films_subtitles">Subtitles</string>
+    <string name="utubot_films_subtitles_loading">Looking for subtitles...</string>
+    <string name="utubot_films_subtitles_off">Off</string>
+    <string name="utubot_films_subtitles_file">In the file:</string>
+    <string name="utubot_films_subtitles_internet">From the internet:</string>
+    <string name="utubot_films_subtitles_best">best match</string>
+    <string name="utubot_films_subtitles_delay">Subtitle delay (from the internet)</string>
+    <string name="utubot_films_subtitles_no_delay">No delay</string>
+    <string name="utubot_films_subtitles_unavailable">Subtitles from the internet are not available now</string>
+    <string name="utubot_films_subtitles_delay_internet_only">The delay works on subtitles from the internet. Pick one first.</string>
     <string name="utubot_films_streams_loading">Loading streams</string>
     <plurals name="utubot_films_hint">
         <item quantity="one">%1$d stream. Up and down to choose, OK to play</item>

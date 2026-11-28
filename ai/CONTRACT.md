@@ -1253,6 +1253,17 @@ are additive and need a signed-in caller.
   with a doubling wait (1 min up to 1 h) after a failure; what the server confirmed is deleted on the TV. Clients: TV only; the browser
   extension has no player to log (`ai/BROWSER_EXTENSION_PLAN.md`, parity matrix).
 
+### Subtitle picker of a film (addendum, 2026-11-28, issue 300)
+
+- `GET /v1/films/subtitles?source_key=imdb:tt..[:S1E2]&file_name=<stream file>&size=<bytes>&lang=<viewer language>` -> `{"subtitles":[{"id",
+  "lang","name","score","hash_match","best"?}]}`: the add-on's subtitles in the viewer's language, then English, each best release match first
+  (`best` marks the first); other languages are not listed. 400 for a bad key, 404 when none, 502 when the add-on fails. Signed-in users only.
+- `GET /v1/films/subtitles/{id}.vtt?source_key=&file_name=&size=` -> the listed subtitle as WebVTT (`text/vtt`). The TV names it by the
+  id of the list, never by an address; the server looks the id up in its own list of that stream and downloads it with the same guarded client
+  as the film cuts. The add-on's lists and files are cached in memory for an hour (64 entries), shared with the cut builder.
+- The TV (`UtubotFilmSubtitlesController`) side-loads the file as a text track merged with the stream, applies the viewer's delay by shifting
+  the cues of its copy, and keeps the choice and the delay per title on the TV. Clients: TV only (no film player in the browser extension).
+
 ### Devices, prompts, videos
 
 - Voice control additions to the web UI: see [Voice control](#voice-control-addendum-2026-11-26).

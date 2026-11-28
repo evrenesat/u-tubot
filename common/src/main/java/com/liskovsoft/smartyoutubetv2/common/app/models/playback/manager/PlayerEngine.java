@@ -17,6 +17,13 @@ public interface PlayerEngine extends PlayerConstants {
 
     /** A single direct stream (a film's MKV or MP4) */
     void openProgressiveUrl(String url);
+
+    /**
+     * A film's subtitle from the internet, side-loaded next to the file's own tracks and selected; null takes it away
+     *
+     * @param file the WebVTT file, already shifted by the viewer's delay
+     */
+    void setFilmSubtitle(@androidx.annotation.Nullable java.io.File file, String id, String lang, String label);
     void openMerged(MediaItemFormatInfo formatInfo, String hlsPlaylistUrl);
     void openMerged(InputStream dashManifest, String hlsPlaylistUrl);
     long getPositionMs();

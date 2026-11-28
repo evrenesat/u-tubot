@@ -22,6 +22,12 @@ import com.google.android.exoplayer2.source.MediaSourceEventListener.LoadEventIn
 import com.google.android.exoplayer2.source.MediaSourceEventListener.MediaLoadData;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.MergingMediaSource;
+import com.google.android.exoplayer2.source.SingleSampleMediaSource;
+import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory;
+import com.google.android.exoplayer2.util.MimeTypes;
+import android.net.Uri;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmSubtitles;
+import java.io.File;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
@@ -90,6 +96,10 @@ public class ExoPlayerController implements Player.EventListener {
      */
     @Nullable
     private MediaSource mUtubotBaseSource;
+    /** The film's own source, before a subtitle from the internet is merged in */
+    private MediaSource mFilmBaseSource;
+    private FilmSubtitle mFilmSubtitle;
+    private String mFilmSelectPendingId;
     private boolean mUtubotCaptionsAttached;
     private boolean mUtubotCaptionsEnabled = true;
     private final UtubotCaptionsFollower.Listener mUtubotCaptionsListener = this::onUtubotCaptionsReady;
@@ -494,7 +504,79 @@ public class ExoPlayerController implements Player.EventListener {
         }
 
         MediaSource mediaSource = mMediaSourceFactory.fromProgressiveUrl(url);
+        mFilmBaseSource = mediaSource;
+        mFilmSelectPendingId = null;
+        FilmSubtitle subtitle = mFilmSubtitle;
+
+        if (subtitle != null && subtitle.file.isFile()) { // the one the viewer picked for this title (see UtubotFilmSubtitlesController)
+            mediaSource = withFilmSubtitle(mediaSource, subtitle);
+            mFilmSelectPendingId = subtitle.format.id;
+        } else {
+            mFilmSubtitle = null;
+        }
+
         openMediaSource(mediaSource);
+    }
+
+    private static final class FilmSubtitle {
+        final File file;
+        final Format format;
+
+        FilmSubtitle(File file, Format format) {
+            this.file = file;
+            this.format = format;
+        }
+    }
+
+    private MediaSource withFilmSubtitle(MediaSource base, FilmSubtitle subtitle) {
+        MediaSource text = new SingleSampleMediaSource.Factory(new DefaultDataSourceFactory(mContext, "utubot"))
+                .createMediaSource(Uri.fromFile(subtitle.file), subtitle.format, C.TIME_UNSET);
+
+        return new MergingMediaSource(base, text);
+    }
+
+    /**
+     * A film's subtitle from the internet: merged with the file's source as a text track and selected. The source is opened again at the
+     * same position (the way the HQ captions of a video are added while it plays).
+     */
+    public void setFilmSubtitle(@Nullable File file, String id, String lang, String label) {
+        mFilmSubtitle = file == null ? null : new FilmSubtitle(file, Format.createTextSampleFormat(UtubotFilmSubtitles.TRACK_PREFIX + id,
+                MimeTypes.TEXT_VTT, Format.NO_VALUE, lang.isEmpty() ? null : lang));
+
+        if (mPlayer == null || mFilmBaseSource == null || mPlayer.getPlaybackState() == Player.STATE_IDLE) {
+            return;
+        }
+
+        FilmSubtitle subtitle = mFilmSubtitle;
+        MediaSource source = subtitle != null ? withFilmSubtitle(mFilmBaseSource, subtitle) : mFilmBaseSource;
+        mFilmSelectPendingId = subtitle != null ? subtitle.format.id : null;
+        mTrackSelectorManager.invalidate();
+        mPlayer.prepare(source, false, false);
+    }
+
+    /**
+     * Selects the subtitle from the internet once the tracks of the source with it are there
+     */
+    private void selectFilmSubtitle() {
+        if (mFilmSelectPendingId == null) {
+            return;
+        }
+
+        mTrackSelectorManager.invalidateSubtitles();
+        Set<MediaTrack> subtitleTracks = mTrackSelectorManager.getSubtitleTracks();
+
+        if (subtitleTracks == null) {
+            return;
+        }
+
+        for (MediaTrack track : subtitleTracks) {
+            if (track.format != null && mFilmSelectPendingId.equals(track.format.id)) {
+                mFilmSelectPendingId = null;
+                mTrackSelectorManager.selectTrack(track);
+                mEventListener.onTrackSelected(ExoFormatItem.from(track));
+                return;
+            }
+        }
     }
 
     public void openMerged(MediaItemFormatInfo formatInfo, String hlsPlaylistUrl) {
@@ -718,6 +800,7 @@ public class ExoPlayerController implements Player.EventListener {
         }
 
         mUtubotBaseSource = null;
+        mFilmBaseSource = null;
         mTrackSelectorManager.release();
         mMediaSourceFactory.release();
         releasePlayer();
@@ -793,6 +876,10 @@ public class ExoPlayerController implements Player.EventListener {
     }
     
     public void setVideo(Video video) {
+        mFilmSubtitle = null; // another video: its own choice is applied by UtubotFilmSubtitlesController
+        mFilmBaseSource = null;
+        mFilmSelectPendingId = null;
+
         Video previous = getVideo();
         mVideo = new WeakReference<>(video);
 
@@ -884,6 +971,7 @@ public class ExoPlayerController implements Player.EventListener {
 
         notifyOnVideoLoad();
         selectUtubotCaptions();
+        selectFilmSubtitle();
 
         for (TrackSelection selection : trackSelections.getAll()) {
             if (selection != null && selection.length() > 0) { // a selection of no track has no format to read

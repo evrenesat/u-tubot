@@ -5,6 +5,11 @@
 - The server never logs a report's content; the TV redacts first (`ai/CONTRACT.md`, "Crash reports and player logs").
 - Tests: `tests/test_device_reports.py`.
 
+## 2026-11-28 (subtitle picker of a film, #300)
+
+- `filmroutes.py`: `GET /v1/films/subtitles` (list) and `GET /v1/films/subtitles/{id}.vtt` (one as WebVTT) for the TV's picker, on the add-on client of the film cuts. `films.py`: `list_subtitles` (the viewer's language then English, each by release match, up to 24; the same filters as `choose_subtitles`), `subtitle_id` (the add-on's id made path-safe), `webvtt`, `TtlCache` (1 hour, 64 entries) for the add-on's lists and files, `FilmSubtitles.listing/webvtt_of/download`. The cut builder uses the same cache.
+- Tests: `tests/test_film_subtitle_picker.py` (list order and filters, ids, WebVTT, cache, both routes, 404/400/401/502); `tests/test_films.py` clears the cache where the add-on's file changes.
+
 ## 2026-11-28 (film cuts, #295)
 
 - `films.py`: source keys (`imdb:tt..[:S1E2]`), the derived release id (`film_video_id`: `f` + 10 hex of SHA-256 of `source_key|release_key`, eleven characters so every video-id route works), SRT/WebVTT parsing into the transcript shape, subtitle choice (viewer's language else English, then release-name token overlap plus group and hash-match bonuses; an episode search drops another episode) and the timing check (cue count, last cue against the stream plus margin, reach, coverage, frame rate, with the 23.976/24/25 mix-up named). `FilmSubtitles` asks the Stremio add-on by IMDb id and file name and size only; downloads go through `guarded_get` (public addresses only, `[films] download_hosts` for a LAN add-on).
