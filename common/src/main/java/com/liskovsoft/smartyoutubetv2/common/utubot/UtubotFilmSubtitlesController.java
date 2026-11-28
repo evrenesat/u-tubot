@@ -196,6 +196,10 @@ public class UtubotFilmSubtitlesController extends BasePlayerController {
         UtubotFilmSubtitles.Store store = new UtubotFilmSubtitles.Store(getContext());
         long delay = current != null && Choice.EXTERNAL.equals(current.kind) ? current.delayMs : 0;
 
+        if (UtubotPlayerLog.isEnabled()) {
+            UtubotPlayerLog.event("subtitle.select", entry.kind + " " + entry.lang);
+        }
+
         if (Choice.EXTERNAL.equals(entry.kind)) {
             Choice choice = new Choice(Choice.EXTERNAL, entry.id, entry.lang, delay);
             store.set(video.film.progressId, choice);
@@ -219,6 +223,10 @@ public class UtubotFilmSubtitlesController extends BasePlayerController {
             return;
         }
 
+        if (UtubotPlayerLog.isEnabled()) {
+            UtubotPlayerLog.event("subtitle.delay", delayMs + " ms");
+        }
+
         Choice moved = choice.withDelay(delayMs);
         store.set(video.film.progressId, moved);
         applyExternal(video, moved, null);
@@ -233,6 +241,10 @@ public class UtubotFilmSubtitlesController extends BasePlayerController {
         File raw = UtubotFilmSubtitles.file(getContext(), film.videoId(), choice.id, 0);
         File shifted = UtubotFilmSubtitles.file(getContext(), film.videoId(), choice.id, choice.delayMs);
         String label = entry != null ? entry.label : UtubotSubtitlePicker.languageName(choice.lang);
+
+        if (UtubotPlayerLog.isEnabled()) {
+            UtubotPlayerLog.event("subtitle.external.load", choice.lang + " delay " + choice.delayMs + " ms");
+        }
 
         RxHelper.disposeActions(mAction);
         mAction = Observable.fromCallable(() -> {
@@ -253,6 +265,7 @@ public class UtubotFilmSubtitlesController extends BasePlayerController {
                     }
                 }, error -> {
                     Log.e(TAG, "Subtitle download failed: %s", error.getMessage());
+                    UtubotPlayerLog.event("subtitle.external.failed");
                     MessageHelpers.showLongMessage(getContext(), R.string.utubot_films_subtitles_unavailable);
                 });
     }
