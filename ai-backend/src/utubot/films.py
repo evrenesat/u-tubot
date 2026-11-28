@@ -16,6 +16,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -84,6 +86,11 @@ FALLBACK_LANGUAGE = "en"
 # (stream, subtitle) frame rates whose mix-up shifts the end of a subtitle by their ratio.
 FRAME_RATE_PAIRS = ((25.0, 23.976), (25.0, 24.0), (24.0, 23.976))
 FRAME_RATE_RATIO_SLACK = 0.012
+MAX_LISTED = 24
+CACHE_ENTRIES = 64
+CACHE_TTL_S = 3600.0
+ID_RE = re.compile(r"[^A-Za-z0-9_.-]")
+ID_MAX_CHARS = 48
 
 
 class FilmRefused(RuntimeError):
@@ -346,6 +353,30 @@ def check_timing(
 # ---- the add-on -----------------------------------------------------------------------------------
 
 
+class TtlCache:
+    """A small in-memory cache for the add-on's lists and the files, so the cut builder and the picker ask once."""
+
+    def __init__(self, entries: int = CACHE_ENTRIES, ttl_s: float = CACHE_TTL_S, clock=time.time):
+        self.entries, self.ttl_s, self.clock = entries, ttl_s, clock
+        self._data: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+
+    def get(self, key: str) -> Any | None:
+        hit = self._data.get(key)
+        if hit is None:
+            return None
+        if self.clock() - hit[0] > self.ttl_s:
+            del self._data[key]
+            return None
+        self._data.move_to_end(key)
+        return hit[1]
+
+    def put(self, key: str, value: Any) -> None:
+        self._data[key] = (self.clock(), value)
+        self._data.move_to_end(key)
+        while len(self._data) > self.entries:
+            self._data.popitem(last=False)
+
+
 class FilmSubtitles:
     """Asks the subtitles add-on for a title and downloads the file that fits the release."""
 
@@ -358,6 +389,7 @@ class FilmSubtitles:
         self.cfg = cfg
         self.transport = transport
         self.resolver = resolver
+        self.cache = TtlCache()
 
     def addon_url(self, source: FilmSource, file_name: str, size_bytes: int | None) -> str:
         """The add-on request: type, IMDb id (with season and episode), the stream's file name and size."""
@@ -404,6 +436,9 @@ class FilmSubtitles:
         self, source: FilmSource, file_name: str, size_bytes: int | None
     ) -> list[dict[str, Any]]:
         url = self.addon_url(source, file_name, size_bytes)
+        cached = self.cache.get("list|" + url)
+        if cached is not None:
+            return cached
         host = urlsplit(self.cfg.subtitles_url).hostname or ""
         raw = await self._get(url, allow_hosts=[host], limit=self.cfg.max_subtitle_bytes)
         try:
@@ -411,7 +446,45 @@ class FilmSubtitles:
         except ValueError as exc:
             raise FilmRefused("The subtitles service answered nonsense.", reason="service") from exc
         items = data.get("subtitles") if isinstance(data, dict) else None
-        return [item for item in items or [] if isinstance(item, dict)]
+        found = [item for item in items or [] if isinstance(item, dict)]
+        self.cache.put("list|" + url, found)
+        return found
+
+    async def download(self, item: dict[str, Any]) -> bytes:
+        """The file of a candidate, from the cache when it was fetched lately."""
+        address = str(item["url"])
+        cached = self.cache.get("file|" + address)
+        if cached is not None:
+            return cached
+        body = await self._get(
+            address, allow_hosts=self.cfg.download_hosts, limit=self.cfg.max_subtitle_bytes
+        )
+        self.cache.put("file|" + address, body)
+        return body
+
+    async def listing(
+        self,
+        source: FilmSource,
+        *,
+        file_name: str,
+        size_bytes: int | None = None,
+        preferred_language: str | None = None,
+    ) -> list[dict[str, Any]]:
+        found = await self.candidates(source, file_name, size_bytes)
+        return list_subtitles(found, file_name, preferred_language, source.season, source.episode)
+
+    async def webvtt_of(
+        self, source: FilmSource, *, file_name: str, size_bytes: int | None, subtitle: str
+    ) -> str:
+        """One listed subtitle as WebVTT; the TV names it by the id of the list, never by an address."""
+        found = await self.candidates(source, file_name, size_bytes)
+        item = next((c for c in found if c.get("url") and subtitle_id(c) == subtitle), None)
+        if item is None:
+            raise FilmRefused("That subtitle is not offered for this film.", reason="none")
+        cues = parse_srt(decode_subtitle(await self.download(item)))
+        if not cues:
+            raise FilmRefused("That subtitle file has no readable lines.", reason="service")
+        return webvtt(cues)
 
     async def fetch(
         self,
@@ -436,11 +509,7 @@ class FilmSubtitles:
         failure = ""  # the reason the best release match was refused: the one worth telling
         for item in ordered[: self.cfg.max_candidates_tried]:
             try:
-                body = await self._get(
-                    str(item["url"]),
-                    allow_hosts=self.cfg.download_hosts,
-                    limit=self.cfg.max_subtitle_bytes,
-                )
+                body = await self.download(item)
             except FilmRefused as exc:
                 failure = failure or exc.message
                 continue
@@ -463,3 +532,77 @@ class FilmSubtitles:
                 release_score(item, file_name),
             )
         raise FilmRefused(failure or "No subtitle file fits this stream.", reason="timing")
+
+
+# ---- the TV's own subtitle picker ---------------------------------------------------------------------
+
+
+def subtitle_id(item: dict[str, Any]) -> str:
+    """A safe id for a path segment: the add-on's own id, else a hash of its address."""
+    raw = ID_RE.sub("", str(item.get("id") or ""))[:ID_MAX_CHARS]
+    return raw or hashlib.sha1(str(item.get("url") or "").encode()).hexdigest()[:16]
+
+
+def vtt_time(seconds: float) -> str:
+    ms = max(0, round(seconds * 1000))
+    return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d}.{ms % 1000:03d}"
+
+
+def webvtt(cues: list[tuple[float, float, str]]) -> str:
+    """The cues as a WebVTT file, the format the TV's player reads as a side-loaded text track."""
+    out = ["WEBVTT", ""]
+    for start, end, text in cues:
+        out.append(f"{vtt_time(start)} --> {vtt_time(max(end, start))}")
+        out.append(text.replace("-->", "->"))
+        out.append("")
+    return "\n".join(out)
+
+
+def list_subtitles(
+    candidates: list[dict[str, Any]],
+    file_name: str,
+    preferred_language: str | None,
+    season: int | None = None,
+    episode: int | None = None,
+) -> list[dict[str, Any]]:
+    """What the picker offers: the viewer's language, then English, each best release match first.
+
+    The same filters as `choose_subtitles` (an address, the right episode) but every wanted
+    language is kept, not only the first with a candidate.
+    """
+    wanted = wanted_languages(preferred_language)
+    usable = []
+    for item in candidates:
+        if not item.get("url"):
+            continue
+        if season is not None and (item.get("season") or season) != season:
+            continue
+        if episode is not None and (item.get("episode") or episode) != episode:
+            continue
+        rank = language_rank(str(item.get("lang", "")), wanted)
+        if rank is not None:
+            usable.append((rank, item))
+    usable.sort(
+        key=lambda pair: (pair[0], -release_score(pair[1], file_name), subtitle_id(pair[1]))
+    )
+    seen: set[str] = set()
+    listed = []
+    for _, item in usable:
+        sid = subtitle_id(item)
+        if sid in seen:
+            continue
+        seen.add(sid)
+        listed.append(
+            {
+                "id": sid,
+                "lang": str(item.get("lang") or ""),
+                "name": str(item.get("subtitleFileName") or item.get("release") or "")[:200],
+                "score": round(release_score(item, file_name), 3),
+                "hash_match": item.get("m") == HASH_MATCH,
+            }
+        )
+        if len(listed) >= MAX_LISTED:
+            break
+    if listed:
+        listed[0]["best"] = True
+    return listed

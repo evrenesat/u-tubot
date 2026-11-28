@@ -302,6 +302,11 @@ public class EmbedPlayerView extends PlayerView implements PlaybackView {
     }
 
     @Override
+    public void setFilmSubtitle(java.io.File file, String id, String lang, String label) {
+        mExoPlayerController.setFilmSubtitle(file, id, lang, label);
+    }
+
+    @Override
     public void openUrlList(List<String> urlList) {
         mExoPlayerController.openUrlList(urlList);
     }

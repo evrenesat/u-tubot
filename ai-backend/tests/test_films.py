@@ -9,6 +9,7 @@ from utubot.config import FilmsConfig
 from utubot.films import (
     FilmRefused,
     FilmSubtitles,
+    TtlCache,
     check_timing,
     choose_subtitles,
     film_source,
@@ -271,6 +272,7 @@ class TestFetch:
         # the best release match decides what is told: file a ends early (40 lines, stops at 4 min)
         assert "different cut" in refused.value.message
         files["/b.srt"] = srt(cues(58))
+        service.cache = TtlCache()  # the files are cached for the picker; the add-on's file changed
         got = await service.fetch(self.SOURCE, file_name="Movie.mkv", duration_ms=600_000)
         assert len(got.segments) == 58
 

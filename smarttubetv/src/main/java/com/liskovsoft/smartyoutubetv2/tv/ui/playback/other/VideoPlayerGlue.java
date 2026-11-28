@@ -52,6 +52,7 @@ import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.SearchAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.SubscribeAction;
 import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotClockAction;
 import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotFilmStreamsAction;
+import com.liskovsoft.smartyoutubetv2.tv.utubot.UtubotFilmSubtitlesAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.TwoStateAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.ThumbsDownAction;
 import com.liskovsoft.smartyoutubetv2.tv.ui.playback.actions.ThumbsUpAction;
@@ -129,6 +130,7 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
         putAction(new VideoInfoAction(context));
         putAction(new UtubotFilmStreamsAction(context));
         putAction(new UtubotClockAction(context));
+        putAction(new UtubotFilmSubtitlesAction(context));
         putAction(new VideoSpeedAction(context));
         putAction(new VideoStatsAction(context));
         putAction(new SearchAction(context));
@@ -237,7 +239,7 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
             addShown(adapter, R.id.action_thumbs_down);
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_SUBTITLES)) {
-            adapter.add(mActions.get(R.id.lb_control_closed_captioning));
+            addShown(adapter, R.id.lb_control_closed_captioning); // a film has its own picker, with the subtitles from the internet
         }
         if (mPlayerTweaksData.isPlayerButtonEnabled(PlayerTweaksData.PLAYER_BUTTON_ADD_TO_PLAYLIST)) {
             addShown(adapter, R.id.action_playlist_add);
@@ -264,6 +266,7 @@ public class VideoPlayerGlue extends MaxControlsVideoPlayerGlue<PlayerAdapter> i
             adapter.add(mActions.get(R.id.action_utubot_clock)); // a film and a video each keep their own choice
         }
         if (mFilmMode) {
+            adapter.add(0, mActions.get(R.id.action_utubot_films_subtitles));
             adapter.add(0, mActions.get(R.id.action_utubot_films_streams));
         }
     }

@@ -27,6 +27,7 @@
     <item name="action_utubot_cut_skip" type="id"/>
     <item name="action_utubot_films_streams" type="id"/>
     <item name="action_utubot_clock" type="id"/>
+    <item name="action_utubot_films_subtitles" type="id"/>
     <item name="channel_new_content" type="id"/>
     <item name="linkify_click_handler" type="id"/>
 </resources>

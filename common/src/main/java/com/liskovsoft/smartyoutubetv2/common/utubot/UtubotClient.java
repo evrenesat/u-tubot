@@ -73,6 +73,7 @@ public class UtubotClient {
     private static final int HTTP_SERVER_ERROR = 500;
     private static final String LEDGER_PATH = "/ledger";
     private static final String REPORTS_PATH = "/device/reports";
+    public static final int MAX_SUBTITLE_BYTES = 2 * 1024 * 1024;
     private static final UtubotFailureThrottle sThrottle = new UtubotFailureThrottle();
     private static final int HTTP_BAD_REQUEST = 400;
     private static final int HTTP_NOT_FOUND = 404;
@@ -257,6 +258,40 @@ public class UtubotClient {
         RequestBody body = RequestBody.create(gzipJson, MediaType.get("application/json; charset=utf-8"));
 
         return send(builder("/device/reports", true).header("Content-Encoding", "gzip").post(body), timeoutMs);
+    }
+
+    /**
+     * The subtitles the backend offers for a film's stream ({@code {"subtitles":[{"id","lang","name","score","best"?}]}}): the viewer's
+     * language, then English, best release match first. The same client and cache as the film cuts.
+     */
+    public String filmSubtitles(UtubotFilmPlay film, int timeoutMs) throws IOException {
+        HttpUrl.Builder url = urlBuilder("/films/subtitles");
+        addFilmSubtitleFacts(url, film);
+
+        if (!film.subtitleLanguage().isEmpty()) {
+            url.addQueryParameter("lang", film.subtitleLanguage());
+        }
+
+        return send(authorized(url), timeoutMs);
+    }
+
+    /**
+     * One of the listed subtitles as WebVTT text, at most {@link #MAX_SUBTITLE_BYTES} long
+     */
+    public String filmSubtitleFile(UtubotFilmPlay film, String subtitleId, int timeoutMs) throws IOException {
+        HttpUrl.Builder url = urlBuilder("/films/subtitles/" + subtitleId + ".vtt");
+        addFilmSubtitleFacts(url, film);
+
+        return send(authorized(url), timeoutMs);
+    }
+
+    private static void addFilmSubtitleFacts(HttpUrl.Builder url, UtubotFilmPlay film) {
+        url.addQueryParameter("source_key", film.sourceKey());
+        url.addQueryParameter("file_name", film.streamName);
+
+        if (film.sizeBytes > 0) {
+            url.addQueryParameter("size", String.valueOf(film.sizeBytes));
+        }
     }
 
     /**

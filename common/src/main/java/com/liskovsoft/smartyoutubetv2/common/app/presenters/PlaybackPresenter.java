@@ -74,6 +74,7 @@ public class PlaybackPresenter extends BasePresenter<PlaybackView> implements Pl
             mEventListeners.add(new UtubotCutController());
             mEventListeners.add(new com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmStreamsController());
             mEventListeners.add(new com.liskovsoft.smartyoutubetv2.common.utubot.UtubotClockController());
+            mEventListeners.add(new com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmSubtitlesController());
         }
         mEventListeners.add(new CensoredWordsController());
         mEventListeners.add(new AutoFrameRateController());

@@ -47,6 +47,7 @@ from .db import MAX_CHANNEL_ID_CHARS, Database
 from .devicereports import DeviceReports, install_report_routes
 from .devicesettings import DeviceSettings, install_settings_routes
 from .feature import feature_run
+from .filmroutes import install_film_routes
 from .films import SOURCE_KIND_FILM, FilmSubtitles, film_source
 from .inbox import (
     KIND_CAPTIONS,
@@ -1772,6 +1773,7 @@ def create_app(
     install_voice_routes(app, deps)
     install_settings_routes(app, deps)
     install_report_routes(app, deps)
+    install_film_routes(app, deps)
     return app
 
 
