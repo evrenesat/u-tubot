@@ -25,6 +25,7 @@ public final class UtubotFilmSubtitles {
     public static final long DELAY_LIMIT_MS = 60_000;
     private static final String DIR = "utubot_film_subtitles";
     private static final String PREFS = "utubot_film_subtitles";
+    private static final String LAST_KEY = "_last"; // a title key never starts with an underscore
     private static final Pattern VTT_TIME = Pattern.compile("(?:(\\d+):)?(\\d{2}):(\\d{2})\\.(\\d{3})");
 
     private UtubotFilmSubtitles() {
@@ -171,6 +172,16 @@ public final class UtubotFilmSubtitles {
 
         public void set(String titleKey, Choice choice) {
             mPrefs.edit().putString(titleKey, choice.encode()).apply();
+        }
+
+        /** The last choice the viewer made for any film or episode: off, or on with its language and kind. A title's own choice wins over it. */
+        @Nullable
+        public Choice getLast() {
+            return Choice.decode(mPrefs.getString(LAST_KEY, null));
+        }
+
+        public void setLast(Choice choice) {
+            mPrefs.edit().putString(LAST_KEY, new Choice(choice.kind, "", choice.lang, 0).encode()).apply();
         }
     }
 }

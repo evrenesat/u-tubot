@@ -281,4 +281,31 @@ public class UtubotFilmsCatalog {
 
         return result;
     }
+
+    /**
+     * The episode the details screen opens on: the first aired one the viewer has not finished, in season and episode order. When every
+     * aired episode is finished (or none has aired) it is the first episode, never an episode that has not aired.
+     */
+    public interface Watched {
+        boolean isWatched(Episode episode);
+    }
+
+    @Nullable
+    public static Episode firstUnwatched(List<Episode> episodes, long now, Watched watched) {
+        Episode first = null;
+
+        for (int season : seasons(episodes)) {
+            for (Episode episode : episodesOf(episodes, season)) {
+                if (first == null) {
+                    first = episode;
+                }
+
+                if (episode.isAired(now) && !watched.isWatched(episode)) {
+                    return episode;
+                }
+            }
+        }
+
+        return first;
+    }
 }

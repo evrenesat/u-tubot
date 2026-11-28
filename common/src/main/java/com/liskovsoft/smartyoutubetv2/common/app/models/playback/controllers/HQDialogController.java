@@ -65,6 +65,11 @@ public class HQDialogController extends BasePlayerController {
         addAudioDelayCategory();
         addPitchEffectCategory();
         addSleepTimerCategory();
+        if (film) {
+            for (OptionCategory category : com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmSubtitlesController.styleCategories(getContext())) {
+                addCategoryInt(category);
+            }
+        }
         //addBackgroundPlaybackCategory();
 
         appendOptions(mCategoriesInt);

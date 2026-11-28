@@ -68,4 +68,24 @@ public class UtubotFilmSubtitlesTest {
         assertNull(Choice.decode("external\tx\ten\tNaN"));
         assertNull(Choice.decode(null));
     }
+
+    @Test
+    public void lastChoiceIsGlobalAndATitlesOwnChoiceStaysSeparate() {
+        android.content.Context context = org.robolectric.RuntimeEnvironment.getApplication();
+        UtubotFilmSubtitles.Store store = new UtubotFilmSubtitles.Store(context);
+        org.junit.Assert.assertNull(store.getLast());
+
+        store.set("tt1:1:1", new Choice(Choice.EXTERNAL, "n1", "tr", 1500));
+        store.setLast(new Choice(Choice.EXTERNAL, "n1", "tr", 1500));
+        assertEquals("tr", store.getLast().lang);
+        assertEquals(Choice.EXTERNAL, store.getLast().kind);
+        assertEquals(0, store.getLast().delayMs); // the delay belongs to the title
+        org.junit.Assert.assertNull(store.get("tt1:1:2")); // the next episode has no choice of its own, so the last one applies
+
+        store.set("tt1:1:2", new Choice(Choice.OFF, "", "", 0)); // its own choice wins and does not need the last one
+        assertEquals(Choice.OFF, store.get("tt1:1:2").kind);
+
+        store.setLast(new Choice(Choice.OFF, "", "", 0));
+        assertEquals(Choice.OFF, store.getLast().kind);
+    }
 }

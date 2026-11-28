@@ -154,4 +154,36 @@ public final class UtubotSubtitlePicker {
     public static External bestExternal(List<External> external) {
         return external.isEmpty() ? null : external.get(0);
     }
+
+    /** The file's track in the language of the remembered choice (the first one the player lists), or none when the file has no such track */
+    @Nullable
+    public static Embedded rememberedEmbedded(List<Embedded> tracks, @Nullable Choice last) {
+        if (last == null || Choice.OFF.equals(last.kind) || normalize(last.lang).isEmpty()) {
+            return null;
+        }
+
+        for (Embedded track : tracks) {
+            if (normalize(track.language).equals(normalize(last.lang))) {
+                return track;
+            }
+        }
+
+        return null;
+    }
+
+    /** The subtitle from the internet in the language of the remembered choice, best release match first, or none when none was found */
+    @Nullable
+    public static External rememberedExternal(List<External> external, @Nullable Choice last) {
+        if (last == null || !Choice.EXTERNAL.equals(last.kind) || normalize(last.lang).isEmpty()) {
+            return null;
+        }
+
+        for (External item : external) {
+            if (normalize(item.lang).equals(normalize(last.lang))) {
+                return item;
+            }
+        }
+
+        return null;
+    }
 }

@@ -67,9 +67,11 @@ public class UtubotFilmSubtitlesController extends BasePlayerController {
             return;
         }
 
-        Choice choice = new UtubotFilmSubtitles.Store(getContext()).get(video.film.progressId);
+        UtubotFilmSubtitles.Store store = new UtubotFilmSubtitles.Store(getContext());
+        Choice choice = store.get(video.film.progressId);
 
         if (choice == null) {
+            applyRemembered(video, store.getLast());
             return;
         }
 
@@ -83,6 +85,56 @@ public class UtubotFilmSubtitlesController extends BasePlayerController {
             if (track != null) {
                 getPlayer().setFormat(track);
             }
+        }
+    }
+
+    /** No choice for this title yet: the last choice for any film (off, or a language and kind) goes on, and the title's own choice still wins later */
+    private void applyRemembered(Video video, @Nullable Choice last) {
+        if (last == null) {
+            return;
+        }
+
+        if (Choice.OFF.equals(last.kind)) {
+            getPlayer().setFormat(FormatItem.SUBTITLE_NONE);
+            return;
+        }
+
+        UtubotSettings settings = UtubotSettings.instance(getContext());
+
+        if (Choice.EXTERNAL.equals(last.kind) && settings.isConfigured()) {
+            RxHelper.disposeActions(mAction);
+            mAction = Observable.fromCallable(() -> UtubotFilmSubtitles.parse(new UtubotClient(settings.getUrl(), settings.getToken()).quiet()
+                            .filmSubtitles(video.film, TIMEOUT_MS)))
+                    .subscribeOn(Schedulers.io())
+                    .observeOn(AndroidSchedulers.mainThread())
+                    .subscribe(list -> {
+                        External found = UtubotSubtitlePicker.rememberedExternal(list, last);
+
+                        if (getPlayer() == null || video != getVideo()) {
+                            return;
+                        }
+
+                        if (found != null) {
+                            applyExternal(video, new Choice(Choice.EXTERNAL, found.id, found.lang, 0), null);
+                        } else {
+                            applyRememberedEmbedded(last);
+                        }
+                    }, error -> applyRememberedEmbedded(last));
+            return;
+        }
+
+        applyRememberedEmbedded(last);
+    }
+
+    private void applyRememberedEmbedded(Choice last) {
+        if (getPlayer() == null) {
+            return;
+        }
+
+        Embedded track = UtubotSubtitlePicker.rememberedEmbedded(embeddedTracks(), last);
+
+        if (track != null && track.handle instanceof FormatItem) {
+            getPlayer().setFormat((FormatItem) track.handle);
         }
     }
 
@@ -150,11 +202,31 @@ public class UtubotFilmSubtitlesController extends BasePlayerController {
         }
 
         dialog.appendRadioCategory(getContext().getString(R.string.utubot_films_subtitles_delay), delays);
+        appendStyleCategories(dialog, getContext());
         dialog.showDialog(getContext().getString(R.string.utubot_films_subtitles));
 
         if (!listed && UtubotSettings.instance(getContext()).isConfigured()) {
             MessageHelpers.showLongMessage(getContext(), R.string.utubot_films_subtitles_unavailable);
         }
+    }
+
+    /**
+     * The subtitle style of YouTube playback (look, size, position), the same settings and the same stored choice: the player draws every
+     * subtitle track (the file's own and the ones from the internet) with them, and they are kept for every film and video.
+     */
+    public static void appendStyleCategories(AppDialogPresenter dialog, android.content.Context context) {
+        for (com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCategory category : styleCategories(context)) {
+            dialog.appendRadioCategory(category.title, category.options);
+        }
+    }
+
+    public static List<com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCategory> styleCategories(android.content.Context context) {
+        List<com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCategory> categories = new ArrayList<>();
+        categories.add(com.liskovsoft.smartyoutubetv2.common.utils.AppDialogUtil.createSubtitleStylesCategory(context));
+        categories.add(com.liskovsoft.smartyoutubetv2.common.utils.AppDialogUtil.createSubtitleSizeCategory(context));
+        categories.add(com.liskovsoft.smartyoutubetv2.common.utils.AppDialogUtil.createSubtitlePositionCategory(context));
+
+        return categories;
     }
 
     private List<Embedded> embeddedTracks() {
@@ -203,13 +275,16 @@ public class UtubotFilmSubtitlesController extends BasePlayerController {
         if (Choice.EXTERNAL.equals(entry.kind)) {
             Choice choice = new Choice(Choice.EXTERNAL, entry.id, entry.lang, delay);
             store.set(video.film.progressId, choice);
+            store.setLast(choice);
             applyExternal(video, choice, entry);
         } else if (Choice.EMBEDDED.equals(entry.kind) && entry.handle instanceof FormatItem) {
             store.set(video.film.progressId, new Choice(Choice.EMBEDDED, entry.id, entry.lang, 0));
+            store.setLast(new Choice(Choice.EMBEDDED, entry.id, entry.lang, 0));
             getPlayer().setFilmSubtitle(null, "", "", "");
             getPlayer().setFormat((FormatItem) entry.handle);
         } else {
             store.set(video.film.progressId, new Choice(Choice.OFF, "", "", 0));
+            store.setLast(new Choice(Choice.OFF, "", "", 0));
             getPlayer().setFormat(FormatItem.SUBTITLE_NONE);
         }
     }

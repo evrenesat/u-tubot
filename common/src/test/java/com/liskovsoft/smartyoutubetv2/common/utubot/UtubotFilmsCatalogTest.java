@@ -63,4 +63,26 @@ public class UtubotFilmsCatalogTest {
         assertEquals(0, UtubotFilmsCatalog.runtimeMs(""));
         assertEquals(0, UtubotFilmsCatalog.runtimeMs(null));
     }
+
+    @Test
+    public void detailsOpenOnTheFirstUnfinishedAiredEpisode() {
+        java.util.List<UtubotFilmsCatalog.Episode> episodes = new java.util.ArrayList<>();
+        for (int season = 1; season <= 2; season++) {
+            for (int number = 1; number <= 4; number++) {
+                episodes.add(new UtubotFilmsCatalog.Episode(season, number, "T", number == 4 && season == 2 ? Long.MAX_VALUE : 0));
+            }
+        }
+
+        UtubotFilmsCatalog.Episode none = UtubotFilmsCatalog.firstUnwatched(episodes, 1000, e -> false);
+        org.junit.Assert.assertEquals(1, none.season);
+        org.junit.Assert.assertEquals(1, none.number);
+
+        UtubotFilmsCatalog.Episode mid = UtubotFilmsCatalog.firstUnwatched(episodes, 1000, e -> e.season == 1 || e.number < 3);
+        org.junit.Assert.assertEquals(2, mid.season);
+        org.junit.Assert.assertEquals(3, mid.number);
+
+        UtubotFilmsCatalog.Episode all = UtubotFilmsCatalog.firstUnwatched(episodes, 1000, e -> true);
+        org.junit.Assert.assertEquals(1, all.season);
+        org.junit.Assert.assertEquals(1, all.number);
+    }
 }

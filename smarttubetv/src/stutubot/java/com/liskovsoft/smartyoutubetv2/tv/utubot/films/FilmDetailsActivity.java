@@ -64,6 +64,8 @@ public class FilmDetailsActivity extends Activity {
     private String mPoster;
     private Item mItem;
     private int mSeason = 1;
+    private boolean mFocusEpisode; // the first view of a series: focus the current or next episode, not the first
+    private View mSelectedEpisodeCard;
     private Episode mEpisode;
     private List<Stream> mStreams = new ArrayList<>();
     private LinearLayout mContent;
@@ -172,7 +174,8 @@ public class FilmDetailsActivity extends Activity {
         if (item.isSeries()) {
             mProgress.rememberEpisodes(item.id, item.episodes);
             Episode resume = resumeEpisode(item);
-            mEpisode = resume != null ? resume : first(item.episodes);
+            mEpisode = resume != null ? resume : UtubotFilmsCatalog.firstUnwatched(item.episodes, System.currentTimeMillis(), this::isWatched);
+            mFocusEpisode = true;
             mSeason = mEpisode != null ? mEpisode.season : 1;
             buildEpisodePickers();
         }
@@ -297,6 +300,10 @@ public class FilmDetailsActivity extends Activity {
             boolean watched = entry != null && entry.isWatched();
             View card = episodeCard(episode, entry == null ? 0f : entry.share(), watched);
             row.addView(card);
+
+            if (mEpisode != null && mEpisode.season == episode.season && mEpisode.number == episode.number) {
+                mSelectedEpisodeCard = card;
+            }
         }
 
         HorizontalScrollView episodeScroll = new HorizontalScrollView(this);
@@ -304,6 +311,32 @@ public class FilmDetailsActivity extends Activity {
         episodeScroll.setClipToPadding(false);
         episodeScroll.addView(row);
         mEpisodeSlot.addView(episodeScroll);
+        showSelectedEpisode(episodeScroll);
+    }
+
+    /** The selected episode is the first card in view; on the first view of the screen it also has the focus */
+    private void showSelectedEpisode(HorizontalScrollView scroll) {
+        View card = mSelectedEpisodeCard;
+        boolean focus = mFocusEpisode;
+        mSelectedEpisodeCard = null;
+
+        if (card == null) {
+            return;
+        }
+
+        scroll.post(() -> {
+            scroll.scrollTo(Math.max(0, card.getLeft() - FilmsUi.dp(this, 8)), 0);
+
+            if (focus) {
+                card.requestFocus();
+            }
+        });
+    }
+
+    private boolean isWatched(Episode episode) {
+        Entry entry = mProgress.get(episode.videoId(mItem.id));
+
+        return entry != null && entry.isWatched();
     }
 
     private View episodeCard(Episode episode, float share, boolean watched) {
@@ -345,6 +378,7 @@ public class FilmDetailsActivity extends Activity {
     }
 
     private void selectSeason(int season) {
+        mFocusEpisode = false;
         mSeason = season;
         List<Episode> episodes = UtubotFilmsCatalog.episodesOf(mItem.episodes, season);
         mEpisode = episodes.isEmpty() ? null : episodes.get(0);
@@ -353,6 +387,7 @@ public class FilmDetailsActivity extends Activity {
     }
 
     private void selectEpisode(Episode episode) {
+        mFocusEpisode = false;
         mEpisode = episode;
         buildEpisodePickers();
         loadStreams();
@@ -391,12 +426,6 @@ public class FilmDetailsActivity extends Activity {
         }
 
         return null;
-    }
-
-    private static Episode first(List<Episode> episodes) {
-        List<Integer> seasons = UtubotFilmsCatalog.seasons(episodes);
-
-        return seasons.isEmpty() ? null : UtubotFilmsCatalog.episodesOf(episodes, seasons.get(0)).get(0);
     }
 
     private void loadStreams() {
@@ -460,7 +489,7 @@ public class FilmDetailsActivity extends Activity {
             mStreamList.addView(FilmsUi.streamRow(this, stream, i == 0, mDevice, v -> play(stream)));
         }
 
-        if (!streams.isEmpty()) {
+        if (!streams.isEmpty() && !mFocusEpisode) {
             mPlay.requestFocus();
         }
     }

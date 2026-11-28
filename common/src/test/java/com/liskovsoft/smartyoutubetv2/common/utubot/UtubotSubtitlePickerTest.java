@@ -93,4 +93,21 @@ public class UtubotSubtitlePickerTest {
         assertEquals(1, entries.size());
         assertTrue(entries.get(0).selected);
     }
+
+    @Test
+    public void rememberedChoiceFindsTheSameLanguageInTheNextFile() {
+        Choice french = new Choice(Choice.EMBEDDED, "other", "fr", 0);
+        assertEquals("f1", UtubotSubtitlePicker.rememberedEmbedded(FILE, french).id);
+        assertEquals("f3", UtubotSubtitlePicker.rememberedEmbedded(FILE, new Choice(Choice.EMBEDDED, "", "tur", 0)).id);
+        org.junit.Assert.assertNull(UtubotSubtitlePicker.rememberedEmbedded(FILE, new Choice(Choice.EMBEDDED, "", "de", 0)));
+        org.junit.Assert.assertNull(UtubotSubtitlePicker.rememberedEmbedded(FILE, new Choice(Choice.OFF, "", "", 0)));
+        org.junit.Assert.assertNull(UtubotSubtitlePicker.rememberedEmbedded(FILE, null));
+    }
+
+    @Test
+    public void rememberedInternetChoiceTakesTheBestMatchOfItsLanguage() {
+        assertEquals("n2", UtubotSubtitlePicker.rememberedExternal(NET, new Choice(Choice.EXTERNAL, "", "en", 0)).id);
+        org.junit.Assert.assertNull(UtubotSubtitlePicker.rememberedExternal(NET, new Choice(Choice.EXTERNAL, "", "de", 0)));
+        org.junit.Assert.assertNull(UtubotSubtitlePicker.rememberedExternal(NET, new Choice(Choice.EMBEDDED, "", "en", 0)));
+    }
 }
