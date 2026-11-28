@@ -485,6 +485,7 @@ public class FilmDetailsActivity extends Activity {
     private void play(Stream stream) {
         UtubotFilmPlay film = newFilm(stream);
         Log.i(TAG, "Chosen stream: " + stream.format.describe() + " verdict=" + stream.format.verdict(mDevice) + " resolution=" + stream.resolution);
+        com.liskovsoft.smartyoutubetv2.common.app.views.ViewManager.instance(this).setFilmParent(getClass()); // Back from the player lands here
         PlaybackPresenter.instance(this).openVideo(Video.fromFilm(film));
     }
 

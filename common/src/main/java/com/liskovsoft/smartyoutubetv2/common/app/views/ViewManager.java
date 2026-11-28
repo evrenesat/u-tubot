@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.lifecycle.Lifecycle;
 
 import com.liskovsoft.sharedutils.helpers.FileHelpers;
@@ -53,6 +54,7 @@ public class ViewManager {
     private Class<? extends Activity> mDefaultTop;
     private long mPrevThrottleTimeMS;
     private boolean mIsMoveToBackEnabled;
+    private Class<? extends Activity> mFilmParent;
     private boolean mIsFinished;
     private boolean mIsPlayerOnlyModeEnabled;
     private long mPendingActivityMs;
@@ -188,6 +190,7 @@ public class ViewManager {
             // The films screen that opened the player is under it: finishing the player shows it. The player still leaves the stack, or
             // startView takes it for the screen on top and never opens the next film (#300).
             removeTopActivity();
+            returnToFilmScreen(activity);
             return;
         }
 
@@ -221,6 +224,28 @@ public class ViewManager {
                 }
             }
         }
+    }
+
+    /**
+     * The films screen that started a film (its details screen) is the one Back returns to. It is not in the stack of screens, so a
+     * Back that leaves it to the system can end on the TV's home screen when the player runs in a task of its own: the screen is
+     * brought to the front explicitly (the instance that is there, nothing is recreated).
+     */
+    public void setFilmParent(@Nullable Class<? extends Activity> parent) {
+        mFilmParent = parent;
+    }
+
+    private void returnToFilmScreen(Activity player) {
+        mIsMoveToBackEnabled = false; // the app is not leaving
+
+        if (mFilmParent == null) {
+            return;
+        }
+
+        Intent intent = new Intent(player, mFilmParent);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+        Log.d(TAG, "Film player finished. Returning to " + mFilmParent.getSimpleName());
+        safeStartActivity(player, intent);
     }
 
     private boolean isFilmPlayer(Activity activity) {

@@ -1,3 +1,9 @@
+## 2026-11-28 (Back from the film player left the app, #309 item 6)
+
+- Cause: since #300 the film branch of `ViewManager.startParentView` only popped the player from the stack of screens and returned. The player is a `singleInstance` activity (a task of its own) and the films screens are not in the stack, so nothing brought the details screen back: the player's task closed over the TV home screen.
+- Fix: the details screen tells the view manager it started the film (`setFilmParent`); when the film player finishes, `returnToFilmScreen` starts that screen with `NEW_TASK | REORDER_TO_FRONT` (the existing instance, nothing recreated) and the app is not marked as leaving.
+- Tests: `ViewManagerFilmReplayTest.backFromAFilmReturnsToItsDetailsScreenAfterOneFilmAndAfterTwo`. Emulator (1920x1080, temporary exported-activity build, not committed): play, Back lands on details; play again, Back, Back lands on the films home (`shots7/item6-back-to-details.png`, `item6-back-to-films-home.png`).
+
 ## 2026-11-28 (Continue watching keeps a series after an episode, #309 item 1)
 
 - Cause: `UtubotFilmsProgress.continueWatching()` kept only entries that were not watched (under 90% of the length). Finishing an episode marked its entry watched, and the series had no other entry, so it dropped out of the row. Nothing knew which episode came next.

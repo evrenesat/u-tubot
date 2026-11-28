@@ -18,6 +18,8 @@ import java.lang.ref.WeakReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Two films in a row (#300): the player of the first leaves the stack of screens when it finishes, so starting the player for the next
@@ -46,6 +48,28 @@ public class ViewManagerFilmReplayTest {
             manager.startParentView(player);
 
             assertNotEquals("play " + play, PlaybackView.class, manager.getTopView());
+        }
+    }
+
+    @Test
+    public void backFromAFilmReturnsToItsDetailsScreenAfterOneFilmAndAfterTwo() throws Exception {
+        android.app.Application app = RuntimeEnvironment.getApplication();
+        ViewManager manager = ViewManager.instance(app);
+        manager.register(PlaybackView.class, PlayerActivity.class);
+        manager.setFilmParent(DetailsActivity.class);
+
+        for (int play = 0; play < 2; play++) {
+            PlayerActivity player = Robolectric.buildActivity(PlayerActivity.class).create().get();
+            manager.addTop(player);
+            while (org.robolectric.Shadows.shadowOf(app).getNextStartedActivity() != null) { }
+            setPlayingVideo(Video.fromFilm(new UtubotFilmPlay("tt1:1:" + play, "series", "tt1", "Show", null, 1, play, "https://h/e.mkv", "Show", 0, 0)));
+
+            manager.startParentView(player);
+
+            android.content.Intent started = org.robolectric.Shadows.shadowOf(app).getNextStartedActivity();
+            assertNotNull("play " + play + ": Back must start the details screen, not leave the app", started);
+            assertEquals(DetailsActivity.class.getName(), started.getComponent().getClassName());
+            assertTrue((started.getFlags() & android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT) != 0);
         }
     }
 
