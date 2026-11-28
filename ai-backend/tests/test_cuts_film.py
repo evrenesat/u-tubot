@@ -15,7 +15,11 @@ RELEASE = "The.Movie.1994.1080p.BluRay.x264-GROUP.mkv|4000000"
 FID = film_video_id(KEY, RELEASE)
 DURATION_MS = 600_000
 POSTER = "https://images.metahub.space/poster/small/tt0111161/img"
-ANSWER = {"parts": [{"from": 1, "to": 30, "label": "The first half"}], "summary": "s", "kept_s": 300}
+ANSWER = {
+    "parts": [{"from": 1, "to": 30, "label": "The first half"}],
+    "summary": "s",
+    "kept_s": 300,
+}
 
 
 def film_params(release=RELEASE, key=KEY, duration_ms=DURATION_MS, **extra):
@@ -183,7 +187,9 @@ class TestFilmRefusals:
         assert r.status_code == 400
 
     async def test_a_bad_source_key_is_refused(self, film_env):
-        r = await post_film(film_env, params=film_params(key="imdb:nope"), preset="cut-highlights-5")
+        r = await post_film(
+            film_env, params=film_params(key="imdb:nope"), preset="cut-highlights-5"
+        )
         assert r.status_code == 400
 
     async def test_watched_is_not_offered_and_not_accepted(self, film_env):
