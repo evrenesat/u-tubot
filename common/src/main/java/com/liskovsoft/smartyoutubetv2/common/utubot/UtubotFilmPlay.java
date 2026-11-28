@@ -37,6 +37,8 @@ public final class UtubotFilmPlay {
     private volatile long mReleaseDurationMs;
     private volatile float mStreamFps;
     private volatile String mSubtitleLanguage = "";
+    private volatile String mYear = "";
+    private volatile String mEpisodeTitle = "";
 
     public UtubotFilmPlay(String progressId, String type, String titleId, String name, @Nullable String poster, int season, int episode,
                           String streamUrl, String streamName, long startMs, long sizeBytes) {
@@ -55,7 +57,34 @@ public final class UtubotFilmPlay {
 
     /** The same title on another stream, from where the viewer is */
     public UtubotFilmPlay withStream(String url, String streamName, long sizeBytes, long startMs) {
-        return new UtubotFilmPlay(progressId, type, titleId, name, poster, season, episode, url, streamName, startMs, sizeBytes);
+        UtubotFilmPlay film = new UtubotFilmPlay(progressId, type, titleId, name, poster, season, episode, url, streamName, startMs, sizeBytes);
+        film.setCatalogue(mYear, mEpisodeTitle);
+
+        return film;
+    }
+
+    /** What the catalogue says for the player's title: the film's year and the episode's title; either may be empty */
+    public void setCatalogue(@Nullable String year, @Nullable String episodeTitle) {
+        mYear = year == null ? "" : year.trim();
+        mEpisodeTitle = episodeTitle == null ? "" : episodeTitle.trim();
+    }
+
+    public String year() {
+        return mYear;
+    }
+
+    public String episodeTitle() {
+        return mEpisodeTitle;
+    }
+
+    /** The title line of the player (see {@link UtubotFilmTitle}) */
+    public String displayTitle() {
+        return UtubotFilmTitle.title(this);
+    }
+
+    /** The format chips of the player's second line */
+    public String displayChips() {
+        return UtubotFilmTitle.chips(streamName, sizeBytes);
     }
 
     /** The backend's {@code source_kind} of a cut: the source is a film, not a YouTube video */

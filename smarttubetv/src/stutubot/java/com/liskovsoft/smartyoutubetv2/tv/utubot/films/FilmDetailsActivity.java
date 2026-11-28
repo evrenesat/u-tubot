@@ -492,10 +492,13 @@ public class FilmDetailsActivity extends Activity {
     private UtubotFilmPlay newFilm(Stream stream) {
         String videoId = videoId();
         Entry entry = mProgress.get(videoId);
-        return new UtubotFilmPlay(videoId, mItem.isSeries() ? UtubotRealDebridClient.TYPE_SERIES : UtubotRealDebridClient.TYPE_MOVIE,
+        UtubotFilmPlay film = new UtubotFilmPlay(videoId, mItem.isSeries() ? UtubotRealDebridClient.TYPE_SERIES : UtubotRealDebridClient.TYPE_MOVIE,
                 mItem.id, mItem.name, mItem.poster, mItem.isSeries() && mEpisode != null ? mEpisode.season : 0,
                 mItem.isSeries() && mEpisode != null ? mEpisode.number : 0, stream.url, stream.name, entry == null ? 0L : entry.resumeMs(),
                 stream.sizeBytes);
+        film.setCatalogue(mItem.year, mItem.isSeries() && mEpisode != null ? mEpisode.shortTitle() : "");
+
+        return film;
     }
 
     /**

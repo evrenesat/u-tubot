@@ -1,5 +1,10 @@
 package com.liskovsoft.smartyoutubetv2.tv.utubot.films;
 
+import android.content.ActivityNotFoundException;
+import android.speech.RecognizerIntent;
+import androidx.annotation.Nullable;
+import com.liskovsoft.smartyoutubetv2.common.prefs.SearchData;
+import com.liskovsoft.smartyoutubetv2.tv.ui.modern.search.ModernVoiceSearch;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
@@ -50,6 +55,8 @@ public class FilmsHomeActivity extends Activity {
     private boolean mInitialFocusDone;
     private boolean mFocusOnRetry;
     private boolean mDestroyed;
+    private ModernVoiceSearch mVoice;
+    private static final int REQUEST_VOICE = 1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -77,6 +84,7 @@ public class FilmsHomeActivity extends Activity {
         setContentView(scroll);
 
         buildHeader();
+        setupVoice();
         mContinueSlot = slot();
         mResultsSlot = slot();
 
@@ -119,12 +127,66 @@ public class FilmsHomeActivity extends Activity {
             return false;
         });
         bar.addView(search, new LinearLayout.LayoutParams(FilmsUi.dp(this, 420), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView mic = FilmsUi.button(this, "Speak", FilmsUi.BODY_SP, v -> mVoice.start());
+        LinearLayout.LayoutParams micParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        micParams.setMargins(FilmsUi.dp(this, 12), 0, 0, 0);
+        bar.addView(mic, micParams);
         mRows.addView(bar);
 
         mStatus = FilmsUi.text(this, "", FilmsUi.BODY_SP, FilmsUi.WARN, false);
         mStatus.setPadding(FilmsUi.dp(this, FilmsUi.MARGIN), FilmsUi.dp(this, 6), FilmsUi.dp(this, FilmsUi.MARGIN), 0);
         mStatus.setVisibility(View.GONE);
         mRows.addView(mStatus);
+    }
+
+    /** Voice search is the one of the YouTube search: the same recognizer and the same "Instant voice search" setting (opens the mic at once) */
+    private void setupVoice() {
+        mVoice = new ModernVoiceSearch(this, new ModernVoiceSearch.Callback() {
+            @Override
+            public void onListening(boolean listening) {
+                mSearch.setHint(listening ? "Listening..." : "Search films and series");
+            }
+
+            @Override
+            public void onPartialResult(String text) {
+                mSearch.setText(text);
+            }
+
+            @Override
+            public void onResult(String text) {
+                mSearch.setText(text);
+                search(text);
+            }
+
+            @Override
+            public void onStartIntent(Intent intent) {
+                try {
+                    startActivityForResult(intent, REQUEST_VOICE);
+                } catch (ActivityNotFoundException e) {
+                    Log.w(TAG, "No voice recognizer on this device");
+                    mSearch.requestFocus();
+                }
+            }
+        });
+
+        if (SearchData.instance(this).isInstantVoiceSearchEnabled()) {
+            mHandler.post(mVoice::start);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == REQUEST_VOICE && resultCode == RESULT_OK && data != null) {
+            List<String> results = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+
+            if (results != null && !results.isEmpty()) {
+                mSearch.setText(results.get(0));
+                search(results.get(0));
+            }
+        }
     }
 
     private void setStatus(String text) {
@@ -368,6 +430,15 @@ public class FilmsHomeActivity extends Activity {
                 .putExtra(FilmDetailsActivity.EXTRA_ID, id)
                 .putExtra(FilmDetailsActivity.EXTRA_NAME, name)
                 .putExtra(FilmDetailsActivity.EXTRA_POSTER, poster));
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+
+        if (mVoice != null) {
+            mVoice.stop();
+        }
     }
 
     @Override
