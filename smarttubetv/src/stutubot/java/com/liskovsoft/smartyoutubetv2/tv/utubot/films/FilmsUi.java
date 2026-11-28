@@ -326,6 +326,11 @@ final class FilmsUi {
      */
     static View posterCard(Context context, String title, String subtitle, @Nullable String posterUrl, float share, boolean watched,
                            View.OnClickListener onClick) {
+        return posterCard(context, title, subtitle, posterUrl, share, watched, onClick, null);
+    }
+
+    static View posterCard(Context context, String title, String subtitle, @Nullable String posterUrl, float share, boolean watched,
+                           View.OnClickListener onClick, @Nullable View.OnLongClickListener onLongClick) {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setClipChildren(false);
@@ -378,6 +383,10 @@ final class FilmsUi {
 
         focusRing(card, frame, CARD, frame, null);
         card.setOnClickListener(onClick);
+
+        if (onLongClick != null) {
+            card.setOnLongClickListener(onLongClick);
+        }
 
         return card;
     }

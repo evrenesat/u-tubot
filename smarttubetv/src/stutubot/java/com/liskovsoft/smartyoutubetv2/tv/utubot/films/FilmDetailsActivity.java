@@ -170,6 +170,7 @@ public class FilmDetailsActivity extends Activity {
         }
 
         if (item.isSeries()) {
+            mProgress.rememberEpisodes(item.id, item.episodes);
             Episode resume = resumeEpisode(item);
             mEpisode = resume != null ? resume : first(item.episodes);
             mSeason = mEpisode != null ? mEpisode.season : 1;
@@ -370,11 +371,11 @@ public class FilmDetailsActivity extends Activity {
     }
 
     private Episode resumeEpisode(Item item) {
-        Entry latest = null;
+        UtubotFilmsProgress.Row latest = null;
 
-        for (Entry entry : mProgress.continueWatching()) {
-            if (item.id.equals(entry.titleId)) {
-                latest = entry;
+        for (UtubotFilmsProgress.Row row : mProgress.continueRow(System.currentTimeMillis())) {
+            if (item.id.equals(row.titleId)) {
+                latest = row;
                 break;
             }
         }
@@ -484,6 +485,7 @@ public class FilmDetailsActivity extends Activity {
     private void play(Stream stream) {
         UtubotFilmPlay film = newFilm(stream);
         Log.i(TAG, "Chosen stream: " + stream.format.describe() + " verdict=" + stream.format.verdict(mDevice) + " resolution=" + stream.resolution);
+        com.liskovsoft.smartyoutubetv2.common.app.views.ViewManager.instance(this).setFilmParent(getClass()); // Back from the player lands here
         PlaybackPresenter.instance(this).openVideo(Video.fromFilm(film));
     }
 

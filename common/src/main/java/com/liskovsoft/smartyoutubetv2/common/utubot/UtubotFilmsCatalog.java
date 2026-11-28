@@ -87,11 +87,23 @@ public class UtubotFilmsCatalog {
         public final int season;
         public final int number;
         public final String title;
+        /** When it first aired (epoch ms), 0 when the catalogue does not say */
+        public final long releasedMs;
 
         public Episode(int season, int number, String title) {
+            this(season, number, title, 0);
+        }
+
+        public Episode(int season, int number, String title, long releasedMs) {
             this.season = season;
             this.number = number;
             this.title = title;
+            this.releasedMs = releasedMs;
+        }
+
+        /** An episode with no known air date counts as aired */
+        public boolean isAired(long now) {
+            return releasedMs <= 0 || releasedMs <= now;
         }
 
         /** The title without a leading "Episode N:" (the card already says "EN"); empty when nothing else is left */
@@ -188,13 +200,30 @@ public class UtubotFilmsCatalog {
             int number = video == null ? 0 : video.optInt("episode", video.optInt("number", 0));
 
             if (season > 0 && number > 0) {
-                episodes.add(new Episode(season, number, video.optString("title", video.optString("name", ""))));
+                episodes.add(new Episode(season, number, video.optString("title", video.optString("name", "")),
+                        parseDate(video.optString("released", ""))));
             }
         }
 
         return new Item(meta.optString("type", fallbackType), meta.optString("id", ""), meta.optString("name", ""), year,
                 meta.optString("poster", ""), meta.optString("background", ""), meta.optString("imdbRating", ""),
                 runtime(meta.optString("runtime", "")), meta.optString("description", ""), episodes);
+    }
+
+    /** An ISO date or date-time ("2026-03-01", "2026-03-01T00:00:00.000Z") in epoch ms, 0 when it is missing or unreadable */
+    static long parseDate(@Nullable String text) {
+        if (text == null || text.length() < 10) {
+            return 0;
+        }
+
+        try {
+            java.text.SimpleDateFormat format = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+            format.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+
+            return format.parse(text.substring(0, 10)).getTime();
+        } catch (java.text.ParseException e) {
+            return 0;
+        }
     }
 
     /** "148 min" or "2h 28min" as the catalogue gives it, kept as is; empty when unknown */

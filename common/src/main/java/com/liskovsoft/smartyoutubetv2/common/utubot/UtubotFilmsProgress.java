@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 
 import androidx.annotation.Nullable;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -74,10 +75,116 @@ public class UtubotFilmsProgress {
     private static final long MINUTE_MS = 60_000;
     private static final long HOUR_MINUTES = 60;
 
+    private static final String EPISODES_PREFS = "utubot_films_episodes";
+    private static final String DISMISSED_PREFS = "utubot_films_dismissed";
+
     private final SharedPreferences mPrefs;
+    /** The episode list of each series the viewer opened, so the row can name the next episode without the network */
+    private final SharedPreferences mEpisodes;
+    /** When the viewer removed a title from the row; watching it again brings it back */
+    private final SharedPreferences mDismissed;
 
     public UtubotFilmsProgress(Context context) {
         mPrefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        mEpisodes = context.getSharedPreferences(EPISODES_PREFS, Context.MODE_PRIVATE);
+        mDismissed = context.getSharedPreferences(DISMISSED_PREFS, Context.MODE_PRIVATE);
+    }
+
+    /** One card of the "Continue watching" row: what to open (the entry's title) and which episode comes up */
+    public static final class Row {
+        /** The title's latest entry: unfinished, or the last finished episode when {@link #next} */
+        public final Entry entry;
+        public final String titleId;
+        public final String name;
+        public final String type;
+        public final String poster;
+        /** The episode to open; 0 for a film */
+        public final int season;
+        public final int episode;
+        public final String episodeTitle;
+        /** The last episode was finished and this is the one after it */
+        public final boolean next;
+
+        Row(Entry entry, int season, int episode, String episodeTitle, boolean next) {
+            this.entry = entry;
+            this.titleId = entry.titleId;
+            this.name = entry.name;
+            this.type = entry.type;
+            this.poster = entry.poster;
+            this.season = season;
+            this.episode = episode;
+            this.episodeTitle = episodeTitle;
+            this.next = next;
+        }
+
+        /** "Next: S01E02 Title", "S01E02 - 20 min left" or a film's time left */
+        public String subtitle() {
+            if (season <= 0) {
+                return entry.timeLeft();
+            }
+
+            String code = String.format(java.util.Locale.US, "S%02dE%02d", season, episode);
+
+            if (next) {
+                return "Next: " + code + (episodeTitle.isEmpty() ? "" : " " + episodeTitle);
+            }
+
+            String left = entry.timeLeft();
+
+            return left.isEmpty() ? code : code + " - " + left;
+        }
+
+        /** The share of the progress bar: none for an episode that has not been started */
+        public float share() {
+            return next ? 0f : entry.share();
+        }
+    }
+
+    /** Keeps the episode list of a series; the row uses it to find the next episode */
+    public void rememberEpisodes(String titleId, List<UtubotFilmsCatalog.Episode> episodes) {
+        if (titleId == null || titleId.isEmpty() || episodes == null || episodes.isEmpty()) {
+            return;
+        }
+
+        JSONArray list = new JSONArray();
+
+        for (UtubotFilmsCatalog.Episode episode : episodes) {
+            list.put(new JSONArray().put(episode.season).put(episode.number).put(episode.title == null ? "" : episode.title)
+                    .put(episode.releasedMs));
+        }
+
+        mEpisodes.edit().putString(titleId, list.toString()).apply();
+    }
+
+    private List<UtubotFilmsCatalog.Episode> episodesOf(String titleId) {
+        List<UtubotFilmsCatalog.Episode> episodes = new ArrayList<>();
+        String text = mEpisodes.getString(titleId, null);
+
+        if (text == null) {
+            return episodes;
+        }
+
+        try {
+            JSONArray list = new JSONArray(text);
+
+            for (int i = 0; i < list.length(); i++) {
+                JSONArray item = list.getJSONArray(i);
+                episodes.add(new UtubotFilmsCatalog.Episode(item.getInt(0), item.getInt(1), item.optString(2, ""), item.optLong(3, 0)));
+            }
+        } catch (JSONException e) {
+            episodes.clear();
+        }
+
+        Collections.sort(episodes, (a, b) -> a.season != b.season ? Integer.compare(a.season, b.season) : Integer.compare(a.number, b.number));
+
+        return episodes;
+    }
+
+    /** Takes a title out of the row; watching it again puts it back */
+    public void removeFromContinue(String titleId, long now) {
+        if (titleId != null && !titleId.isEmpty()) {
+            mDismissed.edit().putLong(titleId, now).apply();
+        }
     }
 
     public void save(String id, String type, String titleId, String name, String poster, int season, int episode, long positionMs, long durationMs,
@@ -108,32 +215,73 @@ public class UtubotFilmsProgress {
     }
 
     /**
-     * The "Continue watching" row: unfinished titles, newest first; an unfinished series shows its latest episode only.
+     * The "Continue watching" row, newest first. A film stays while it is unfinished. A series stays after a finished episode with the next
+     * aired episode as its card ("Next: S01E02 ..."), and leaves when its last aired episode is finished or the viewer removes it.
      */
-    public List<Entry> continueWatching() {
+    public List<Row> continueRow(long now) {
         List<Entry> entries = new ArrayList<>();
 
         for (Map.Entry<String, ?> stored : mPrefs.getAll().entrySet()) {
             Entry entry = stored.getValue() instanceof String ? parse(stored.getKey(), (String) stored.getValue()) : null;
 
-            if (entry != null && !entry.isWatched() && entry.positionMs >= MIN_RESUME_MS) {
+            if (entry != null) {
                 entries.add(entry);
             }
         }
 
         Collections.sort(entries, (a, b) -> Long.compare(b.updatedAt, a.updatedAt));
 
-        List<Entry> result = new ArrayList<>();
+        List<Row> result = new ArrayList<>();
         List<String> seen = new ArrayList<>();
 
         for (Entry entry : entries) {
-            if (!seen.contains(entry.titleId)) {
-                seen.add(entry.titleId);
-                result.add(entry);
+            if (seen.contains(entry.titleId)) {
+                continue;
+            }
+
+            seen.add(entry.titleId);
+
+            if (entry.updatedAt <= mDismissed.getLong(entry.titleId, -1)) {
+                continue;
+            }
+
+            boolean series = entry.season > 0;
+
+            if (!entry.isWatched() && entry.positionMs >= MIN_RESUME_MS) {
+                result.add(new Row(entry, series ? entry.season : 0, entry.episode, episodeTitle(entry, entry.season, entry.episode), false));
+            } else if (series && entry.isWatched()) {
+                UtubotFilmsCatalog.Episode next = nextAired(entry, now);
+
+                if (next != null) {
+                    result.add(new Row(entry, next.season, next.number, next.shortTitle(), true));
+                }
             }
         }
 
         return result;
+    }
+
+    private String episodeTitle(Entry entry, int season, int number) {
+        for (UtubotFilmsCatalog.Episode episode : episodesOf(entry.titleId)) {
+            if (episode.season == season && episode.number == number) {
+                return episode.shortTitle();
+            }
+        }
+
+        return "";
+    }
+
+    @Nullable
+    private UtubotFilmsCatalog.Episode nextAired(Entry finished, long now) {
+        for (UtubotFilmsCatalog.Episode episode : episodesOf(finished.titleId)) {
+            boolean after = episode.season > finished.season || (episode.season == finished.season && episode.number > finished.episode);
+
+            if (after && episode.isAired(now)) {
+                return episode;
+            }
+        }
+
+        return null;
     }
 
     /** "40 min left" (rounded up to a whole minute), "1 h 5 min left"; empty for no time left */
