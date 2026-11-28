@@ -79,7 +79,7 @@ public class RemoteController extends BasePlayerController implements OnDataChan
 
     @Override
     public void onVideoLoaded(Video item) {
-        if (getPlayer() == null) {
+        if (getPlayer() == null || (item != null && item.isFilm())) { // a film is not sent to the phone
             return;
         }
 

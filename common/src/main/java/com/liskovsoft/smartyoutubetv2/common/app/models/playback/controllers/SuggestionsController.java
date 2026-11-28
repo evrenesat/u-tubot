@@ -244,7 +244,7 @@ public class SuggestionsController extends BasePlayerController {
     }
 
     public void loadSuggestions(Video video) {
-        if (isEmbedPlayer()) {
+        if (isEmbedPlayer() || (video != null && video.isFilm())) { // a film has no YouTube suggestions
             return;
         }
 

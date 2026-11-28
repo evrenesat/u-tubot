@@ -177,6 +177,12 @@ public final class UtubotMenu {
      * button both come here.
      */
     public static void showCuts(Context context, Video video) {
+        if (video.isFilm()) {
+            // The cut picker is for YouTube videos; the cuts of a film (source kind film, see UtubotFilmPlay) come with their own backend calls
+            MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_film_none));
+            return;
+        }
+
         sCutMode = null;
         rebuildCuts(context, video);
     }

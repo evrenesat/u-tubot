@@ -456,6 +456,43 @@ public class VideoLoaderControllerTest {
         return video;
     }
 
+    /**
+     * A film opens as one progressive source: no YouTube formats are fetched (that would reach the YouTube service), the film is not queued
+     * and a next or previous press does nothing
+     */
+    @Test
+    public void aFilmOpensItsStreamDirectly() throws Exception {
+        Video film = Video.fromFilm(new com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmPlay("tt1", "movie", "tt1", "Heat", null, 0, 0,
+                "https://host/key/file.mkv", "Heat 2160p DV HDR", 0, 0));
+        List<String> calls = new ArrayList<>();
+        PlaybackView player = (PlaybackView) Proxy.newProxyInstance(PlaybackView.class.getClassLoader(), new Class<?>[]{PlaybackView.class},
+                (proxy, method, args) -> {
+                    calls.add(method.getName() + (args != null && args.length == 1 && args[0] instanceof String ? ":" + args[0] : ""));
+                    return method.getReturnType() == boolean.class ? false : null;
+                });
+        TestController controller = new TestController(film) {
+            {
+                setAltContext(RuntimeEnvironment.getApplication());
+            }
+
+            @Override
+            public PlaybackView getPlayer() {
+                return player;
+            }
+        };
+
+        Method load = VideoLoaderController.class.getDeclaredMethod("loadVideo", Video.class);
+        load.setAccessible(true);
+        load.invoke(controller, film);
+
+        assertTrue(calls.contains("openProgressiveUrl:https://host/key/file.mkv"));
+        assertFalse(calls.contains("openDash"));
+        assertEquals("utubot-film:tt1", getField(controller, "mFormatVideoId"));
+        assertEquals("progressive", getField(controller, "mFormatProtocol"));
+        assertTrue(controller.onNextClicked());
+        assertTrue(controller.onPreviousClicked());
+    }
+
     private static class TestController extends VideoLoaderController {
         private final Video mVideo;
 

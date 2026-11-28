@@ -297,6 +297,11 @@ public class EmbedPlayerView extends PlayerView implements PlaybackView {
     }
 
     @Override
+    public void openProgressiveUrl(String url) {
+        mExoPlayerController.openProgressiveUrl(url);
+    }
+
+    @Override
     public void openUrlList(List<String> urlList) {
         mExoPlayerController.openUrlList(urlList);
     }

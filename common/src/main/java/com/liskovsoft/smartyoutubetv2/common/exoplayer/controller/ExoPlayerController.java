@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.Format;
+import com.google.android.exoplayer2.video.ColorInfo;
 import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.SimpleExoPlayer;
@@ -146,6 +147,21 @@ public class ExoPlayerController implements Player.EventListener {
             if (trackType == C.TRACK_TYPE_VIDEO || trackType == C.TRACK_TYPE_AUDIO) {
                 FormatAttempts.onDecoder(trackType == C.TRACK_TYPE_VIDEO, decoderName);
                 VideoStarts.onDecoder(trackType == C.TRACK_TYPE_VIDEO, decoderName, initializationDurationMs);
+            }
+        }
+
+        /**
+         * What the film's file really opened as, so a wrong picture can be traced to the stream or to the TV
+         */
+        @Override
+        public void onDecoderInputFormatChanged(EventTime eventTime, int trackType, Format format) {
+            Video video = getVideo();
+
+            if (trackType == C.TRACK_TYPE_VIDEO && video != null && video.isFilm()) {
+                ColorInfo color = format.colorInfo;
+                Log.i(TAG, "Film video format: mime=" + format.sampleMimeType + " codecs=" + format.codecs + " size=" + format.width + "x"
+                        + format.height + " colorSpace=" + (color == null ? "unset" : color.colorSpace) + " colorTransfer="
+                        + (color == null ? "unset" : color.colorTransfer) + " colorRange=" + (color == null ? "unset" : color.colorRange));
             }
         }
 
@@ -509,7 +525,7 @@ public class ExoPlayerController implements Player.EventListener {
         mUtubotCaptionsAttached = false;
         mUtubotCaptionsSelectPending = false;
 
-        if (!UtubotSettings.isBuiltIn() || !mUtubotCaptionsEnabled || video == null || mediaSource instanceof MergingMediaSource) {
+        if (!UtubotSettings.isBuiltIn() || !mUtubotCaptionsEnabled || video == null || video.isFilm() || mediaSource instanceof MergingMediaSource) {
             return mediaSource;
         }
 
@@ -766,7 +782,7 @@ public class ExoPlayerController implements Player.EventListener {
         }
 
         if (UtubotSettings.isBuiltIn() && mUtubotCaptionsEnabled) {
-            if (video != null) {
+            if (video != null && !video.isFilm()) {
                 UtubotManager.instance(mContext).followCaptions(video.videoId, mUtubotCaptionsListener);
             } else {
                 UtubotManager.instance(mContext).stopFollowingCaptions(mUtubotCaptionsListener);

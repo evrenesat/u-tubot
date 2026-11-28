@@ -75,7 +75,7 @@ so the other flavors behave as before.
 | `app/models/playback/controllers/ExoPlayerController.java` | `openProgressiveUrl(url)` next to `openUrlList`, builds a single progressive source and plays it | the spike plays one Real-Debrid stream through the same path as `urlList` |
 | `exoplayer/ExoMediaSourceFactory.java` | `fromProgressiveUrl(url)` next to `fromUrlList` | the single-source media source for one stream |
 | `app/models/playback/controllers/SponsorBlockController.java` | `applyHandWrittenSkips(List<SponsorSegment>)` (and `@Nullable` import): feeds the hand-written ranges to the sponsor block (`Observable.just(...).flatMap(this::startSponsorWatcher)`); the caller enables and skips the `real-debrid` category first | cut-style skips for a Real-Debrid stream, through the existing sponsor watcher |
-| `common/.../utubot/UtubotFilmsDeveloperPresenter.java`, `UtubotSettings.java`, `UpdatesSettingsPresenter.java`, `smarttubetv/src/stutubot/.../films/RealDebridFilmsActivity.java` | new: Settings, Updates, switch "Films developer entry" (off by default, built-in flavor only; its address, token, IMDb id and skip list live in the private `UtubotSettings` prefs, never logged) shows "Films (developer)": address, token, IMDb id, skip list, "List streams" which opens the film screen (stutubot flavor, not exported, closes itself when the switch is off) | the hidden developer entry of the spike; the codec checklist is `docs/films-codec-checklist.md` |
+| `common/.../utubot/UtubotFilmsDeveloperPresenter.java`, `UtubotSettings.java`, `UpdatesSettingsPresenter.java`, `smarttubetv/src/stutubot/.../films/FilmDetailsActivity.java` | new: Settings, Updates, switch "Films developer entry" (off by default, built-in flavor only; its address, token, IMDb id and skip list live in the private `UtubotSettings` prefs, never logged) shows "Films (developer)": address, token, IMDb id, skip list (no longer used: films play in the main player), "List streams" which opens the details screen of that IMDb id (stutubot flavor, not exported, closes itself when the switch is off) | the hidden developer entry of the spike; the codec checklist is `docs/films-codec-checklist.md` |
 | `tv/presenter/VideoCardPresenter.java` | mark with own colour, `addMark` overload, card tag | mark rendering, panel reads the focused card |
 | `tv/ui/modern/widgets/ModernVideoCard.java` | card tag | panel reads the focused card |
 | `smarttubetv/src/main/res/layout/modern_video_card.xml` | `modern_card_utubot_summary` in the thumb frame, top-end, gone by default, own focus background and the `settings_utubot` symbol, clickable but not focusable | the card's visible touch entry to the Summary view on a tablet |
@@ -410,8 +410,15 @@ server. The recipe, with the keyevents of a seek and the log lines a check reads
 The spike's entry is on the TV: Settings, Updates, "Films developer entry" (off by default; stutubot flavor only), then "Films (developer)". Enter
 the stream addon address, the Real-Debrid token, an IMDb id and optionally a skip list ("30,90;600,720", seconds), then "List streams" and choose one.
 The address may contain `{token}`, which is replaced by the token (Torrentio: `https://host/realdebrid={token}`). Address and token stay in the app's
-private preferences and are never logged or shown. The skip list is fed through `SponsorBlockController.applyHandWrittenSkips` (the `real-debrid`
-category is set to skip first). Unit tests run against a local fake addon (`TinyHttpServer`), never a real service and never YouTube. What the owner
+private preferences and are never logged or shown. Films play in the main player (issue 294): the details screen opens `PlaybackPresenter.openVideo(Video.fromFilm(UtubotFilmPlay))`.
+`VideoLoaderController.loadFilm` opens the stream as one progressive source (no YouTube format fetch); the hand-written skip list is not
+applied any more. Hooks in upstream files, all guarded by `Video.isFilm()`: `VideoLoaderController` (load, no queue, no next/previous, end closes
+the player), `VideoStateController` (position and watched mark go to `UtubotFilmsProgress`, no YouTube history), `SuggestionsController`,
+`SponsorBlockController`, `RemoteController`, `ErrorFixerController` (a stream error shows a message), `ExoPlayerController` (no HQ captions, format
+log), `ViewManager.startParentView` (Back finishes the player, the details screen is under it), `VideoPlayerGlue.setFilmMode` (hides like,
+subscribe, channel, chat, queue, segment blocker, search, share, add to playlist and info; adds "Streams", handled by
+`UtubotFilmStreamsController`). The cuts button stays; `UtubotFilmPlay` carries `sourceKind()` "film", `sourceKey()` `imdb:tt…[:S1E2]`,
+`releaseKey()` and `releaseDurationMs()` for the follow-up. Unit tests run against a local fake addon (`TinyHttpServer`), never a real service and never YouTube. What the owner
 tests on the TCL: `docs/films-codec-checklist.md`.
 
 ## End-to-end test without a device

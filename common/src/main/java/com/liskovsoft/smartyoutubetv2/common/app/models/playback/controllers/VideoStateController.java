@@ -4,6 +4,8 @@ import com.liskovsoft.mediaserviceinterfaces.data.MediaItemMetadata;
 import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.smartyoutubetv2.common.R;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmPlay;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmsProgress;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Playlist;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.BasePlayerController;
@@ -409,7 +411,7 @@ public class VideoStateController extends BasePlayerController {
      * Reset position of currently opened music and live videos.
      */
     private void resetPositionIfNeeded(Video item) {
-        if (getStateService() == null || item == null) {
+        if (getStateService() == null || item == null || item.isFilm()) { // a film's position is in its own store
             return;
         }
 
@@ -534,6 +536,11 @@ public class VideoStateController extends BasePlayerController {
             return;
         }
 
+        if (getVideo() != null && getVideo().isFilm()) {
+            saveFilmProgress(getVideo().film);
+            return;
+        }
+
         savePosition();
 
         if (!isBeginEmbed()) {
@@ -544,6 +551,13 @@ public class VideoStateController extends BasePlayerController {
 
     private void restoreState() {
         if (getPlayer() == null) {
+            return;
+        }
+
+        if (getVideo() != null && getVideo().isFilm()) {
+            restoreFilmPosition(getVideo().film);
+            restoreVolume();
+            restorePitch();
             return;
         }
 
@@ -564,6 +578,37 @@ public class VideoStateController extends BasePlayerController {
     //
     //    getStateService().persistState();
     //}
+
+    /**
+     * A film or an episode keeps its position, its watched mark and its place in "Continue watching" in the films progress store, not in
+     * the YouTube history
+     */
+    private void saveFilmProgress(UtubotFilmPlay film) {
+        if (getPlayer() == null || !getPlayer().containsMedia() || mIncognito) {
+            return;
+        }
+
+        film.saveProgress(new UtubotFilmsProgress(getContext()), getPlayer().getPositionMs(), getPlayer().getDurationMs(),
+                System.currentTimeMillis());
+    }
+
+    private void restoreFilmPosition(UtubotFilmPlay film) {
+        if (getPlayer() == null) {
+            return;
+        }
+
+        film.setReleaseDurationMs(getPlayer().getDurationMs());
+        long startMs = film.resumeFrom(new UtubotFilmsProgress(getContext()));
+
+        if (startMs > 0) {
+            getPlayer().setPositionMs(getBeforeEndMs(startMs));
+        }
+
+        if (!mIsPlayBlocked) {
+            boolean playEnabled = isPlayEnabled();
+            getPlayer().setPlayWhenReady(playEnabled);
+        }
+    }
 
     private void savePosition() {
         Video video = getVideo();

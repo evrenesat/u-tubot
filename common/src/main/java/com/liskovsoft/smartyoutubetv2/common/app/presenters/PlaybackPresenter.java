@@ -72,6 +72,7 @@ public class PlaybackPresenter extends BasePresenter<PlaybackView> implements Pl
             // After the sponsor watcher: its onVideoLoaded starts the segment refresh the cut's skipper merges with, and the cut's double
             // press is guarded so it never takes a key from the player's controls or from a quick-skip direction
             mEventListeners.add(new UtubotCutController());
+            mEventListeners.add(new com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmStreamsController());
         }
         mEventListeners.add(new CensoredWordsController());
         mEventListeners.add(new AutoFrameRateController());

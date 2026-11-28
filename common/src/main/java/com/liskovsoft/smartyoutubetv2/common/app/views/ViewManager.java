@@ -1,5 +1,6 @@
 package com.liskovsoft.smartyoutubetv2.common.app.views;
 
+import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Fragment;
@@ -182,6 +183,10 @@ public class ViewManager {
     }
 
     public void startParentView(Activity activity) {
+        if (isFilmPlayer(activity)) {
+            return; // the films screen that opened the player is under it: finishing the player shows it
+        }
+
         if (activity.getIntent() != null) {
             removeTopActivity();
 
@@ -212,6 +217,12 @@ public class ViewManager {
                 }
             }
         }
+    }
+
+    private boolean isFilmPlayer(Activity activity) {
+        Video video = PlaybackPresenter.instance(mContext).getVideo();
+
+        return video != null && video.isFilm() && activity.getClass() == mViewMapping.get(PlaybackView.class);
     }
 
     public boolean hasParentView(Activity activity) {

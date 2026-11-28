@@ -14,6 +14,9 @@ public interface PlayerEngine extends PlayerConstants {
     void openDashUrl(String dashManifestUrl);
     void openHlsUrl(String hlsPlaylistUrl);
     void openUrlList(List<String> urlList);
+
+    /** A single direct stream (a film's MKV or MP4) */
+    void openProgressiveUrl(String url);
     void openMerged(MediaItemFormatInfo formatInfo, String hlsPlaylistUrl);
     void openMerged(InputStream dashManifest, String hlsPlaylistUrl);
     long getPositionMs();

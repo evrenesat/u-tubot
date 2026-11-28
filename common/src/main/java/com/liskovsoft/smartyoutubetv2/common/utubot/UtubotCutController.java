@@ -135,7 +135,7 @@ public class UtubotCutController extends BasePlayerController implements UtubotC
         updateCutSkipButton();
         updateEndingTime();
 
-        if (item != null && item.videoId != null && UtubotSettings.instance(getContext()).isConfigured()) {
+        if (item != null && item.videoId != null && !item.isFilm() && UtubotSettings.instance(getContext()).isConfigured()) {
             UtubotManager.instance(getContext()).followCuts(item.videoId, this);
         }
     }

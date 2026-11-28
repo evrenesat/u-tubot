@@ -52,8 +52,8 @@ public class UtubotFilmsDeveloperPresenterTest {
 
         assertNotNull(intent);
         assertEquals(UtubotFilmsDeveloperPresenter.FILMS_ACTIVITY, intent.getComponent().getClassName());
-        assertEquals("tt0944947", intent.getStringExtra(UtubotFilmsDeveloperPresenter.EXTRA_IMDB_ID));
-        assertEquals("30,90", intent.getStringExtra(UtubotFilmsDeveloperPresenter.EXTRA_SKIPS));
+        assertEquals("tt0944947", intent.getStringExtra(UtubotFilmsDeveloperPresenter.EXTRA_ID));
+        assertEquals("movie", intent.getStringExtra(UtubotFilmsDeveloperPresenter.EXTRA_TYPE));
         assertFalse("the token never rides the intent", intent.getExtras().toString().contains("token"));
 
         mSettings.setFilmsDeveloperEnabled(false);

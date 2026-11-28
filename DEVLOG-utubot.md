@@ -1,3 +1,15 @@
+## 2026-11-28 (films in the main player, #294, #293)
+
+- Films and episodes now play in the main player (PlaybackFragment, VideoLoaderController, ExoPlayerController) with all its controls: seek bar, speed, audio tracks (HQ button, "Audio formats"), subtitle tracks (CC button, the file's embedded tracks), the OSD look. `RealDebridFilmsActivity` is gone; Play on the details screen calls `PlaybackPresenter.openVideo(Video.fromFilm(UtubotFilmPlay))`.
+- `Video.film` (`UtubotFilmPlay`) marks a direct-stream video; its id is `utubot-film:<progress id>`, never a YouTube id. `VideoLoaderController.loadFilm` skips the format fetch and opens the file with `openProgressiveUrl`; the #291 format log is kept (`Chosen stream`, `Film video format`).
+- OSD: like, dislike, subscribe, channel, comments/chat, queue, segment blocker, search, share, add to playlist and info are hidden; a "Streams" button lists the title's other streams and switches at the same position. The cuts button stays (it says "No cut for this film yet").
+- Resume and watched marks: `VideoStateController` writes `UtubotFilmsProgress` (never the YouTube history); the end of the film closes the player and the details screen shows Resume or the watched mark. Back from the player lands on the details screen.
+- For the director's cuts follow-up the film carries `sourceKind` film, `sourceKey` `imdb:tt…` (`imdb:tt…:S1E2` for an episode), `releaseKey` (stream name and size) and `releaseDurationMs` (set when the player knows the length); names match `ai-backend/src/utubot/cuts.py` `source_ref`.
+- #293: a click on the Films item of the legacy sidebar (`BrowseFragment`) opens Films at once, like the modern rail already did. The overlay Retry went away with the old player.
+- The developer entry's "List streams" now opens the details screen of the IMDb id; the hand-written skip list is no longer applied (dead setting, `UtubotRealDebridSkips` kept).
+- Tests: `UtubotFilmPlayTest`, `VideoLoaderControllerTest.aFilmOpensItsStreamDirectly`, `UtubotFilmsDeveloperPresenterTest`. Emulator (1920x1080, mock add-on, MKV with two audio and two subtitle tracks): screenshots in `/tmp/utubot-films/shots3/`.
+- Not done: the cut picker for films (follow-up), skip list for films, a distinct icon for the Streams button (shares the u·tubot icon), chips in the Streams list (plain text rows).
+
 ## 2026-11-27 (films UI review fixes, #290)
 
 - Home: only the poster frame zooms (the title and year stay on the row baseline), clipped to the ring's rounded corners; the card keeps its padding unclipped so the zoom is not cut at the left and top. Cards are 96x144 dp with 16 sp titles (one line) and 14 sp year and chips. The header and search sit on one line, so two full rows fit at 1920x1080. While a row loads it shows grey placeholder cards; a failed row shows a plain sentence and a focusable Retry button (the exception stays in the log). With "Continue watching" the first focus is its first card; its film cards say how much is left ("1 h 12 min left"). Search results say "Film" or "Series" under the title.

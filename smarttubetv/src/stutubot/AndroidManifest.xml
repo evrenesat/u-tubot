@@ -8,11 +8,6 @@
     <application
         android:label="u·tubot"
         tools:replace="android:label">
-        <!-- The film screen of the Real-Debrid spike; reached from Settings, Updates, "Films (developer)", closes itself when that is off -->
-        <activity
-            android:name="com.liskovsoft.smartyoutubetv2.tv.utubot.films.RealDebridFilmsActivity"
-            android:exported="false"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
         <!-- The films home and details screens (issue 290); opened from the same entry, close themselves when it is off -->
         <activity
             android:name="com.liskovsoft.smartyoutubetv2.tv.utubot.films.FilmsHomeActivity"

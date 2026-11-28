@@ -27,6 +27,9 @@ import com.liskovsoft.smartyoutubetv2.common.app.presenters.dialogs.VideoActionP
 import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
 import com.liskovsoft.smartyoutubetv2.common.diagnostics.FormatAttempts;
 import com.liskovsoft.smartyoutubetv2.common.diagnostics.PlayerFailure;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmDevice;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmFormat;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmPlay;
 import com.liskovsoft.smartyoutubetv2.common.diagnostics.VideoStart;
 import com.liskovsoft.smartyoutubetv2.common.diagnostics.VideoStarts;
 import com.liskovsoft.smartyoutubetv2.common.misc.MediaServiceManager;
@@ -157,7 +160,9 @@ public class VideoLoaderController extends BasePlayerController {
 
         item.isShuffled = false;
 
-        if (!item.fromQueue && !item.belongsToPlaybackQueue()) {
+        if (item.isFilm()) {
+            item.fromQueue = false; // a film is not queued with the YouTube videos
+        } else if (!item.fromQueue && !item.belongsToPlaybackQueue()) {
             mPlaylist.add(item);
         } else {
             item.fromQueue = false;
@@ -169,7 +174,10 @@ public class VideoLoaderController extends BasePlayerController {
         } else {
             VideoStarts.onEngineWait(item.videoId);
             mPendingVideo = item;
-            prefetchFormatInfo(item);
+
+            if (!item.isFilm()) {
+                prefetchFormatInfo(item);
+            }
         }
     }
 
@@ -197,6 +205,11 @@ public class VideoLoaderController extends BasePlayerController {
         }
         
         updateRepeatButton();
+
+        if (video != null && video.isFilm()) {
+            return;
+        }
+
         resolveMusicCategory(video);
         // Can't set title at this point
         //checkSleepTimer();
@@ -204,6 +217,10 @@ public class VideoLoaderController extends BasePlayerController {
 
     @Override
     public boolean onPreviousClicked() {
+        if (isFilmPlaying()) {
+            return true; // nothing before or after a film
+        }
+
         loadPrevious();
 
         return true;
@@ -211,6 +228,10 @@ public class VideoLoaderController extends BasePlayerController {
 
     @Override
     public boolean onNextClicked() {
+        if (isFilmPlaying()) {
+            return true;
+        }
+
         if (getGeneralData().isChildModeEnabled()) {
             onPlayEnd();
         } else {
@@ -283,6 +304,11 @@ public class VideoLoaderController extends BasePlayerController {
             return;
         }
 
+        if (isFilmPlaying()) {
+            getPlayer().finishReally(); // back to the details screen; the position was saved with the end
+            return;
+        }
+
         // Stop the playback if the user is browsing options or reading comments
         int playbackMode = getPlaybackMode();
         if (getAppDialogPresenter().isDialogShown() && !getAppDialogPresenter().isOverlay() && playbackMode != PlayerConstants.PLAYBACK_MODE_ONE) {
@@ -312,11 +338,44 @@ public class VideoLoaderController extends BasePlayerController {
      */
     private void loadVideo(Video item) {
         if (getPlayer() != null && item != null) {
+            if (item.isFilm()) {
+                getPlayer().setVideo(item);
+                getPlayer().resetPlayerState();
+                loadFilm(item);
+                return;
+            }
+
             mPlaylist.setCurrent(item);
             getPlayer().setVideo(item);
             getPlayer().resetPlayerState();
             loadFormatInfo(item);
         }
+    }
+
+    private boolean isFilmPlaying() {
+        return getVideo() != null && getVideo().isFilm();
+    }
+
+    /**
+     * A film or an episode: its stream is a direct link, so there are no YouTube formats to fetch. The player opens it as one progressive
+     * source (MKV, MP4), where its audio and subtitle tracks are the file's own.
+     */
+    private void loadFilm(Video video) {
+        UtubotFilmPlay film = video.film;
+
+        disposeActions();
+        mFormatVideoId = video.videoId;
+        mFormatClient = UtubotFilmPlay.SOURCE_KIND;
+        mFormatProtocol = PlayerFailure.PROTOCOL_PROGRESSIVE;
+        mStreamsExpireTimeMs = 0;
+
+        UtubotFilmFormat format = UtubotFilmFormat.parse(film.streamName);
+        // The address can hold a key: only what the stream name says is logged
+        Log.i(TAG, "Chosen stream: " + format.describe() + " verdict=" + format.verdict(new UtubotFilmDevice(getContext())));
+
+        getPlayer().showProgressBar(false);
+        getPlayer().showBackground(null);
+        getPlayer().openProgressiveUrl(film.streamUrl);
     }
 
     /**

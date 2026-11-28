@@ -972,6 +972,7 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
             // Preserve player formatting
             mPlayerGlue.setTitle(video.getTitleFull() != null ? video.getTitleFull() : "...");
             mPlayerGlue.setSubtitle(video.getSecondTitleFull() != null ? createSubtitle(video) : "...");
+            mPlayerGlue.setFilmMode(video.isFilm());
             mPlayerGlue.setVideo(video);
         }
     }
@@ -1105,6 +1106,11 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
     @Override
     public void openHlsUrl(String hlsPlaylistUrl) {
         mExoPlayerController.openHlsUrl(hlsPlaylistUrl);
+    }
+
+    @Override
+    public void openProgressiveUrl(String url) {
+        mExoPlayerController.openProgressiveUrl(url);
     }
 
     @Override
