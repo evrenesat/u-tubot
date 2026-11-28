@@ -1,3 +1,15 @@
+## 2026-11-28 (films polish: voice search, film settings, titles, subtitles, episodes, #309 items 2-5, 7-9)
+
+- Voice search (2): the films home has a Speak button and opens the mic at once when "Instant voice search" is on (the same `SearchData` setting and `ModernVoiceSearch` as the YouTube search); typing still works.
+- Playback settings in film mode (3): `UtubotFilmPlaybackSettings` decides what the "Advanced playback settings" dialog shows over a film. Keep: audio formats (the file's tracks), video zoom, video buffer, audio delay, pitch/speed, sleep timer, auto frame rate, subtitle style/scale/position (new, 9). Hide: video formats list (itags, VP9/AV1 preference), quality presets, the global audio language list, network engine. SponsorBlock, suggestions and remote control were already off for films. `HQDialogController` asks the policy.
+- Real languages only (4): the audio language list is hidden over a film; the subtitle picker lists Off, the file's tracks and the internet subtitles that were found, nothing else.
+- Titles (5): the player shows the catalogue title ("The Long Voyage (2021)", "Farscape - S01E02 - Episode title") and a second line of chips ("1080p - DTS-HD 5.1 - 11 GB"). `UtubotFilmTitle` parses the file name only as the fallback (SxxEyy, 1x02, year, quality, audio, size); `UtubotFilmTitleTest` has real-world names.
+- Subtitles remember (7): `Store.setLast` keeps the last choice globally (off, or on with language and kind; no delay). A film or episode without a choice of its own gets it: off, the file's track of that language, or the best internet subtitle of that language (falls back to the file's track). A title's own choice from #305 still wins.
+- Episodes (8): the details screen opens on the current or next unwatched aired episode (`UtubotFilmsCatalog.firstUnwatched`), its season selected, the card focused and scrolled into view.
+- Subtitle style (9): the subtitle picker and the playback settings list YouTube's subtitle style, scale and bottom shift (`AppDialogUtil` categories, `PlayerData`), applied by `SubtitleManager` to every track, kept per TV.
+- Tests: `UtubotFilmsCatalogTest`, `UtubotSubtitlePickerTest`, `UtubotFilmSubtitlesTest`, `UtubotFilmPlaybackSettingsTest`, `UtubotFilmTitleTest`, `UtubotFilmPlayTest`. Emulator (1920x1080, temporary exported-activity build, not committed): `/tmp/utubot-films/shots7/item2..item9-*.png`.
+- Not done: the emulator run did not exercise a remembered choice across two files (the mock file has no subtitle tracks and no backend ran), so item 7 is covered by unit tests only; the player menu offers the style in the playback settings, not as a separate "Subtitle style..." entry.
+
 ## 2026-11-28 (Back from the film player left the app, #309 item 6)
 
 - Cause: since #300 the film branch of `ViewManager.startParentView` only popped the player from the stack of screens and returned. The player is a `singleInstance` activity (a task of its own) and the films screens are not in the stack, so nothing brought the details screen back: the player's task closed over the TV home screen.

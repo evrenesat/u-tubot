@@ -111,7 +111,7 @@ public class UtubotFilmPlayTest {
         assertTrue(video.isFilm());
         assertEquals("fa8e9102fa1", video.videoId); // f + SHA-256 of "imdb:tt1234567|Heat 2160p DV|5000", as film_video_id in the backend
         assertEquals("Heat", video.getTitle());
-        assertEquals("Heat 2160p DV", video.secondTitle);
+        assertEquals("2160p \u00b7 Dolby Vision \u00b7 1 MB", video.secondTitle); // chips, never the file name
         assertTrue(Video.from(video).isFilm());
         assertFalse(Video.from("dQw4w9WgXcQ").isFilm());
     }

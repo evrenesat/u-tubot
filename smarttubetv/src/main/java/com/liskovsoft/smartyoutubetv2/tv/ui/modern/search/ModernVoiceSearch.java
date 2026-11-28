@@ -24,14 +24,14 @@ import java.util.List;
  * Voice search with the recognizer chosen in the search settings, like the classic search:<br/>
  * system (in-app, no extra screen), intent (the system voice screen) or Gotev library.
  */
-final class ModernVoiceSearch {
+public final class ModernVoiceSearch {
     private static final String TAG = ModernVoiceSearch.class.getSimpleName();
     private final Context mContext;
     private final Callback mCallback;
     private SpeechRecognizer mRecognizer;
     private boolean mIsGotevActive;
 
-    interface Callback {
+    public interface Callback {
         void onListening(boolean listening);
         void onPartialResult(String text);
         void onResult(String text);
@@ -41,18 +41,18 @@ final class ModernVoiceSearch {
         void onStartIntent(Intent intent);
     }
 
-    ModernVoiceSearch(Context context, Callback callback) {
+    public ModernVoiceSearch(Context context, Callback callback) {
         mContext = context;
         mCallback = callback;
     }
 
-    static Intent createIntent() {
+    public static Intent createIntent() {
         Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         return intent;
     }
 
-    void start() {
+    public void start() {
         stop();
 
         switch (SearchData.instance(mContext).getSpeechRecognizerType()) {
@@ -67,7 +67,7 @@ final class ModernVoiceSearch {
         }
     }
 
-    void stop() {
+    public void stop() {
         if (mRecognizer != null) {
             mRecognizer.destroy();
             mRecognizer = null;

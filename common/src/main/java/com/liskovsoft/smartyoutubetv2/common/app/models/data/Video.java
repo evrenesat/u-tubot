@@ -243,8 +243,8 @@ public final class Video {
         Video video = new Video();
         video.film = film;
         video.videoId = film.videoId();
-        video.title = film.title();
-        video.secondTitle = film.streamName;
+        video.title = film.displayTitle();
+        video.secondTitle = film.displayChips();
         video.cardImageUrl = film.poster;
         video.bgImageUrl = film.poster;
         return video;

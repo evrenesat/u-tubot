@@ -87,7 +87,7 @@ public class UtubotFilmStreamsController extends BasePlayerController {
 
         long positionMs = getPlayer().getPositionMs();
         video.film = video.film.withStream(stream.url, stream.name, stream.sizeBytes, positionMs);
-        video.secondTitle = stream.name;
+        video.secondTitle = video.film.displayChips();
         AppDialogPresenter.instance(getContext()).closeDialog();
         getMainController().onNewVideo(video);
     }
