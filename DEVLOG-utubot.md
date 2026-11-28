@@ -1,3 +1,9 @@
+## 2026-11-28 (second film play stuck, #300)
+
+- Cause: `ViewManager.startParentView` returned early for the film player (PR #296) and so never popped the player from the stack of screens. After the first film the stack still ended with `PlaybackActivity`, so `startView(PlaybackView)` for the next film took the player for the screen on top (`getTopView() == viewClass` while the app is in the foreground) and returned without starting anything. The details screen's Play did nothing until the app was quit. Evidence on the emulator (1920x1080): the second Play logged only `UtubotFilmDetails: Chosen stream` and no `ViewManager: Launching activity: PlaybackActivity`, and the top activity stayed the details screen.
+- Fix: the film branch pops the player (`removeTopActivity`) before it returns; the skip in `startView` now logs `View ... is on top already`.
+- Tests: `ViewManagerFilmReplayTest` (two films in a row: the player is off the stack after each). Emulator: first play, Back, another episode plays (`shots5/second-play.png`).
+
 ## 2026-11-28 (director's cuts for films and episodes, #295)
 
 - A film or an episode in the main player now has the cut actions of a YouTube video: the player's "Director's cut..." button (the picker with the presets, "Skim the film" (#207), "Describe the cut..." for a typed description or the phone, by voice), and a new "Cuts" button next to Play on the details screen, which opens the same picker for the best stream (a ready cut starts the film with it). Finished cuts skip their ranges in the player through the existing cut playback (seek bar dims, skip toast, scissors on the clock). Resume and watched marks are unchanged.

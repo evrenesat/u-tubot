@@ -163,6 +163,7 @@ public class ViewManager {
     public void startView(Class<?> viewClass, boolean forceStart) {
         // Skip starting activity twice to get rid of pausing/resuming activity cycle
         if (Utils.isAppInForegroundFixed() && getTopView() == viewClass) {
+            Log.d(TAG, "View " + viewClass.getSimpleName() + " is on top already. Skipping start...");
             return;
         }
 
@@ -184,7 +185,10 @@ public class ViewManager {
 
     public void startParentView(Activity activity) {
         if (isFilmPlayer(activity)) {
-            return; // the films screen that opened the player is under it: finishing the player shows it
+            // The films screen that opened the player is under it: finishing the player shows it. The player still leaves the stack, or
+            // startView takes it for the screen on top and never opens the next film (#300).
+            removeTopActivity();
+            return;
         }
 
         if (activity.getIntent() != null) {
