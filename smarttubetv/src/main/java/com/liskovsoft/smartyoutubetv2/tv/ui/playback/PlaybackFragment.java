@@ -1,5 +1,6 @@
 package com.liskovsoft.smartyoutubetv2.tv.ui.playback;
 
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotClockPolicy;
 import android.media.session.PlaybackState;
 import android.os.Build.VERSION;
 import android.content.Context;
@@ -594,7 +595,7 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
 
         DateTimeView clock = getView().findViewById(R.id.global_time);
         clock.showDate(false);
-        clock.setVisibility(getPlayerData().isGlobalClockEnabled() ? View.VISIBLE : View.GONE);
+        clock.setVisibility(UtubotClockPolicy.cornerClock(getContext(), getPlayerData()) ? View.VISIBLE : View.GONE);
     }
 
     private void initializeGlobalEndingTime() {
@@ -603,7 +604,7 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
         }
 
         EndingTimeView endingTime = getView().findViewById(R.id.global_ending_time);
-        endingTime.setVisibility(getPlayerData().isGlobalEndingTimeEnabled() ? View.VISIBLE : View.GONE);
+        endingTime.setVisibility(UtubotClockPolicy.cornerEndingTime(getContext(), getPlayerData()) ? View.VISIBLE : View.GONE);
     }
 
     private void initializePixelRatio() {
@@ -973,6 +974,8 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
             mPlayerGlue.setTitle(video.getTitleFull() != null ? video.getTitleFull() : "...");
             mPlayerGlue.setSubtitle(video.getSecondTitleFull() != null ? createSubtitle(video) : "...");
             mPlayerGlue.setFilmMode(video.isFilm());
+            initializeGlobalClock();
+            initializeGlobalEndingTime();
             mPlayerGlue.setVideo(video);
         }
     }
@@ -1066,6 +1069,13 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
     @Override
     public void updateEndingTime() {
         if (getView() != null) {
+            // The Clock button and a film after a video (or the other way) change what the corner shows
+            initializeGlobalClock();
+            initializeGlobalEndingTime();
+            if (mPlayerGlue != null) {
+                mPlayerGlue.refreshTimeLine();
+            }
+
             EndingTimeView endingTime = getView().findViewById(R.id.global_ending_time);
             endingTime.update();
         }

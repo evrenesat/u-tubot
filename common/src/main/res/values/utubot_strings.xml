@@ -68,6 +68,9 @@
     <string name="utubot_films_failed">Cannot load streams</string>
     <string name="utubot_films_stream_error">Cannot play this stream. Pick another one under Streams.</string>
     <string name="utubot_films_streams">Streams</string>
+    <string name="utubot_clock">Clock</string>
+    <string name="utubot_clock_on">Clock and end time on</string>
+    <string name="utubot_clock_off">Clock and end time off</string>
     <string name="utubot_films_streams_loading">Loading streams</string>
     <plurals name="utubot_films_hint">
         <item quantity="one">%1$d stream. Up and down to choose, OK to play</item>

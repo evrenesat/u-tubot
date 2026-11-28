@@ -28,6 +28,7 @@ DEVICE_ONLY = {
     "cut_legend_shown",
     "pending_prompt_sets",
     "films_developer",
+    "films_clock",
     "films_skips",
     "films_imdb_id",
     "films_catalog_url",
