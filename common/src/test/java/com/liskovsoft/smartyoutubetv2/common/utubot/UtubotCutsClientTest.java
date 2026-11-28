@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(RobolectricTestRunner.class)
@@ -49,6 +50,17 @@ public class UtubotCutsClientTest {
             return new TinyHttpServer.Response(200, "{\"configured\":true,\"presets\":[" +
                     "{\"id\":\"cut-no-filler\",\"label\":\"No filler\",\"state\":\"ready\",\"request_id\":\"cut1\",\"cut\":" + CUT + "}," +
                     "{\"id\":\"cut-answer\",\"label\":\"Just the answer\",\"state\":\"none\"}]}");
+        });
+        mServer.on("/v1/videos/f7bb94acc21/cuts", request -> {
+            mAuth.set(request.headers.get("authorization"));
+            mQuery.set(request.query);
+
+            if ("POST".equals(request.method)) {
+                mBody.set(request.body);
+                return new TinyHttpServer.Response(200, "{\"request_id\":\"cut9\",\"state\":\"building\"}");
+            }
+
+            return new TinyHttpServer.Response(200, "{\"configured\":true,\"presets\":[]}");
         });
         mServer.on("/v1/videos/abcdefghijk/cut-choice", request -> {
             mAuth.set(request.headers.get("authorization"));
@@ -217,5 +229,60 @@ public class UtubotCutsClientTest {
         new UtubotClient(base(), TOKEN).fillCutRequest("cut1", "Keep the demo", null);
 
         assertEquals("{\"prompt\":\"Keep the demo\"}", mBody.get());
+    }
+
+    private static UtubotFilmPlay film() {
+        UtubotFilmPlay film = new UtubotFilmPlay("tt0111161", "movie", "tt0111161", "The Movie", "https://img.example/p.jpg", 0, 0,
+                "https://host/secret-key/file.mkv", "Movie.mkv", 0, 1234);
+        film.setReleaseDurationMs(7_200_000);
+        film.setStreamFps(23.976f);
+        film.setSubtitleLanguage("tr");
+        return film;
+    }
+
+    @Test
+    public void aFilmCutRequestNamesItsReleaseAndNothingAboutTheViewer() throws IOException {
+        UtubotFilmPlay film = film();
+        VideoMeta meta = UtubotMeta.from(com.liskovsoft.smartyoutubetv2.common.app.models.data.Video.fromFilm(film));
+        UtubotClient client = new UtubotClient(base(), TOKEN);
+
+        CutRequest request = client.requestCut(film.videoId(), "cut-skim-film", null, false, meta);
+
+        assertEquals("f7bb94acc21", film.videoId());
+        assertEquals("cut9", request.id);
+        assertEquals("{\"preset\":\"cut-skim-film\"}", mBody.get());
+        String query = URLDecoder.decode(mQuery.get(), StandardCharsets.UTF_8);
+        assertTrue(query, query.contains("source_kind=film"));
+        assertTrue(query, query.contains("source_key=imdb:tt0111161"));
+        assertTrue(query, query.contains("release_key=Movie.mkv|1234"));
+        assertTrue(query, query.contains("release_duration_ms=7200000"));
+        assertTrue(query, query.contains("duration_s=7200"));
+        assertTrue(query, query.contains("title=The Movie"));
+        assertTrue(query, query.contains("sub_lang=tr"));
+        assertTrue(query, query.contains("stream_fps=23.976"));
+        assertTrue(query, query.contains("poster=https://img.example/p.jpg"));
+        assertFalse(query, query.contains("secret-key")); // the stream address can carry a key
+        assertFalse(query, query.contains("channel"));
+    }
+
+    @Test
+    public void theCutListOfAFilmCarriesTheReleaseToo() throws IOException {
+        UtubotFilmPlay film = film();
+        VideoMeta meta = UtubotMeta.from(com.liskovsoft.smartyoutubetv2.common.app.models.data.Video.fromFilm(film));
+
+        new UtubotClient(base(), TOKEN).cuts(film.videoId(), meta);
+
+        assertTrue(URLDecoder.decode(mQuery.get(), StandardCharsets.UTF_8).contains("source_key=imdb:tt0111161"));
+    }
+
+    @Test
+    public void aYouTubeVideoSendsNoFilmFacts() throws IOException {
+        VideoMeta meta = new VideoMeta();
+        meta.videoId = "abcdefghijk";
+        meta.title = "A video";
+
+        new UtubotClient(base(), TOKEN).cuts("abcdefghijk", meta);
+
+        assertFalse(mQuery.get().contains("source_kind"));
     }
 }

@@ -3,6 +3,7 @@ package com.liskovsoft.smartyoutubetv2.common.utubot;
 import androidx.annotation.Nullable;
 
 import com.liskovsoft.mediaserviceinterfaces.data.SponsorSegment;
+import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Cut;
 
 import java.util.List;
@@ -18,6 +19,8 @@ public final class UtubotCutSkipper {
      * segments within the same window)
      */
     public static final long TOUCH_MS = 3_000;
+    public static final long VIDEO_TOLERANCE_MS = 2_000;
+    public static final long FILM_TOLERANCE_MS = 30_000;
     /**
      * A move of the playback longer than a tick of the highest speed cannot be the playback flowing: it is a seek
      */
@@ -70,7 +73,19 @@ public final class UtubotCutSkipper {
      * different edition of it)
      */
     public static boolean matchesDuration(Cut cut, long durationMs) {
-        return cut != null && cut.durationMs > 0 && durationMs > 0 && Math.abs(cut.durationMs - durationMs) <= 2_000;
+        return matchesDuration(cut, durationMs, VIDEO_TOLERANCE_MS);
+    }
+
+    /**
+     * A film's cut belongs to its release by the id (the stream file), and subtitle timing is not frame exact, so its length may differ
+     * by {@link #FILM_TOLERANCE_MS} (the backend's {@code [films] apply_tolerance_ms} default)
+     */
+    public static boolean matchesDuration(Cut cut, long durationMs, long toleranceMs) {
+        return cut != null && cut.durationMs > 0 && durationMs > 0 && Math.abs(cut.durationMs - durationMs) <= toleranceMs;
+    }
+
+    public static long toleranceFor(@Nullable Video video) {
+        return video != null && video.isFilm() ? FILM_TOLERANCE_MS : VIDEO_TOLERANCE_MS;
     }
 
     /**

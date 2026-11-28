@@ -158,6 +158,10 @@ public class ExoPlayerController implements Player.EventListener {
             Video video = getVideo();
 
             if (trackType == C.TRACK_TYPE_VIDEO && video != null && video.isFilm()) {
+                if (format.frameRate != Format.NO_VALUE) {
+                    video.film.setStreamFps(format.frameRate); // the backend rejects subtitles timed for another frame rate
+                }
+
                 ColorInfo color = format.colorInfo;
                 Log.i(TAG, "Film video format: mime=" + format.sampleMimeType + " codecs=" + format.codecs + " size=" + format.width + "x"
                         + format.height + " colorSpace=" + (color == null ? "unset" : color.colorSpace) + " colorTransfer="

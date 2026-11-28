@@ -9,6 +9,7 @@ import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionCategory;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
@@ -178,9 +179,8 @@ public final class UtubotMenu {
      */
     public static void showCuts(Context context, Video video) {
         if (video.isFilm()) {
-            // The cut picker is for YouTube videos; the cuts of a film (source kind film, see UtubotFilmPlay) come with their own backend calls
-            MessageHelpers.showLongMessage(context, context.getString(R.string.utubot_cut_film_none));
-            return;
+            // The backend looks the subtitles up in the viewer's language (else English); the film's other facts are on the film itself
+            video.film.setSubtitleLanguage(PlayerData.instance(context).getSubtitleLanguage());
         }
 
         sCutMode = null;

@@ -79,6 +79,8 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      * The cut lists of the session with the ETag each was cached under, so the background refresh can
      * re-validate with If-None-Match. Guarded by this field.
      */
+    /** The meta of the films that played this session, by backend id: their cut fetches carry the release */
+    private final Map<String, VideoMeta> mFilmMetas = new ConcurrentHashMap<>();
     private final Map<String, CutEntry> mCuts = new LinkedHashMap<String, CutEntry>() {
         @Override
         protected boolean removeEldestEntry(Entry<String, CutEntry> eldest) {
@@ -817,8 +819,19 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
      * {@link UtubotCutFollower})
      */
     public void followCuts(String videoId, UtubotCutFollower.Listener listener) {
+        followCuts(videoId, null, listener);
+    }
+
+    /**
+     * A film names its release in the meta: the backend knows a film's id only from it, so the follower's fetches send it too
+     */
+    public void followCuts(String videoId, @Nullable VideoMeta meta, UtubotCutFollower.Listener listener) {
         if (!mSettings.isConfigured() || videoId == null) {
             return;
+        }
+
+        if (meta != null && meta.film != null) {
+            mFilmMetas.put(videoId, meta);
         }
 
         cutsFollower().follow(videoId, listener);
@@ -861,7 +874,9 @@ public class UtubotManager implements UtubotPanelModel.Source, UtubotAnswerModel
                 public void fetchCuts(String videoId, UtubotCutFollower.CutsCallback callback) {
                     UtubotClient client = newClient();
 
-                    Observable.<CutList>fromCallable(() -> client.cuts(videoId))
+                    VideoMeta filmMeta = mFilmMetas.get(videoId);
+
+                    Observable.<CutList>fromCallable(() -> client.cuts(videoId, filmMeta))
                             .subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
                             .subscribe(cuts -> {
                                 if (isCurrent(client)) {
