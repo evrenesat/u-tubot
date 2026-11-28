@@ -412,6 +412,15 @@ class CutsConfig(BaseModel):
         return self
 
 
+class ReportsConfig(BaseModel):
+    """Crash reports and player logs a TV uploads (`POST /v1/device/reports`), kept per user and device."""
+
+    keep_days: int = Field(30, ge=1)
+    max_bytes_per_user: int = Field(50 * 1024 * 1024, ge=1024)
+    # A report is refused past this size, compressed and once unpacked.
+    max_report_bytes: int = Field(2 * 1024 * 1024, ge=1024)
+
+
 class FilmsConfig(BaseModel):
     """Film cuts: the transcript of a film comes from its subtitles, found by IMDb id.
 
@@ -1093,6 +1102,7 @@ class Config(BaseModel):
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     cuts: CutsConfig = Field(default_factory=CutsConfig)
     films: FilmsConfig = Field(default_factory=FilmsConfig)
+    reports: ReportsConfig = Field(default_factory=ReportsConfig)
     classes: ClassesConfig = Field(default_factory=ClassesConfig)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)

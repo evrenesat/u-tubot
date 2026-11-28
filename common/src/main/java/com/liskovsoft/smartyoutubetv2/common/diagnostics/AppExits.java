@@ -10,6 +10,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
 import com.liskovsoft.smartyoutubetv2.common.prefs.DebuggingData;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -28,6 +29,8 @@ import java.util.List;
 public final class AppExits {
     public static final String KIND_CRASH = "crash";
     public static final String KIND_APP_EXIT = "app_exit";
+    public static final String KIND_ANR = "anr";
+    private static final int CRASH_LOG_LINES = 60;
     private static final int MAX_EXITS = 16;
     /**
      * Apart at most: processes that went together
@@ -47,12 +50,16 @@ public final class AppExits {
      */
     public static void recordCrash(Context context, Thread thread, Throwable error) {
         try {
+            UtubotPlayerLog.event("crash", UtubotPlayerLog.describeForCrash(error));
             FormatAttempts.flush(context, true);
             PlayerFailure.create(context, KIND_CRASH)
                     .videoId(FormatAttempts.getVideoId())
                     .error(error)
                     .detail("thread", thread.getName())
+                    .detail("screen", UtubotPlayerLog.screen())
+                    .detail("recentEvents", new JSONArray(UtubotPlayerLog.tail(CRASH_LOG_LINES)))
                     .recordNow();
+            UtubotPlayerLog.flushNow();
         } catch (Throwable e) {
             // The crash goes on as it would
         }

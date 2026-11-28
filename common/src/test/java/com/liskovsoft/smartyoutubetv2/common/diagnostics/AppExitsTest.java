@@ -64,6 +64,30 @@ public class AppExitsTest {
     /**
      * On the disk before the handler returns (the app dies next), with the video playing
      */
+    /**
+     * The crash report holds the last events of the player log and the log is on the disk too
+     */
+    @Test
+    public void aCrashCarriesTheRecentPlayerEventsAndFlushesThem() throws Exception {
+        com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog.useForTesting(
+                com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog.createForTesting(mFolder.newFolder("events"), 16, 4096, 2));
+
+        try {
+            com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog.event("player.open", "film");
+
+            AppExits.recordCrash(getContext(), new Thread("main"), new IllegalStateException("Boom"));
+
+            String written = new String(Files.readAllBytes(new File(mFolder.getRoot(), PlayerFailureLog.CURRENT).toPath()), StandardCharsets.UTF_8);
+            assertTrue(written, written.contains("recentEvents"));
+            assertTrue(written, written.contains("player.open film"));
+            List<File> files = com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog.filesForUpload();
+            assertEquals(1, files.size());
+            assertTrue(new String(Files.readAllBytes(files.get(0).toPath()), StandardCharsets.UTF_8).contains("crash IllegalStateException: Boom"));
+        } finally {
+            com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog.useForTesting(null);
+        }
+    }
+
     @Test
     public void aCrashIsWrittenRightAway() throws Exception {
         FormatAttempts.onNewVideo(getContext(), "playing");

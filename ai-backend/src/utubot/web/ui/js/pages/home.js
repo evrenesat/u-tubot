@@ -71,6 +71,19 @@ export async function render(view) {
         ),
         h("a", { class: "btn sec", href: "#/captions", text: "Open jobs" }),
       ),
+      status.reports
+        ? card(
+            "TV crash reports",
+            h(
+              "div",
+              { class: "row" },
+              pill(status.reports.crashes + " crashes", status.reports.crashes ? "bad" : "ok"),
+              pill(status.reports.anrs + " not responding", status.reports.anrs ? "bad" : ""),
+              pill(status.reports.reports + " reports"),
+            ),
+            h("p", { class: "muted", text: "Last " + status.reports.days + " days." }),
+          )
+        : null,
       card(
         "TV",
         h("p", { class: "muted", text: "Link a TV with a one-time code, no typing on the remote beyond the code." }),

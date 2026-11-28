@@ -106,6 +106,12 @@ CREATE TABLE IF NOT EXISTS user_secrets(
 CREATE TABLE IF NOT EXISTS user_secret_rev(user TEXT PRIMARY KEY, rev INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS user_secret_deliveries(
   user TEXT NOT NULL, device_id TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY(user, device_id));
+CREATE TABLE IF NOT EXISTS device_reports(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT NOT NULL, device_id TEXT NOT NULL DEFAULT '',
+  device_name TEXT NOT NULL DEFAULT '', received_at REAL NOT NULL, app_version TEXT NOT NULL DEFAULT '',
+  crashes INTEGER NOT NULL DEFAULT 0, anrs INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,
+  size INTEGER NOT NULL, body BLOB NOT NULL);
+CREATE INDEX IF NOT EXISTS device_reports_user ON device_reports(user, id);
 CREATE TABLE IF NOT EXISTS user_passwords(
   user TEXT PRIMARY KEY, hash TEXT NOT NULL, updated_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(
@@ -376,6 +382,13 @@ class Database:
             self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             self._conn.execute("VACUUM")
             self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    def execute_id(self, sql: str, params: Iterable[Any] = ()) -> int:
+        """An INSERT: the row id it got."""
+        with self._lock:
+            cur = self._conn.execute(sql, tuple(params))
+            self._conn.commit()
+            return int(cur.lastrowid or 0)
 
     def execute_rc(self, sql: str, params: Iterable[Any] = ()) -> int:
         with self._lock:

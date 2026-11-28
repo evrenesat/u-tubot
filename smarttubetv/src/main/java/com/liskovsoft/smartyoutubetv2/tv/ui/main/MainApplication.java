@@ -51,6 +51,8 @@ import com.liskovsoft.youtubeapi.service.YouTubeServiceManager;
 
 import org.conscrypt.Conscrypt;
 
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog;
+
 import java.lang.Thread.UncaughtExceptionHandler;
 import java.security.Provider;
 import java.security.Security;
@@ -188,6 +190,7 @@ public class MainApplication extends MultiDexApplication implements Configuratio
 
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
             if (shouldIgnore(e)) {
+                UtubotPlayerLog.error("ignored.exception", e);
                 MessageHelpers.showLongMessage(this, e.getMessage());
                 return;
             }

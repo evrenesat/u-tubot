@@ -1,3 +1,10 @@
+## 2026-11-28 (crash reports and player logs, #301)
+
+- `devicereports.py`: `POST /v1/device/reports` (paired TV only, gzip or plain JSON, size limit before and after unpacking so a zip bomb is refused with 413, must be a JSON object), `DeviceReports` over the new table `device_reports` (additive; report stored gzipped, counts of crashes, ANRs and errors read from the failure kinds). Retention on every upload: `[reports] keep_days` (30) and `max_bytes_per_user` (50 MiB, oldest first). `counts()` feeds `reports` in `GET /v1/status` (admin: whole server) and a card on the web home.
+- CLI: `utubot reports list [--user] [--limit]`, `utubot reports show ID`. `Database.execute_id` returns the new row id.
+- The server never logs a report's content; the TV redacts first (`ai/CONTRACT.md`, "Crash reports and player logs").
+- Tests: `tests/test_device_reports.py`.
+
 ## 2026-11-28 (film cuts, #295)
 
 - `films.py`: source keys (`imdb:tt..[:S1E2]`), the derived release id (`film_video_id`: `f` + 10 hex of SHA-256 of `source_key|release_key`, eleven characters so every video-id route works), SRT/WebVTT parsing into the transcript shape, subtitle choice (viewer's language else English, then release-name token overlap plus group and hash-match bonuses; an episode search drops another episode) and the timing check (cue count, last cue against the stream plus margin, reach, coverage, frame rate, with the 23.976/24/25 mix-up named). `FilmSubtitles` asks the Stremio add-on by IMDb id and file name and size only; downloads go through `guarded_get` (public addresses only, `[films] download_hosts` for a LAN add-on).

@@ -11,6 +11,7 @@ import android.view.MotionEvent;
 import androidx.fragment.app.Fragment;
 
 import com.liskovsoft.sharedutils.helpers.Helpers;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog;
 import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.smartyoutubetv2.common.app.models.playback.manager.PlayerEngine;
 import com.liskovsoft.smartyoutubetv2.common.app.presenters.AppDialogPresenter;
@@ -64,6 +65,10 @@ public class PlaybackActivity extends LeanbackActivity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
+            UtubotPlayerLog.event("key.back");
+        }
+
         if (mPlaybackFragment != null) {
             mPlaybackFragment.onDispatchKeyEvent(event);
         }
@@ -91,6 +96,10 @@ public class PlaybackActivity extends LeanbackActivity {
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (mPlaybackFragment == null) { // not created yet or already gone: the keys below have nothing to act on
+            return super.onKeyDown(keyCode, event);
+        }
+
         if (keyCode == KeyEvent.KEYCODE_BUTTON_R1) {
             mPlaybackFragment.skipToNext();
             return true;

@@ -207,7 +207,10 @@ def install_web_routes(app: FastAPI, d: Deps) -> None:
 
     @app.get("/v1/status")
     async def status(user: UserConfig = Depends(current_user)):
-        return svc.status.home(user.name)
+        body = svc.status.home(user.name)
+        # The TVs' crash reports of the last week: the whole server for an admin, else the user's own
+        body["reports"] = svc.device_reports.counts(None if user.admin else user.name)
+        return body
 
     @app.get("/v1/updates")
     async def updates(user: UserConfig = Depends(current_user)):
