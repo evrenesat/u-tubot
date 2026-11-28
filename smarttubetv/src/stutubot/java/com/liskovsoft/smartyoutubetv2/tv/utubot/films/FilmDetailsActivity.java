@@ -170,6 +170,7 @@ public class FilmDetailsActivity extends Activity {
         }
 
         if (item.isSeries()) {
+            mProgress.rememberEpisodes(item.id, item.episodes);
             Episode resume = resumeEpisode(item);
             mEpisode = resume != null ? resume : first(item.episodes);
             mSeason = mEpisode != null ? mEpisode.season : 1;
@@ -370,11 +371,11 @@ public class FilmDetailsActivity extends Activity {
     }
 
     private Episode resumeEpisode(Item item) {
-        Entry latest = null;
+        UtubotFilmsProgress.Row latest = null;
 
-        for (Entry entry : mProgress.continueWatching()) {
-            if (item.id.equals(entry.titleId)) {
-                latest = entry;
+        for (UtubotFilmsProgress.Row row : mProgress.continueRow(System.currentTimeMillis())) {
+            if (item.id.equals(row.titleId)) {
+                latest = row;
                 break;
             }
         }

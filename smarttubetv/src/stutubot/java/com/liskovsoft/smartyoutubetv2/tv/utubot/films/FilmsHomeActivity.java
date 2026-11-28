@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
+import android.widget.Toast;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
@@ -157,10 +158,15 @@ public class FilmsHomeActivity extends Activity {
         mContinueSlot.removeAllViews();
         List<View> cards = new ArrayList<>();
 
-        for (Entry entry : mProgress.continueWatching()) {
-            String subtitle = entry.season > 0 ? "S" + entry.season + " E" + entry.episode : entry.timeLeft();
-            cards.add(FilmsUi.posterCard(this, entry.name, subtitle, entry.poster, entry.share(), false,
-                    v -> openDetails(entry.type, entry.titleId, entry.name, entry.poster)));
+        for (UtubotFilmsProgress.Row row : mProgress.continueRow(System.currentTimeMillis())) {
+            cards.add(FilmsUi.posterCard(this, row.name, row.subtitle(), row.poster, row.share(), false,
+                    v -> openDetails(row.type, row.titleId, row.name, row.poster),
+                    v -> {
+                        mProgress.removeFromContinue(row.titleId, System.currentTimeMillis());
+                        Toast.makeText(this, row.name + " removed from Continue watching", Toast.LENGTH_SHORT).show();
+                        showContinueWatching();
+                        return true;
+                    }));
         }
 
         if (!cards.isEmpty()) {
