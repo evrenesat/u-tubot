@@ -231,6 +231,11 @@ max_tokens = 2000
 
 # Films: the transcript of a film cut is its subtitles, found by IMDb id on a Stremio subtitles
 # add-on. Only the IMDb id, season/episode and the stream's file name and size are sent.
+# [reports]                       # crash reports and player logs the TVs upload
+# keep_days = 30
+# max_bytes_per_user = 52428800    # the oldest are dropped past this
+# max_report_bytes = 2097152       # one report, compressed and unpacked
+
 # [films]
 # subtitles_url = "https://opensubtitles-v3.strem.io"
 # download_hosts = []             # hosts subtitle files may come from even at a private address (an add-on on the LAN)

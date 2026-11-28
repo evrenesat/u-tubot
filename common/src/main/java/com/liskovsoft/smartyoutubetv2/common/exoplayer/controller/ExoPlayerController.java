@@ -35,6 +35,7 @@ import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptionsFollower;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCaptionsOpen;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotManager;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotModels.Captions;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.BuildConfig;
 import com.liskovsoft.smartyoutubetv2.common.R;
@@ -145,6 +146,7 @@ public class ExoPlayerController implements Player.EventListener {
         @Override
         public void onDecoderInitialized(EventTime eventTime, int trackType, String decoderName, long initializationDurationMs) {
             if (trackType == C.TRACK_TYPE_VIDEO || trackType == C.TRACK_TYPE_AUDIO) {
+                UtubotPlayerLog.event("player.decoder", (trackType == C.TRACK_TYPE_VIDEO ? "video " : "audio ") + decoderName);
                 FormatAttempts.onDecoder(trackType == C.TRACK_TYPE_VIDEO, decoderName);
                 VideoStarts.onDecoder(trackType == C.TRACK_TYPE_VIDEO, decoderName, initializationDurationMs);
             }
@@ -156,6 +158,10 @@ public class ExoPlayerController implements Player.EventListener {
         @Override
         public void onDecoderInputFormatChanged(EventTime eventTime, int trackType, Format format) {
             Video video = getVideo();
+
+            if (trackType == C.TRACK_TYPE_VIDEO && UtubotPlayerLog.isEnabled()) {
+                UtubotPlayerLog.event("player.format", format.sampleMimeType + " " + format.codecs + " " + format.width + "x" + format.height);
+            }
 
             if (trackType == C.TRACK_TYPE_VIDEO && video != null && video.isFilm()) {
                 if (format.frameRate != Format.NO_VALUE) {
@@ -481,6 +487,12 @@ public class ExoPlayerController implements Player.EventListener {
      * codec check reads what decoder ExoPlayer picks from it (FormatAttempts, PlaybackHealth).
      */
     public void openProgressiveUrl(String url) {
+        if (url == null || url.isEmpty()) {
+            UtubotPlayerLog.event("player.open.refused", "no stream address");
+            mEventListener.onEngineError(ExoPlaybackException.TYPE_SOURCE, -1, new IllegalArgumentException("No stream address"));
+            return;
+        }
+
         MediaSource mediaSource = mMediaSourceFactory.fromProgressiveUrl(url);
         openMediaSource(mediaSource);
     }
@@ -498,6 +510,16 @@ public class ExoPlayerController implements Player.EventListener {
     }
 
     private void openMediaSource(MediaSource mediaSource) {
+        if (mPlayer == null) { // released (the view is gone, or the engine failed): nothing to open it with
+            UtubotPlayerLog.event("player.open.refused", "no player");
+            return;
+        }
+
+        if (UtubotPlayerLog.isEnabled()) {
+            Video video = getVideo();
+            UtubotPlayerLog.event("player.open", (video != null && video.isFilm() ? "film " : "video ") + mediaSource.getClass().getSimpleName());
+        }
+
         mFrameStepper.reset();
         mRangeMuter.reset();
         resetPlayerState(); // fixes occasional video artifacts and problems with quality switching
@@ -689,6 +711,8 @@ public class ExoPlayerController implements Player.EventListener {
     }
     
     public void release() {
+        UtubotPlayerLog.event("player.release");
+
         if (UtubotSettings.isBuiltIn()) {
             UtubotManager.instance(mContext).stopFollowingCaptions(mUtubotCaptionsListener);
         }
@@ -814,6 +838,10 @@ public class ExoPlayerController implements Player.EventListener {
         if (formatItem != null && formatItem.getTrack() != null) {
             FormatItem selectedFormatItem = getSelectedFormat(formatItem.getTrack().rendererIndex);
             if (!isSelected(formatItem, selectedFormatItem)) {
+                if (UtubotPlayerLog.isEnabled()) {
+                    UtubotPlayerLog.event("player.track.selected", "type " + formatItem.getType() + " " + formatItem.getTitle());
+                }
+
                 mTrackSelectorManager.selectTrack(formatItem.getTrack());
                 mEventListener.onTrackSelected(formatItem);
             }
@@ -858,7 +886,12 @@ public class ExoPlayerController implements Player.EventListener {
         selectUtubotCaptions();
 
         for (TrackSelection selection : trackSelections.getAll()) {
-            if (selection != null) {
+            if (selection != null && selection.length() > 0) { // a selection of no track has no format to read
+                if (UtubotPlayerLog.isEnabled()) {
+                    Format selected = selection.getFormat(0);
+                    UtubotPlayerLog.event("player.track", selected.sampleMimeType + " " + selected.codecs + " " + selected.language);
+                }
+
                 // EXO: 2.12.1
                 //Format format = selection.getSelectedFormat();
 
@@ -901,6 +934,7 @@ public class ExoPlayerController implements Player.EventListener {
         // NOTE: Player is released at this point. So, there is no sense to restore the playback here.
 
         Throwable nested = error.getCause() != null ? error.getCause() : error;
+        UtubotPlayerLog.error("player.error", nested);
 
         mEventListener.onEngineError(error.type, error.rendererIndex, nested);
     }
@@ -912,6 +946,15 @@ public class ExoPlayerController implements Player.EventListener {
         }
 
         PlayerCommands.onState(playbackState, getPositionMs());
+
+        if (UtubotPlayerLog.isEnabled()) {
+            UtubotPlayerLog.event("player.state", TrackSelectorUtil.stateToString(playbackState) + (playWhenReady ? " play" : " pause") + " at "
+                    + getPositionMs());
+
+            if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED || !playWhenReady) {
+                UtubotPlayerLog.flushAsync(); // pause, stop, end: written off the player's threads
+            }
+        }
 
         boolean isPlayPressed = Player.STATE_READY == playbackState && playWhenReady;
         boolean isPausePressed = Player.STATE_READY == playbackState && !playWhenReady;
@@ -952,6 +995,7 @@ public class ExoPlayerController implements Player.EventListener {
         Log.e(TAG, "onPositionDiscontinuity");
 
         if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+            UtubotPlayerLog.event("player.seek", String.valueOf(getPositionMs()));
             mFrameStepper.onSeek();
             // Any seek (SponsorBlock, chapters, remote, not only the UI's): its buffering comes before onSeekProcessed and isn't a stall
             FormatAttempts.onSeek();
@@ -1126,6 +1170,8 @@ public class ExoPlayerController implements Player.EventListener {
             mPlayer.release();
         } catch (ArrayIndexOutOfBoundsException e) { // thrown on stop()
             e.printStackTrace();
+        } catch (RuntimeException e) { // a player that is already released or broken must not take the screen down with it
+            UtubotPlayerLog.error("player.release.failed", e);
         } finally {
             mPlayer = null;
         }

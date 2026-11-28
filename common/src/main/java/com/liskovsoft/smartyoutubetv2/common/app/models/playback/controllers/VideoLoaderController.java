@@ -30,6 +30,7 @@ import com.liskovsoft.smartyoutubetv2.common.diagnostics.PlayerFailure;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmDevice;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmFormat;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotFilmPlay;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog;
 import com.liskovsoft.smartyoutubetv2.common.diagnostics.VideoStart;
 import com.liskovsoft.smartyoutubetv2.common.diagnostics.VideoStarts;
 import com.liskovsoft.smartyoutubetv2.common.misc.MediaServiceManager;
@@ -363,6 +364,12 @@ public class VideoLoaderController extends BasePlayerController {
     private void loadFilm(Video video) {
         UtubotFilmPlay film = video.film;
 
+        if (film == null || film.streamUrl == null || film.streamUrl.isEmpty()) {
+            UtubotPlayerLog.event("film.load.refused", "no stream");
+            MessageHelpers.showLongMessage(getContext(), R.string.utubot_films_stream_error);
+            return;
+        }
+
         disposeActions();
         mFormatVideoId = video.videoId;
         mFormatClient = UtubotFilmPlay.SOURCE_KIND;
@@ -371,6 +378,7 @@ public class VideoLoaderController extends BasePlayerController {
 
         UtubotFilmFormat format = UtubotFilmFormat.parse(film.streamName);
         // The address can hold a key: only what the stream name says is logged
+        UtubotPlayerLog.event("film.load", format.describe());
         Log.i(TAG, "Chosen stream: " + format.describe() + " verdict=" + format.verdict(new UtubotFilmDevice(getContext())));
 
         getPlayer().showProgressBar(false);

@@ -4,6 +4,7 @@ import argparse
 import getpass
 import json
 import sys
+import time
 from pathlib import Path
 
 from . import appchannel, appsync
@@ -184,6 +185,32 @@ def cmd_user_revoke(args: argparse.Namespace) -> int:
         print("unknown device id", file=sys.stderr)
         return 1
     print("revoked")
+    return 0
+
+
+def _reports(args: argparse.Namespace):
+    from .devicereports import DeviceReports
+
+    cfg = load_config(args.config)
+    return DeviceReports(cfg.reports, Database(cfg.db_path))
+
+
+def cmd_reports_list(args: argparse.Namespace) -> int:
+    for r in _reports(args).list(args.user, args.limit):
+        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["received_at"]))
+        print(
+            f"{r['id']}  {when}  {r['user']}  {r['device_name'] or r['device_id']}  v{r['app_version']}  "
+            f"crashes={r['crashes']} anrs={r['anrs']} errors={r['errors']}  {r['size']}B"
+        )
+    return 0
+
+
+def cmd_reports_show(args: argparse.Namespace) -> int:
+    found = _reports(args).get(args.id)
+    if found is None:
+        print("unknown report id", file=sys.stderr)
+        return 1
+    print(json.dumps(found, indent=2, sort_keys=True))
     return 0
 
 
@@ -572,6 +599,17 @@ def main(argv: list[str] | None = None) -> int:
     revoke = user.add_parser("revoke", help="revoke a paired device token")
     revoke.add_argument("device_id")
     revoke.set_defaults(func=cmd_user_revoke)
+    reports = sub.add_parser(
+        "reports", help="crash reports and player logs of the TVs"
+    ).add_subparsers(dest="sub", required=True)
+    reports_list = reports.add_parser("list", help="newest first")
+    reports_list.add_argument("--user")
+    reports_list.add_argument("--limit", type=int, default=50)
+    reports_list.set_defaults(func=cmd_reports_list)
+    reports_show = reports.add_parser("show", help="one report as JSON")
+    reports_show.add_argument("id", type=int)
+    reports_show.set_defaults(func=cmd_reports_show)
+
     app = sub.add_parser("app", help="app update channel").add_subparsers(dest="sub", required=True)
     publish = app.add_parser(
         "publish", help="publish APKs (one per ABI, named ..._<abi>.apk) and rewrite update.json"

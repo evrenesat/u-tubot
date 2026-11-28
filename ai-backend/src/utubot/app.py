@@ -44,6 +44,7 @@ from .config import (
 from .content import ContentService
 from .cuts import CutRefused, CutService
 from .db import MAX_CHANNEL_ID_CHARS, Database
+from .devicereports import DeviceReports, install_report_routes
 from .devicesettings import DeviceSettings, install_settings_routes
 from .feature import feature_run
 from .films import SOURCE_KIND_FILM, FilmSubtitles, film_source
@@ -237,6 +238,7 @@ class Services:
     artifacts: ArtifactCache
     ledger: LedgerService
     user_providers: UserProviders
+    device_reports: Any = None
     device_settings: Any = None
     secrets: Any = None
     build: buildinfo.Build = field(default_factory=buildinfo.detect)
@@ -335,6 +337,7 @@ def build_services(
         ledger=ledger,
         user_providers=user_providers,
         secrets=secret_store,
+        device_reports=DeviceReports(cfg.reports, db),
     )
 
 
@@ -1768,6 +1771,7 @@ def create_app(
     install_web_routes(app, deps)
     install_voice_routes(app, deps)
     install_settings_routes(app, deps)
+    install_report_routes(app, deps)
     return app
 
 

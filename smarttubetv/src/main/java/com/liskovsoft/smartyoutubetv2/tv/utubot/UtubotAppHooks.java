@@ -4,7 +4,10 @@ import android.app.Activity;
 import android.app.Application;
 import android.os.Bundle;
 
+import com.liskovsoft.smartyoutubetv2.common.diagnostics.AnrWatchdog;
+import com.liskovsoft.smartyoutubetv2.common.diagnostics.ReportUploader;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotCutNotices;
+import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotPlayerLog;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotScreen;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettings;
 import com.liskovsoft.smartyoutubetv2.common.utubot.UtubotSettingsSyncRunner;
@@ -30,6 +33,10 @@ public final class UtubotAppHooks {
         }
 
         UtubotCutNotices.instance(application).install();
+        // Crash reports and the player's event log, sent to the backend while nothing plays (see ReportUploader)
+        UtubotPlayerLog.init(application);
+        AnrWatchdog.start(application);
+        ReportUploader.start(application);
 
         application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             // The controller holds its activity weakly: a value that held its key would keep the entry from ever being collected
@@ -37,6 +44,8 @@ public final class UtubotAppHooks {
 
             @Override
             public void onActivityResumed(Activity activity) {
+                UtubotPlayerLog.setScreen(activity.getClass().getSimpleName());
+                UtubotPlayerLog.event("activity.resumed", activity.getClass().getSimpleName());
                 boolean isDialog = activity instanceof AppDialogActivity;
                 UtubotScreen.onResumed(activity, isDialog);
 
@@ -69,6 +78,12 @@ public final class UtubotAppHooks {
 
             @Override
             public void onActivityPaused(Activity activity) {
+                UtubotPlayerLog.event("activity.paused", activity.getClass().getSimpleName());
+
+                if (activity instanceof PlaybackActivity) {
+                    UtubotPlayerLog.flushAsync();
+                }
+
                 UtubotScreen.onPaused(activity);
 
                 UtubotBadgeController controller = mControllers.get(activity);
@@ -80,6 +95,13 @@ public final class UtubotAppHooks {
 
             @Override
             public void onActivityDestroyed(Activity activity) {
+                UtubotPlayerLog.event("activity.destroyed", activity.getClass().getSimpleName());
+
+                if (activity instanceof PlaybackActivity) {
+                    UtubotPlayerLog.flushAsync();
+                    ReportUploader.onPlaybackEnded();
+                }
+
                 UtubotScreen.onPaused(activity);
                 UtubotBadgeController controller = mControllers.remove(activity);
 
@@ -90,6 +112,7 @@ public final class UtubotAppHooks {
 
             @Override
             public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
+                UtubotPlayerLog.event("activity.created", activity.getClass().getSimpleName());
             }
 
             @Override
@@ -98,6 +121,11 @@ public final class UtubotAppHooks {
 
             @Override
             public void onActivityStopped(Activity activity) {
+                UtubotPlayerLog.event("activity.stopped", activity.getClass().getSimpleName());
+
+                if (activity instanceof PlaybackActivity) {
+                    UtubotPlayerLog.flushAsync();
+                }
             }
 
             @Override

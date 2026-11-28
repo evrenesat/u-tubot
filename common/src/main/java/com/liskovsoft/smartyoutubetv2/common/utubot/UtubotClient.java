@@ -72,6 +72,7 @@ public class UtubotClient {
     private static final int HTTP_UNAUTHORIZED = 401;
     private static final int HTTP_SERVER_ERROR = 500;
     private static final String LEDGER_PATH = "/ledger";
+    private static final String REPORTS_PATH = "/device/reports";
     private static final UtubotFailureThrottle sThrottle = new UtubotFailureThrottle();
     private static final int HTTP_BAD_REQUEST = 400;
     private static final int HTTP_NOT_FOUND = 404;
@@ -246,6 +247,16 @@ public class UtubotClient {
         } catch (org.json.JSONException e) {
             throw new IOException("bad secret body");
         }
+    }
+
+    /**
+     * A crash report and player log (ai/CONTRACT.md, "Crash reports and player logs"), gzip of its JSON; the answer holds its id.
+     * Not reported to the error ledger when it fails: the uploader retries on its own.
+     */
+    public String postDeviceReport(byte[] gzipJson, int timeoutMs) throws IOException {
+        RequestBody body = RequestBody.create(gzipJson, MediaType.get("application/json; charset=utf-8"));
+
+        return send(builder("/device/reports", true).header("Content-Encoding", "gzip").post(body), timeoutMs);
     }
 
     /**
@@ -1049,7 +1060,7 @@ public class UtubotClient {
         String path = request.url().encodedPath();
         boolean clientSide = !(error instanceof HttpException) || ((HttpException) error).code >= HTTP_SERVER_ERROR;
 
-        if (mIsCancelled || mIsQuiet || mToken.isEmpty() || path.endsWith(LEDGER_PATH) || !clientSide) {
+        if (mIsCancelled || mIsQuiet || mToken.isEmpty() || path.endsWith(LEDGER_PATH) || path.endsWith(REPORTS_PATH) || !clientSide) {
             return;
         }
 

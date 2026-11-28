@@ -1236,6 +1236,23 @@ are additive and need a signed-in caller.
   its `release.json` changelog (older releases: the bullets of the release body), all in group `other`.
   The TV shows both lists as text under Settings, Updates, What's new (no QR code); the web UI shows them under Updates.
 
+### Crash reports and player logs (addendum, 2026-11-28, issue 301)
+
+- `POST /v1/device/reports` (paired TV token only; a config token or browser session is refused with 400), body gzip (`Content-Encoding:
+  gzip`) or plain JSON, at most `[reports] max_report_bytes` (default 2 MiB, also once unpacked, 413 past it) -> `{"id":"<n>"}`.
+- The report is a JSON object: `{"schema":1,"app":{"version","code","flavor"},"device":{"model","sdk"},"failures":[...],"events":["MM-dd
+  HH:mm:ss.SSS name detail",...]}`. `failures` are the TV's player failure records (kinds `crash`, `anr`, `*_error`, `stall`...; a crash holds
+  its stack, the screen and the last 60 events) and `events` the player event log (open stream, format, decoder, state, seek, track changes,
+  errors, Back, activity lifecycle). The TV redacts before it sends: URL queries and user info, opaque path segments (Real-Debrid tokens
+  sit in an add-on address), values after token/key/secret/password/authorization, bearer and device tokens, the token and add-on
+  address the TV holds, IP and email addresses. The server stores the report as it came and never logs its content.
+- Stored in `device_reports` per user and device (name, app version, crash, ANR and error counts), kept `[reports] keep_days` (30) and at
+  most `max_bytes_per_user` (50 MiB, oldest first). CLI: `utubot reports list [--user U] [--limit N]`, `utubot reports show ID`.
+- `GET /v1/status` also has `"reports":{"days":7,"reports","crashes","anrs"}` (the whole server for an admin, else the caller's own).
+- The TV sends (`ReportUploader`) only while nothing plays: a minute after the app starts, 30 s after the player closes and every 6 hours,
+  with a doubling wait (1 min up to 1 h) after a failure; what the server confirmed is deleted on the TV. Clients: TV only; the browser
+  extension has no player to log (`ai/BROWSER_EXTENSION_PLAN.md`, parity matrix).
+
 ### Devices, prompts, videos
 
 - Voice control additions to the web UI: see [Voice control](#voice-control-addendum-2026-11-26).
